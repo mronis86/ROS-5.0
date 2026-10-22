@@ -7,6 +7,7 @@ import { socketClient } from '../services/socket-client';
 import { normalizeCueLabel } from '../lib/cueCards';
 
 type PptAction = 'none' | 'load' | 'load_start' | 'start' | 'stop';
+type SlideView = 'grid' | 'list';
 
 type PptBinding = {
   itemId: number | null;
@@ -20,6 +21,7 @@ type PptSlide = {
   imageUrl: string;
   signedUrl?: string | null;
   hasImage: boolean;
+  expiresAt?: string | null;
   binding: PptBinding;
 };
 
@@ -51,6 +53,17 @@ const ACTION_OPTIONS: { id: PptAction; label: string }[] = [
 ];
 
 const CUE_REQUIRED_ACTIONS = new Set<PptAction>(['load', 'load_start', 'start']);
+const VIEW_STORAGE_KEY = 'ros-ppt-slide-view';
+
+function readSlideView(): SlideView {
+  try {
+    const stored = window.localStorage.getItem(VIEW_STORAGE_KEY);
+    if (stored === 'list' || stored === 'grid') return stored;
+  } catch {
+    /* ignore */
+  }
+  return 'grid';
+}
 
 function formatLastSeen(raw: string | null): string {
   if (!raw) return 'never';
@@ -61,7 +74,7 @@ function formatLastSeen(raw: string | null): string {
   return `${Math.round(ms / 60000)}m ago`;
 }
 
-function StillImage({ slide }: { slide: PptSlide }) {
+function StillImage({ slide, className = '' }: { slide: PptSlide; className?: string }) {
   const [src, setSrc] = useState(slide.signedUrl || '');
 
   useEffect(() => {
@@ -90,7 +103,9 @@ function StillImage({ slide }: { slide: PptSlide }) {
 
   if (!src) {
     return (
-      <div className="flex aspect-video items-center justify-center bg-slate-950 text-xs text-slate-500">
+      <div
+        className={`flex aspect-video items-center justify-center bg-slate-950 text-xs text-slate-500 ${className}`}
+      >
         No still
       </div>
     );
@@ -99,8 +114,72 @@ function StillImage({ slide }: { slide: PptSlide }) {
     <img
       src={src}
       alt={slide.title || `Slide ${slide.slideIndex}`}
-      className="aspect-video w-full object-cover bg-black"
+      className={`aspect-video w-full object-cover bg-black ${className}`}
     />
+  );
+}
+
+function BindingFields({
+  slide,
+  cues,
+  compact,
+  onChange,
+}: {
+  slide: PptSlide;
+  cues: ScheduleCueOption[];
+  compact?: boolean;
+  onChange: (next: PptBinding) => void;
+}) {
+  const labelClass = compact
+    ? 'block text-[10px] font-semibold uppercase tracking-wide text-slate-500'
+    : 'block text-[11px] font-semibold uppercase tracking-wide text-slate-400';
+  const selectClass = compact
+    ? 'mt-0.5 w-full min-w-[10rem] rounded border border-slate-600 bg-slate-900 px-2 py-1 text-sm text-white'
+    : 'mt-1 w-full rounded border border-slate-600 bg-slate-900 px-2 py-1.5 text-sm text-white';
+
+  return (
+    <>
+      <label className={labelClass}>
+        Cue
+        <select
+          className={selectClass}
+          value={slide.binding.itemId ?? ''}
+          onChange={(e) => {
+            const itemId = e.target.value ? Number(e.target.value) : null;
+            let action = slide.binding.action;
+            if (!itemId && CUE_REQUIRED_ACTIONS.has(action)) action = 'none';
+            else if (itemId && action === 'none') action = 'load_start';
+            onChange({ itemId, action });
+          }}
+        >
+          <option value="">Not mapped</option>
+          {cues.map((cue) => (
+            <option key={cue.id} value={cue.id}>
+              {cue.label}
+              {cue.segmentName ? ` — ${cue.segmentName}` : ''}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className={labelClass}>
+        When this slide is live
+        <select
+          className={selectClass}
+          value={slide.binding.action}
+          onChange={(e) => {
+            const action = e.target.value as PptAction;
+            if (CUE_REQUIRED_ACTIONS.has(action) && !slide.binding.itemId) return;
+            onChange({ itemId: slide.binding.itemId, action });
+          }}
+        >
+          {ACTION_OPTIONS.map((opt) => (
+            <option key={opt.id} value={opt.id}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
+      </label>
+    </>
   );
 }
 
@@ -111,15 +190,30 @@ const PowerPointPage: React.FC = () => {
 
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
+  const [clearing, setClearing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [session, setSession] = useState<PptSession | null>(null);
   const [slides, setSlides] = useState<PptSlide[]>([]);
   const [cues, setCues] = useState<ScheduleCueOption[]>([]);
+  const [retentionMonths, setRetentionMonths] = useState(4);
+  const [view, setView] = useState<SlideView>(readSlideView);
+
+  const setSlideView = useCallback((next: SlideView) => {
+    setView(next);
+    try {
+      window.localStorage.setItem(VIEW_STORAGE_KEY, next);
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   const applyPayload = useCallback((data: any) => {
     if (!data) return;
     if (data.session) setSession(data.session as PptSession);
     if (Array.isArray(data.slides)) setSlides(data.slides as PptSlide[]);
+    if (Number.isFinite(Number(data.retentionMonths))) {
+      setRetentionMonths(Number(data.retentionMonths));
+    }
   }, []);
 
   const loadDeck = useCallback(async () => {
@@ -247,6 +341,32 @@ const PowerPointPage: React.FC = () => {
     [applyPayload, eventId, loadDeck]
   );
 
+  const clearStills = useCallback(async () => {
+    if (!eventId || clearing) return;
+    const ok = window.confirm(
+      'Remove all captured stills for this event from Railway?\n\nCue mappings stay so recapturing the same deck can restore them.'
+    );
+    if (!ok) return;
+    setClearing(true);
+    setError(null);
+    try {
+      const res = await fetch(
+        `${getApiBaseUrl()}/api/powerpoint/${encodeURIComponent(eventId)}/stills`,
+        {
+          method: 'DELETE',
+          headers: apiJsonHeaders(),
+        }
+      );
+      if (!res.ok) throw new Error(`Clear failed (${res.status})`);
+      applyPayload(await res.json());
+    } catch (e: any) {
+      setError(e?.message || 'Failed to clear stills');
+      void loadDeck();
+    } finally {
+      setClearing(false);
+    }
+  }, [applyPayload, clearing, eventId, loadDeck]);
+
   const liveSlide = useMemo(
     () => slides.find((s) => s.pptSlideId === session?.currentSlideId) || null,
     [session?.currentSlideId, slides]
@@ -277,6 +397,7 @@ const PowerPointPage: React.FC = () => {
             {eventName}
             {session?.deckName ? ` · ${session.deckName}` : ''}
             {session?.slideCount ? ` · ${session.slideCount} slides` : ''}
+            {` · stills auto-clear after ${retentionMonths} months`}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -301,6 +422,42 @@ const PowerPointPage: React.FC = () => {
           <span className="text-[11px] text-slate-500">
             Seen {formatLastSeen(session?.lastSeen || null)}
           </span>
+          {slides.length > 0 ? (
+            <div className="inline-flex overflow-hidden rounded border border-slate-600">
+              <button
+                type="button"
+                onClick={() => setSlideView('grid')}
+                className={`px-3 py-1.5 text-xs font-semibold ${
+                  view === 'grid'
+                    ? 'bg-slate-600 text-white'
+                    : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
+                }`}
+              >
+                Grid
+              </button>
+              <button
+                type="button"
+                onClick={() => setSlideView('list')}
+                className={`px-3 py-1.5 text-xs font-semibold ${
+                  view === 'list'
+                    ? 'bg-slate-600 text-white'
+                    : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
+                }`}
+              >
+                List
+              </button>
+            </div>
+          ) : null}
+          {slides.length > 0 ? (
+            <button
+              type="button"
+              disabled={clearing}
+              onClick={() => void clearStills()}
+              className="rounded border border-rose-700 bg-rose-950 px-3 py-1.5 text-xs font-semibold text-rose-100 hover:bg-rose-900 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {clearing ? 'Clearing…' : 'Clear stills'}
+            </button>
+          ) : null}
           <a
             href={getAppDownloadUrl('powerpoint-bridge.zip')}
             className="rounded bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-500"
@@ -366,12 +523,56 @@ const PowerPointPage: React.FC = () => {
             integration token, pick this event, then Capture stills. Event ID:{' '}
             <code className="rounded bg-slate-900 px-1 text-orange-200">{eventId}</code>
           </p>
+          <p className="mt-2 text-xs text-slate-500">
+            Captured stills are removed from Railway automatically after {retentionMonths} months.
+            Recapture to keep a current set.
+          </p>
           <a
             href={getAppDownloadUrl('powerpoint-bridge.zip')}
             className="mt-4 inline-flex rounded bg-orange-600 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-500"
           >
             Download PowerPoint Bridge
           </a>
+        </div>
+      ) : view === 'list' ? (
+        <div className="mx-4 my-4 overflow-hidden rounded-xl border border-slate-700 bg-slate-800">
+          {slides.map((slide) => {
+            const isLive = session?.currentSlideId === slide.pptSlideId && !!session?.slideshowActive;
+            return (
+              <article
+                key={slide.pptSlideId}
+                className={`flex flex-wrap items-center gap-3 border-b border-slate-700 px-3 py-2 last:border-b-0 ${
+                  isLive ? 'bg-amber-950/40' : ''
+                }`}
+              >
+                <div className="w-28 shrink-0 overflow-hidden rounded border border-slate-600">
+                  <StillImage slide={slide} />
+                </div>
+                <div className="min-w-[10rem] flex-1">
+                  <div className="text-sm font-semibold text-white">
+                    Slide {slide.slideIndex}
+                    {isLive ? (
+                      <span className="ml-2 rounded bg-amber-500 px-1.5 py-0.5 text-[10px] font-bold uppercase text-slate-950">
+                        Live
+                      </span>
+                    ) : null}
+                    {savingId === slide.pptSlideId ? (
+                      <span className="ml-2 text-[10px] font-normal text-slate-400">Saving…</span>
+                    ) : null}
+                  </div>
+                  <div className="truncate text-xs text-slate-400">{slide.title || 'Untitled'}</div>
+                </div>
+                <div className="flex min-w-[16rem] flex-1 flex-wrap gap-2">
+                  <BindingFields
+                    slide={slide}
+                    cues={cues}
+                    compact
+                    onChange={(next) => void saveBinding(slide, next)}
+                  />
+                </div>
+              </article>
+            );
+          })}
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-4 p-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
@@ -404,49 +605,11 @@ const PowerPointPage: React.FC = () => {
                       <span className="text-[10px] text-slate-400">Saving…</span>
                     ) : null}
                   </div>
-                  <label className="block text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-                    Cue
-                    <select
-                      className="mt-1 w-full rounded border border-slate-600 bg-slate-900 px-2 py-1.5 text-sm text-white"
-                      value={slide.binding.itemId ?? ''}
-                      onChange={(e) => {
-                        const itemId = e.target.value ? Number(e.target.value) : null;
-                        let action = slide.binding.action;
-                        if (!itemId && CUE_REQUIRED_ACTIONS.has(action)) action = 'none';
-                        else if (itemId && action === 'none') action = 'load_start';
-                        void saveBinding(slide, { itemId, action });
-                      }}
-                    >
-                      <option value="">Not mapped</option>
-                      {cues.map((cue) => (
-                        <option key={cue.id} value={cue.id}>
-                          {cue.label}
-                          {cue.segmentName ? ` — ${cue.segmentName}` : ''}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="block text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-                    When this slide is live
-                    <select
-                      className="mt-1 w-full rounded border border-slate-600 bg-slate-900 px-2 py-1.5 text-sm text-white"
-                      value={slide.binding.action}
-                      onChange={(e) => {
-                        const action = e.target.value as PptAction;
-                        if (CUE_REQUIRED_ACTIONS.has(action) && !slide.binding.itemId) return;
-                        void saveBinding(slide, {
-                          itemId: slide.binding.itemId,
-                          action,
-                        });
-                      }}
-                    >
-                      {ACTION_OPTIONS.map((opt) => (
-                        <option key={opt.id} value={opt.id}>
-                          {opt.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                  <BindingFields
+                    slide={slide}
+                    cues={cues}
+                    onChange={(next) => void saveBinding(slide, next)}
+                  />
                 </div>
               </article>
             );
