@@ -1,0 +1,13 @@
+---
+description: Wait for the user to authorize every git push
+alwaysApply: true
+---
+
+# Confirm before every git push
+
+The user wants to personally authorize every push (the usual Cursor / GitHub "authorize push to master" step).
+
+- Never run `git push` (or any command that updates a remote) until the user has just confirmed in this conversation that they are ready to authorize that push.
+- "Commit and push" or "update cloudflare" is not enough. After the commit, stop and ask them to confirm the push so they can click authorize.
+- Do not use stored git credentials to push silently in the background.
+- After they confirm, then push and wait for their authorize prompt.

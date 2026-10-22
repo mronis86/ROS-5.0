@@ -130,6 +130,11 @@ const PowerPointPage: React.FC = () => {
       const res = await fetch(`${getApiBaseUrl()}/api/powerpoint/${encodeURIComponent(eventId)}`, {
         headers: apiJsonHeaders(),
       });
+      if (res.status === 404) {
+        throw new Error(
+          'Railway API is still on the old build (GET /api/powerpoint returned 404). Redeploy ros-50-production from the Railway dashboard so the PowerPoint endpoints go live, then refresh this page.'
+        );
+      }
       if (!res.ok) throw new Error(`Load failed (${res.status})`);
       applyPayload(await res.json());
     } catch (e: any) {
@@ -311,7 +316,17 @@ const PowerPointPage: React.FC = () => {
 
       {error ? (
         <div className="mx-4 mt-3 rounded border border-rose-700 bg-rose-950/60 px-3 py-2 text-sm text-rose-100">
-          {error}
+          <p>{error}</p>
+          <button
+            type="button"
+            className="mt-2 rounded bg-rose-800 px-3 py-1 text-xs font-semibold text-white hover:bg-rose-700"
+            onClick={() => {
+              setLoading(true);
+              void loadDeck();
+            }}
+          >
+            Retry
+          </button>
         </div>
       ) : null}
 
