@@ -1216,6 +1216,7 @@ function buildRailwayHealthMeta() {
     nodeVersion: process.version,
     uptimeSeconds: Math.floor(process.uptime()),
     env: process.env.NODE_ENV || 'development',
+    powerpointRoutes: true,
   };
 }
 
