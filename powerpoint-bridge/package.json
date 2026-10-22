@@ -1,0 +1,41 @@
+{
+  "name": "ros-powerpoint-bridge",
+  "version": "0.1.0",
+  "description": "Windows helper: capture PowerPoint stills and report the live slide to ROS",
+  "private": true,
+  "main": "electron/main.js",
+  "devDependencies": {
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8"
+  },
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder --win portable"
+  },
+  "build": {
+    "appId": "com.sinor.ros.powerpoint-bridge",
+    "productName": "ROS PowerPoint Bridge",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "electron/**/*",
+      "renderer/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ],
+      "artifactName": "ROS-PowerPoint-Bridge-${version}-portable.exe"
+    },
+    "portable": {
+      "artifactName": "ROS-PowerPoint-Bridge-${version}-portable.exe"
+    }
+  }
+}

@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ROS PowerPoint Bridge</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <h1>ROS PowerPoint Bridge</h1>
+        <span id="run-pill" class="pill stopped">Stopped</span>
+      </div>
+      <div class="top-actions">
+        <button type="button" id="btn-start" class="primary">Start follow</button>
+        <button type="button" id="btn-stop">Stop</button>
+        <button type="button" id="btn-capture" class="secondary">Capture stills</button>
+        <button type="button" id="btn-save">Save</button>
+      </div>
+    </header>
+
+    <main>
+      <section class="card">
+        <h2>ROS event</h2>
+        <label>
+          API base URL
+          <input id="apiBaseUrl" type="text" spellcheck="false" placeholder="https://ros-50-production.up.railway.app" />
+        </label>
+        <label>
+          API token
+          <span class="hint">Admin → Integration tokens · <code>ros_itok_…</code> · scopes <code>read,control,write</code></span>
+          <input id="apiToken" type="password" autocomplete="off" spellcheck="false" placeholder="ros_itok_…" />
+        </label>
+        <div class="row">
+          <button type="button" id="btn-validate">Test API</button>
+          <button type="button" id="btn-load-events">Load events</button>
+        </div>
+        <label>
+          Event
+          <select id="eventSelect">
+            <option value="">Load events first</option>
+          </select>
+        </label>
+        <p id="api-msg" class="hint"></p>
+      </section>
+
+      <section class="card">
+        <h2>PowerPoint</h2>
+        <p class="hint">Open the deck in PowerPoint on this PC, then capture stills. Start follow before Slideshow so live slides fire the mapped cues.</p>
+        <div class="status-grid">
+          <div><span class="k">PowerPoint</span><span id="st-ppt">—</span></div>
+          <div><span class="k">Deck</span><span id="st-deck">—</span></div>
+          <div><span class="k">Slides</span><span id="st-count">—</span></div>
+          <div><span class="k">Slideshow</span><span id="st-show">—</span></div>
+          <div><span class="k">Live slide</span><span id="st-live">—</span></div>
+          <div><span class="k">Last action</span><span id="st-action">—</span></div>
+        </div>
+        <p id="st-error" class="error"></p>
+      </section>
+    </main>
+    <div id="toast" hidden></div>
+    <script src="app.js"></script>
+  </body>
+</html>

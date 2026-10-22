@@ -62,6 +62,7 @@ const {
   safeOriginalName,
 } = require('./lib/event-cue-files');
 const { registerEventBoardRoutes, ensureEventBoardSchema } = require('./lib/event-board');
+const { registerPowerpointRoutes, ensurePowerpointSchema } = require('./lib/powerpoint-stills');
 const { registerSpeakerRoutes, ensureSpeakersSchema } = require('./lib/speakers');
 const { buildPlatformMaintenanceReport, startPlatformMaintenanceAlerts } = require('./lib/platform-maintenance');
 const { loadDisplaySyncEnabled, setDisplaySyncEnabled } = require('./lib/display-sync');
@@ -464,6 +465,10 @@ async function clearCueActualStarts(eventId) {
 
 function broadcastTimerUpdated(eventId, timerRow) {
   recordCueActualStart(eventId, timerRow);
+  const followState = timerRow?.timer_state || '';
+  if (followState === 'running' || followState === 'loaded') {
+    void resolveAndBroadcastScriptCueFollow(eventId, timerRow.item_id);
+  }
   let data = applyResolumeMeta(eventId, timerRow, { isSubCue: false });
   data = applyMittiMeta(eventId, data, { isSubCue: false });
   data = applyAvPlayoutMeta(eventId, data, { isSubCue: false });
@@ -1009,7 +1014,7 @@ const corsOptions = {
 };
 app.use(cors(corsOptions));
 app.use(morgan('combined'));
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '20mb' }));
 
 // API auth: resolves Bearer/query tokens; enforces REQUIRE_API_AUTH when legacy mode is off
 applyAuthRateLimits(app, pool);
@@ -1019,6 +1024,22 @@ registerAuthRoutes(app, pool, { requireAdminAuth });
 registerUserReportRoutes(app, pool);
 registerAppSettingsRoutes(app, pool, { requireAdminAccess });
 registerEventCueFileRoutes(app, pool);
+registerPowerpointRoutes(app, {
+  pool,
+  isBucketConfigured,
+  getS3,
+  getBucketConfig,
+  broadcastUpdate,
+  broadcastTimerUpdated,
+  resolveCueDurationSeconds,
+  clearSyncState: (eventId) => {
+    try {
+      clearAllResolumeState(eventId);
+    } catch {
+      /* ignore */
+    }
+  },
+});
 registerEventBoardRoutes(app, {
   pool,
   userCanAccessEvent,
@@ -1788,6 +1809,166 @@ async function runCueActualStartsSyncTable(db) {
     ALTER TABLE public.cue_actual_starts
     ALTER COLUMN item_id TYPE BIGINT
   `).catch(() => {});
+}
+
+async function runScriptCueBindingsSyncTable(db) {
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS public.script_cue_bindings (
+      event_id TEXT NOT NULL,
+      item_id BIGINT NOT NULL,
+      script_id UUID NOT NULL REFERENCES public.scripts(id) ON DELETE CASCADE,
+      jump_line INTEGER,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (event_id, item_id)
+    )
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_script_cue_bindings_script
+      ON public.script_cue_bindings (script_id)
+  `);
+}
+
+function normalizeTeleprompterCueKey(raw) {
+  if (raw == null) return null;
+  const stripped = String(raw).trim().replace(/^cue\s*/i, '').trim();
+  return stripped ? stripped.toLowerCase() : null;
+}
+
+function parseTeleprompterCueMarkers(scriptText) {
+  const out = {};
+  String(scriptText || '').split('\n').forEach((line, index) => {
+    const match = line.match(/\[\[\s*cue\s*:?\s*([0-9A-Za-z._-]+)\s*\]\]/i);
+    if (!match) return;
+    const key = normalizeTeleprompterCueKey(match[1]);
+    if (key && out[key] == null) out[key] = index;
+  });
+  return out;
+}
+
+function scheduleCueList(scheduleItems) {
+  const items = Array.isArray(scheduleItems) ? scheduleItems : [];
+  return items
+    .map((item) => {
+      const itemId = parseInt(item?.id, 10);
+      if (!Number.isFinite(itemId)) return null;
+      const rawCue = item?.customFields?.cue ?? item?.custom_fields?.cue ?? '';
+      const cueKey = normalizeTeleprompterCueKey(rawCue);
+      const name = String(item?.segmentName || item?.segment_name || '').trim();
+      return {
+        item_id: itemId,
+        day: Number(item?.day || 1),
+        cue: rawCue ? String(rawCue) : '',
+        cue_key: cueKey,
+        name,
+        label: rawCue ? String(rawCue) : name || `Item ${itemId}`,
+      };
+    })
+    .filter(Boolean);
+}
+
+const eventScriptCueFollow = new Map();
+
+async function resolveAndBroadcastScriptCueFollow(eventId, itemId) {
+  if (!pool || !eventId) return;
+  const id = parseInt(itemId, 10);
+  if (!Number.isFinite(id)) return;
+  try {
+    const [bindRes, rosRes] = await Promise.all([
+      pool.query(
+        `SELECT b.event_id, b.item_id, b.script_id, b.jump_line,
+                s.script_name, s.script_text, s.voice_ignore_lines
+         FROM public.script_cue_bindings b
+         JOIN public.scripts s ON s.id = b.script_id
+         WHERE b.event_id = $1 AND b.item_id = $2`,
+        [String(eventId), id]
+      ),
+      pool.query(
+        'SELECT schedule_items FROM public.run_of_show_data WHERE event_id = $1',
+        [String(eventId)]
+      ),
+    ]);
+    const schedule = scheduleCueList(rosRes.rows[0]?.schedule_items);
+    const cueRow = schedule.find((row) => row.item_id === id);
+    const cueKey = cueRow?.cue_key || null;
+    const cueLabel = cueRow?.label || (cueKey ? `CUE ${cueKey}` : '');
+
+    let scriptId = null;
+    let scriptName = '';
+    let scriptText = '';
+    let voiceIgnoreLines = [];
+    let jumpLine = null;
+    let reason = 'marker';
+
+    if (bindRes.rows[0]) {
+      const row = bindRes.rows[0];
+      scriptId = row.script_id;
+      scriptName = row.script_name || '';
+      scriptText = row.script_text || '';
+      voiceIgnoreLines = Array.isArray(row.voice_ignore_lines) ? row.voice_ignore_lines : [];
+      if (row.jump_line != null && Number.isFinite(Number(row.jump_line))) {
+        jumpLine = Number(row.jump_line);
+      } else {
+        const markers = parseTeleprompterCueMarkers(scriptText);
+        jumpLine = cueKey != null && markers[cueKey] != null ? markers[cueKey] : 0;
+      }
+      reason = 'binding';
+    } else {
+      const active = eventActiveScripts.get(String(eventId));
+      if (!active?.scriptText || !cueKey) return;
+      const markers = parseTeleprompterCueMarkers(active.scriptText);
+      if (markers[cueKey] == null) return;
+      scriptId = active.scriptId || null;
+      scriptName = active.scriptName || '';
+      scriptText = active.scriptText;
+      voiceIgnoreLines = Array.isArray(active.voiceIgnoreLines) ? active.voiceIgnoreLines : [];
+      jumpLine = markers[cueKey];
+      reason = 'marker';
+    }
+
+    const commentsRes = scriptId
+      ? await pool.query(
+          'SELECT * FROM public.script_comments WHERE script_id = $1 ORDER BY line_number ASC',
+          [scriptId]
+        )
+      : { rows: [] };
+
+    const payload = {
+      eventId: String(eventId),
+      itemId: id,
+      cueKey,
+      cueLabel,
+      scriptId,
+      scriptName,
+      scriptText,
+      comments: commentsRes.rows,
+      voiceIgnoreLines,
+      jumpLine,
+      reason,
+    };
+    eventScriptCueFollow.set(String(eventId), payload);
+    if (reason === 'binding') {
+      eventActiveScripts.set(String(eventId), {
+        scriptId,
+        scriptName,
+        scriptText,
+        comments: commentsRes.rows,
+        voiceIgnoreLines,
+        updatedAt: Date.now(),
+      });
+      io.to(`event:${eventId}`).emit('scriptContentSync', {
+        eventId: String(eventId),
+        scriptId,
+        scriptName,
+        scriptText,
+        comments: commentsRes.rows,
+        voiceIgnoreLines,
+        timestamp: Date.now(),
+      });
+    }
+    io.to(`event:${eventId}`).emit('scriptCueFollow', payload);
+  } catch (err) {
+    console.warn('⚠️ script cue follow skipped:', err.message || err);
+  }
 }
 
 async function runOperatorCountdownsSyncTable(db) {
@@ -7640,6 +7821,10 @@ app.post('/api/active-timers', async (req, res) => {
     
     // Broadcast update via WebSocket with database elapsed_seconds
     recordCueActualStart(event_id, timerData);
+    const followState = timerData?.timer_state || timer_state || '';
+    if (followState === 'running' || followState === 'loaded') {
+      void resolveAndBroadcastScriptCueFollow(event_id, timerData.item_id ?? item_id);
+    }
     broadcastUpdate(event_id, 'timerUpdated', timerData);
     
     res.status(201).json(timerData);
@@ -8832,7 +9017,13 @@ app.get('/api/events/:eventId/stream', (req, res) => {
 
 // Helper function to broadcast updates via Socket.IO only (SSE disabled)
 function broadcastUpdate(eventId, updateType, data) {
-  if (updateType === 'timerUpdated') recordCueActualStart(eventId, data);
+  if (updateType === 'timerUpdated') {
+    recordCueActualStart(eventId, data);
+    const followState = data?.timer_state || '';
+    if (followState === 'running' || followState === 'loaded') {
+      void resolveAndBroadcastScriptCueFollow(eventId, data.item_id);
+    }
+  }
   const message = {
     type: updateType,
     eventId,
@@ -10106,6 +10297,8 @@ io.on('connection', (socket) => {
         timestamp: activeScript.updatedAt || Date.now(),
       });
     }
+    const followCatchUp = eventScriptCueFollow.get(String(eventId));
+    if (followCatchUp) socket.emit('scriptCueFollow', followCatchUp);
   });
   
   // Leave event room
@@ -11161,6 +11354,70 @@ app.delete('/api/backups/:backupId', async (req, res) => {
 // Scripts Follow API Endpoints
 // ========================================
 
+app.get('/api/script-cue-bindings/:eventId', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    const [bindRes, rosRes] = await Promise.all([
+      pool.query(
+        `SELECT event_id, item_id, script_id, jump_line, updated_at
+         FROM public.script_cue_bindings WHERE event_id = $1`,
+        [String(eventId)]
+      ),
+      pool.query(
+        'SELECT schedule_items FROM public.run_of_show_data WHERE event_id = $1',
+        [String(eventId)]
+      ),
+    ]);
+    res.json({
+      bindings: bindRes.rows,
+      cues: scheduleCueList(rosRes.rows[0]?.schedule_items),
+    });
+  } catch (error) {
+    console.error('Error fetching script cue bindings:', error);
+    res.status(500).json({ error: 'Failed to fetch script cue bindings' });
+  }
+});
+
+app.put('/api/script-cue-bindings/:eventId', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    const itemId = parseInt(req.body?.item_id, 10);
+    const scriptId = req.body?.script_id;
+    const jumpRaw = req.body?.jump_line;
+    const jumpLine =
+      jumpRaw == null || jumpRaw === '' ? null : parseInt(jumpRaw, 10);
+    if (!eventId || !Number.isFinite(itemId) || !scriptId) {
+      return res.status(400).json({ error: 'event_id, item_id, and script_id are required' });
+    }
+    const result = await pool.query(
+      `INSERT INTO public.script_cue_bindings (event_id, item_id, script_id, jump_line, updated_at)
+       VALUES ($1, $2, $3, $4, NOW())
+       ON CONFLICT (event_id, item_id)
+       DO UPDATE SET script_id = EXCLUDED.script_id, jump_line = EXCLUDED.jump_line, updated_at = NOW()
+       RETURNING *`,
+      [String(eventId), itemId, scriptId, Number.isFinite(jumpLine) ? jumpLine : null]
+    );
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error saving script cue binding:', error);
+    res.status(500).json({ error: 'Failed to save script cue binding' });
+  }
+});
+
+app.delete('/api/script-cue-bindings/:eventId/:itemId', async (req, res) => {
+  try {
+    const itemId = parseInt(req.params.itemId, 10);
+    await pool.query(
+      'DELETE FROM public.script_cue_bindings WHERE event_id = $1 AND item_id = $2',
+      [String(req.params.eventId), itemId]
+    );
+    res.status(204).send();
+  } catch (error) {
+    console.error('Error deleting script cue binding:', error);
+    res.status(500).json({ error: 'Failed to delete script cue binding' });
+  }
+});
+
 // Get all scripts (list)
 app.get('/api/scripts', async (req, res) => {
   try {
@@ -11594,6 +11851,18 @@ server.listen(PORT, '0.0.0.0', async () => {
       console.log('✅ operator_countdowns table synced');
     } catch (err) {
       console.warn('⚠️ operator_countdowns sync skipped:', err.message || err);
+    }
+    try {
+      await runScriptCueBindingsSyncTable(pool);
+      console.log('✅ script_cue_bindings table synced');
+    } catch (err) {
+      console.warn('⚠️ script_cue_bindings sync skipped:', err.message || err);
+    }
+    try {
+      await ensurePowerpointSchema(pool);
+      console.log('✅ powerpoint stills / bindings tables synced');
+    } catch (err) {
+      console.warn('⚠️ powerpoint stills sync skipped:', err.message || err);
     }
     try {
       await runCueActualStartsSyncTable(pool);

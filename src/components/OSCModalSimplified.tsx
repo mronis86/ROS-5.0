@@ -130,6 +130,19 @@ const OSCModalSimplified: React.FC<OSCModalSimplifiedProps> = ({
               {/* Offline Show — LAN show laptop */}
               <div className="text-center mb-4">
                 <a
+                  href="/powerpoint-bridge.zip"
+                  download="powerpoint-bridge.zip"
+                  className="block bg-orange-600 hover:bg-orange-500 text-white text-sm py-3 px-6 rounded text-center transition-colors font-semibold"
+                >
+                  PowerPoint Bridge (Windows)
+                </a>
+                <div className="text-xs text-orange-200 mt-2">
+                  Capture slide stills · map cues in the web app · fire load/start when a slide is live
+                </div>
+              </div>
+
+              <div className="text-center mb-4">
+                <a
                   href="/offline-show.zip"
                   download="offline-show.zip"
                   className="block bg-teal-700 hover:bg-teal-600 text-white text-sm py-3 px-6 rounded text-center transition-colors font-semibold"
