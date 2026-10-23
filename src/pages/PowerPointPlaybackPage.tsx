@@ -229,9 +229,13 @@ const PowerPointPlaybackPage: React.FC = () => {
   }, [applyPlayback, eventId, loadCues, loadStatus]);
 
   const sendCommand = useCallback(
-    async (action: string, slideIndex?: number) => {
+    async (
+      action: string,
+      extra?: number | { slideIndex?: number; itemId?: number | null; fileId?: string }
+    ) => {
       if (!eventId || sending) return;
-      setSending(action);
+      const opts = typeof extra === 'number' ? { slideIndex: extra } : extra || {};
+      setSending(action === 'open' && opts.fileId ? `open:${opts.fileId}` : action);
       setError(null);
       try {
         const res = await fetch(
@@ -239,7 +243,12 @@ const PowerPointPlaybackPage: React.FC = () => {
           {
             method: 'POST',
             headers: apiJsonHeaders(),
-            body: JSON.stringify({ action, slideIndex }),
+            body: JSON.stringify({
+              action,
+              slideIndex: opts.slideIndex,
+              itemId: opts.itemId,
+              fileId: opts.fileId,
+            }),
           }
         );
         if (!res.ok) throw new Error(`Command failed (${res.status})`);
@@ -250,7 +259,7 @@ const PowerPointPlaybackPage: React.FC = () => {
             const current = prev.currentIndex || 1;
             const nextIndex =
               action === 'goto'
-                ? Number(slideIndex)
+                ? Number(opts.slideIndex)
                 : action === 'next'
                   ? current + 1
                   : current - 1;
@@ -259,6 +268,13 @@ const PowerPointPlaybackPage: React.FC = () => {
               currentIndex: count > 0 ? Math.min(count, Math.max(1, nextIndex)) : nextIndex,
             };
           });
+        }
+        if (action === 'end') {
+          setSession((prev) =>
+            prev
+              ? { ...prev, slideshowActive: false, deckName: '', currentIndex: null, slideCount: prev.slideCount }
+              : prev
+          );
         }
         applyPlayback(await res.json());
       } catch (e: any) {
@@ -446,59 +462,86 @@ const PowerPointPlaybackPage: React.FC = () => {
           <div className="mt-2 text-sm text-rose-300">{session.lastError}</div>
         ) : null}
 
-        <div className="mt-4 flex flex-wrap items-end gap-2">
-          <button
-            type="button"
-            disabled={!!sending}
-            onClick={() => void sendCommand('prev')}
-            className="rounded bg-slate-700 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-600 disabled:opacity-50"
-          >
-            Previous
-          </button>
-          <button
-            type="button"
-            disabled={!!sending}
-            onClick={() => void sendCommand('next')}
-            className="rounded bg-slate-700 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-600 disabled:opacity-50"
-          >
-            Next
-          </button>
-          <label className="text-xs text-slate-400">
-            Go to
-            <span className="mt-1 flex gap-1">
-              <input
-                type="number"
-                min={1}
-                value={gotoValue}
-                onChange={(e) => setGotoValue(e.target.value)}
-                className="w-20 rounded border border-slate-600 bg-slate-900 px-2 py-1.5 text-sm text-white"
-              />
-              <button
-                type="button"
-                disabled={!!sending || !gotoValue}
-                onClick={() => void sendCommand('goto', Number(gotoValue))}
-                className="rounded bg-slate-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-slate-600 disabled:opacity-50"
-              >
-                Go
-              </button>
-            </span>
-          </label>
-          <button
-            type="button"
-            disabled={!!sending}
-            onClick={() => void sendCommand('start')}
-            className="rounded bg-emerald-800 px-3 py-2 text-sm font-semibold text-emerald-50 hover:bg-emerald-700 disabled:opacity-50"
-          >
-            Start slideshow
-          </button>
-          <button
-            type="button"
-            disabled={!!sending}
-            onClick={() => void sendCommand('end')}
-            className="rounded bg-rose-900 px-3 py-2 text-sm font-semibold text-rose-50 hover:bg-rose-800 disabled:opacity-50"
-          >
-            End slideshow
-          </button>
+        {/paused|Manual/i.test(session?.lastCommand || '') ? (
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded border border-amber-800/70 bg-amber-950/40 px-3 py-2 text-sm text-amber-100">
+            <span>Cue auto-open is paused so this manual deck can stay up.</span>
+            <button
+              type="button"
+              disabled={!!sending}
+              onClick={() => void sendCommand('resume')}
+              className="rounded bg-amber-800 px-3 py-1.5 text-xs font-semibold text-amber-50 hover:bg-amber-700 disabled:opacity-50"
+            >
+              Resume cue follow
+            </button>
+          </div>
+        ) : null}
+
+        <div className="mt-5 rounded-lg border border-slate-700 bg-slate-900/60 p-3">
+          <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Show control</div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={!!sending}
+              onClick={() => void sendCommand('start')}
+              className="rounded bg-emerald-800 px-4 py-2 text-sm font-semibold text-emerald-50 hover:bg-emerald-700 disabled:opacity-50"
+            >
+              Start slideshow
+            </button>
+            <button
+              type="button"
+              disabled={!!sending}
+              onClick={() => void sendCommand('end')}
+              className="rounded bg-rose-900 px-4 py-2 text-sm font-semibold text-rose-50 hover:bg-rose-800 disabled:opacity-50"
+            >
+              End slideshow & close PowerPoint
+            </button>
+          </div>
+          <p className="mt-2 text-xs text-slate-500">
+            End closes the slideshow and quits PowerPoint. Cue auto-open stays paused until you resume
+            or a new cue starts.
+          </p>
+        </div>
+
+        <div className="mt-4">
+          <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Slide navigation</div>
+          <div className="mt-2 flex flex-wrap items-end gap-2">
+            <button
+              type="button"
+              disabled={!!sending}
+              onClick={() => void sendCommand('prev')}
+              className="rounded bg-slate-700 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-600 disabled:opacity-50"
+            >
+              Previous
+            </button>
+            <button
+              type="button"
+              disabled={!!sending}
+              onClick={() => void sendCommand('next')}
+              className="rounded bg-slate-700 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-600 disabled:opacity-50"
+            >
+              Next
+            </button>
+            <label className="text-xs text-slate-400">
+              Go to
+              <span className="mt-1 flex gap-1">
+                <input
+                  type="number"
+                  min={1}
+                  value={gotoValue}
+                  onChange={(e) => setGotoValue(e.target.value)}
+                  className="w-20 rounded border border-slate-600 bg-slate-900 px-2 py-1.5 text-sm text-white"
+                />
+                <button
+                  type="button"
+                  disabled={!!sending || !gotoValue}
+                  onClick={() => void sendCommand('goto', Number(gotoValue))}
+                  className="rounded bg-slate-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-slate-600 disabled:opacity-50"
+                >
+                  Go
+                </button>
+              </span>
+            </label>
+          </div>
         </div>
 
         {previews.length > 0 ? (
@@ -541,11 +584,11 @@ const PowerPointPlaybackPage: React.FC = () => {
 
       <section className="mx-4 mt-4 rounded-xl border border-slate-700 bg-slate-800/50 p-4">
         <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">
-          Cached event decks
+          Synced decks · open anytime
         </div>
         <p className="mt-1 text-xs text-slate-500">
-          Check PPT on the cue and upload a .ppt / .pptx in Assets. The Windows helper syncs those
-          files before the show and opens the current version when that cue loads.
+          Cue follow still opens the matching deck when a cue starts. Use Open & start here to fire a
+          deck yourself without waiting on the clock.
         </p>
         {preferred.length === 0 ? (
           <p className="mt-3 text-sm text-slate-400">No PowerPoint files on this event yet.</p>
@@ -572,11 +615,28 @@ const PowerPointPlaybackPage: React.FC = () => {
                       {asset.sizeBytes != null ? ` · ${Math.round(asset.sizeBytes / 1024)} KB` : ''}
                     </div>
                   </div>
-                  {active ? (
-                    <span className="rounded-full bg-orange-700 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-orange-50">
-                      Current cue
-                    </span>
-                  ) : null}
+                  <div className="flex flex-wrap items-center gap-2">
+                    {active ? (
+                      <span className="rounded-full bg-orange-700 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-orange-50">
+                        Current cue
+                      </span>
+                    ) : null}
+                    {session?.currentItemId != null && asset.itemId === session.currentItemId ? (
+                      <span className="rounded-full bg-slate-600 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-slate-100">
+                        Open
+                      </span>
+                    ) : null}
+                    <button
+                      type="button"
+                      disabled={!!sending}
+                      onClick={() =>
+                        void sendCommand('open', { itemId: asset.itemId, fileId: asset.fileId })
+                      }
+                      className="rounded bg-orange-700 px-3 py-1.5 text-xs font-semibold text-orange-50 hover:bg-orange-600 disabled:opacity-50"
+                    >
+                      {sending === `open:${asset.fileId}` ? 'Opening…' : 'Open & start'}
+                    </button>
+                  </div>
                 </div>
               );
             })}

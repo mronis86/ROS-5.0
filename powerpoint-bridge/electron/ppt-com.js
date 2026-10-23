@@ -205,6 +205,10 @@ async function endShow() {
   return withWatchPaused(() => runPptCommand('endShow'));
 }
 
+async function quitApp() {
+  return withWatchPaused(() => runPptCommand('quit'));
+}
+
 async function nextSlide() {
   return withWatchPaused(() => runPptCommand('next'));
 }
@@ -227,6 +231,7 @@ module.exports = {
   closeAll,
   startShow,
   endShow,
+  quitApp,
   nextSlide,
   prevSlide,
   gotoSlide,

@@ -42,6 +42,8 @@ class PlaybackController {
     this.previewPath = '';
     this.previewBusy = false;
     this.liveTimer = null;
+    this.manualHold = false;
+    this.closedByOperator = false;
     this.manifest = { files: {} };
     this.status = this.blankStatus('Stopped');
   }
@@ -347,6 +349,24 @@ class PlaybackController {
   async followLoadedCue(loadedItemId, loadedCue = null, livePath = null, slideshowActive = false) {
     const cueLabel = loadedCue?.cueLabel || (loadedItemId != null ? `Cue ${loadedItemId}` : '');
     const timerState = loadedCue?.timerState || null;
+    if (this.manualHold || this.closedByOperator) {
+      const runningOther =
+        loadedItemId != null &&
+        timerState === 'running' &&
+        Number(loadedItemId) !== Number(this.currentItemId);
+      if (!runningOther) {
+        this.emit({
+          loadedCueLabel: cueLabel,
+          message: this.closedByOperator
+            ? 'PowerPoint closed · cue follow paused'
+            : `Manual deck · ${this.status.deckName || 'open'}`,
+          lastAction: this.closedByOperator ? 'Cue follow paused' : 'Manual deck',
+        });
+        return;
+      }
+      this.manualHold = false;
+      this.closedByOperator = false;
+    }
     if (loadedItemId == null) {
       this.emit({ loadedCueLabel: '', message: 'No cue loaded' });
       return;
@@ -509,20 +529,131 @@ class PlaybackController {
   async runCommand(command) {
     const action = String(command.action || '').toLowerCase();
     let result = null;
+    if (action === 'resume') {
+      this.manualHold = false;
+      this.closedByOperator = false;
+      this.lastCommandId = command.id;
+      this.lastError = '';
+      this.emit({ lastAction: 'Resumed cue follow', error: '' });
+      await this.reportAndRefresh(true);
+      return;
+    }
+    if (action === 'open') {
+      await this.openManual(command);
+      this.lastCommandId = command.id;
+      return;
+    }
     if (action === 'next') result = await ppt.nextSlide();
     else if (action === 'prev') result = await ppt.prevSlide();
     else if (action === 'goto') result = await ppt.gotoSlide(command.slideIndex);
-    else if (action === 'start') result = await ppt.startShow(this.currentPath);
-    else if (action === 'end') result = await ppt.endShow();
-    else return;
+    else if (action === 'start') {
+      this.closedByOperator = false;
+      result = await ppt.startShow(this.currentPath);
+    } else if (action === 'end') {
+      result = await ppt.quitApp();
+      this.closedByOperator = true;
+      this.manualHold = false;
+      this.currentPath = null;
+      this.currentFileId = null;
+      this.currentItemId = null;
+      this.previewPath = '';
+      this.lastStartedItemId = null;
+    } else return;
     if (!result || result.ok === false) {
       this.lastError = result?.error || `Command ${action} failed`;
     } else {
       this.lastError = '';
-      this.applyLive(result);
+      if (action === 'end') {
+        this.emit({
+          powerpoint: false,
+          slideshowActive: false,
+          deckName: '',
+          slideCount: 0,
+          currentIndex: null,
+          livePath: '',
+        });
+      } else {
+        this.applyLive(result);
+      }
     }
     this.lastCommandId = command.id;
-    this.emit({ lastAction: `Web ${action}`, error: this.lastError });
+    this.emit({
+      lastAction: action === 'end' ? 'Ended slideshow and closed PowerPoint' : `Web ${action}`,
+      error: this.lastError,
+    });
+    await this.reportAndRefresh(true);
+  }
+
+  async openManual(command) {
+    const itemId = Number(command.itemId);
+    const fileId = command.fileId != null ? String(command.fileId) : '';
+    let asset = Number.isFinite(itemId) ? preferredAssetForItem(this.assets, itemId) : null;
+    if (!asset && fileId) {
+      asset = (this.assets || []).find((row) => String(row.fileId) === fileId) || null;
+    }
+    if (!asset) {
+      this.lastError = 'That deck is not in the sync folder yet. Click Sync decks first.';
+      this.emit({ error: this.lastError, lastAction: 'Manual open failed' });
+      return;
+    }
+    const cueLabel = `Cue ${asset.itemId}`;
+    let dest = this.localPathFor(asset, cueLabel);
+    if (!dest || !fs.existsSync(dest)) {
+      try {
+        await this.syncCache();
+      } catch {
+        /* still try recorded path */
+      }
+      dest = this.localPathFor(asset, cueLabel);
+    }
+    if (!dest || !fs.existsSync(dest)) {
+      this.lastError = `Synced file missing for ${asset.originalName || cueLabel}`;
+      this.emit({ error: this.lastError, lastAction: 'Manual open failed' });
+      return;
+    }
+    let result;
+    try {
+      result = await ppt.swapDeck(dest, this.currentPath);
+    } catch (err) {
+      this.lastError = err.message || 'Could not open deck';
+      this.emit({ error: this.lastError, lastAction: 'Manual open failed' });
+      return;
+    }
+    if (!result || result.ok === false) {
+      this.lastError = result?.error || 'Could not open deck';
+      this.emit({ error: this.lastError, lastAction: 'Manual open failed' });
+      return;
+    }
+    if (!result.slideshowActive) {
+      try {
+        const started = await ppt.startShow(dest);
+        if (started && started.ok !== false) {
+          this.applyLive(started);
+          result = { ...result, ...started, slideshowActive: !!started.slideshowActive };
+        }
+      } catch (err) {
+        this.lastError = err.message || result.showWarning || '';
+      }
+    }
+    this.manualHold = true;
+    this.closedByOperator = false;
+    this.currentPath = dest;
+    this.currentFileId = asset.fileId || null;
+    this.currentItemId = Number.isFinite(Number(asset.itemId)) ? Number(asset.itemId) : null;
+    this.lastStartedItemId = this.currentItemId;
+    this.lastError = result.showWarning || '';
+    this.applyLive(result);
+    this.emit({
+      powerpoint: true,
+      slideshowActive: !!result.slideshowActive,
+      deckName: result.deckName || path.basename(dest),
+      slideCount: result.slideCount || 0,
+      currentIndex: Number(result.slideIndex) > 0 ? Number(result.slideIndex) : 1,
+      lastAction: `Manual open & start · ${result.deckName || path.basename(dest)}`,
+      error: this.lastError,
+    });
+    void this.captureAndUploadPreviews(dest);
+    await this.reportAndRefresh(true);
   }
 
   applyLive(live) {

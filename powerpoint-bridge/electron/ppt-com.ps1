@@ -335,6 +335,21 @@ if ($Command -eq 'watch') {
   }
 }
 
+if ($Command -eq 'endShow' -or $Command -eq 'quit') {
+  $app = Get-PptApp
+  if ($app) {
+    try { Exit-Shows $app } catch {}
+    try { Close-AllPresentations $app $null } catch {}
+    try { $app.Quit() } catch {}
+    Start-Sleep -Milliseconds 400
+  }
+  try {
+    Get-Process -Name POWERPNT,POWERPNT.EXE -ErrorAction SilentlyContinue | Stop-Process -Force
+  } catch {}
+  Write-Json @{ ok = $true; closed = $true; quit = $true; slideshowActive = $false; deckName = ''; slideCount = 0; slideIndex = $null }
+  exit 0
+}
+
 $needsLaunch = $Command -in @('open', 'swap')
 $ppt = if ($needsLaunch) { Ensure-PptApp } else { Get-PptApp }
 
@@ -379,14 +394,6 @@ if ($Command -eq 'open' -or $Command -eq 'swap') {
 if ($Command -eq 'close') {
   Close-AllPresentations $ppt $null
   Write-Json @{ ok = $true; closed = $true }
-  exit 0
-}
-
-if ($Command -eq 'endShow') {
-  Exit-Shows $ppt
-  $pres = $null
-  try { $pres = $ppt.ActivePresentation } catch {}
-  Write-Json (Live-Payload $ppt $pres)
   exit 0
 }
 
