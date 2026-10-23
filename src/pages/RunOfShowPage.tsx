@@ -9,6 +9,7 @@ import { getBackupPreviewStats } from '../lib/backupPreview';
 import { apiJsonHeaders } from '../lib/sessionAuth';
 import { getCountdownPrimaryHex, useCountdownColorMode, RAINBOW_COUNTDOWN_GRADIENT } from '../lib/countdownColor';
 import { overtimeSignPrefix, useOvertimeSign } from '../lib/overtimeSign';
+import { OvertimeClockText, pageClockSignClass } from '../lib/OvertimeClockText';
 import {
   findTopPreshowCue,
   isPreshowArmedForKey,
@@ -7141,11 +7142,10 @@ const RunOfShowPage: React.FC = () => {
     const hours = Math.floor(absSeconds / 3600);
     const minutes = Math.floor((absSeconds % 3600) / 60);
     const secs = Math.floor(absSeconds % 60);
-    const sign = overtimeSignPrefix(seconds, overtimeSign);
     if (hours === 0) {
-      return `${sign}${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+      return `${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
     }
-    return `${sign}${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
   // Helper function to format time for sub-cue timers - HH:MM:SS format or MM:SS if hours are 00
@@ -16580,7 +16580,12 @@ const RunOfShowPage: React.FC = () => {
                     style={rosPreshowRainbow ? undefined : { color: getCountdownColor() }}
                   >
                     <div className="text-3xl font-mono leading-none">
-                      {formatTime(getRemainingTime())}
+                      <OvertimeClockText
+                        seconds={getRemainingTime()}
+                        body={formatTime(getRemainingTime())}
+                        sign={overtimeSign}
+                        signClassName={pageClockSignClass(getRemainingTime(), overtimeSign)}
+                      />
                     </div>
                     {rosClockTodBadge ? (
                       <div className="mt-1 font-mono text-[11px] font-semibold leading-none tracking-wide text-cyan-300">

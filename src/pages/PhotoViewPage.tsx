@@ -25,6 +25,7 @@ import DisplaySyncPausedBanner from '../components/DisplaySyncPausedBanner';
 import { speakersForSlots } from '../lib/micManager';
 import { getCountdownPrimaryHex, useCountdownColorMode, RAINBOW_COUNTDOWN_GRADIENT } from '../lib/countdownColor';
 import { overtimeSignPrefix, useOvertimeSign } from '../lib/overtimeSign';
+import { OvertimeClockText, pageClockSignClass } from '../lib/OvertimeClockText';
 import { usePreshowRainbow } from '../lib/usePreshowRainbow';
 import { findTopPreshowCue } from '../lib/preshowCountdown';
 import { formatShowDelayBanner } from '../lib/showDelay';
@@ -1002,11 +1003,10 @@ const PhotoViewPage: React.FC = () => {
     const hours = Math.floor(absSeconds / 3600);
     const minutes = Math.floor((absSeconds % 3600) / 60);
     const secs = Math.floor(absSeconds % 60);
-    const sign = overtimeSignPrefix(seconds, overtimeSign);
     if (hours === 0) {
-      return `${sign}${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+      return `${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
     }
-    return `${sign}${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
   // Get remaining time for active timer, sub-cue timer, or loaded CUE - allow negative values (matches Run of Show)
@@ -2688,7 +2688,12 @@ const PhotoViewPage: React.FC = () => {
                     ...(usePreshowRainbowColors ? {} : { color: getCountdownColor() }),
                   }}
                 >
-                  {formatTime(getRemainingTime())}
+                  <OvertimeClockText
+                    seconds={getRemainingTime()}
+                    body={formatTime(getRemainingTime())}
+                    sign={overtimeSign}
+                    signClassName={pageClockSignClass(getRemainingTime(), overtimeSign)}
+                  />
                 </div>
               </div>
               </div>
@@ -3216,7 +3221,12 @@ const PhotoViewPage: React.FC = () => {
               }`}
               style={usePreshowRainbowColors ? undefined : { color: getCountdownColor() }}
             >
-              {formatTime(getRemainingTime())}
+              <OvertimeClockText
+                seconds={getRemainingTime()}
+                body={formatTime(getRemainingTime())}
+                sign={overtimeSign}
+                signClassName={pageClockSignClass(getRemainingTime(), overtimeSign)}
+              />
             </div>
           </div>
         </div>

@@ -15,7 +15,8 @@ import {
   formatSpeakerLocation,
 } from '../showcase/photoShowcaseHelpers';
 import { countdownColorForRemaining } from '../lib/countdownColor';
-import { overtimeSignPrefix, useOvertimeSign } from '../lib/overtimeSign';
+import { useOvertimeSign } from '../lib/overtimeSign';
+import { OvertimeClockText, pageClockSignClass } from '../lib/OvertimeClockText';
 import { usePreshowRainbow } from '../lib/usePreshowRainbow';
 import { findTopPreshowCue } from '../lib/preshowCountdown';
 import { programTypeSurfaceStyle } from '../lib/rosProgramTypeSplit';
@@ -147,11 +148,10 @@ function formatTime(seconds: number): string {
   const h = Math.floor(abs / 3600);
   const m = Math.floor((abs % 3600) / 60);
   const s = abs % 60;
-  const sign = overtimeSignPrefix(seconds);
   if (h === 0) {
-    return `${sign}${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
   }
-  return `${sign}${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
 function countdownColor(remaining: number, hasTimer: boolean): string {
@@ -165,7 +165,7 @@ function progressColor(remaining: number): string {
 }
 
 const MicManagerPage: React.FC = () => {
-  useOvertimeSign();
+  const overtimeSign = useOvertimeSign();
   const location = useLocation();
   const navigate = useNavigate();
   const q = new URLSearchParams(location.search);
@@ -1011,7 +1011,12 @@ const MicManagerPage: React.FC = () => {
                     : { color: countdownColor(remainingSeconds, hasTimer) }
                 }
               >
-                {formatTime(hasTimer ? remainingSeconds : 0)}
+                <OvertimeClockText
+                  seconds={hasTimer ? remainingSeconds : 0}
+                  body={formatTime(hasTimer ? remainingSeconds : 0)}
+                  sign={overtimeSign}
+                  signClassName={pageClockSignClass(hasTimer ? remainingSeconds : 0, overtimeSign)}
+                />
               </div>
             </div>
           </div>
