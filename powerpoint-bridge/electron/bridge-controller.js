@@ -1,5 +1,5 @@
 const ppt = require('./ppt-com');
-const { uploadStills, reportLive } = require('./railway-client');
+const { uploadStills, reportLive, reportPlaybackLive } = require('./railway-client');
 
 class BridgeController {
   constructor({ onStatus } = {}) {
@@ -105,6 +105,13 @@ class BridgeController {
         deckName: live.deckName,
         slideCount,
       });
+      try {
+        await reportPlaybackLive(this.config.apiBaseUrl, this.config.apiToken, this.config.eventId, {
+          helperMode: 'follow',
+        });
+      } catch {
+        /* Launcher page can still show this helper is in the other mode */
+      }
       if (result?.fired) {
         this.emit({
           lastAction: `${result.action || 'fired'} → item ${result.itemId || '?'}`,

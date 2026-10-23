@@ -42,6 +42,7 @@ class PlaybackController {
       currentIndex: null,
       currentItemId: this.currentItemId,
       loadedItemId: this.lastLoadedItemId,
+      loadedCueLabel: '',
       lastAction: '',
       lastError: this.lastError,
       error: this.lastError,
@@ -121,11 +122,17 @@ class PlaybackController {
         this.config.apiToken,
         this.config.eventId
       );
-      const loadedItemId = playback?.session?.loadedItemId ?? null;
+      const loadedItemId = playback?.session?.loadedItemId ?? playback?.session?.loadedCue?.itemId ?? null;
+      const loadedCue = playback?.session?.loadedCue || null;
       const queued = playback?.session?.queuedCommand || null;
 
       if (loadedItemId !== this.lastLoadedItemId) {
-        await this.followLoadedCue(loadedItemId);
+        await this.followLoadedCue(loadedItemId, loadedCue);
+      } else if (loadedCue?.cueLabel) {
+        this.emit({
+          loadedCueLabel: loadedCue.cueLabel,
+          message: this.status.message,
+        });
       }
 
       if (queued && queued.id && queued.id !== this.lastCommandId) {
@@ -241,9 +248,13 @@ class PlaybackController {
     fs.renameSync(tmp, dest);
   }
 
-  async followLoadedCue(loadedItemId) {
+  async followLoadedCue(loadedItemId, loadedCue = null) {
     this.lastLoadedItemId = loadedItemId;
-    if (loadedItemId == null) return;
+    const cueLabel = loadedCue?.cueLabel || (loadedItemId != null ? `Cue ${loadedItemId}` : '');
+    if (loadedItemId == null) {
+      this.emit({ loadedCueLabel: '', message: 'No cue loaded' });
+      return;
+    }
     const asset = preferredAssetForItem(this.assets, loadedItemId);
     const cachedPath = asset ? this.localPathFor(asset) : null;
     const cachedExists = cachedPath && fs.existsSync(cachedPath);
@@ -255,14 +266,19 @@ class PlaybackController {
     });
 
     if (decision.action === 'idle') {
-      this.emit({ message: `Cue ${loadedItemId} loaded · no PPT`, lastAction: 'No PPT' });
+      this.emit({
+        loadedCueLabel: cueLabel,
+        message: `${cueLabel} loaded · no PPT`,
+        lastAction: 'No PPT',
+      });
       return;
     }
     if (decision.action === 'warn') {
       this.lastError = decision.warning;
       this.emit({
+        loadedCueLabel: cueLabel,
         error: this.lastError,
-        message: `Cue ${loadedItemId}: PPT checked, no cached deck`,
+        message: `${cueLabel}: PPT checked, no cached deck`,
         lastAction: 'Missing deck',
       });
       return;
@@ -276,12 +292,20 @@ class PlaybackController {
       this.currentPath = null;
       this.currentFileId = null;
       this.currentItemId = loadedItemId;
-      this.emit({ message: `Cue ${loadedItemId} · closed PowerPoint`, lastAction: 'Closed deck' });
+      this.emit({
+        loadedCueLabel: cueLabel,
+        message: `${cueLabel} · closed PowerPoint`,
+        lastAction: 'Closed deck',
+      });
       return;
     }
     if (decision.action === 'keep') {
       this.currentItemId = loadedItemId;
-      this.emit({ message: `Cue ${loadedItemId} · same deck`, lastAction: 'Kept deck' });
+      this.emit({
+        loadedCueLabel: cueLabel,
+        message: `${cueLabel} · same deck`,
+        lastAction: 'Kept deck',
+      });
       return;
     }
     if (decision.action === 'swap') {
@@ -299,7 +323,8 @@ class PlaybackController {
         deckName: result.deckName || path.basename(decision.path),
         slideCount: result.slideCount || 0,
         currentIndex: result.slideIndex != null ? Number(result.slideIndex) : 1,
-        message: `Cue ${loadedItemId} · ${result.deckName || 'deck'} live`,
+        loadedCueLabel: cueLabel,
+        message: `${cueLabel} · ${result.deckName || 'deck'} live`,
         lastAction: decision.closePath ? 'Swapped deck' : 'Opened deck',
         error: '',
       });
@@ -345,6 +370,7 @@ class PlaybackController {
       live = null;
     }
     await reportPlaybackLive(this.config.apiBaseUrl, this.config.apiToken, this.config.eventId, {
+      helperMode: 'playback',
       deckName: live?.deckName || this.status.deckName || '',
       slideCount: live?.slideCount || this.status.slideCount || 0,
       slideshowActive: !!(live && live.slideshowActive),

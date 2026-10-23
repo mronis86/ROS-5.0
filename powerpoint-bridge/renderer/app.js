@@ -18,6 +18,7 @@ const els = {
   stCount: document.getElementById('st-count'),
   stShow: document.getElementById('st-show'),
   stLive: document.getElementById('st-live'),
+  stCue: document.getElementById('st-cue'),
   stAction: document.getElementById('st-action'),
   stError: document.getElementById('st-error'),
   toast: document.getElementById('toast'),
@@ -209,6 +210,11 @@ function applyStatus(status) {
   els.stCount.textContent = status.slideCount || '—';
   els.stShow.textContent = status.slideshowActive ? 'Live' : 'Off';
   els.stLive.textContent = status.currentIndex != null ? String(status.currentIndex) : '—';
+  if (els.stCue) {
+    els.stCue.textContent =
+      status.loadedCueLabel ||
+      (status.loadedItemId != null ? `Cue ${status.loadedItemId}` : '—');
+  }
   els.stAction.textContent = status.lastAction || '—';
   els.stError.textContent = status.error || '';
   if (status.mode === 'playback' || bridgeMode === 'playback') {
