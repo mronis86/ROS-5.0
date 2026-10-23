@@ -144,6 +144,19 @@ async function reportPlaybackLive(apiBaseUrl, apiToken, eventId, payload) {
   );
 }
 
+async function uploadPlaybackPreviews(apiBaseUrl, apiToken, eventId, payload) {
+  return railwayFetch(
+    apiBaseUrl,
+    apiToken,
+    `/api/powerpoint/${encodeURIComponent(eventId)}/playback/previews`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }
+  );
+}
+
 module.exports = {
   railwayFetch,
   httpFetch,
@@ -154,4 +167,5 @@ module.exports = {
   fetchPlaybackManifest,
   fetchPlaybackStatus,
   reportPlaybackLive,
+  uploadPlaybackPreviews,
 };

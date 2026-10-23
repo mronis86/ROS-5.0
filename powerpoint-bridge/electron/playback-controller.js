@@ -5,6 +5,7 @@ const {
   fetchPlaybackManifest,
   fetchPlaybackStatus,
   reportPlaybackLive,
+  uploadPlaybackPreviews,
   httpFetch,
 } = require('./railway-client');
 const {
@@ -36,6 +37,11 @@ class PlaybackController {
     this.lastCommandId = null;
     this.lastError = '';
     this.lastSyncAt = 0;
+    this.lastLiveKey = '';
+    this.lastReportAt = 0;
+    this.previewPath = '';
+    this.previewBusy = false;
+    this.liveTimer = null;
     this.manifest = { files: {} };
     this.status = this.blankStatus('Stopped');
   }
@@ -51,6 +57,7 @@ class PlaybackController {
       slideCount: 0,
       currentSlideId: null,
       currentIndex: null,
+      livePath: '',
       currentItemId: this.currentItemId,
       loadedItemId: this.lastLoadedItemId,
       loadedCueLabel: '',
@@ -138,6 +145,8 @@ class PlaybackController {
     this.running = true;
     this.lastError = '';
     this.emit({ message: 'Starting ROS PPT Launcher…', error: '' });
+    try { ppt.startLiveWatch(); } catch { /* ignore */ }
+    this.pollLive(true);
     this.tick(true);
   }
 
@@ -147,6 +156,11 @@ class PlaybackController {
       clearTimeout(this.timer);
       this.timer = null;
     }
+    if (this.liveTimer) {
+      clearTimeout(this.liveTimer);
+      this.liveTimer = null;
+    }
+    try { ppt.stopLiveWatch(); } catch { /* ignore */ }
     this.emit({ message: 'Stopped', slideshowActive: false });
   }
 
@@ -174,25 +188,27 @@ class PlaybackController {
       const loadedItemId = playback?.session?.loadedItemId ?? playback?.session?.loadedCue?.itemId ?? null;
       const loadedCue = playback?.session?.loadedCue || null;
       const queued = playback?.session?.queuedCommand || null;
-      let livePath = null;
+      let livePath = this.status.livePath || null;
+      let slideshowActive = !!this.status.slideshowActive;
       try {
         const live = await ppt.getLive();
         if (live && live.ok !== false) {
           livePath = live.fullName || live.full_name || null;
+          slideshowActive = !!live.slideshowActive;
           this.applyLive(live);
         }
       } catch {
-        livePath = null;
+        livePath = this.status.livePath || null;
       }
 
-      await this.followLoadedCue(loadedItemId, loadedCue, livePath);
+      await this.followLoadedCue(loadedItemId, loadedCue, livePath, slideshowActive);
 
       if (queued && queued.id && queued.id !== this.lastCommandId) {
         await this.runCommand(queued);
+        await this.reportAndRefresh(true);
       }
 
-      await this.reportAndRefresh();
-      this.scheduleNext(700);
+      this.scheduleNext(1200);
     } catch (err) {
       this.lastError = err.message || String(err);
       this.emit({ error: this.lastError, message: 'Playback error' });
@@ -328,7 +344,7 @@ class PlaybackController {
     }
   }
 
-  async followLoadedCue(loadedItemId, loadedCue = null, livePath = null) {
+  async followLoadedCue(loadedItemId, loadedCue = null, livePath = null, slideshowActive = false) {
     const cueLabel = loadedCue?.cueLabel || (loadedItemId != null ? `Cue ${loadedItemId}` : '');
     const timerState = loadedCue?.timerState || null;
     if (loadedItemId == null) {
@@ -345,6 +361,7 @@ class PlaybackController {
       currentPath: this.currentPath,
       livePath,
       timerState,
+      slideshowActive,
     });
 
     if (decision.action === 'idle') {
@@ -368,12 +385,13 @@ class PlaybackController {
     }
     if (decision.action === 'close') {
       try {
-        await ppt.closeDeck(this.currentPath);
+        await ppt.closeAll();
       } catch (err) {
         this.lastError = err.message || String(err);
       }
       this.currentPath = null;
       this.currentFileId = null;
+      this.previewPath = '';
       this.currentItemId = loadedItemId;
       this.lastLoadedItemId = loadedItemId;
       this.emit({
@@ -458,17 +476,18 @@ class PlaybackController {
       this.lastLoadedItemId = loadedItemId;
       this.lastError = result.showWarning || '';
       const slideIndex = Number(result.slideIndex);
-      if (decision.startShow && !result.slideshowActive) {
+      if (!result.slideshowActive) {
         try {
           const started = await ppt.startShow(this.currentPath);
           if (started && started.ok !== false) {
             this.applyLive(started);
+            result.slideshowActive = !!started.slideshowActive;
             this.lastStartedItemId = loadedItemId;
           }
         } catch (err) {
           this.lastError = err.message || result.showWarning || '';
         }
-      } else if (result.slideshowActive && decision.startShow) {
+      } else {
         this.lastStartedItemId = loadedItemId;
       }
       this.emit({
@@ -482,6 +501,8 @@ class PlaybackController {
         lastAction: decision.startShow ? 'Opened and ran cue deck' : 'Opened cue deck',
         error: this.lastError,
       });
+      void this.captureAndUploadPreviews(decision.path);
+      await this.reportAndRefresh(true);
     }
   }
 
@@ -511,29 +532,80 @@ class PlaybackController {
       slideshowActive: !!live.slideshowActive,
       deckName: live.deckName || this.status.deckName,
       slideCount: live.slideCount || this.status.slideCount,
+      livePath: live.fullName || live.full_name || this.status.livePath,
       currentIndex: Number.isFinite(Number(live.slideIndex)) && Number(live.slideIndex) > 0
         ? Number(live.slideIndex)
         : this.status.currentIndex,
     });
   }
 
-  async reportAndRefresh() {
-    let live = null;
+  liveFingerprint() {
+    return [
+      this.status.livePath || '',
+      this.status.currentIndex || '',
+      this.status.slideshowActive ? '1' : '0',
+      this.status.slideCount || 0,
+      this.currentItemId || '',
+    ].join('|');
+  }
+
+  scheduleLive(ms) {
+    if (this.liveTimer) clearTimeout(this.liveTimer);
+    if (!this.running) return;
+    this.liveTimer = setTimeout(() => this.pollLive(false), ms);
+  }
+
+  async pollLive(forceReport) {
+    if (!this.running) return;
     try {
-      live = await ppt.getLive();
+      const live = await ppt.getLive();
       if (live && live.ok !== false) this.applyLive(live);
+      const key = this.liveFingerprint();
+      const changed = key !== this.lastLiveKey;
+      if (forceReport || changed || Date.now() - this.lastReportAt > 2000) {
+        await this.reportAndRefresh(false);
+        this.lastLiveKey = key;
+      }
     } catch {
-      live = null;
+      /* next poll */
     }
+    this.scheduleLive(this.status.slideshowActive ? 220 : 500);
+  }
+
+  async captureAndUploadPreviews(filePath) {
+    if (!filePath || this.previewBusy || this.previewPath === filePath) return;
+    this.previewBusy = true;
+    try {
+      const stills = await ppt.captureStills();
+      if (!stills || stills.ok === false || !Array.isArray(stills.slides) || !stills.slides.length) {
+        return;
+      }
+      await uploadPlaybackPreviews(this.config.apiBaseUrl, this.config.apiToken, this.config.eventId, {
+        fileId: this.currentFileId,
+        deckName: stills.deckName || this.status.deckName,
+        slides: stills.slides,
+      });
+      this.previewPath = filePath;
+      this.emit({
+        slideCount: stills.slideCount || stills.slides.length,
+        lastAction: `Captured ${stills.slides.length} slide previews`,
+      });
+      await this.reportAndRefresh(true);
+    } catch (err) {
+      this.lastError = err.message || 'Could not capture slide previews';
+      this.emit({ error: this.lastError });
+    } finally {
+      this.previewBusy = false;
+    }
+  }
+
+  async reportAndRefresh(_unusedLive) {
     await reportPlaybackLive(this.config.apiBaseUrl, this.config.apiToken, this.config.eventId, {
       helperMode: 'playback',
-      deckName: live?.deckName || this.status.deckName || '',
-      slideCount: live?.slideCount || this.status.slideCount || 0,
-      slideshowActive: !!(live && live.slideshowActive),
-      currentIndex:
-        Number.isFinite(Number(live?.slideIndex)) && Number(live.slideIndex) > 0
-          ? Number(live.slideIndex)
-          : this.status.currentIndex,
+      deckName: this.status.deckName || '',
+      slideCount: this.status.slideCount || 0,
+      slideshowActive: !!this.status.slideshowActive,
+      currentIndex: this.status.currentIndex,
       currentItemId: this.currentItemId,
       currentFileId: this.currentFileId,
       cacheOk: this.cacheRows.filter((r) => r.state === 'ok' || r.state === 'replaced').length,
@@ -542,6 +614,7 @@ class PlaybackController {
       lastCommandId: this.lastCommandId,
       lastError: this.lastError || '',
     });
+    this.lastReportAt = Date.now();
   }
 
   async syncNow(config) {

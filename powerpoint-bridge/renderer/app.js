@@ -213,7 +213,12 @@ function applyStatus(status) {
   els.stDeck.textContent = status.deckName || '—';
   els.stCount.textContent = status.slideCount || '—';
   els.stShow.textContent = status.slideshowActive ? 'Live' : 'Off';
-  els.stLive.textContent = status.currentIndex != null ? String(status.currentIndex) : '—';
+  els.stLive.textContent =
+    status.currentIndex != null
+      ? status.slideCount
+        ? `${status.currentIndex} / ${status.slideCount}`
+        : String(status.currentIndex)
+      : '—';
   if (els.stCue) {
     els.stCue.textContent =
       status.loadedCueLabel ||

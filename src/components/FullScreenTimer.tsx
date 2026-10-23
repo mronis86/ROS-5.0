@@ -6,7 +6,8 @@ import {
   countdownColorForRemaining,
   useCountdownColorMode,
 } from '../lib/countdownColor';
-import { overtimeSignPrefix, useOvertimeSign } from '../lib/overtimeSign';
+import { useOvertimeSign } from '../lib/overtimeSign';
+import { OvertimeClockText } from '../lib/OvertimeClockText';
 import { isPreshowTimerMessage, findTopPreshowCue } from '../lib/preshowCountdown';
 import { shouldUsePreshowRainbow } from '../lib/usePreshowRainbow';
 import { AltTimerBadge } from './AltTimerBadge';
@@ -207,17 +208,24 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
     return secondaryRemainingSeconds(timer) > 0;
   };
 
-  const formatSecondaryTime = (remaining: number): string => {
-    const abs = Math.abs(remaining);
-    const hours = Math.floor(abs / 3600);
-    const minutes = Math.floor((abs % 3600) / 60);
-    const seconds = abs % 60;
-    const prefix = overtimeSignPrefix(remaining, overtimeSign);
+  const formatTimeBody = (seconds: number) => {
+    const absSeconds = Math.abs(seconds);
+    const hours = Math.floor(absSeconds / 3600);
+    const minutes = Math.floor((absSeconds % 3600) / 60);
+    const secs = Math.floor(absSeconds % 60);
     if (hours === 0) {
-      return `${prefix}${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+      return `${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
     }
-    return `${prefix}${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+    return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
+
+  const formatSecondaryTime = (remaining: number) => (
+    <OvertimeClockText
+      seconds={remaining}
+      body={formatTimeBody(remaining)}
+      sign={overtimeSign}
+    />
+  );
 
   const hasLargeAlt = secondaryStillVisible(displaySecondaryTimer);
   const indentedSubTimer = getLiveIndentedSubTimer(hybridTimerData);
@@ -614,17 +622,13 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
   }, []);
 
   // Helper function to format time (same as RunOfShowPage) - handles negative values
-  const formatTime = (seconds: number) => {
-    const absSeconds = Math.abs(seconds);
-    const hours = Math.floor(absSeconds / 3600);
-    const minutes = Math.floor((absSeconds % 3600) / 60);
-    const secs = Math.floor(absSeconds % 60);
-    const sign = overtimeSignPrefix(seconds, overtimeSign);
-    if (hours === 0) {
-      return `${sign}${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-    }
-    return `${sign}${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-  };
+  const formatTime = (seconds: number) => (
+    <OvertimeClockText
+      seconds={seconds}
+      body={formatTimeBody(seconds)}
+      sign={overtimeSign}
+    />
+  );
 
   // Format time of day
   const formatTimeOfDay = (date: Date) => {

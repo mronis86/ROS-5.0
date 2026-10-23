@@ -61,6 +61,21 @@ function Normalize-Path($p) {
   try { return ([IO.Path]::GetFullPath($p)).ToLowerInvariant() } catch { return ([string]$p).ToLowerInvariant() }
 }
 
+function Get-LivePresentation($app) {
+  if (-not $app) { return $null }
+  try {
+    if ($app.SlideShowWindows.Count -gt 0) {
+      $p = $app.SlideShowWindows.Item(1).Presentation
+      if ($p) { return $p }
+    }
+  } catch {}
+  try { return $app.ActivePresentation } catch {}
+  try {
+    if ($app.Presentations.Count -gt 0) { return $app.Presentations.Item(1) }
+  } catch {}
+  return $null
+}
+
 function Find-Presentation($app, $path) {
   $want = Normalize-Path $path
   if (-not $want) { return $null }
@@ -134,13 +149,7 @@ function Try-ProtectedView($app, $path) {
 }
 
 function Close-OtherPresentations($app, $keepPath) {
-  $keep = Normalize-Path $keepPath
-  foreach ($p in @($app.Presentations)) {
-    try {
-      if ($keep -and ((Normalize-Path $p.FullName) -eq $keep)) { continue }
-      Close-Presentation $app $p
-    } catch {}
-  }
+  Close-AllPresentations $app $keepPath
 }
 
 function Copy-DeckForOpen($path) {
@@ -199,32 +208,57 @@ function Open-Presentation($app, $path) {
 
 function Start-Show($pres) {
   if (-not $pres) { return $false }
+  $app = $null
+  try { $app = $pres.Application } catch {}
   try {
-    if ($pres.Application.SlideShowWindows.Count -gt 0) {
+    if ($app -and $app.SlideShowWindows.Count -gt 0) {
       $live = $null
-      try { $live = $pres.Application.SlideShowWindows.Item(1).Presentation } catch {}
+      try { $live = $app.SlideShowWindows.Item(1).Presentation } catch {}
       if ($live -and ((Normalize-Path $live.FullName) -eq (Normalize-Path $pres.FullName))) {
+        Focus-Show $app $pres
         return $true
       }
+      Exit-Shows $app
+      Start-Sleep -Milliseconds 250
     }
   } catch {}
+  $ran = $false
   try {
     $settings = $pres.SlideShowSettings
     $settings.ShowType = 1
     $settings.LoopUntilStopped = 0
+    try { $settings.RangeType = 1 } catch {}
     $settings.Run() | Out-Null
-    return $true
+    $ran = $true
   } catch {
-    return $false
+    $ran = $false
   }
+  if (-not $ran) {
+    try {
+      Add-Type -AssemblyName System.Windows.Forms
+      Focus-Show $app $pres
+      Start-Sleep -Milliseconds 200
+      [System.Windows.Forms.SendKeys]::SendWait('{F5}')
+      Start-Sleep -Milliseconds 450
+    } catch {}
+  }
+  Start-Sleep -Milliseconds 250
+  Focus-Show $app $pres
+  try { return ([int]$app.SlideShowWindows.Count -gt 0) } catch { return $ran }
 }
 
 function Exit-Shows($app) {
-  try {
-    while ($app.SlideShowWindows.Count -gt 0) {
-      $app.SlideShowWindows.Item(1).View.Exit()
-    }
-  } catch {}
+  if (-not $app) { return }
+  for ($pass = 0; $pass -lt 3; $pass++) {
+    try {
+      $count = [int]$app.SlideShowWindows.Count
+      for ($i = $count; $i -ge 1; $i--) {
+        try { $app.SlideShowWindows.Item($i).View.Exit() } catch {}
+      }
+    } catch {}
+    Start-Sleep -Milliseconds 250
+    try { if ([int]$app.SlideShowWindows.Count -lt 1) { break } } catch { break }
+  }
 }
 
 function Close-Presentation($app, $pres) {
@@ -238,10 +272,68 @@ function Close-Presentation($app, $pres) {
       }
     }
   } catch {}
+  try { $pres.Saved = $true } catch {}
   try { $pres.Close() } catch {}
 }
 
+function Close-AllPresentations($app, $keepPath) {
+  Exit-Shows $app
+  Start-Sleep -Milliseconds 350
+  $keep = Normalize-Path $keepPath
+  $list = @()
+  try { $list = @($app.Presentations) } catch { $list = @() }
+  foreach ($p in $list) {
+    try {
+      if ($keep -and ((Normalize-Path $p.FullName) -eq $keep)) { continue }
+      Close-Presentation $app $p
+    } catch {}
+  }
+  Start-Sleep -Milliseconds 250
+}
+
+function Focus-Show($app, $pres) {
+  try { $app.Visible = $true } catch {
+    try { $app.Visible = -1 } catch {}
+  }
+  try { $app.Activate() } catch {}
+  try { $app.WindowState = 3 } catch {}
+  try {
+    if ($pres -and $pres.Windows.Count -gt 0) { $pres.Windows.Item(1).Activate() }
+  } catch {}
+  try {
+    if ($app.SlideShowWindows.Count -gt 0) {
+      $ssw = $app.SlideShowWindows.Item(1)
+      try { $ssw.Activate() } catch {}
+    }
+  } catch {}
+}
+
 try {
+
+if ($Command -eq 'watch') {
+  $dir = if ($OutDir) { $OutDir } else { $env:TEMP }
+  if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+  $outFile = Join-Path $dir 'ros-ppt-live.json'
+  $tmpFile = "$outFile.tmp"
+  while ($true) {
+    $payload = @{ ok = $false; error = 'PowerPoint is not running.'; fullName = ''; slideshowActive = $false; slideIndex = $null; slideCount = 0; deckName = '' }
+    try {
+      $app = Get-PptApp
+      if ($app) {
+        $pres = Get-LivePresentation $app
+        if ($pres) { $payload = Live-Payload $app $pres }
+        else { $payload = @{ ok = $false; error = 'No presentation is open in PowerPoint.'; fullName = ''; slideshowActive = $false; slideIndex = $null; slideCount = 0; deckName = '' } }
+      }
+    } catch {
+      $payload = @{ ok = $false; error = (Friendly-ComError $_.Exception.Message); fullName = ''; slideshowActive = $false }
+    }
+    try {
+      [IO.File]::WriteAllText($tmpFile, ($payload | ConvertTo-Json -Compress -Depth 8))
+      [IO.File]::Copy($tmpFile, $outFile, $true)
+    } catch {}
+    Start-Sleep -Milliseconds 180
+  }
+}
 
 $needsLaunch = $Command -in @('open', 'swap')
 $ppt = if ($needsLaunch) { Ensure-PptApp } else { Get-PptApp }
@@ -253,18 +345,30 @@ if (-not $ppt) {
 
 if ($Command -eq 'open' -or $Command -eq 'swap') {
   if (-not $FilePath -or -not (Test-Path -LiteralPath $FilePath)) {
-    Write-Json @{ ok = $false; error = 'Cached deck file is missing. Click Sync cache, then Follow loaded cue.' }
+    Write-Json @{ ok = $false; error = 'Cached deck file is missing. Click Sync decks, then Follow ROS cues.' }
     exit 0
   }
-  Exit-Shows $ppt
-  if ($ClosePath -and ((Normalize-Path $ClosePath) -ne (Normalize-Path $FilePath))) {
-    $old = Find-Presentation $ppt $ClosePath
-    if ($old) { Close-Presentation $ppt $old }
-  }
+  Close-AllPresentations $ppt $FilePath
   $pres = Open-Presentation $ppt $FilePath
   $started = Start-Show $pres
+  if (-not $started) {
+    try {
+      $pptPath = Join-Path $env:ProgramFiles 'Microsoft Office\root\Office16\POWERPNT.EXE'
+      if (-not (Test-Path -LiteralPath $pptPath)) {
+        $pf86 = [Environment]::GetEnvironmentVariable('ProgramFiles(x86)')
+        if ($pf86) { $pptPath = Join-Path $pf86 'Microsoft Office\root\Office16\POWERPNT.EXE' }
+      }
+      if (Test-Path -LiteralPath $pptPath) {
+        Start-Process -FilePath $pptPath -ArgumentList @('/s', $FilePath) | Out-Null
+        Start-Sleep -Milliseconds 800
+        $started = $true
+      }
+    } catch {}
+  }
   Start-Sleep -Milliseconds 250
+  Focus-Show $ppt $pres
   $payload = Live-Payload $ppt $pres
+  $payload.fullName = $FilePath
   if (-not $started -and -not $payload.slideshowActive) {
     $payload.showWarning = 'Deck opened. Slideshow did not start — use Start slideshow on the Launcher page.'
   }
@@ -273,10 +377,7 @@ if ($Command -eq 'open' -or $Command -eq 'swap') {
 }
 
 if ($Command -eq 'close') {
-  $target = $null
-  if ($FilePath) { $target = Find-Presentation $ppt $FilePath }
-  if (-not $target) { try { $target = $ppt.ActivePresentation } catch {} }
-  Close-Presentation $ppt $target
+  Close-AllPresentations $ppt $null
   Write-Json @{ ok = $true; closed = $true }
   exit 0
 }
@@ -322,10 +423,9 @@ if ($Command -eq 'next' -or $Command -eq 'prev' -or $Command -eq 'goto') {
   exit 0
 }
 
-$pres = $null
-try { $pres = $ppt.ActivePresentation } catch {}
+$pres = Get-LivePresentation $ppt
 if (-not $pres) {
-  Write-Json @{ ok = $false; error = 'No active presentation in PowerPoint.' }
+  Write-Json @{ ok = $false; error = 'No presentation is open in PowerPoint.'; fullName = '' }
   exit 0
 }
 

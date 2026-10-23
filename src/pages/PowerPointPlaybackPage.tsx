@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { getApiBaseUrl, getAppDownloadUrl } from '../services/api-client';
-import { apiJsonHeaders } from '../lib/sessionAuth';
+import { apiAuthFetch, apiJsonHeaders } from '../lib/sessionAuth';
 import { socketClient } from '../services/socket-client';
 import { DatabaseService } from '../services/database';
 import { normalizeCueLabel } from '../lib/cueCards';
@@ -31,6 +31,14 @@ type PlaybackSession = {
   queuedCommand: { id?: string; action?: string; slideIndex?: number | null } | null;
   loadedItemId: number | null;
   loadedCue?: LoadedCue | null;
+};
+
+type PreviewSlide = {
+  pptSlideId: string;
+  slideIndex: number;
+  title: string;
+  hasImage: boolean;
+  imageUrl: string;
 };
 
 type ManifestAsset = {
@@ -66,6 +74,45 @@ function isFreshSeen(raw: string | null): boolean {
   return Number.isFinite(ms) && ms >= 0 && ms <= HELPER_FRESH_MS;
 }
 
+function PreviewImage({ slide, className = '' }: { slide: PreviewSlide; className?: string }) {
+  const [src, setSrc] = useState('');
+
+  useEffect(() => {
+    if (!slide.hasImage) {
+      setSrc('');
+      return;
+    }
+    let objectUrl = '';
+    let cancelled = false;
+    (async () => {
+      const res = await apiAuthFetch(`${getApiBaseUrl()}${slide.imageUrl}`);
+      if (!res || !res.ok || cancelled) return;
+      const blob = await res.blob();
+      objectUrl = URL.createObjectURL(blob);
+      if (!cancelled) setSrc(objectUrl);
+    })();
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [slide.hasImage, slide.imageUrl, slide.pptSlideId]);
+
+  if (!src) {
+    return (
+      <div className={`flex aspect-video items-center justify-center bg-slate-950 text-xs text-slate-500 ${className}`}>
+        Slide {slide.slideIndex}
+      </div>
+    );
+  }
+  return (
+    <img
+      src={src}
+      alt={slide.title || `Slide ${slide.slideIndex}`}
+      className={`aspect-video w-full object-cover bg-black ${className}`}
+    />
+  );
+}
+
 function cueFromItem(item: any): ScheduleCue | null {
   const id = Number(item?.id);
   if (!Number.isFinite(id)) return null;
@@ -93,10 +140,12 @@ const PowerPointPlaybackPage: React.FC = () => {
   const [cues, setCues] = useState<ScheduleCue[]>([]);
   const [gotoValue, setGotoValue] = useState('');
   const [sending, setSending] = useState<string | null>(null);
+  const [previews, setPreviews] = useState<PreviewSlide[]>([]);
   const [, setSeenTick] = useState(0);
 
   const applyPlayback = useCallback((data: any) => {
     if (data?.session) setSession(data.session as PlaybackSession);
+    if (Array.isArray(data?.previews)) setPreviews(data.previews as PreviewSlide[]);
   }, []);
 
   const loadCues = useCallback(async () => {
@@ -110,24 +159,29 @@ const PowerPointPlaybackPage: React.FC = () => {
     }
   }, [eventId]);
 
-  const loadStatus = useCallback(async () => {
+  const loadStatus = useCallback(async (withManifest = false) => {
     if (!eventId) {
       setError('Missing eventId');
       setLoading(false);
       return;
     }
     try {
-      const [statusRes, manifestRes] = await Promise.all([
+      const fetches: Promise<Response>[] = [
         fetch(`${getApiBaseUrl()}/api/powerpoint/${encodeURIComponent(eventId)}/playback`, {
           headers: apiJsonHeaders(),
         }),
-        fetch(`${getApiBaseUrl()}/api/powerpoint/${encodeURIComponent(eventId)}/playback/manifest`, {
-          headers: apiJsonHeaders(),
-        }),
-      ]);
+      ];
+      if (withManifest) {
+        fetches.push(
+          fetch(`${getApiBaseUrl()}/api/powerpoint/${encodeURIComponent(eventId)}/playback/manifest`, {
+            headers: apiJsonHeaders(),
+          })
+        );
+      }
+      const [statusRes, manifestRes] = await Promise.all(fetches);
       if (!statusRes.ok) throw new Error(`Status failed (${statusRes.status})`);
       applyPlayback(await statusRes.json());
-      if (manifestRes.ok) {
+      if (manifestRes?.ok) {
         const manifest = await manifestRes.json();
         setAssets(Array.isArray(manifest?.assets) ? manifest.assets : []);
       }
@@ -140,7 +194,7 @@ const PowerPointPlaybackPage: React.FC = () => {
   }, [applyPlayback, eventId]);
 
   useEffect(() => {
-    void loadStatus();
+    void loadStatus(true);
     void loadCues();
   }, [loadCues, loadStatus]);
 
@@ -148,7 +202,7 @@ const PowerPointPlaybackPage: React.FC = () => {
     if (!eventId) return;
     const poll = window.setInterval(() => {
       void loadStatus();
-    }, 3000);
+    }, 1000);
     const seen = window.setInterval(() => setSeenTick((n) => n + 1), 1000);
     return () => {
       window.clearInterval(poll);
@@ -189,6 +243,23 @@ const PowerPointPlaybackPage: React.FC = () => {
           }
         );
         if (!res.ok) throw new Error(`Command failed (${res.status})`);
+        if (action === 'next' || action === 'prev' || action === 'goto') {
+          setSession((prev) => {
+            if (!prev) return prev;
+            const count = prev.slideCount || previews.length || 0;
+            const current = prev.currentIndex || 1;
+            const nextIndex =
+              action === 'goto'
+                ? Number(slideIndex)
+                : action === 'next'
+                  ? current + 1
+                  : current - 1;
+            return {
+              ...prev,
+              currentIndex: count > 0 ? Math.min(count, Math.max(1, nextIndex)) : nextIndex,
+            };
+          });
+        }
         applyPlayback(await res.json());
       } catch (e: any) {
         setError(e?.message || 'Failed to send command');
@@ -196,7 +267,7 @@ const PowerPointPlaybackPage: React.FC = () => {
         setSending(null);
       }
     },
-    [applyPlayback, eventId, sending]
+    [applyPlayback, eventId, previews.length, sending]
   );
 
   const currentCue = useMemo(() => {
@@ -246,7 +317,9 @@ const PowerPointPlaybackPage: React.FC = () => {
           <p className="truncate text-xs text-slate-400">
             {eventName}
             {session?.deckName ? ` · ${session.deckName}` : ''}
-            {session?.slideCount ? ` · ${session.slideCount} slides` : ''}
+            {session?.slideCount || previews.length
+              ? ` · ${session?.currentIndex || '—'} / ${session?.slideCount || previews.length} slides`
+              : ''}
             {` · cache ${session?.cacheOk || 0}/${session?.cacheTotal || 0}`}
           </p>
         </div>
@@ -360,7 +433,11 @@ const PowerPointPlaybackPage: React.FC = () => {
         <div className="text-[11px] font-bold uppercase tracking-wide text-orange-300">Live deck</div>
         <div className="mt-1 text-lg font-semibold text-white">
           {session?.deckName || 'No deck open'}
-          {session?.currentIndex != null ? ` · slide ${session.currentIndex}` : ''}
+        </div>
+        <div className="mt-2 text-3xl font-bold tabular-nums text-orange-200">
+          {session?.currentIndex != null || session?.slideCount || previews.length
+            ? `Slide ${session?.currentIndex || '—'} of ${session?.slideCount || previews.length || '—'}`
+            : 'Waiting for deck'}
         </div>
         <div className="mt-1 text-sm text-slate-400">
           {session?.lastCommand ? session.lastCommand : 'Waiting for the helper to follow the loaded cue'}
@@ -423,6 +500,43 @@ const PowerPointPlaybackPage: React.FC = () => {
             End slideshow
           </button>
         </div>
+
+        {previews.length > 0 ? (
+          <div className="mt-5">
+            <div className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">
+              Slide previews · {previews.length} slides
+            </div>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+              {previews.map((slide) => {
+                const isLive = session?.currentIndex === slide.slideIndex;
+                return (
+                  <button
+                    key={slide.pptSlideId}
+                    type="button"
+                    disabled={!!sending}
+                    onClick={() => void sendCommand('goto', slide.slideIndex)}
+                    className={`overflow-hidden rounded-lg border text-left transition ${
+                      isLive
+                        ? 'border-orange-400 ring-2 ring-orange-400/70'
+                        : 'border-slate-700 hover:border-slate-500'
+                    }`}
+                  >
+                    <PreviewImage slide={slide} />
+                    <div className={`px-2 py-1.5 text-xs ${isLive ? 'bg-orange-950/70 text-orange-100' : 'bg-slate-900 text-slate-300'}`}>
+                      <span className="font-semibold">Slide {slide.slideIndex}</span>
+                      {slide.title ? <span className="ml-1 truncate text-slate-400">{slide.title}</span> : null}
+                      {isLive ? <span className="ml-1 font-bold uppercase text-orange-300">Live</span> : null}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ) : session?.connected && session?.deckName ? (
+          <p className="mt-4 text-sm text-slate-400">
+            Capturing slide previews after the deck opens…
+          </p>
+        ) : null}
       </section>
 
       <section className="mx-4 mt-4 rounded-xl border border-slate-700 bg-slate-800/50 p-4">

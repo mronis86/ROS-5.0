@@ -8,6 +8,7 @@ import {
   useCountdownColorMode,
 } from '../lib/countdownColor';
 import { overtimeSignPrefix, useOvertimeSign } from '../lib/overtimeSign';
+import { OvertimeClockText } from '../lib/OvertimeClockText';
 import { findTopPreshowCue, isPreshowTimerMessage } from '../lib/preshowCountdown';
 import { shouldUsePreshowRainbow } from '../lib/usePreshowRainbow';
 import { AltTimerBadge } from './AltTimerBadge';
@@ -882,18 +883,31 @@ const Clock: React.FC<ClockProps> = ({
 
   // WebSocket provides real-time updates, no drift detection cleanup needed
 
-  // Helper function to format time (same as RunOfShowPage) - handles negative values
-  const formatTime = (seconds: number) => {
+  const formatTimeBody = (seconds: number) => {
     const absSeconds = Math.abs(seconds);
     const hours = Math.floor(absSeconds / 3600);
     const minutes = Math.floor((absSeconds % 3600) / 60);
     const secs = Math.floor(absSeconds % 60);
-    const sign = overtimeSignPrefix(seconds, overtimeSign);
     if (hours === 0) {
-      return `${sign}${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+      return `${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
     }
-    return `${sign}${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
+
+  // Helper function to format time (same as RunOfShowPage) - handles negative values
+  const formatTime = (seconds: number) => {
+    const sign = overtimeSignPrefix(seconds, overtimeSign);
+    return `${sign}${formatTimeBody(seconds)}`;
+  };
+
+  const renderSignedTime = (seconds: number, className?: string) => (
+    <OvertimeClockText
+      seconds={seconds}
+      body={formatTimeBody(seconds)}
+      sign={overtimeSign}
+      className={className}
+    />
+  );
 
   // Format time of day
   const formatTimeOfDay = (date: Date) => {
@@ -1118,7 +1132,7 @@ const Clock: React.FC<ClockProps> = ({
                 className={`text-white ${usePreshowRainbow ? 'ros-rainbow-text' : ''}`}
                 style={usePreshowRainbow ? undefined : { color: getProgressBarColor() }}
               >
-                {formatTime(getRemainingTime())}
+                {renderSignedTime(getRemainingTime())}
               </div>
             </>
           ) : useCountUp ? (
@@ -1414,17 +1428,23 @@ const Clock: React.FC<ClockProps> = ({
             return secondaryRemainingSigned(currentSecondaryTimer);
           })();
 
-          const formatSecondary = (remaining: number) => {
+          const formatSecondaryBody = (remaining: number) => {
             const absRemaining = Math.abs(remaining);
             const hours = Math.floor(absRemaining / 3600);
             const minutes = Math.floor((absRemaining % 3600) / 60);
             const seconds = absRemaining % 60;
-            const prefix = overtimeSignPrefix(remaining, overtimeSign);
             if (hours === 0) {
-              return `${prefix}${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+              return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
             }
-            return `${prefix}${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+            return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
           };
+          const formatSecondary = (remaining: number) => (
+            <OvertimeClockText
+              seconds={remaining}
+              body={formatSecondaryBody(remaining)}
+              sign={overtimeSign}
+            />
+          );
 
           const hours = Math.floor(Math.abs(remainingSeconds) / 3600);
           const largeTimeClass = hours === 0
@@ -1494,7 +1514,7 @@ const Clock: React.FC<ClockProps> = ({
             }`}
             style={usePreshowRainbow ? undefined : { color: getProgressBarColor() }}
           >
-            {formatTime(getRemainingTime())}
+            {renderSignedTime(getRemainingTime())}
           </div>
           {/* Main progress bar under small main timer */}
           <div className="w-40 mx-auto mt-2 bg-slate-700 rounded-full overflow-hidden border border-slate-600 relative h-2">
@@ -1542,13 +1562,10 @@ const Clock: React.FC<ClockProps> = ({
               const hours = Math.floor(absRemaining / 3600);
               const minutes = Math.floor((absRemaining % 3600) / 60);
               const seconds = absRemaining % 60;
-              const prefix = overtimeSignPrefix(remaining, overtimeSign);
-              
-              if (hours > 0) {
-                return `${prefix}${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-              } else {
-                return `${prefix}${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-              }
+              const body = hours > 0
+                ? `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
+                : `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+              return <OvertimeClockText seconds={remaining} body={body} sign={overtimeSign} />;
             })()}
           </div>
           {/* Secondary progress bar under small alt timer */}
@@ -1649,7 +1666,7 @@ const Clock: React.FC<ClockProps> = ({
                   })()}`}
                   style={usePreshowRainbow ? undefined : { color: getCountUpProgressBarColor() }}
                 >
-                  {formatTime(elapsedForDisplay)}
+                  {renderSignedTime(elapsedForDisplay)}
                 </div>
               </div>
               <div className="w-full max-w-5xl mt-0">
@@ -1692,7 +1709,7 @@ const Clock: React.FC<ClockProps> = ({
                   })()}`}
                   style={usePreshowRainbow ? undefined : { color: getProgressBarColor() }}
                 >
-                  {formatTime(getRemainingTime())}
+                  {renderSignedTime(getRemainingTime())}
                 </div>
               </div>
               {/* Progress Bar - 0px below timer */}
@@ -1751,7 +1768,7 @@ const Clock: React.FC<ClockProps> = ({
                 }`}
                 style={usePreshowRainbow ? undefined : { color: getCountUpProgressBarColor() }}
               >
-                {formatTime(elapsedForDisplay)}
+                {renderSignedTime(elapsedForDisplay)}
               </div>
             </>
           ) : (
@@ -1772,7 +1789,7 @@ const Clock: React.FC<ClockProps> = ({
                 }`}
                 style={usePreshowRainbow ? undefined : { color: getProgressBarColor() }}
               >
-                {formatTime(getRemainingTime())}
+                {renderSignedTime(getRemainingTime())}
               </div>
             </>
           )}
@@ -1816,7 +1833,7 @@ const Clock: React.FC<ClockProps> = ({
                 }`}
                 style={usePreshowRainbow ? undefined : { color: getCountUpProgressBarColor() }}
               >
-                {formatTime(elapsedForDisplay)}
+                {renderSignedTime(elapsedForDisplay)}
               </div>
             </>
           ) : (
@@ -1837,7 +1854,7 @@ const Clock: React.FC<ClockProps> = ({
                 }`}
                 style={usePreshowRainbow ? undefined : { color: getProgressBarColor() }}
               >
-                {formatTime(getRemainingTime())}
+                {renderSignedTime(getRemainingTime())}
               </div>
             </>
           )}

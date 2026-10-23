@@ -61,7 +61,14 @@ function fsExistsSafe(filePath) {
  * What Mode 2 should do when the ROS cue changes.
  * livePath is whatever PowerPoint actually has open (may not be our sync file).
  */
-function decidePlaybackAction({ hasPPT, cachedPath, currentPath, livePath, timerState }) {
+function decidePlaybackAction({
+  hasPPT,
+  cachedPath,
+  currentPath,
+  livePath,
+  timerState,
+  slideshowActive,
+}) {
   const openPath = livePath || currentPath || null;
   if (!hasPPT) {
     return { action: openPath ? 'close' : 'idle', path: null, closePath: openPath };
@@ -70,7 +77,7 @@ function decidePlaybackAction({ hasPPT, cachedPath, currentPath, livePath, timer
     return { action: 'warn', path: null, closePath: null, warning: 'PPT checked but no synced deck for this cue' };
   }
   if (openPath && pathsEqual(cachedPath, openPath)) {
-    if (timerState === 'running') {
+    if (!slideshowActive) {
       return { action: 'run', path: cachedPath, closePath: null };
     }
     return { action: 'keep', path: cachedPath, closePath: null };
@@ -79,7 +86,7 @@ function decidePlaybackAction({ hasPPT, cachedPath, currentPath, livePath, timer
     action: 'swap',
     path: cachedPath,
     closePath: openPath,
-    startShow: timerState === 'running',
+    startShow: true,
   };
 }
 

@@ -42,8 +42,18 @@ assert.strictEqual(
     hasPPT: true,
     cachedPath: 'C:\\cache\\a.pptx',
     currentPath: 'c:\\cache\\a.pptx',
+    slideshowActive: true,
   }).action,
   'keep'
+);
+assert.strictEqual(
+  decidePlaybackAction({
+    hasPPT: true,
+    cachedPath: 'C:\\cache\\a.pptx',
+    currentPath: 'c:\\cache\\a.pptx',
+    slideshowActive: false,
+  }).action,
+  'run'
 );
 assert.strictEqual(
   decidePlaybackAction({
@@ -61,8 +71,26 @@ assert.strictEqual(
     cachedPath: 'C:\\sync\\cue7.pptx',
     livePath: 'C:\\sync\\cue7.pptx',
     timerState: 'running',
+    slideshowActive: false,
   }).action,
   'run'
+);
+assert.strictEqual(
+  decidePlaybackAction({
+    hasPPT: true,
+    cachedPath: 'C:\\sync\\cue7.pptx',
+    livePath: 'C:\\sync\\cue7.pptx',
+    slideshowActive: true,
+  }).startShow,
+  undefined
+);
+assert.strictEqual(
+  decidePlaybackAction({
+    hasPPT: true,
+    cachedPath: 'C:\\sync\\cue7.pptx',
+    livePath: 'C:\\other\\USCLC.pptx',
+  }).startShow,
+  true
 );
 assert.ok(syncFileName({ itemId: 7, originalName: 'Map.pptx' }, 'CUE 7').startsWith('CUE 7 - Map'));
 assert.strictEqual(
