@@ -15,7 +15,7 @@ export function OvertimeClockText({ seconds, body, sign, className }: OvertimeCl
   }
   return (
     <span className={`inline-flex items-center justify-center ${className || ''}`}>
-      <span className="inline-flex w-[0.7em] shrink-0 items-center justify-center leading-none -translate-y-[0.06em] mr-[0.22em]">
+      <span className="inline-flex shrink-0 items-center justify-center leading-none -translate-y-[0.04em] mr-[0.06em]">
         {prefix}
       </span>
       <span>{body}</span>

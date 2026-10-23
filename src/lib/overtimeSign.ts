@@ -14,14 +14,14 @@ export const OVERTIME_SIGN_OPTIONS: {
   {
     id: 'minus',
     label: 'Minus (−)',
-    description: 'Overtime counts down through zero: − 01:23',
-    preview: '− 01:23',
+    description: 'Overtime counts down through zero: −01:23',
+    preview: '−01:23',
   },
   {
     id: 'plus',
     label: 'Plus (+)',
-    description: 'Overtime counts up from zero: + 01:23',
-    preview: '+ 01:23',
+    description: 'Overtime counts up from zero: +01:23',
+    preview: '+01:23',
   },
 ];
 
@@ -62,7 +62,7 @@ export function overtimeSignPrefix(
   sign: OvertimeSignId = getOvertimeSignId()
 ): string {
   if (!(seconds < 0)) return '';
-  return sign === 'plus' ? '+ ' : '− ';
+  return sign === 'plus' ? '+' : '−';
 }
 
 /** Subscribe so open clocks update when Admin changes the overtime sign. */

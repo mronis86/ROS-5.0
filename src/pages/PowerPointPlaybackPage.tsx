@@ -57,6 +57,22 @@ type ScheduleCue = {
   hasPPT: boolean;
 };
 
+type RosCue = {
+  itemId: number;
+  timerState: 'loaded' | 'running';
+};
+
+function rosCueFromTimer(data: any): RosCue | null {
+  if (!data) return null;
+  const raw = String(data.timer_state ?? data.timerState ?? '').toLowerCase();
+  if (data.is_active === false || raw === 'stopped') return null;
+  const itemId = Number(data.item_id ?? data.itemId);
+  if (!Number.isFinite(itemId)) return null;
+  if (data.is_running === true || raw === 'running') return { itemId, timerState: 'running' };
+  if (raw === 'loaded' || data.is_active === true) return { itemId, timerState: 'loaded' };
+  return null;
+}
+
 const HELPER_FRESH_MS = 20 * 1000;
 
 function formatLastSeen(raw: string | null): string {
@@ -141,6 +157,7 @@ const PowerPointPlaybackPage: React.FC = () => {
   const [gotoValue, setGotoValue] = useState('');
   const [sending, setSending] = useState<string | null>(null);
   const [previews, setPreviews] = useState<PreviewSlide[]>([]);
+  const [rosCue, setRosCue] = useState<RosCue | null>(null);
   const [, setSeenTick] = useState(0);
 
   const applyPlayback = useCallback((data: any) => {
@@ -156,6 +173,16 @@ const PowerPointPlaybackPage: React.FC = () => {
       setCues(items.map(cueFromItem).filter(Boolean) as ScheduleCue[]);
     } catch {
       setCues([]);
+    }
+  }, [eventId]);
+
+  const loadRosCue = useCallback(async () => {
+    if (!eventId) return;
+    try {
+      const timer = await DatabaseService.getActiveTimer(eventId);
+      setRosCue(rosCueFromTimer(timer));
+    } catch {
+      setRosCue(null);
     }
   }, [eventId]);
 
@@ -196,19 +223,21 @@ const PowerPointPlaybackPage: React.FC = () => {
   useEffect(() => {
     void loadStatus(true);
     void loadCues();
-  }, [loadCues, loadStatus]);
+    void loadRosCue();
+  }, [loadCues, loadRosCue, loadStatus]);
 
   useEffect(() => {
     if (!eventId) return;
     const poll = window.setInterval(() => {
       void loadStatus();
+      void loadRosCue();
     }, 1000);
     const seen = window.setInterval(() => setSeenTick((n) => n + 1), 1000);
     return () => {
       window.clearInterval(poll);
       window.clearInterval(seen);
     };
-  }, [eventId, loadStatus]);
+  }, [eventId, loadRosCue, loadStatus]);
 
   useEffect(() => {
     if (!eventId) return;
@@ -216,10 +245,17 @@ const PowerPointPlaybackPage: React.FC = () => {
       eventId,
       {
         onPptPlaybackStatus: (data) => applyPlayback(data),
-        onTimerUpdated: () => {
+        onTimerUpdated: (data) => {
+          setRosCue(rosCueFromTimer(data));
           void loadStatus();
           void loadCues();
         },
+        onActiveTimersUpdated: (data) => {
+          setRosCue(rosCueFromTimer(data));
+          void loadStatus();
+        },
+        onTimerStopped: () => setRosCue(null),
+        onTimersStopped: () => setRosCue(null),
       },
       'powerpoint-playback-page'
     );
@@ -288,17 +324,22 @@ const PowerPointPlaybackPage: React.FC = () => {
 
   const currentCue = useMemo(() => {
     const fromSession = session?.loadedCue;
-    const itemId = fromSession?.itemId ?? session?.loadedItemId ?? session?.currentItemId ?? null;
-    const scheduled = itemId != null ? cues.find((cue) => cue.id === itemId) : null;
-    if (!itemId && !fromSession?.cueLabel) return null;
+    const sessionLive = fromSession?.timerState === 'loaded' || fromSession?.timerState === 'running'
+      ? fromSession
+      : null;
+    const itemId = rosCue?.itemId ?? sessionLive?.itemId ?? null;
+    const timerState = rosCue?.timerState ?? sessionLive?.timerState ?? null;
+    if (itemId == null || !timerState) return null;
+    const scheduled = cues.find((cue) => cue.id === itemId) || null;
     return {
       itemId,
-      label: fromSession?.cueLabel || scheduled?.label || (itemId != null ? `Item ${itemId}` : '—'),
-      segmentName: fromSession?.segmentName || scheduled?.segmentName || '',
-      timerState: fromSession?.timerState || null,
-      hasPPT: fromSession?.hasPPT || scheduled?.hasPPT || false,
+      label: (sessionLive?.itemId === itemId ? sessionLive.cueLabel : '') || scheduled?.label || `Item ${itemId}`,
+      segmentName:
+        (sessionLive?.itemId === itemId ? sessionLive.segmentName : '') || scheduled?.segmentName || '',
+      timerState,
+      hasPPT: (sessionLive?.itemId === itemId && sessionLive.hasPPT) || scheduled?.hasPPT || false,
     };
-  }, [cues, session]);
+  }, [cues, rosCue, session]);
 
   const helperSeen = isFreshSeen(session?.lastSeen || null);
   const wrongMode = !session?.connected && helperSeen && session?.helperMode === 'follow';
