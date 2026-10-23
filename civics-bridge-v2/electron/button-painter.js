@@ -428,10 +428,18 @@ async function flagDataUrl(code) {
 async function renderButtonPng(spec) {
   const width = spec.width || BUTTON_W;
   const height = spec.height || BUTTON_H;
-  const abbrev = stateAbbrev(spec.state);
+  const rosterState = String(spec.state || '').trim();
+  const abbrev = stateAbbrev(rosterState);
   const name = String(spec.name || '').trim();
-  const stateName = String(spec.stateLabel || spec.state || '').trim();
   const layout = spec.layout || (spec.flag ? 'abbrev-name-flag' : 'abbrev-name');
+  const stackedState =
+    layout === 'state-student' ||
+    layout === 'flag-state-student' ||
+    layout === 'state-initial' ||
+    layout === 'flag-state-initial';
+  const stateName = stackedState
+    ? rosterState || String(spec.stateLabel || '').trim()
+    : String(spec.stateLabel || rosterState).trim();
   const wantsFlag = layout === 'abbrev-name-flag' || layout === 'flag-state-name' || layout === 'flag-state-student' || layout === 'flag-state-initial';
   const flag = wantsFlag ? await flagDataUrl(abbrev) : null;
   if (wantsFlag && !flag) {

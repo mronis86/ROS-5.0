@@ -170,6 +170,7 @@ class BridgeController {
     this.lastError = '';
     this.pressSocket = null;
     this.pressChain = Promise.resolve();
+    this.pressProblem = '';
   }
 
   emit() {
@@ -224,37 +225,61 @@ class BridgeController {
       return;
     }
     const socket = io(`http://${comp.host}:${comp.port}`, {
-      transports: ['websocket', 'polling'],
+      transports: ['polling', 'websocket'],
       reconnection: true,
       timeout: 8000,
+      extraHeaders: { Origin: `http://${comp.host}:${comp.port}` },
     });
     this.pressSocket = socket;
+    const where = `${comp.host}:${comp.port}`;
     socket.on('connect', () => {
-      this.lastOk = `Press colors are watching Companion at ${comp.host}:${comp.port}.`;
+      this.pressProblem = '';
+      this.lastOk = `Press colors connected to Companion at ${where}.`;
       this.lastError = '';
       this.emit();
+      void postLog(loadConfig(), `Press colors connected to Companion at ${where}.`);
+      socket.emit('log_catchup', (history) => {
+        const count = Array.isArray(history) ? history.length : 0;
+        void postLog(loadConfig(), `Companion log is open. ${count} earlier lines.`);
+      });
     });
     socket.on('disconnect', () => {
-      this.lastError = `Press colors lost the connection to Companion at ${comp.host}:${comp.port}. Reconnecting.`;
+      const message = `Press colors lost Companion at ${where}. Reconnecting.`;
+      if (this.pressProblem === message) return;
+      this.pressProblem = message;
+      this.lastError = message;
       this.emit();
+      void postLog(loadConfig(), message);
     });
     socket.on('connect_error', (err) => {
-      this.lastError = `Press colors could not reach Companion at ${comp.host}:${comp.port}. ${err.message || err}`;
+      const message = `Press colors could not reach Companion at ${where}. ${err.message || err}`;
+      if (this.pressProblem === message) return;
+      this.pressProblem = message;
+      this.lastError = message;
       this.emit();
+      void postLog(loadConfig(), message);
     });
     socket.on('log', (_now, _source, _level, message) => {
-      const match = String(message || '').match(/^Button (\d+)\.(\d+) pressed$/);
+      const match = String(message || '').match(/Button\s+(\d+)\.(\d+)\s+pressed/);
       if (!match) return;
       const cfg = loadConfig().companion;
       if (!cfg.pressColors) return;
+      const page = parseInt(match[1], 10);
+      const bank = parseInt(match[2], 10);
       let n = 0;
       try {
-        n = pressIndex(cfg, parseInt(match[1], 10), parseInt(match[2], 10));
-      } catch {
+        n = pressIndex(cfg, page, bank);
+      } catch (err) {
+        void postLog(loadConfig(), `Press page ${page} bank ${bank} ignored. ${err.message || err}`);
         return;
       }
-      if (!n) return;
-      const run = this.pressChain.then(() => this.applyPress(n));
+      if (!n) {
+        this.lastOk = `Press page ${page} bank ${bank} is not one of the configured buttons.`;
+        this.emit();
+        void postLog(loadConfig(), this.lastOk);
+        return;
+      }
+      const run = this.pressChain.then(() => this.applyPress(n, page, bank));
       this.pressChain = run.then(
         () => {},
         () => {}
@@ -263,7 +288,7 @@ class BridgeController {
   }
 
   /** Background color only. Pictures and text are left as they are. */
-  async applyPress(n) {
+  async applyPress(n, page, bank) {
     const comp = loadConfig().companion;
     if (!comp.pressColors) return;
     const layout = layoutOf(comp);
@@ -281,13 +306,15 @@ class BridgeController {
       }
     }
     if (failures.length) {
-      this.lastError = `Press ${n} color update failed. ${failures.join(' | ')}`;
+      this.lastError = `Press page ${page} bank ${bank} color update failed. ${failures.join(' | ')}`;
       this.emit();
+      void postLog(loadConfig(), this.lastError);
       throw new Error(this.lastError);
     }
-    this.lastOk = `Button ${n} selected on page ${comp.page}. Background color only. Pictures were not changed.`;
+    this.lastOk = `Pressed page ${page} bank ${bank}. That button is the selected color. The other configured buttons are the default color.`;
     this.lastError = '';
     this.emit();
+    void postLog(loadConfig(), this.lastOk);
   }
 
   stop() {
@@ -316,8 +343,10 @@ class BridgeController {
 
     if (this.lastSeen === null) {
       this.lastSeen = requestedAt;
-      if (!this.pressSocket) this.lastOk = 'Waiting for a new request from the website.';
-      this.lastError = '';
+      if (!String(this.lastOk).startsWith('Press colors') && !String(this.lastOk).startsWith('Pressed ')) {
+        this.lastOk = 'Waiting for a new request from the website.';
+      }
+      if (!String(this.lastError).startsWith('Press colors')) this.lastError = '';
       this.emit();
       return;
     }
@@ -397,9 +426,12 @@ class BridgeController {
       const entry = { n: i + 1, where: pos.where, state: 'created', message: '', png: '' };
       try {
         if (hasStudent) {
+          const rosterState = String(slot.state || '').trim();
+          const rawLabel = String(slot.stateLabel || rosterState).trim();
+          const shortStateOk = pictureStyle === 'state-name' || pictureStyle === 'flag-state-name';
           const png = await this.renderWithRetry({
-            state: slot.state || '',
-            stateLabel: stateLabelFor(slot.stateLabel || slot.state || '', comp),
+            state: rosterState,
+            stateLabel: shortStateOk ? stateLabelFor(rawLabel, comp) : rosterState || rawLabel,
             name: slot.name || '',
             eliminated,
             flagOutline,

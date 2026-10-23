@@ -70,15 +70,20 @@ const RESULT_CLASS: Record<string, string> = {
 };
 
 const MIN_BRIDGE_VERSION = [2, 1, 10];
+const FULL_STATE_PICTURE_VERSION = [2, 1, 14];
 
-function isCurrentBridge(version?: string) {
+function versionAtLeast(version: string | undefined, min: number[]) {
   const parts = String(version || '')
     .split('.')
     .map((p) => parseInt(p, 10) || 0);
-  for (let i = 0; i < MIN_BRIDGE_VERSION.length; i += 1) {
-    if ((parts[i] || 0) !== MIN_BRIDGE_VERSION[i]) return (parts[i] || 0) > MIN_BRIDGE_VERSION[i];
+  for (let i = 0; i < min.length; i += 1) {
+    if ((parts[i] || 0) !== min[i]) return (parts[i] || 0) > min[i];
   }
   return true;
+}
+
+function isCurrentBridge(version?: string) {
+  return versionAtLeast(version, MIN_BRIDGE_VERSION);
 }
 
 const CivicsCompanionButtonsPanel: React.FC<Props> = ({ roster, eventId, pushing, onPush }) => {
@@ -144,6 +149,11 @@ const CivicsCompanionButtonsPanel: React.FC<Props> = ({ roster, eventId, pushing
     pictureStyle === 'flag-state-name' ||
     pictureStyle === 'flag-state-student' ||
     pictureStyle === 'flag-state-initial';
+  const needsFullStatePainter =
+    pictureStyle === 'state-student' ||
+    pictureStyle === 'flag-state-student' ||
+    pictureStyle === 'state-initial' ||
+    pictureStyle === 'flag-state-initial';
   const showAbbrev = pictureStyle === 'abbrev-name' || pictureStyle === 'abbrev-name-flag';
   const showStateAndName =
     fullStudent || pictureStyle === 'state-initial' || pictureStyle === 'flag-state-initial';
@@ -156,6 +166,8 @@ const CivicsCompanionButtonsPanel: React.FC<Props> = ({ roster, eventId, pushing
   const liveBridges = seenBridges.filter((b) => isCurrentBridge(b.bridgeVersion));
   const oldBridges = seenBridges.filter((b) => !isCurrentBridge(b.bridgeVersion));
   const bridge = liveBridges[0] || null;
+  const painterTooOld =
+    needsFullStatePainter && !!bridge && !versionAtLeast(bridge.bridgeVersion, FULL_STATE_PICTURE_VERSION);
   const pictureSetId = build?.action === 'import' ? build.generateId || '' : build?.requestedAt || '';
   const bridgePictures =
     build && build.action !== 'clear' && pictures.generateId && pictures.generateId === pictureSetId
@@ -185,11 +197,13 @@ const CivicsCompanionButtonsPanel: React.FC<Props> = ({ roster, eventId, pushing
     ? 'Start Civics Bridge V2 first. The website needs to see it.'
     : tooManyBridges
       ? 'More than one Civics Bridge V2 is running. Close the extra copies first.'
-      : bridge?.layoutError
-        ? bridge.layoutError
-        : working
-          ? 'The bridge is still working on the last request.'
-          : '';
+      : painterTooOld
+        ? `Bridge ${bridge?.bridgeVersion || '2.1.12'} draws abbreviations for this picture. Close it and start Civics Bridge V2 2.1.14, then Generate again.`
+        : bridge?.layoutError
+          ? bridge.layoutError
+          : working
+            ? 'The bridge is still working on the last request.'
+            : '';
 
   const send = async (nextBuild: CivicsButtonBuild) => {
     setMessage(null);
@@ -255,6 +269,7 @@ const CivicsCompanionButtonsPanel: React.FC<Props> = ({ roster, eventId, pushing
             Close all but one, or they will both change Companion.
           </p>
         )}
+        {painterTooOld && <p className="mt-2 text-sm text-amber-300">{blockReason}</p>}
         {oldBridges.length > 0 && (
           <p className="mt-2 text-sm text-amber-300">
             An older Civics Bridge is still open
@@ -398,7 +413,7 @@ const CivicsCompanionButtonsPanel: React.FC<Props> = ({ roster, eventId, pushing
       {!previewed && slots.length > 0 && (
         <p className="text-xs text-slate-500">Click Preview to check the buttons before you can generate them.</p>
       )}
-      {previewed && blockReason && <p className="text-xs text-amber-300">{blockReason}</p>}
+      {previewed && blockReason && !painterTooOld && <p className="text-xs text-amber-300">{blockReason}</p>}
       {message && <p className="text-sm text-red-300">{message}</p>}
 
       {waitingForBridge && (
