@@ -425,6 +425,7 @@ class PlaybackController {
       this.lastLoadedItemId = loadedItemId;
       this.currentItemId = loadedItemId;
       this.currentPath = decision.path || this.currentPath;
+      void this.captureAndUploadPreviews(this.currentPath);
       this.emit({
         loadedCueLabel: cueLabel,
         message: `${cueLabel} · matching deck ready`,
@@ -437,6 +438,7 @@ class PlaybackController {
       this.currentItemId = loadedItemId;
       this.currentPath = decision.path || this.currentPath;
       if (this.lastStartedItemId === loadedItemId && this.status.slideshowActive) {
+        void this.captureAndUploadPreviews(this.currentPath);
         this.emit({
           loadedCueLabel: cueLabel,
           message: `${cueLabel} · slideshow live`,
@@ -444,6 +446,7 @@ class PlaybackController {
         });
         return;
       }
+      await this.captureAndUploadPreviews(this.currentPath);
       try {
         const started = await ppt.startShow(this.currentPath);
         if (started && started.ok !== false) this.applyLive(started);
@@ -496,6 +499,7 @@ class PlaybackController {
       this.lastLoadedItemId = loadedItemId;
       this.lastError = result.showWarning || '';
       const slideIndex = Number(result.slideIndex);
+      await this.captureAndUploadPreviews(decision.path);
       if (!result.slideshowActive) {
         try {
           const started = await ppt.startShow(this.currentPath);
@@ -521,7 +525,6 @@ class PlaybackController {
         lastAction: decision.startShow ? 'Opened and ran cue deck' : 'Opened cue deck',
         error: this.lastError,
       });
-      void this.captureAndUploadPreviews(decision.path);
       await this.reportAndRefresh(true);
     }
   }
@@ -624,6 +627,7 @@ class PlaybackController {
       this.emit({ error: this.lastError, lastAction: 'Manual open failed' });
       return;
     }
+    await this.captureAndUploadPreviews(dest);
     if (!result.slideshowActive) {
       try {
         const started = await ppt.startShow(dest);
@@ -652,7 +656,6 @@ class PlaybackController {
       lastAction: `Manual open & start · ${result.deckName || path.basename(dest)}`,
       error: this.lastError,
     });
-    void this.captureAndUploadPreviews(dest);
     await this.reportAndRefresh(true);
   }
 
@@ -707,7 +710,7 @@ class PlaybackController {
     if (!filePath || this.previewBusy || this.previewPath === filePath) return;
     this.previewBusy = true;
     try {
-      const stills = await ppt.captureStills();
+      const stills = await ppt.captureStills({ width: 360, height: 202 });
       if (!stills || stills.ok === false || !Array.isArray(stills.slides) || !stills.slides.length) {
         return;
       }

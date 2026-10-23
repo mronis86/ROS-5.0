@@ -3,7 +3,9 @@ param(
   [string]$OutDir = '',
   [string]$FilePath = '',
   [string]$ClosePath = '',
-  [int]$SlideIndex = 0
+  [int]$SlideIndex = 0,
+  [int]$Width = 0,
+  [int]$Height = 0
 )
 
 $ErrorActionPreference = 'Stop'
@@ -457,19 +459,26 @@ if ($Command -eq 'snapshot') {
     exit 0
   }
   New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
+  $exportW = if ($Width -gt 0) { $Width } else { 480 }
+  $exportH = if ($Height -gt 0) { $Height } else { 270 }
   $slides = @()
   foreach ($s in $pres.Slides) {
     $id = [string][int]$s.SlideID
     $index = [int]$s.SlideIndex
     $jpg = Join-Path $OutDir ("$id.jpg")
-    $s.Export($jpg, 'JPG', 480, 270)
+    try {
+      $s.Export($jpg, 'JPG', $exportW, $exportH)
+    } catch {
+      continue
+    }
+    if (-not (Test-Path $jpg)) { continue }
     $slides += @{
       pptSlideId = $id
       slideIndex = $index
       title = Get-SlideTitle $s
       fileName = "$id.jpg"
-      width = 480
-      height = 270
+      width = $exportW
+      height = $exportH
     }
   }
   Write-Json @{

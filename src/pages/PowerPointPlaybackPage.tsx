@@ -74,6 +74,18 @@ function rosCueFromTimer(data: any): RosCue | null {
 }
 
 const HELPER_FRESH_MS = 20 * 1000;
+const previewObjectUrls = new Map<string, string>();
+
+function stubSlide(index: number | null): PreviewSlide | null {
+  if (index == null || !Number.isFinite(index) || index < 1) return null;
+  return {
+    pptSlideId: `stub-${index}`,
+    slideIndex: index,
+    title: '',
+    hasImage: false,
+    imageUrl: '',
+  };
+}
 
 function formatLastSeen(raw: string | null): string {
   if (!raw) return 'never';
@@ -91,27 +103,31 @@ function isFreshSeen(raw: string | null): boolean {
 }
 
 function PreviewImage({ slide, className = '' }: { slide: PreviewSlide; className?: string }) {
-  const [src, setSrc] = useState('');
+  const [src, setSrc] = useState(() => previewObjectUrls.get(slide.imageUrl) || '');
 
   useEffect(() => {
-    if (!slide.hasImage) {
+    if (!slide.hasImage || !slide.imageUrl) {
       setSrc('');
       return;
     }
-    let objectUrl = '';
+    const cached = previewObjectUrls.get(slide.imageUrl);
+    if (cached) {
+      setSrc(cached);
+      return;
+    }
     let cancelled = false;
     (async () => {
       const res = await apiAuthFetch(`${getApiBaseUrl()}${slide.imageUrl}`);
       if (!res || !res.ok || cancelled) return;
       const blob = await res.blob();
-      objectUrl = URL.createObjectURL(blob);
+      const objectUrl = URL.createObjectURL(blob);
+      previewObjectUrls.set(slide.imageUrl, objectUrl);
       if (!cancelled) setSrc(objectUrl);
     })();
     return () => {
       cancelled = true;
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [slide.hasImage, slide.imageUrl, slide.pptSlideId]);
+  }, [slide.hasImage, slide.imageUrl]);
 
   if (!src) {
     return (
@@ -340,6 +356,13 @@ const PowerPointPlaybackPage: React.FC = () => {
       hasPPT: (sessionLive?.itemId === itemId && sessionLive.hasPPT) || scheduled?.hasPPT || false,
     };
   }, [cues, rosCue, session]);
+
+  const liveIndex = session?.currentIndex != null && session.currentIndex > 0 ? session.currentIndex : null;
+  const currentSlide =
+    (liveIndex != null ? previews.find((slide) => slide.slideIndex === liveIndex) : null) || stubSlide(liveIndex);
+  const nextSlide =
+    (liveIndex != null ? previews.find((slide) => slide.slideIndex === liveIndex + 1) : null) ||
+    stubSlide(liveIndex != null && session?.slideCount && liveIndex < session.slideCount ? liveIndex + 1 : null);
 
   const helperSeen = isFreshSeen(session?.lastSeen || null);
   const wrongMode = !session?.connected && helperSeen && session?.helperMode === 'follow';
@@ -585,40 +608,92 @@ const PowerPointPlaybackPage: React.FC = () => {
           </div>
         </div>
 
-        {previews.length > 0 ? (
+        {currentSlide || nextSlide || previews.length > 0 ? (
           <div className="mt-5">
             <div className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">
-              Slide previews · {previews.length} slides
+              Slide previews
+              {session?.slideCount || previews.length
+                ? ` · ${session?.slideCount || previews.length} slides`
+                : ''}
             </div>
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
-              {previews.map((slide) => {
-                const isLive = session?.currentIndex === slide.slideIndex;
-                return (
-                  <button
-                    key={slide.pptSlideId}
-                    type="button"
-                    disabled={!!sending}
-                    onClick={() => void sendCommand('goto', slide.slideIndex)}
-                    className={`overflow-hidden rounded-lg border text-left transition ${
-                      isLive
-                        ? 'border-orange-400 ring-2 ring-orange-400/70'
-                        : 'border-slate-700 hover:border-slate-500'
+            <div className="grid gap-3 md:grid-cols-2">
+              {[
+                { slide: currentSlide, label: 'Current', live: true },
+                { slide: nextSlide, label: 'Next', live: false },
+              ].map(({ slide, label, live }) => (
+                <button
+                  key={label}
+                  type="button"
+                  disabled={!!sending || !slide}
+                  onClick={() => slide && void sendCommand('goto', slide.slideIndex)}
+                  className={`overflow-hidden rounded-xl border text-left ${
+                    live
+                      ? 'border-orange-400 ring-2 ring-orange-400/60'
+                      : 'border-slate-700 hover:border-slate-500'
+                  } disabled:opacity-60`}
+                >
+                  <div
+                    className={`px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide ${
+                      live ? 'bg-orange-950/80 text-orange-200' : 'bg-slate-900 text-slate-400'
                     }`}
                   >
+                    {label}
+                    {slide ? ` · Slide ${slide.slideIndex}` : ''}
+                  </div>
+                  {slide ? (
                     <PreviewImage slide={slide} />
-                    <div className={`px-2 py-1.5 text-xs ${isLive ? 'bg-orange-950/70 text-orange-100' : 'bg-slate-900 text-slate-300'}`}>
-                      <span className="font-semibold">Slide {slide.slideIndex}</span>
-                      {slide.title ? <span className="ml-1 truncate text-slate-400">{slide.title}</span> : null}
-                      {isLive ? <span className="ml-1 font-bold uppercase text-orange-300">Live</span> : null}
+                  ) : (
+                    <div className="flex aspect-video items-center justify-center bg-slate-950 text-sm text-slate-500">
+                      {live ? 'No live slide' : 'Last slide'}
                     </div>
-                  </button>
-                );
-              })}
+                  )}
+                  {slide?.title ? (
+                    <div className="truncate px-3 py-1.5 text-xs text-slate-300">{slide.title}</div>
+                  ) : null}
+                </button>
+              ))}
             </div>
+            {previews.length > 0 ? (
+              <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
+                {previews.map((slide) => {
+                  const isLive = liveIndex === slide.slideIndex;
+                  const isNext = liveIndex != null && slide.slideIndex === liveIndex + 1;
+                  return (
+                    <button
+                      key={slide.pptSlideId}
+                      type="button"
+                      disabled={!!sending}
+                      onClick={() => void sendCommand('goto', slide.slideIndex)}
+                      className={`w-24 shrink-0 overflow-hidden rounded-md border text-left ${
+                        isLive
+                          ? 'border-orange-400 ring-1 ring-orange-400/70'
+                          : isNext
+                            ? 'border-sky-600'
+                            : 'border-slate-700 hover:border-slate-500'
+                      }`}
+                    >
+                      <PreviewImage slide={slide} />
+                      <div
+                        className={`px-1.5 py-1 text-[10px] font-semibold ${
+                          isLive ? 'bg-orange-950/80 text-orange-100' : 'bg-slate-900 text-slate-300'
+                        }`}
+                      >
+                        {slide.slideIndex}
+                        {isLive ? ' · Live' : isNext ? ' · Next' : ''}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : session?.connected && session?.deckName ? (
+              <p className="mt-3 text-xs text-slate-500">
+                Capturing small slide thumbnails before the slideshow starts…
+              </p>
+            ) : null}
           </div>
         ) : session?.connected && session?.deckName ? (
           <p className="mt-4 text-sm text-slate-400">
-            Capturing slide previews after the deck opens…
+            Capturing small slide thumbnails before the slideshow starts…
           </p>
         ) : null}
       </section>

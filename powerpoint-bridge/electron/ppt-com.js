@@ -132,11 +132,20 @@ async function getLive() {
   return runPptCommand('live');
 }
 
-async function captureStills() {
+async function captureStills(opts = {}) {
   return withWatchPaused(async () => {
     const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ros-ppt-stills-'));
+    const width = Number(opts.width) > 0 ? Number(opts.width) : 480;
+    const height = Number(opts.height) > 0 ? Number(opts.height) : 270;
     try {
-      const meta = await runPptCommand('snapshot', ['-OutDir', outDir]);
+      const meta = await runPptCommand('snapshot', [
+        '-OutDir',
+        outDir,
+        '-Width',
+        String(width),
+        '-Height',
+        String(height),
+      ]);
       if (!meta || meta.ok === false) return meta;
       const slides = Array.isArray(meta.slides) ? meta.slides : meta.slides ? [meta.slides] : [];
       const withImages = slides.map((slide) => {
@@ -152,8 +161,8 @@ async function captureStills() {
           slideIndex: Number(slide.slideIndex),
           title: slide.title || '',
           imageBase64,
-          width: slide.width || 480,
-          height: slide.height || 270,
+          width: slide.width || width,
+          height: slide.height || height,
         };
       });
       return {

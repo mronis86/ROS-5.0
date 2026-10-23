@@ -70,6 +70,7 @@ const {
 const {
   registerPowerpointPlaybackRoutes,
   ensurePowerpointPlaybackSchema,
+  startPowerpointPlaybackCleanup,
 } = require('./lib/powerpoint-playback');
 const { registerAppDownloadRoutes } = require('./lib/app-downloads');
 const { registerSpeakerRoutes, ensureSpeakersSchema } = require('./lib/speakers');
@@ -1228,7 +1229,7 @@ function buildRailwayHealthMeta() {
     uptimeSeconds: Math.floor(process.uptime()),
     env: process.env.NODE_ENV || 'development',
     powerpointRoutes: true,
-    apiRevision: 'dl-20261023h',
+    apiRevision: 'dl-20261023i',
   };
 }
 
@@ -11880,6 +11881,7 @@ server.listen(PORT, '0.0.0.0', async () => {
         isBucketConfigured,
         broadcastUpdate,
       });
+      startPowerpointPlaybackCleanup(pool);
       console.log('✅ powerpoint stills / bindings / playback tables synced');
     } catch (err) {
       console.warn('⚠️ powerpoint stills sync skipped:', err.message || err);
