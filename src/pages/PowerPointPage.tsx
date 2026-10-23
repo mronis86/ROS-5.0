@@ -195,7 +195,7 @@ const PowerPointPage: React.FC = () => {
   const [session, setSession] = useState<PptSession | null>(null);
   const [slides, setSlides] = useState<PptSlide[]>([]);
   const [cues, setCues] = useState<ScheduleCueOption[]>([]);
-  const [retentionMonths, setRetentionMonths] = useState(4);
+  const [retentionMonths, setRetentionMonths] = useState(1);
   const [view, setView] = useState<SlideView>(readSlideView);
 
   const setSlideView = useCallback((next: SlideView) => {
@@ -397,7 +397,7 @@ const PowerPointPage: React.FC = () => {
             {eventName}
             {session?.deckName ? ` · ${session.deckName}` : ''}
             {session?.slideCount ? ` · ${session.slideCount} slides` : ''}
-            {` · stills auto-clear after ${retentionMonths} months`}
+            {` · stills auto-clear after ${retentionMonths} month${retentionMonths === 1 ? '' : 's'}`}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -524,7 +524,8 @@ const PowerPointPage: React.FC = () => {
             <code className="rounded bg-slate-900 px-1 text-orange-200">{eventId}</code>
           </p>
           <p className="mt-2 text-xs text-slate-500">
-            Captured stills are removed from Railway automatically after {retentionMonths} months.
+            Captured stills are removed from Railway automatically after {retentionMonths} month
+            {retentionMonths === 1 ? '' : 's'}.
             Recapture to keep a current set.
           </p>
           <a
