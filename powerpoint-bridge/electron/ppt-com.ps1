@@ -14,6 +14,14 @@ function Write-Json($obj) {
   [Console]::Out.Write($json)
 }
 
+function Friendly-ComError($msg) {
+  $text = [string]$msg
+  if ($text -match 'E_FAIL|COMException|InteropServices') {
+    return 'PowerPoint refused the COM call (E_FAIL). Close any PowerPoint dialog or Protected View, then Follow loaded cue again.'
+  }
+  return $text
+}
+
 function Get-PptApp {
   try {
     return [Runtime.InteropServices.Marshal]::GetActiveObject('PowerPoint.Application')
@@ -26,7 +34,9 @@ function Ensure-PptApp {
   $app = Get-PptApp
   if ($app) { return $app }
   $app = New-Object -ComObject PowerPoint.Application
-  $app.Visible = 1
+  try { $app.Visible = $true } catch {
+    try { $app.Visible = -1 } catch {}
+  }
   return $app
 }
 
@@ -99,11 +109,57 @@ function Live-Payload($app, $pres) {
   }
 }
 
+function Unblock-Deck($path) {
+  if (-not $path) { return }
+  try { Unblock-File -LiteralPath $path -ErrorAction SilentlyContinue } catch {}
+}
+
+function Open-Presentation($app, $path) {
+  Unblock-Deck $path
+  $existing = Find-Presentation $app $path
+  if ($existing) { return $existing }
+  try {
+    return $app.Presentations.Open($path, $false, $false, $true)
+  } catch {
+    try {
+      foreach ($pv in @($app.ProtectedViewWindows)) {
+        $source = ''
+        try { $source = [string]$pv.SourcePath } catch {}
+        try { if (-not $source) { $source = [string]$pv.Presentation.FullName } } catch {}
+        if ($source -and ((Normalize-Path $source) -eq (Normalize-Path $path))) {
+          return $pv.Edit('')
+        }
+        try {
+          if (([string]$pv.Caption -replace ' \[Protected View\]$', '') -eq [IO.Path]::GetFileName($path)) {
+            return $pv.Edit('')
+          }
+        } catch {}
+      }
+    } catch {}
+    throw
+  }
+}
+
 function Start-Show($pres) {
-  $settings = $pres.SlideShowSettings
-  $settings.ShowType = 1
-  $settings.LoopUntilStopped = 0
-  $settings.Run() | Out-Null
+  if (-not $pres) { return $false }
+  try {
+    if ($pres.Application.SlideShowWindows.Count -gt 0) {
+      $live = $null
+      try { $live = $pres.Application.SlideShowWindows.Item(1).Presentation } catch {}
+      if ($live -and ((Normalize-Path $live.FullName) -eq (Normalize-Path $pres.FullName))) {
+        return $true
+      }
+    }
+  } catch {}
+  try {
+    $settings = $pres.SlideShowSettings
+    $settings.ShowType = 1
+    $settings.LoopUntilStopped = 0
+    $settings.Run() | Out-Null
+    return $true
+  } catch {
+    return $false
+  }
 }
 
 function Exit-Shows($app) {
@@ -128,30 +184,33 @@ function Close-Presentation($app, $pres) {
   try { $pres.Close() } catch {}
 }
 
+try {
+
 $needsLaunch = $Command -in @('open', 'swap')
 $ppt = if ($needsLaunch) { Ensure-PptApp } else { Get-PptApp }
 
 if (-not $ppt) {
-  Write-Json @{ ok = $false; error = 'PowerPoint is not running. Open the deck first.' }
+  Write-Json @{ ok = $false; error = 'PowerPoint is not running. Open PowerPoint, then Follow loaded cue.' }
   exit 0
 }
 
 if ($Command -eq 'open' -or $Command -eq 'swap') {
   if (-not $FilePath -or -not (Test-Path -LiteralPath $FilePath)) {
-    Write-Json @{ ok = $false; error = 'FilePath missing or not found' }
+    Write-Json @{ ok = $false; error = 'Cached deck file is missing. Click Sync cache, then Follow loaded cue.' }
     exit 0
   }
-  $pres = Find-Presentation $ppt $FilePath
-  if (-not $pres) {
-    $pres = $ppt.Presentations.Open($FilePath, $false, $false, $true)
-  }
-  Start-Show $pres
-  Start-Sleep -Milliseconds 250
   if ($ClosePath -and ((Normalize-Path $ClosePath) -ne (Normalize-Path $FilePath))) {
     $old = Find-Presentation $ppt $ClosePath
     if ($old) { Close-Presentation $ppt $old }
   }
-  Write-Json (Live-Payload $ppt $pres)
+  $pres = Open-Presentation $ppt $FilePath
+  $started = Start-Show $pres
+  Start-Sleep -Milliseconds 250
+  $payload = Live-Payload $ppt $pres
+  if (-not $started -and -not $payload.slideshowActive) {
+    $payload.showWarning = 'Deck opened. Slideshow did not start — use Start slideshow on the Launcher page.'
+  }
+  Write-Json $payload
   exit 0
 }
 
@@ -187,7 +246,7 @@ if ($Command -eq 'startShow') {
 
 if ($Command -eq 'next' -or $Command -eq 'prev' -or $Command -eq 'goto') {
   if ($ppt.SlideShowWindows.Count -lt 1) {
-    Write-Json @{ ok = $false; error = 'Slideshow is not running.' }
+    Write-Json @{ ok = $false; error = 'Slideshow is not running. Use Start slideshow first.' }
     exit 0
   }
   $view = $ppt.SlideShowWindows.Item(1).View
@@ -258,3 +317,8 @@ if ($Command -eq 'snapshot') {
 }
 
 Write-Json @{ ok = $false; error = "Unknown command $Command" }
+
+} catch {
+  Write-Json @{ ok = $false; error = (Friendly-ComError $_.Exception.Message) }
+  exit 0
+}

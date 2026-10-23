@@ -126,14 +126,7 @@ class PlaybackController {
       const loadedCue = playback?.session?.loadedCue || null;
       const queued = playback?.session?.queuedCommand || null;
 
-      if (loadedItemId !== this.lastLoadedItemId) {
-        await this.followLoadedCue(loadedItemId, loadedCue);
-      } else if (loadedCue?.cueLabel) {
-        this.emit({
-          loadedCueLabel: loadedCue.cueLabel,
-          message: this.status.message,
-        });
-      }
+      await this.followLoadedCue(loadedItemId, loadedCue);
 
       if (queued && queued.id && queued.id !== this.lastCommandId) {
         await this.runCommand(queued);
@@ -246,10 +239,14 @@ class PlaybackController {
     const tmp = `${dest}.part`;
     fs.writeFileSync(tmp, buf);
     fs.renameSync(tmp, dest);
+    try {
+      fs.unlinkSync(`${dest}:Zone.Identifier`);
+    } catch {
+      /* no MOTW stream */
+    }
   }
 
   async followLoadedCue(loadedItemId, loadedCue = null) {
-    this.lastLoadedItemId = loadedItemId;
     const cueLabel = loadedCue?.cueLabel || (loadedItemId != null ? `Cue ${loadedItemId}` : '');
     if (loadedItemId == null) {
       this.emit({ loadedCueLabel: '', message: 'No cue loaded' });
@@ -266,6 +263,7 @@ class PlaybackController {
     });
 
     if (decision.action === 'idle') {
+      this.lastLoadedItemId = loadedItemId;
       this.emit({
         loadedCueLabel: cueLabel,
         message: `${cueLabel} loaded · no PPT`,
@@ -292,6 +290,7 @@ class PlaybackController {
       this.currentPath = null;
       this.currentFileId = null;
       this.currentItemId = loadedItemId;
+      this.lastLoadedItemId = loadedItemId;
       this.emit({
         loadedCueLabel: cueLabel,
         message: `${cueLabel} · closed PowerPoint`,
@@ -300,6 +299,7 @@ class PlaybackController {
       return;
     }
     if (decision.action === 'keep') {
+      this.lastLoadedItemId = loadedItemId;
       this.currentItemId = loadedItemId;
       this.emit({
         loadedCueLabel: cueLabel,
@@ -309,24 +309,45 @@ class PlaybackController {
       return;
     }
     if (decision.action === 'swap') {
-      const result = await ppt.swapDeck(decision.path, decision.closePath);
+      let result;
+      try {
+        result = await ppt.swapDeck(decision.path, decision.closePath);
+      } catch (err) {
+        this.lastError = err.message || 'Could not open deck';
+        this.emit({
+          loadedCueLabel: cueLabel,
+          error: this.lastError,
+          message: `${cueLabel} · PowerPoint open failed`,
+          lastAction: 'Open failed',
+        });
+        return;
+      }
       if (!result || result.ok === false) {
-        throw new Error(result?.error || 'Could not open deck');
+        this.lastError = result?.error || 'Could not open deck';
+        this.emit({
+          loadedCueLabel: cueLabel,
+          error: this.lastError,
+          message: `${cueLabel} · PowerPoint open failed`,
+          lastAction: 'Open failed',
+        });
+        return;
       }
       this.currentPath = decision.path;
       this.currentFileId = asset?.fileId || null;
       this.currentItemId = loadedItemId;
-      this.lastError = '';
+      this.lastLoadedItemId = loadedItemId;
+      this.lastError = result.showWarning || '';
+      const slideIndex = Number(result.slideIndex);
       this.emit({
         powerpoint: true,
         slideshowActive: !!result.slideshowActive,
         deckName: result.deckName || path.basename(decision.path),
         slideCount: result.slideCount || 0,
-        currentIndex: result.slideIndex != null ? Number(result.slideIndex) : 1,
+        currentIndex: Number.isFinite(slideIndex) && slideIndex > 0 ? slideIndex : 1,
         loadedCueLabel: cueLabel,
-        message: `${cueLabel} · ${result.deckName || 'deck'} live`,
+        message: result.showWarning || `${cueLabel} · ${result.deckName || 'deck'} live`,
         lastAction: decision.closePath ? 'Swapped deck' : 'Opened deck',
-        error: '',
+        error: this.lastError,
       });
     }
   }
@@ -357,7 +378,9 @@ class PlaybackController {
       slideshowActive: !!live.slideshowActive,
       deckName: live.deckName || this.status.deckName,
       slideCount: live.slideCount || this.status.slideCount,
-      currentIndex: live.slideIndex != null ? Number(live.slideIndex) : this.status.currentIndex,
+      currentIndex: Number.isFinite(Number(live.slideIndex)) && Number(live.slideIndex) > 0
+        ? Number(live.slideIndex)
+        : this.status.currentIndex,
     });
   }
 
@@ -374,7 +397,10 @@ class PlaybackController {
       deckName: live?.deckName || this.status.deckName || '',
       slideCount: live?.slideCount || this.status.slideCount || 0,
       slideshowActive: !!(live && live.slideshowActive),
-      currentIndex: live?.slideIndex != null ? Number(live.slideIndex) : this.status.currentIndex,
+      currentIndex:
+        Number.isFinite(Number(live?.slideIndex)) && Number(live.slideIndex) > 0
+          ? Number(live.slideIndex)
+          : this.status.currentIndex,
       currentItemId: this.currentItemId,
       currentFileId: this.currentFileId,
       cacheOk: this.cacheRows.filter((r) => r.state === 'ok' || r.state === 'replaced').length,

@@ -11,6 +11,14 @@ function resolveScript() {
 
 const SCRIPT = resolveScript();
 
+function cleanPptError(raw) {
+  const text = String(raw || '').replace(/\s+/g, ' ').trim();
+  if (/E_FAIL|COMException|InteropServices/i.test(text)) {
+    return 'PowerPoint refused the COM call (E_FAIL). Close any PowerPoint dialog or Protected View, then Follow loaded cue again.';
+  }
+  return text.replace(/[A-Za-z]:\\[^\s:]+\.ps1\s*:/g, '').trim() || text;
+}
+
 function runPptCommand(command, extraArgs = []) {
   return new Promise((resolve, reject) => {
     const args = [
@@ -39,7 +47,7 @@ function runPptCommand(command, extraArgs = []) {
     child.on('close', (code) => {
       const text = stdout.trim();
       if (!text) {
-        return reject(new Error(stderr.trim() || `PowerPoint COM exited ${code}`));
+        return reject(new Error(cleanPptError(stderr.trim() || `PowerPoint COM exited ${code}`)));
       }
       try {
         resolve(JSON.parse(text));
