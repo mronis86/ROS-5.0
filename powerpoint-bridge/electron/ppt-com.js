@@ -96,4 +96,53 @@ async function captureStills() {
   }
 }
 
-module.exports = { getStatus, getLive, captureStills };
+function extra(flag, value) {
+  if (value == null || value === '') return [];
+  return [flag, String(value)];
+}
+
+async function openDeck(filePath, closePath) {
+  return runPptCommand('open', [...extra('-FilePath', filePath), ...extra('-ClosePath', closePath)]);
+}
+
+async function swapDeck(filePath, closePath) {
+  return runPptCommand('swap', [...extra('-FilePath', filePath), ...extra('-ClosePath', closePath)]);
+}
+
+async function closeDeck(filePath) {
+  return runPptCommand('close', extra('-FilePath', filePath));
+}
+
+async function startShow(filePath) {
+  return runPptCommand('startShow', extra('-FilePath', filePath));
+}
+
+async function endShow() {
+  return runPptCommand('endShow');
+}
+
+async function nextSlide() {
+  return runPptCommand('next');
+}
+
+async function prevSlide() {
+  return runPptCommand('prev');
+}
+
+async function gotoSlide(slideIndex) {
+  return runPptCommand('goto', extra('-SlideIndex', slideIndex));
+}
+
+module.exports = {
+  getStatus,
+  getLive,
+  captureStills,
+  openDeck,
+  swapDeck,
+  closeDeck,
+  startShow,
+  endShow,
+  nextSlide,
+  prevSlide,
+  gotoSlide,
+};

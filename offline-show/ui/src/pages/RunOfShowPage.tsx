@@ -117,6 +117,17 @@ interface CustomColumn {
   id: string;
 }
 
+/** Clock-page timer mode for the loaded/running cue (header badge). */
+function resolveRosTimerDisplayMode(item: any): 'countdown' | 'countUp' | 'timeOfDay' | 'todOnly' {
+  if (!item) return 'countdown';
+  const raw = String(item.timerDisplay ?? item.timer_display ?? '');
+  const normalized = raw.replace(/_/g, '').toLowerCase();
+  if (normalized === 'todonly') return 'todOnly';
+  if (normalized === 'timeofday' || item.useTimeOfDay === true) return 'timeOfDay';
+  if (normalized === 'countup') return 'countUp';
+  return 'countdown';
+}
+
 const RunOfShowPage: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
@@ -837,7 +848,42 @@ const RunOfShowPage: React.FC = () => {
   const [resolumeSyncPulse, setResolumeSyncPulse] = useState(false);
   const resolumeSyncPulseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [hybridTimerProgress, setHybridTimerProgress] = useState<{ elapsed: number; total: number }>({ elapsed: 0, total: 0 });
+  const [todClockTick, setTodClockTick] = useState(0);
   const [clockOffset, setClockOffset] = useState<number>(0); // Offset between client and server clocks in ms
+  const activeCueForTod =
+    schedule.find(
+      (s) =>
+        s.id ===
+        Number(hybridTimerData?.activeTimer?.item_id ?? activeItemId ?? NaN)
+    ) || null;
+  const rosClockTimerMode = resolveRosTimerDisplayMode(activeCueForTod);
+  const showTodOnClock = rosClockTimerMode === 'timeOfDay' || rosClockTimerMode === 'todOnly';
+  const rosClockTodBadge = showTodOnClock
+    ? rosClockTimerMode === 'todOnly'
+      ? {
+          label: 'TOD ONLY',
+          title: 'Timer page is Time of Day only — displays show wall clock, no countdown or progress bar',
+        }
+      : {
+          label: 'TOD',
+          title: 'Timer page is Time of Day — displays show wall clock plus remaining time and progress bar',
+        }
+    : null;
+  const rosClockWallTime = useMemo(() => {
+    if (!showTodOnClock) return '';
+    return getSyncedNow(clockOffset).toLocaleTimeString('en-US', {
+      timeZone: resolveShowTimezone(eventTimezone),
+      hour12: true,
+      hour: 'numeric',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+  }, [showTodOnClock, clockOffset, eventTimezone, todClockTick]);
+  useEffect(() => {
+    if (!showTodOnClock) return;
+    const id = window.setInterval(() => setTodClockTick((n) => n + 1), 1000);
+    return () => window.clearInterval(id);
+  }, [showTodOnClock]);
   const [selectedTimerId, setSelectedTimerId] = useState<number | null>(null);
   const [loadedItems, setLoadedItems] = useState<Record<number, boolean>>({});
   /** Latest timer UI for cloud reconnect — refs avoid stale state when toggling Cloud on. */
@@ -11948,8 +11994,37 @@ const RunOfShowPage: React.FC = () => {
               
               {/* Timer Display with Color */}
               <div className="relative">
-                <div className="text-3xl font-mono bg-slate-800 px-6 py-3 rounded-lg border border-slate-600" style={{ color: getCountdownColor() }}>
-                  {formatTime(getRemainingTime())}
+                <div
+                  className={`flex items-stretch overflow-hidden rounded-lg border bg-slate-800 ${
+                    rosClockTodBadge ? 'border-cyan-500/70' : 'border-slate-600'
+                  }`}
+                  title={rosClockTodBadge?.title}
+                >
+                  {rosClockTodBadge ? (
+                    <div className="flex min-w-[2.25rem] flex-col items-center justify-center bg-cyan-600 px-1.5 text-center leading-tight text-white">
+                      <span className="text-[9px] font-bold uppercase tracking-[0.16em]">
+                        TOD
+                      </span>
+                      {rosClockTimerMode === 'todOnly' ? (
+                        <span className="text-[8px] font-bold uppercase tracking-[0.12em] text-cyan-50">
+                          Only
+                        </span>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  <div
+                    className={`px-6 text-center ${rosClockTodBadge ? 'py-2' : 'py-3'}`}
+                    style={{ color: getCountdownColor() }}
+                  >
+                    <div className="text-3xl font-mono leading-none">
+                      {formatTime(getRemainingTime())}
+                    </div>
+                    {rosClockTodBadge ? (
+                      <div className="mt-1 font-mono text-[11px] font-semibold leading-none tracking-wide text-cyan-300">
+                        {rosClockWallTime}
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
                 {/* Drift Status Indicator - positioned in bottom-right corner */}
               </div>

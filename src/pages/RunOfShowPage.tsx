@@ -339,6 +339,17 @@ interface CustomColumn {
   id: string;
 }
 
+/** Clock-page timer mode for the loaded/running cue (header badge). */
+function resolveRosTimerDisplayMode(item: any): 'countdown' | 'countUp' | 'timeOfDay' | 'todOnly' {
+  if (!item) return 'countdown';
+  const raw = String(item.timerDisplay ?? item.timer_display ?? '');
+  const normalized = raw.replace(/_/g, '').toLowerCase();
+  if (normalized === 'todonly') return 'todOnly';
+  if (normalized === 'timeofday' || item.useTimeOfDay === true) return 'timeOfDay';
+  if (normalized === 'countup') return 'countUp';
+  return 'countdown';
+}
+
 /** Stable compare so a cell edit does not look like every other row changed. */
 function scheduleItemSignature(item: any): string {
   if (!item) return '';
@@ -1683,6 +1694,19 @@ const RunOfShowPage: React.FC = () => {
     itemId: activeCueForPreshow?.id ?? hybridTimerData?.activeTimer?.item_id,
     topPreshowItemId: findTopPreshowCue(schedule, indentedCues, selectedDay)?.id ?? null,
   });
+  const rosClockTimerMode = resolveRosTimerDisplayMode(activeCueForPreshow);
+  const showTodOnClock = rosClockTimerMode === 'timeOfDay' || rosClockTimerMode === 'todOnly';
+  const rosClockTodBadge = showTodOnClock
+    ? rosClockTimerMode === 'todOnly'
+      ? {
+          label: 'TOD ONLY',
+          title: 'Clock page is Time of Day only — displays show wall clock, no countdown or progress bar',
+        }
+      : {
+          label: 'TOD',
+          title: 'Clock page is Time of Day — displays show wall clock plus remaining time and progress bar',
+        }
+    : null;
 
   // Admin/Crew: ~1 min after PreShow is running while still Rehearsal → In-Show overlay
   useEffect(() => {
@@ -1783,13 +1807,30 @@ const RunOfShowPage: React.FC = () => {
   const [resolumeSyncPulse, setResolumeSyncPulse] = useState(false);
   const resolumeSyncPulseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [hybridTimerProgress, setHybridTimerProgress] = useState<{ elapsed: number; total: number }>({ elapsed: 0, total: 0 });
+  const [todClockTick, setTodClockTick] = useState(0);
   const [clockOffset, setClockOffset] = useState<number>(0); // Offset between client and server clocks in ms
+  const rosClockWallTime = useMemo(() => {
+    if (!showTodOnClock) return '';
+    return getSyncedNow(clockOffset).toLocaleTimeString('en-US', {
+      timeZone: resolveShowTimezone(calendarTimezoneRef.current, eventTimezone),
+      hour12: true,
+      hour: 'numeric',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+  }, [showTodOnClock, clockOffset, eventTimezone, todClockTick]);
+  useEffect(() => {
+    if (!showTodOnClock) return;
+    const id = window.setInterval(() => setTodClockTick((n) => n + 1), 1000);
+    return () => window.clearInterval(id);
+  }, [showTodOnClock]);
   const [selectedTimerId, setSelectedTimerId] = useState<number | null>(null);
   const [loadedItems, setLoadedItems] = useState<Record<number, boolean>>({});
   const [showMenuDropdown, setShowMenuDropdown] = useState(false);
   const [showImportExportSubmenu, setShowImportExportSubmenu] = useState(false);
   const [importExportGroup, setImportExportGroup] = useState<'export' | 'import' | null>(null);
   const [showOperatorActionsSubmenu, setShowOperatorActionsSubmenu] = useState(false);
+  const [showPowerPointSubmenu, setShowPowerPointSubmenu] = useState(false);
   const [showReportsSubmenu, setShowReportsSubmenu] = useState(false);
   const [fullScreenTimerWindow, setFullScreenTimerWindow] = useState<Window | null>(null);
   const [clockWindow, setClockWindow] = useState<Window | null>(null);
@@ -8395,6 +8436,7 @@ const RunOfShowPage: React.FC = () => {
   const menuDropdownContainerRef = useRef<HTMLDivElement>(null);
   const menuMainPanelRef = useRef<HTMLDivElement>(null);
   const operatorActionsFlyoutRef = useRef<HTMLDivElement>(null);
+  const powerPointFlyoutRef = useRef<HTMLDivElement>(null);
   const importExportFlyoutRef = useRef<HTMLDivElement>(null);
   const reportsFlyoutRef = useRef<HTMLDivElement>(null);
 
@@ -8406,6 +8448,9 @@ const RunOfShowPage: React.FC = () => {
       clampMenuPanelToViewport(panel, 'dropdown');
       if (showOperatorActionsSubmenu) {
         clampMenuPanelToViewport(operatorActionsFlyoutRef.current, 'flyout', panel);
+      }
+      if (showPowerPointSubmenu) {
+        clampMenuPanelToViewport(powerPointFlyoutRef.current, 'flyout', panel);
       }
       if (showImportExportSubmenu) {
         clampMenuPanelToViewport(importExportFlyoutRef.current, 'flyout', panel);
@@ -8426,6 +8471,7 @@ const RunOfShowPage: React.FC = () => {
   }, [
     showMenuDropdown,
     showOperatorActionsSubmenu,
+    showPowerPointSubmenu,
     showImportExportSubmenu,
     importExportGroup,
     showReportsSubmenu,
@@ -15483,6 +15529,7 @@ const RunOfShowPage: React.FC = () => {
                       setShowImportExportSubmenu(false);
                       setImportExportGroup(null);
                       setShowOperatorActionsSubmenu(false);
+                      setShowPowerPointSubmenu(false);
                       setShowReportsSubmenu(false);
                     }
                   }}
@@ -15576,20 +15623,63 @@ const RunOfShowPage: React.FC = () => {
                           ) : null}
                         </button>
                       )}
-                      <button
-                        onClick={() => {
-                          setShowMenuDropdown(false);
-                          const powerpointUrl = `/powerpoint?eventId=${event?.id}&eventName=${encodeURIComponent(event?.name || '')}`;
-                          window.open(powerpointUrl, '_blank');
-                        }}
-                        className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center gap-3"
-                        title="Connect PowerPoint stills to cues and timers"
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                        </svg>
-                        PowerPoint
-                      </button>
+                      <div className="relative">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowPowerPointSubmenu(!showPowerPointSubmenu);
+                            setShowOperatorActionsSubmenu(false);
+                            setShowImportExportSubmenu(false);
+                            setImportExportGroup(null);
+                            setShowReportsSubmenu(false);
+                          }}
+                          className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center justify-between gap-3"
+                          title="Use PowerPoint with this Run of Show"
+                        >
+                          <span className="flex items-center gap-3">
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                            </svg>
+                            PowerPoint
+                          </span>
+                          <svg className={`w-4 h-4 flex-shrink-0 transition-transform ${showPowerPointSubmenu ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                          </svg>
+                        </button>
+                        {showPowerPointSubmenu && (
+                          <div
+                            ref={powerPointFlyoutRef}
+                            className="absolute top-0 z-[60] w-64 py-1 bg-slate-800 border border-slate-600 rounded-lg shadow-lg"
+                          >
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setShowMenuDropdown(false);
+                                setShowPowerPointSubmenu(false);
+                                const powerpointUrl = `/powerpoint?eventId=${event?.id}&eventName=${encodeURIComponent(event?.name || '')}`;
+                                window.open(powerpointUrl, '_blank');
+                              }}
+                              className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors"
+                              title="Map a live slideshow to ROS cues and timers"
+                            >
+                              PowerPoint Show with Timers
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setShowMenuDropdown(false);
+                                setShowPowerPointSubmenu(false);
+                                const playbackUrl = `/powerpoint-playback?eventId=${event?.id}&eventName=${encodeURIComponent(event?.name || '')}`;
+                                window.open(playbackUrl, '_blank');
+                              }}
+                              className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors"
+                              title="Load a cue to open its PowerPoint from the asset bucket"
+                            >
+                              ROS PPT Launcher
+                            </button>
+                          </div>
+                        )}
+                      </div>
                       <button
                         onClick={() => {
                           setShowMenuDropdown(false);
@@ -15619,6 +15709,7 @@ const RunOfShowPage: React.FC = () => {
                         <button
                           onClick={() => {
                             setShowOperatorActionsSubmenu(!showOperatorActionsSubmenu);
+                            setShowPowerPointSubmenu(false);
                             setShowImportExportSubmenu(false);
                             setImportExportGroup(null);
                             setShowReportsSubmenu(false);
@@ -15804,12 +15895,28 @@ const RunOfShowPage: React.FC = () => {
                                 window.open(powerpointUrl, '_blank');
                               }}
                               className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center gap-3"
-                              title="PowerPoint stills: map live slides to cues and timers"
+                              title="Map a live slideshow to ROS cues and timers"
                             >
                               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
                               </svg>
-                              PowerPoint
+                              PowerPoint Show with Timers
+                            </button>
+                            <button
+                              onClick={() => {
+                                setShowMenuDropdown(false);
+                                setShowOperatorActionsSubmenu(false);
+                                const playbackUrl = `/powerpoint-playback?eventId=${event?.id}&eventName=${encodeURIComponent(event?.name || '')}`;
+                                window.open(playbackUrl, '_blank');
+                              }}
+                              className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center gap-3"
+                              title="Load a cue to open its PowerPoint from the asset bucket"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                              </svg>
+                              ROS PPT Launcher
                             </button>
                             <button
                               onClick={() => {
@@ -15889,6 +15996,7 @@ const RunOfShowPage: React.FC = () => {
                             setShowImportExportSubmenu(next);
                             setImportExportGroup(null);
                             setShowOperatorActionsSubmenu(false);
+                            setShowPowerPointSubmenu(false);
                             setShowReportsSubmenu(false);
                           }}
                           className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center justify-between gap-3"
@@ -16064,6 +16172,7 @@ const RunOfShowPage: React.FC = () => {
                             setShowImportExportSubmenu(false);
                             setImportExportGroup(null);
                             setShowOperatorActionsSubmenu(false);
+                            setShowPowerPointSubmenu(false);
                           }}
                           className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center justify-between gap-3"
                         >
@@ -16449,12 +16558,36 @@ const RunOfShowPage: React.FC = () => {
               {/* Timer Display with Color */}
               <div className="relative">
                 <div
-                  className={`text-3xl font-mono bg-slate-800 px-6 py-3 rounded-lg border border-slate-600 ${
-                    rosPreshowRainbow ? 'ros-rainbow-text' : ''
+                  className={`flex items-stretch overflow-hidden rounded-lg border bg-slate-800 ${
+                    rosClockTodBadge ? 'border-cyan-500/70' : 'border-slate-600'
                   }`}
-                  style={rosPreshowRainbow ? undefined : { color: getCountdownColor() }}
+                  title={rosClockTodBadge?.title}
                 >
-                  {formatTime(getRemainingTime())}
+                  {rosClockTodBadge ? (
+                    <div className="flex min-w-[2.25rem] flex-col items-center justify-center bg-cyan-600 px-1.5 text-center leading-tight text-white">
+                      <span className="text-[9px] font-bold uppercase tracking-[0.16em]">
+                        TOD
+                      </span>
+                      {rosClockTimerMode === 'todOnly' ? (
+                        <span className="text-[8px] font-bold uppercase tracking-[0.12em] text-cyan-50">
+                          Only
+                        </span>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  <div
+                    className={`px-6 text-center ${rosClockTodBadge ? 'py-2' : 'py-3'} ${rosPreshowRainbow ? 'ros-rainbow-text' : ''}`}
+                    style={rosPreshowRainbow ? undefined : { color: getCountdownColor() }}
+                  >
+                    <div className="text-3xl font-mono leading-none">
+                      {formatTime(getRemainingTime())}
+                    </div>
+                    {rosClockTodBadge ? (
+                      <div className="mt-1 font-mono text-[11px] font-semibold leading-none tracking-wide text-cyan-300">
+                        {rosClockWallTime}
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
                 {/* Drift Status Indicator - positioned in bottom-right corner */}
               </div>

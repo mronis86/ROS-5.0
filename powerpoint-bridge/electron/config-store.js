@@ -7,6 +7,7 @@ const DEFAULTS = {
   apiBaseUrl: 'https://ros-50-production.up.railway.app',
   apiToken: '',
   eventId: '',
+  bridgeMode: 'follow',
 };
 
 function configPath() {
@@ -27,6 +28,9 @@ function saveConfig(partial) {
   if (next.apiBaseUrl) next.apiBaseUrl = normalizeBaseUrl(next.apiBaseUrl);
   if (next.apiToken != null) next.apiToken = normalizeApiToken(next.apiToken);
   if (next.eventId != null) next.eventId = String(next.eventId || '').trim();
+  if (next.bridgeMode != null) {
+    next.bridgeMode = next.bridgeMode === 'playback' ? 'playback' : 'follow';
+  }
   fs.mkdirSync(path.dirname(configPath()), { recursive: true });
   fs.writeFileSync(configPath(), JSON.stringify(next, null, 2), 'utf8');
   return next;

@@ -1,7 +1,7 @@
 {
   "name": "ros-powerpoint-bridge",
   "version": "0.1.0",
-  "description": "Windows helper: capture PowerPoint stills and report the live slide to ROS",
+  "description": "Windows helper: Mode 1 stills fire ROS cues; Mode 2 ROS load opens cached PowerPoint",
   "private": true,
   "main": "electron/main.js",
   "devDependencies": {

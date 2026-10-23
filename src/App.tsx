@@ -42,6 +42,7 @@ import ScriptsFollowPage from './pages/ScriptsFollowPage';
 import TeleprompterPage from './pages/TeleprompterPage';
 import CueCardsPage from './pages/CueCardsPage';
 import PowerPointPage from './pages/PowerPointPage';
+import PowerPointPlaybackPage from './pages/PowerPointPlaybackPage';
 import AdminPage from './pages/AdminPage';
 import PinNotesPopoutPage from './pages/PinNotesPopoutPage';
 import OperatorTimerPopoutPage from './pages/OperatorTimerPopoutPage';
@@ -85,7 +86,8 @@ function AppContent() {
   const isScriptsFollow = location.pathname === '/scripts-follow';
   const isTeleprompter = location.pathname === '/teleprompter';
   const isCueCards = location.pathname === '/cue-cards';
-  const isPowerPoint = location.pathname === '/powerpoint';
+  const isPowerPoint =
+    location.pathname === '/powerpoint' || location.pathname === '/powerpoint-playback';
   const isGoogleSheets = location.pathname === '/google-sheets-vmix';
   const isLocalXML = location.pathname === '/lower-thirds-xml' || location.pathname === '/schedule-xml' || location.pathname === '/custom-columns-xml';
   const isNetlifyXML = location.pathname === '/netlify-lower-thirds-xml' || location.pathname === '/netlify-schedule-xml' || location.pathname === '/netlify-custom-columns-xml';
@@ -197,6 +199,7 @@ function AppContent() {
             <Route path="/teleprompter" element={<TeleprompterPage />} />
             <Route path="/cue-cards" element={<CueCardsPage />} />
             <Route path="/powerpoint" element={<PowerPointPage />} />
+            <Route path="/powerpoint-playback" element={<PowerPointPlaybackPage />} />
           </Routes>
           </div>
         </AuthGuard>

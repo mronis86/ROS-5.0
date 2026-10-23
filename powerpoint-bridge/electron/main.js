@@ -4,6 +4,7 @@ const os = require('os');
 const fs = require('fs');
 const { loadConfig, saveConfig } = require('./config-store');
 const { BridgeController } = require('./bridge-controller');
+const { PlaybackController } = require('./playback-controller');
 const { validateApi, listCalendarEvents } = require('./railway-client');
 const ppt = require('./ppt-com');
 
@@ -26,18 +27,25 @@ app.setPath('userData', userDataRoot);
 app.disableHardwareAcceleration();
 
 let mainWindow = null;
-const bridge = new BridgeController({
-  onStatus: (status) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('bridge:status', status);
-    }
-  },
-});
+const cacheRoot = path.join(userDataRoot, 'powerpoint-cache');
+
+function sendStatus(status) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('bridge:status', status);
+  }
+}
+
+const follow = new BridgeController({ onStatus: sendStatus });
+const playback = new PlaybackController({ onStatus: sendStatus, cacheRoot });
+
+function activeController(mode) {
+  return mode === 'playback' ? playback : follow;
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 820,
-    height: 780,
+    width: 860,
+    height: 860,
     title: 'ROS PowerPoint Bridge',
     autoHideMenuBar: true,
     backgroundColor: '#0f172a',
@@ -55,7 +63,8 @@ function createWindow() {
 
 app.whenReady().then(createWindow);
 app.on('window-all-closed', () => {
-  bridge.stop();
+  follow.stop();
+  playback.stop();
   if (process.platform !== 'darwin') app.quit();
 });
 
@@ -71,15 +80,31 @@ ipcMain.handle('api:events', async (_e, partial) => {
 });
 ipcMain.handle('ppt:status', () => ppt.getStatus());
 ipcMain.handle('ppt:capture', async () => {
-  return bridge.captureStills(loadConfig());
+  follow.stop();
+  playback.stop();
+  return follow.captureStills(loadConfig());
 });
 ipcMain.handle('bridge:start', (_e, partial) => {
   const cfg = saveConfig(partial || {});
-  bridge.start(cfg);
-  return { ok: true };
+  if (cfg.bridgeMode === 'playback') {
+    follow.stop();
+    playback.start(cfg);
+  } else {
+    playback.stop();
+    follow.start(cfg);
+  }
+  return { ok: true, mode: cfg.bridgeMode || 'follow' };
 });
 ipcMain.handle('bridge:stop', () => {
-  bridge.stop();
+  follow.stop();
+  playback.stop();
   return { ok: true };
 });
-ipcMain.handle('bridge:status', () => bridge.status);
+ipcMain.handle('bridge:status', () => {
+  const mode = loadConfig().bridgeMode;
+  return activeController(mode).status;
+});
+ipcMain.handle('playback:sync', async (_e, partial) => {
+  const cfg = saveConfig(partial || {});
+  return playback.syncNow(cfg);
+});

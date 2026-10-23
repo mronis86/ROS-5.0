@@ -71,6 +71,12 @@ interface SocketCallbacks {
     action?: string | null;
     itemId?: number | null;
   }) => void;
+  onPptPlaybackStatus?: (data: any) => void;
+  onPptPlaybackCommand?: (data: {
+    id?: string;
+    action?: string;
+    slideIndex?: number | null;
+  }) => void;
 }
 
 class SocketClient {
@@ -104,6 +110,8 @@ class SocketClient {
     'onInitialSync',
     'onPptDeckUpdated',
     'onPptSlideLive',
+    'onPptPlaybackStatus',
+    'onPptPlaybackCommand',
   ]);
 
   private dispatchTimerMessage = (data: any) => {
@@ -357,6 +365,12 @@ class SocketClient {
           break;
         case 'pptSlideLive':
           this.callbacks.onPptSlideLive?.(message.data);
+          break;
+        case 'pptPlaybackStatus':
+          this.callbacks.onPptPlaybackStatus?.(message.data);
+          break;
+        case 'pptPlaybackCommand':
+          this.callbacks.onPptPlaybackCommand?.(message.data);
           break;
         default:
           console.log('Unknown Socket.IO message type:', message.type, message);

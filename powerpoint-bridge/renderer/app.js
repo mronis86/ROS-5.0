@@ -21,18 +21,66 @@ const els = {
   stAction: document.getElementById('st-action'),
   stError: document.getElementById('st-error'),
   toast: document.getElementById('toast'),
+  modeHint: document.getElementById('mode-hint'),
+  pptHint: document.getElementById('ppt-hint'),
+  cacheCard: document.getElementById('cache-card'),
+  cacheList: document.getElementById('cache-list'),
+  btnStart: document.getElementById('btn-start'),
+  btnSync: document.getElementById('btn-sync'),
+  btnCapture: document.getElementById('btn-capture'),
 };
 
 let loadedEvents = [];
 /** @type {'all' | 'upcoming' | 'past'} */
 let eventFilter = 'upcoming';
+/** @type {'follow' | 'playback'} */
+let bridgeMode = 'follow';
 
 function formConfig() {
   return {
     apiBaseUrl: els.apiBaseUrl.value.trim(),
     apiToken: els.apiToken.value.trim(),
     eventId: els.eventSelect.value.trim(),
+    bridgeMode,
   };
+}
+
+function applyModeUi() {
+  const playback = bridgeMode === 'playback';
+  document.querySelectorAll('[data-bridge-mode]').forEach((btn) => {
+    const active = btn.getAttribute('data-bridge-mode') === bridgeMode;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-selected', active ? 'true' : 'false');
+  });
+  if (els.btnStart) els.btnStart.textContent = playback ? 'Follow loaded cue' : 'Start follow';
+  if (els.btnSync) els.btnSync.hidden = !playback;
+  if (els.btnCapture) els.btnCapture.hidden = playback;
+  if (els.cacheCard) els.cacheCard.hidden = !playback;
+  if (els.modeHint) {
+    els.modeHint.textContent = playback
+      ? 'ROS PPT Launcher: sync decks, then follow the loaded cue. Opens the new .pptx, then closes the previous one. Do not run both modes on this PC for the same event.'
+      : 'PowerPoint Show with Timers: capture stills and fire cues when a slide is live. Do not run both modes on this PC for the same event.';
+  }
+  if (els.pptHint) {
+    els.pptHint.textContent = playback
+      ? 'PowerPoint can be closed until follow starts. Sync cache before the show so version changes are already on disk.'
+      : 'Open the deck in PowerPoint on this PC, then capture stills. Start follow before Slideshow so live slides fire the mapped cues.';
+  }
+}
+
+function renderCache(rows) {
+  if (!els.cacheList) return;
+  const list = Array.isArray(rows) ? rows : [];
+  if (!list.length) {
+    els.cacheList.innerHTML = '<p class="hint">No .ppt / .pptx assets on this event yet.</p>';
+    return;
+  }
+  els.cacheList.innerHTML = list
+    .map((row) => {
+      const flag = row.hasPPT ? 'PPT cue' : 'file only';
+      return `<div class="cache-row"><strong>${row.name || 'deck'}</strong><span>cue ${row.itemId} · ${flag}</span><span class="cache-${row.state || 'ok'}">${row.detail || row.state || ''}</span></div>`;
+    })
+    .join('');
 }
 
 function toast(msg) {
@@ -163,12 +211,17 @@ function applyStatus(status) {
   els.stLive.textContent = status.currentIndex != null ? String(status.currentIndex) : '—';
   els.stAction.textContent = status.lastAction || '—';
   els.stError.textContent = status.error || '';
+  if (status.mode === 'playback' || bridgeMode === 'playback') {
+    renderCache(status.cacheRows);
+  }
 }
 
 async function load() {
   const cfg = await api.loadConfig();
   els.apiBaseUrl.value = cfg.apiBaseUrl || '';
   els.apiToken.value = cfg.apiToken || '';
+  bridgeMode = cfg.bridgeMode === 'playback' ? 'playback' : 'follow';
+  applyModeUi();
   if (cfg.eventId) {
     const opt = document.createElement('option');
     opt.value = cfg.eventId;
@@ -208,6 +261,30 @@ document.querySelectorAll('.event-tab').forEach((btn) => {
 
 if (els.eventSearch) {
   els.eventSearch.addEventListener('input', () => fillEvents(null, formConfig().eventId));
+}
+
+document.querySelectorAll('[data-bridge-mode]').forEach((btn) => {
+  btn.onclick = async () => {
+    bridgeMode = btn.getAttribute('data-bridge-mode') === 'playback' ? 'playback' : 'follow';
+    applyModeUi();
+    await api.saveConfig(formConfig());
+    await api.stopBridge();
+  };
+});
+
+if (els.btnSync) {
+  els.btnSync.onclick = async () => {
+    try {
+      await api.saveConfig(formConfig());
+      els.stError.textContent = 'Syncing cache…';
+      const rows = await api.syncPlayback(formConfig());
+      renderCache(rows);
+      toast('Cache synced');
+      els.stError.textContent = '';
+    } catch (err) {
+      els.stError.textContent = err.message || String(err);
+    }
+  };
 }
 
 document.getElementById('btn-capture').onclick = async () => {

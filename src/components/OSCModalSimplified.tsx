@@ -137,7 +137,7 @@ const OSCModalSimplified: React.FC<OSCModalSimplifiedProps> = ({
                   PowerPoint Bridge (Windows)
                 </a>
                 <div className="text-xs text-orange-200 mt-2">
-                  Capture slide stills · map cues in the web app · fire load/start when a slide is live
+                  Use PowerPoint with Run of Show — Show with Timers or ROS PPT Launcher
                 </div>
               </div>
 

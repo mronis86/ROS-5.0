@@ -72,7 +72,9 @@ No Node.js / npm install required.
 2. Open PowerPoint with your deck.
 3. Double-click START.bat (or ROS PowerPoint Bridge.exe in the same folder).
 4. Paste the Railway API URL and an integration token (ros_itok_...) with read,control,write.
-5. Load events, pick the show, Capture stills, then Start follow.
+5. Load events, pick the show.
+6. PowerPoint Show with Timers: Capture stills, then Start follow.
+7. ROS PPT Launcher: Sync cache, then Follow loaded cue.
 
 Keep the .exe next to resources\\app.asar.
 `;

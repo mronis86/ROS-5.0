@@ -37,14 +37,14 @@ const RoleSelectionModal: React.FC<RoleSelectionModalProps> = ({
     },
     {
       value: 'OPERATOR',
-      label: 'Operator (Limited Edit)',
+      label: 'Operator (Limited Editing)',
       description: 'Can control timers and view data',
       icon: '🎮',
     },
     {
       value: 'EDITOR',
       label: 'Editor (Full Access)',
-      description: 'Can edit all content and settings',
+      description: 'Can edit all content and settings. No timer control.',
       icon: '✏️',
     },
   ];

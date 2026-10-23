@@ -392,7 +392,7 @@ const PowerPointPage: React.FC = () => {
     <div className="min-h-screen bg-slate-900 text-slate-100">
       <header className="sticky top-0 z-20 flex flex-wrap items-center justify-between gap-3 border-b border-slate-700 bg-slate-900/95 px-4 py-3">
         <div className="min-w-0">
-          <h1 className="text-lg font-semibold text-white">PowerPoint cues</h1>
+          <h1 className="text-lg font-semibold text-white">PowerPoint Show with Timers</h1>
           <p className="truncate text-xs text-slate-400">
             {eventName}
             {session?.deckName ? ` · ${session.deckName}` : ''}

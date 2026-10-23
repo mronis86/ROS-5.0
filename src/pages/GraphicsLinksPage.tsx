@@ -79,14 +79,14 @@ const DOWNLOAD_TOOLS = [
   {
     id: 'powerpoint',
     title: 'PowerPoint Bridge',
-    blurb: 'Capture slide stills and fire ROS cues when a slide goes live',
+    blurb: 'Use PowerPoint with Run of Show — timers from a live deck, or launch a cue’s .pptx',
     meta: 'Windows · unzip and run START.bat',
     href: getAppDownloadUrl('powerpoint-bridge.zip'),
     filename: 'powerpoint-bridge.zip',
     details: [
-      'Open the deck in PowerPoint first',
+      'PowerPoint Show with Timers or ROS PPT Launcher',
       'Token scopes: read, control, write',
-      'Map stills to cues on the PowerPoint page',
+      'Launcher syncs Assets .pptx files before the show',
     ],
     row: 'bg-orange-950/70 border-orange-700',
     bar: 'bg-orange-500',

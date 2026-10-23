@@ -18,6 +18,10 @@ $UploadDir = Join-Path $ProjectRoot "cloudflare-$DateStr-V2"
 if (-not $SkipPack) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $ProjectRoot 'create-cloudflare-dated.ps1') `
         -NetlifyDownloadsBase $NetlifyDownloadsBase
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "Pack failed (exit $LASTEXITCODE). Not deploying."
+        exit $LASTEXITCODE
+    }
 }
 
 if (-not (Test-Path (Join-Path $UploadDir 'index.html'))) {

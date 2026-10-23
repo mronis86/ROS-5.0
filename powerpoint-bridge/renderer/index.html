@@ -15,6 +15,7 @@
       <div class="top-actions">
         <button type="button" id="btn-start" class="primary">Start follow</button>
         <button type="button" id="btn-stop">Stop</button>
+        <button type="button" id="btn-sync" class="secondary" hidden>Sync cache</button>
         <button type="button" id="btn-capture" class="secondary">Capture stills</button>
         <button type="button" id="btn-save">Save</button>
       </div>
@@ -52,8 +53,17 @@
       </section>
 
       <section class="card">
+        <h2>Mode</h2>
+        <div class="event-tabs" role="tablist" aria-label="Bridge mode">
+          <button type="button" class="event-tab active" data-bridge-mode="follow" role="tab" aria-selected="true">PowerPoint Show with Timers</button>
+          <button type="button" class="event-tab" data-bridge-mode="playback" role="tab" aria-selected="false">ROS PPT Launcher</button>
+        </div>
+        <p id="mode-hint" class="hint">Use PowerPoint with Run of Show. Pick one mode on this PC for the event.</p>
+      </section>
+
+      <section class="card">
         <h2>PowerPoint</h2>
-        <p class="hint">Open the deck in PowerPoint on this PC, then capture stills. Start follow before Slideshow so live slides fire the mapped cues.</p>
+        <p id="ppt-hint" class="hint">Open the deck in PowerPoint on this PC, then capture stills. Start follow before Slideshow so live slides fire the mapped cues.</p>
         <div class="status-grid">
           <div><span class="k">PowerPoint</span><span id="st-ppt">—</span></div>
           <div><span class="k">Deck</span><span id="st-deck">—</span></div>
@@ -63,6 +73,12 @@
           <div><span class="k">Last action</span><span id="st-action">—</span></div>
         </div>
         <p id="st-error" class="error"></p>
+      </section>
+
+      <section id="cache-card" class="card" hidden>
+        <h2>Cached decks</h2>
+        <p class="hint">Downloads .ppt / .pptx from the event asset bucket. Replaces a file when the upload id or size changes.</p>
+        <div id="cache-list" class="cache-list"><p class="hint">Sync cache before the show.</p></div>
       </section>
     </main>
     <div id="toast" hidden></div>

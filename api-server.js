@@ -67,6 +67,10 @@ const {
   ensurePowerpointSchema,
   startPowerpointStillsCleanup,
 } = require('./lib/powerpoint-stills');
+const {
+  registerPowerpointPlaybackRoutes,
+  ensurePowerpointPlaybackSchema,
+} = require('./lib/powerpoint-playback');
 const { registerAppDownloadRoutes } = require('./lib/app-downloads');
 const { registerSpeakerRoutes, ensureSpeakersSchema } = require('./lib/speakers');
 const { buildPlatformMaintenanceReport, startPlatformMaintenanceAlerts } = require('./lib/platform-maintenance');
@@ -1046,6 +1050,7 @@ registerPowerpointRoutes(app, {
     }
   },
 });
+registerPowerpointPlaybackRoutes(app, { pool, broadcastUpdate });
 registerEventBoardRoutes(app, {
   pool,
   userCanAccessEvent,
@@ -1223,7 +1228,7 @@ function buildRailwayHealthMeta() {
     uptimeSeconds: Math.floor(process.uptime()),
     env: process.env.NODE_ENV || 'development',
     powerpointRoutes: true,
-    apiRevision: 'ppt-20261022f',
+    apiRevision: 'ppt-20261023a',
   };
 }
 
@@ -11868,13 +11873,14 @@ server.listen(PORT, '0.0.0.0', async () => {
     }
     try {
       await ensurePowerpointSchema(pool);
+      await ensurePowerpointPlaybackSchema(pool);
       startPowerpointStillsCleanup(pool, {
         getS3,
         getBucketConfig,
         isBucketConfigured,
         broadcastUpdate,
       });
-      console.log('✅ powerpoint stills / bindings tables synced');
+      console.log('✅ powerpoint stills / bindings / playback tables synced');
     } catch (err) {
       console.warn('⚠️ powerpoint stills sync skipped:', err.message || err);
     }

@@ -119,10 +119,39 @@ async function reportLive(apiBaseUrl, apiToken, eventId, payload) {
   });
 }
 
+async function fetchPlaybackManifest(apiBaseUrl, apiToken, eventId) {
+  return railwayFetch(
+    apiBaseUrl,
+    apiToken,
+    `/api/powerpoint/${encodeURIComponent(eventId)}/playback/manifest`
+  );
+}
+
+async function fetchPlaybackStatus(apiBaseUrl, apiToken, eventId) {
+  return railwayFetch(apiBaseUrl, apiToken, `/api/powerpoint/${encodeURIComponent(eventId)}/playback`);
+}
+
+async function reportPlaybackLive(apiBaseUrl, apiToken, eventId, payload) {
+  return railwayFetch(
+    apiBaseUrl,
+    apiToken,
+    `/api/powerpoint/${encodeURIComponent(eventId)}/playback/live`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }
+  );
+}
+
 module.exports = {
   railwayFetch,
+  httpFetch,
   listCalendarEvents,
   validateApi,
   uploadStills,
   reportLive,
+  fetchPlaybackManifest,
+  fetchPlaybackStatus,
+  reportPlaybackLive,
 };
