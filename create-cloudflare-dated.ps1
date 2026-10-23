@@ -23,9 +23,9 @@ $publicDir = Join-Path $ProjectRoot 'public'
 $utf8NoBom = New-Object System.Text.UTF8Encoding $false
 $MaxFileBytes = 25 * 1024 * 1024
 $NetlifyBase = $NetlifyDownloadsBase.TrimEnd('/')
-$LargeZips = @('ROS-OSC-Control-portable.zip', 'ros-vmix-datasource-bridge.zip', 'ros-civics-vmix-bridge.zip')
+$LargeZips = @('ROS-OSC-Control-portable.zip', 'ros-civics-vmix-bridge.zip')
 $RailwayDownloadsBase = 'https://ros-50-production.up.railway.app/api/downloads'
-$RailwayZips = @('powerpoint-bridge.zip')
+$RailwayZips = @('powerpoint-bridge.zip', 'ros-vmix-datasource-bridge.zip')
 $UnusedDeployZips = @(
     'OSC_GUI_App_Enhanced.zip',
     'OSC_GUI_App_Enhanced_Updated.zip',

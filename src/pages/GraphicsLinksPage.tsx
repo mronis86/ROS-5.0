@@ -66,7 +66,7 @@ const DOWNLOAD_TOOLS = [
     title: 'vMix DataSource Bridge',
     blurb: 'Follows the loaded cue and selects the vMix Data Source row',
     meta: '~97 MB · no Node install',
-    href: '/ros-vmix-datasource-bridge.zip',
+    href: getAppDownloadUrl('ros-vmix-datasource-bridge.zip'),
     filename: 'ros-vmix-datasource-bridge.zip',
     details: ['Cue column match', 'Multi Data Source bindings', 'START.bat — no npm on show PC'],
     row: 'bg-cyan-900/50 border-cyan-600',

@@ -2,7 +2,9 @@
  * Upload a hosted operator zip to the Railway ros-downloads bucket
  * and wire DOWNLOADS_BUCKET_* vars onto the ROS-5.0 service.
  *
- * Usage: node scripts/upload-app-download.js public/powerpoint-bridge.zip
+ * Usage:
+ *   node scripts/upload-app-download.js public/powerpoint-bridge.zip
+ *   node scripts/upload-app-download.js public/ros-vmix-datasource-bridge.zip
  */
 const { execFileSync } = require('child_process');
 const fs = require('fs');
@@ -39,6 +41,10 @@ if (!fs.existsSync(localPath)) {
 const HOSTED = {
   'powerpoint-bridge.zip': {
     key: 'downloads/powerpoint-bridge.zip',
+    contentType: 'application/zip',
+  },
+  'ros-vmix-datasource-bridge.zip': {
+    key: 'downloads/ros-vmix-datasource-bridge.zip',
     contentType: 'application/zip',
   },
 };
