@@ -5,6 +5,7 @@
  * Usage:
  *   node scripts/upload-app-download.js public/powerpoint-bridge.zip
  *   node scripts/upload-app-download.js public/ros-vmix-datasource-bridge.zip
+ *   node scripts/upload-app-download.js public/ros-hyperdeck-ingest.zip
  */
 const { execFileSync } = require('child_process');
 const fs = require('fs');
@@ -45,6 +46,10 @@ const HOSTED = {
   },
   'ros-vmix-datasource-bridge.zip': {
     key: 'downloads/ros-vmix-datasource-bridge.zip',
+    contentType: 'application/zip',
+  },
+  'ros-hyperdeck-ingest.zip': {
+    key: 'downloads/ros-hyperdeck-ingest.zip',
     contentType: 'application/zip',
   },
 };

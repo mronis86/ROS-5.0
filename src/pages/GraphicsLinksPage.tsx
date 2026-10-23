@@ -100,7 +100,7 @@ const DOWNLOAD_TOOLS = [
     title: 'HyperDeck Ingest',
     blurb: 'Record marked cues, then copy clips to an editor folder',
     meta: 'Portable · no Python on show PC',
-    href: '/ros-hyperdeck-ingest.zip',
+    href: getAppDownloadUrl('ros-hyperdeck-ingest.zip'),
     filename: 'ros-hyperdeck-ingest.zip',
     details: [
       'Integration token (same as vMix bridge)',

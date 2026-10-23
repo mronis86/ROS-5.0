@@ -52,6 +52,7 @@ public/ROS-OSC-Control-portable.zip
 public/ros-civics-vmix-bridge.zip
 public/ros-vmix-datasource-bridge.zip
 public/powerpoint-bridge.zip
+public/ros-hyperdeck-ingest.zip
 
 # IDE files
 .vscode/
