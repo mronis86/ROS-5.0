@@ -8,6 +8,7 @@ const DEFAULTS = {
   apiToken: '',
   eventId: '',
   bridgeMode: 'follow',
+  syncFolder: '',
 };
 
 function configPath() {
@@ -31,6 +32,7 @@ function saveConfig(partial) {
   if (next.bridgeMode != null) {
     next.bridgeMode = next.bridgeMode === 'playback' ? 'playback' : 'follow';
   }
+  if (next.syncFolder != null) next.syncFolder = String(next.syncFolder || '').trim();
   fs.mkdirSync(path.dirname(configPath()), { recursive: true });
   fs.writeFileSync(configPath(), JSON.stringify(next, null, 2), 'utf8');
   return next;

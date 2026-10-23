@@ -114,30 +114,87 @@ function Unblock-Deck($path) {
   try { Unblock-File -LiteralPath $path -ErrorAction SilentlyContinue } catch {}
 }
 
-function Open-Presentation($app, $path) {
-  Unblock-Deck $path
-  $existing = Find-Presentation $app $path
-  if ($existing) { return $existing }
+function Try-ProtectedView($app, $path) {
   try {
-    return $app.Presentations.Open($path, $false, $false, $true)
-  } catch {
-    try {
-      foreach ($pv in @($app.ProtectedViewWindows)) {
-        $source = ''
-        try { $source = [string]$pv.SourcePath } catch {}
-        try { if (-not $source) { $source = [string]$pv.Presentation.FullName } } catch {}
-        if ($source -and ((Normalize-Path $source) -eq (Normalize-Path $path))) {
+    foreach ($pv in @($app.ProtectedViewWindows)) {
+      $source = ''
+      try { $source = [string]$pv.SourcePath } catch {}
+      try { if (-not $source) { $source = [string]$pv.Presentation.FullName } } catch {}
+      if ($source -and ((Normalize-Path $source) -eq (Normalize-Path $path))) {
+        return $pv.Edit('')
+      }
+      try {
+        if (([string]$pv.Caption -replace ' \[Protected View\]$', '') -eq [IO.Path]::GetFileName($path)) {
           return $pv.Edit('')
         }
-        try {
-          if (([string]$pv.Caption -replace ' \[Protected View\]$', '') -eq [IO.Path]::GetFileName($path)) {
-            return $pv.Edit('')
-          }
-        } catch {}
-      }
+      } catch {}
+    }
+  } catch {}
+  return $null
+}
+
+function Close-OtherPresentations($app, $keepPath) {
+  $keep = Normalize-Path $keepPath
+  foreach ($p in @($app.Presentations)) {
+    try {
+      if ($keep -and ((Normalize-Path $p.FullName) -eq $keep)) { continue }
+      Close-Presentation $app $p
     } catch {}
-    throw
   }
+}
+
+function Copy-DeckForOpen($path) {
+  $ext = [IO.Path]::GetExtension($path)
+  if (-not $ext) { $ext = '.pptx' }
+  $dest = Join-Path $env:TEMP ("ros-ppt-open" + $ext)
+  try {
+    Copy-Item -LiteralPath $path -Destination $dest -Force
+    Unblock-Deck $dest
+    return $dest
+  } catch {
+    return $path
+  }
+}
+
+function Try-OpenPath($app, $path) {
+  $existing = Find-Presentation $app $path
+  if ($existing) { return $existing }
+  $fromPv = Try-ProtectedView $app $path
+  if ($fromPv) { return $fromPv }
+  try { return $app.Presentations.Open($path, $false, $false, $true) } catch {}
+  try { return $app.Presentations.Open($path) } catch {}
+  return $null
+}
+
+function Open-Presentation($app, $path) {
+  Unblock-Deck $path
+  Exit-Shows $app
+  Start-Sleep -Milliseconds 200
+  Close-OtherPresentations $app $path
+  Start-Sleep -Milliseconds 200
+
+  $opened = Try-OpenPath $app $path
+  if ($opened) { return $opened }
+
+  $simple = Copy-DeckForOpen $path
+  if ($simple -and ((Normalize-Path $simple) -ne (Normalize-Path $path))) {
+    $opened = Try-OpenPath $app $simple
+    if ($opened) { return $opened }
+  }
+
+  try {
+    Start-Process -FilePath $path | Out-Null
+    for ($i = 0; $i -lt 20; $i++) {
+      Start-Sleep -Milliseconds 250
+      $opened = Find-Presentation $app $path
+      if (-not $opened -and $simple) { $opened = Find-Presentation $app $simple }
+      if ($opened) { return $opened }
+      $fromPv = Try-ProtectedView $app $path
+      if ($fromPv) { return $fromPv }
+    }
+  } catch {}
+
+  throw [InvalidOperationException]::new("PowerPoint could not open the cached deck. Close the USCLC / other open presentation, then Follow loaded cue again.")
 }
 
 function Start-Show($pres) {
@@ -199,6 +256,7 @@ if ($Command -eq 'open' -or $Command -eq 'swap') {
     Write-Json @{ ok = $false; error = 'Cached deck file is missing. Click Sync cache, then Follow loaded cue.' }
     exit 0
   }
+  Exit-Shows $ppt
   if ($ClosePath -and ((Normalize-Path $ClosePath) -ne (Normalize-Path $FilePath))) {
     $old = Find-Presentation $ppt $ClosePath
     if ($old) { Close-Presentation $ppt $old }

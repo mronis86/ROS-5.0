@@ -7,7 +7,15 @@ const {
   reportPlaybackLive,
   httpFetch,
 } = require('./railway-client');
-const { cacheFileName, preferredAssetForItem, decidePlaybackAction } = require('./playback-logic');
+const {
+  preferredAssetForItem,
+  decidePlaybackAction,
+  syncFileName,
+  shouldReplaceLocalFile,
+} = require('./playback-logic');
+
+const MANIFEST_NAME = 'ros-ppt-sync.json';
+const SYNC_EVERY_MS = 15 * 1000;
 
 class PlaybackController {
   constructor({ onStatus, cacheRoot } = {}) {
@@ -24,8 +32,11 @@ class PlaybackController {
     this.currentFileId = null;
     this.currentItemId = null;
     this.lastLoadedItemId = null;
+    this.lastStartedItemId = null;
     this.lastCommandId = null;
     this.lastError = '';
+    this.lastSyncAt = 0;
+    this.manifest = { files: {} };
     this.status = this.blankStatus('Stopped');
   }
 
@@ -49,6 +60,7 @@ class PlaybackController {
       cacheOk: this.cacheRows.filter((r) => r.state === 'ok').length,
       cacheTotal: this.cacheRows.length,
       cacheRows: this.cacheRows,
+      syncFolder: this.config?.syncFolder || '',
     };
   }
 
@@ -70,12 +82,44 @@ class PlaybackController {
     this.onStatus(this.status);
   }
 
-  cacheDir(eventId, itemId) {
-    return path.join(this.cacheRoot, String(eventId), String(itemId));
+  syncDir() {
+    const root = String(this.config?.syncFolder || '').trim();
+    if (!root) {
+      const err = new Error('Pick a sync folder for ROS PPT Launcher.');
+      err.statusCode = 400;
+      throw err;
+    }
+    return path.join(root, String(this.config.eventId || 'event'));
   }
 
-  localPathFor(asset) {
-    return path.join(this.cacheDir(this.config.eventId, asset.itemId), cacheFileName(asset.fileId, asset.originalName));
+  manifestPath() {
+    return path.join(this.syncDir(), MANIFEST_NAME);
+  }
+
+  readManifest() {
+    try {
+      const raw = JSON.parse(fs.readFileSync(this.manifestPath(), 'utf8'));
+      this.manifest = raw && typeof raw === 'object' ? raw : { files: {} };
+      if (!this.manifest.files || typeof this.manifest.files !== 'object') this.manifest.files = {};
+    } catch {
+      this.manifest = { files: {} };
+    }
+    return this.manifest;
+  }
+
+  writeManifest() {
+    const dir = this.syncDir();
+    fs.mkdirSync(dir, { recursive: true });
+    this.manifest.eventId = this.config.eventId;
+    this.manifest.updatedAt = new Date().toISOString();
+    fs.writeFileSync(this.manifestPath(), JSON.stringify(this.manifest, null, 2), 'utf8');
+  }
+
+  localPathFor(asset, cueLabel) {
+    const itemKey = String(asset.itemId);
+    const recorded = this.manifest?.files?.[itemKey];
+    const fileName = recorded?.localName || syncFileName(asset, cueLabel);
+    return path.join(this.syncDir(), fileName);
   }
 
   start(config) {
@@ -84,6 +128,11 @@ class PlaybackController {
     if (!this.config.eventId) {
       this.lastError = 'Pick an event first.';
       this.emit({ error: this.lastError, message: 'No event' });
+      return;
+    }
+    if (!String(this.config.syncFolder || '').trim()) {
+      this.lastError = 'Pick a sync folder, then Sync decks.';
+      this.emit({ error: this.lastError, message: 'No sync folder' });
       return;
     }
     this.running = true;
@@ -114,7 +163,7 @@ class PlaybackController {
     }
     this.busy = true;
     try {
-      if (forceSync || !this.assets.length) {
+      if (forceSync || !this.assets.length || Date.now() - this.lastSyncAt > SYNC_EVERY_MS) {
         await this.syncCache();
       }
       const playback = await fetchPlaybackStatus(
@@ -125,8 +174,18 @@ class PlaybackController {
       const loadedItemId = playback?.session?.loadedItemId ?? playback?.session?.loadedCue?.itemId ?? null;
       const loadedCue = playback?.session?.loadedCue || null;
       const queued = playback?.session?.queuedCommand || null;
+      let livePath = null;
+      try {
+        const live = await ppt.getLive();
+        if (live && live.ok !== false) {
+          livePath = live.fullName || live.full_name || null;
+          this.applyLive(live);
+        }
+      } catch {
+        livePath = null;
+      }
 
-      await this.followLoadedCue(loadedItemId, loadedCue);
+      await this.followLoadedCue(loadedItemId, loadedCue, livePath);
 
       if (queued && queued.id && queued.id !== this.lastCommandId) {
         await this.runCommand(queued);
@@ -144,49 +203,69 @@ class PlaybackController {
   }
 
   async syncCache() {
-    const manifest = await fetchPlaybackManifest(
+    const remote = await fetchPlaybackManifest(
       this.config.apiBaseUrl,
       this.config.apiToken,
       this.config.eventId
     );
-    this.assets = Array.isArray(manifest?.assets) ? manifest.assets : [];
-    this.cuesWithPpt = Array.isArray(manifest?.cuesWithPpt)
-      ? manifest.cuesWithPpt.map((id) => Number(id)).filter((id) => Number.isFinite(id))
+    this.assets = Array.isArray(remote?.assets) ? remote.assets : [];
+    this.cuesWithPpt = Array.isArray(remote?.cuesWithPpt)
+      ? remote.cuesWithPpt.map((id) => Number(id)).filter((id) => Number.isFinite(id))
       : [];
-    const keep = new Set();
+    const dir = this.syncDir();
+    fs.mkdirSync(dir, { recursive: true });
+    this.readManifest();
+    const keep = new Set([this.manifestPath().toLowerCase()]);
+    const nextFiles = {};
     const rows = [];
+
     for (const asset of this.assets) {
       if (!asset.itemId || !asset.fileId) continue;
-      const dest = this.localPathFor(asset);
+      const itemKey = String(asset.itemId);
+      const localName = syncFileName(asset, `Cue ${asset.itemId}`);
+      const dest = path.join(dir, localName);
+      const previous = this.manifest.files[itemKey] || {};
+      const previousPath = previous.localName ? path.join(dir, previous.localName) : dest;
       keep.add(dest.toLowerCase());
-      fs.mkdirSync(path.dirname(dest), { recursive: true });
       let state = 'ok';
-      let detail = 'Cached';
-      const exists = fs.existsSync(dest);
-      const sizeOk =
-        exists &&
-        asset.sizeBytes != null &&
-        Number(asset.sizeBytes) > 0 &&
-        fs.statSync(dest).size === Number(asset.sizeBytes);
-      if (!exists || (asset.sizeBytes != null && !sizeOk)) {
+      let detail = 'Synced';
+      const replace = shouldReplaceLocalFile(
+        {
+          fileId: previous.fileId,
+          sizeBytes: previous.sizeBytes ?? (fs.existsSync(dest) ? fs.statSync(dest).size : null),
+          path: previousPath,
+        },
+        { fileId: asset.fileId, sizeBytes: asset.sizeBytes }
+      );
+      if (replace) {
         if (!asset.downloadUrl) {
           state = 'missing';
           detail = 'No download URL';
         } else {
           try {
+            if (previousPath && previousPath.toLowerCase() !== dest.toLowerCase() && fs.existsSync(previousPath)) {
+              try { fs.unlinkSync(previousPath); } catch { /* ignore */ }
+            }
             await this.downloadFile(asset.downloadUrl, dest);
-            state = exists ? 'replaced' : 'ok';
-            detail = exists ? 'Replaced' : 'Downloaded';
+            state = previous.fileId ? 'replaced' : 'ok';
+            detail = previous.fileId ? 'Replaced newer version' : 'Downloaded';
           } catch (err) {
             state = 'missing';
             detail = err.message || 'Download failed';
           }
         }
       }
+      nextFiles[itemKey] = {
+        fileId: asset.fileId,
+        sizeBytes: asset.sizeBytes ?? (fs.existsSync(dest) ? fs.statSync(dest).size : null),
+        localName,
+        originalName: asset.originalName,
+      };
       rows.push({
         fileId: asset.fileId,
         itemId: asset.itemId,
         name: asset.originalName,
+        localName,
         hasPPT: !!asset.hasPPT,
         preferred: !!asset.preferred,
         state,
@@ -195,12 +274,15 @@ class PlaybackController {
       });
     }
 
-    const eventRoot = path.join(this.cacheRoot, String(this.config.eventId));
-    this.pruneOrphans(eventRoot, keep);
+    this.manifest.files = nextFiles;
+    this.writeManifest();
+    this.pruneOrphans(dir, keep);
     this.cacheRows = rows;
+    this.lastSyncAt = Date.now();
     this.emit({
-      message: `Cache ${rows.filter((r) => r.state === 'ok' || r.state === 'replaced').length}/${rows.length}`,
-      lastAction: 'Synced cache',
+      message: `Synced ${rows.filter((r) => r.state === 'ok' || r.state === 'replaced').length}/${rows.length} decks`,
+      lastAction: 'Synced folder',
+      syncFolder: this.config.syncFolder,
     });
     return rows;
   }
@@ -246,20 +328,23 @@ class PlaybackController {
     }
   }
 
-  async followLoadedCue(loadedItemId, loadedCue = null) {
+  async followLoadedCue(loadedItemId, loadedCue = null, livePath = null) {
     const cueLabel = loadedCue?.cueLabel || (loadedItemId != null ? `Cue ${loadedItemId}` : '');
+    const timerState = loadedCue?.timerState || null;
     if (loadedItemId == null) {
       this.emit({ loadedCueLabel: '', message: 'No cue loaded' });
       return;
     }
     const asset = preferredAssetForItem(this.assets, loadedItemId);
-    const cachedPath = asset ? this.localPathFor(asset) : null;
+    const cachedPath = asset ? this.localPathFor(asset, cueLabel) : null;
     const cachedExists = cachedPath && fs.existsSync(cachedPath);
     const hasPPT = this.cuesWithPpt.includes(Number(loadedItemId)) || !!asset?.hasPPT;
     const decision = decidePlaybackAction({
       hasPPT,
       cachedPath: cachedExists ? cachedPath : null,
       currentPath: this.currentPath,
+      livePath,
+      timerState,
     });
 
     if (decision.action === 'idle') {
@@ -301,11 +386,46 @@ class PlaybackController {
     if (decision.action === 'keep') {
       this.lastLoadedItemId = loadedItemId;
       this.currentItemId = loadedItemId;
+      this.currentPath = decision.path || this.currentPath;
       this.emit({
         loadedCueLabel: cueLabel,
-        message: `${cueLabel} · same deck`,
-        lastAction: 'Kept deck',
+        message: `${cueLabel} · matching deck ready`,
+        lastAction: 'Matching deck',
       });
+      return;
+    }
+    if (decision.action === 'run') {
+      this.lastLoadedItemId = loadedItemId;
+      this.currentItemId = loadedItemId;
+      this.currentPath = decision.path || this.currentPath;
+      if (this.lastStartedItemId === loadedItemId && this.status.slideshowActive) {
+        this.emit({
+          loadedCueLabel: cueLabel,
+          message: `${cueLabel} · slideshow live`,
+          lastAction: 'Slideshow live',
+        });
+        return;
+      }
+      try {
+        const started = await ppt.startShow(this.currentPath);
+        if (started && started.ok !== false) this.applyLive(started);
+        this.lastStartedItemId = loadedItemId;
+        this.lastError = '';
+        this.emit({
+          loadedCueLabel: cueLabel,
+          message: `${cueLabel} · started slideshow`,
+          lastAction: 'Started slideshow',
+          error: '',
+        });
+      } catch (err) {
+        this.lastError = err.message || 'Could not start slideshow';
+        this.emit({
+          loadedCueLabel: cueLabel,
+          error: this.lastError,
+          message: `${cueLabel} · deck matched, slideshow failed`,
+          lastAction: 'Start failed',
+        });
+      }
       return;
     }
     if (decision.action === 'swap') {
@@ -338,15 +458,28 @@ class PlaybackController {
       this.lastLoadedItemId = loadedItemId;
       this.lastError = result.showWarning || '';
       const slideIndex = Number(result.slideIndex);
+      if (decision.startShow && !result.slideshowActive) {
+        try {
+          const started = await ppt.startShow(this.currentPath);
+          if (started && started.ok !== false) {
+            this.applyLive(started);
+            this.lastStartedItemId = loadedItemId;
+          }
+        } catch (err) {
+          this.lastError = err.message || result.showWarning || '';
+        }
+      } else if (result.slideshowActive && decision.startShow) {
+        this.lastStartedItemId = loadedItemId;
+      }
       this.emit({
         powerpoint: true,
-        slideshowActive: !!result.slideshowActive,
+        slideshowActive: !!result.slideshowActive || timerState === 'running',
         deckName: result.deckName || path.basename(decision.path),
         slideCount: result.slideCount || 0,
         currentIndex: Number.isFinite(slideIndex) && slideIndex > 0 ? slideIndex : 1,
         loadedCueLabel: cueLabel,
-        message: result.showWarning || `${cueLabel} · ${result.deckName || 'deck'} live`,
-        lastAction: decision.closePath ? 'Swapped deck' : 'Opened deck',
+        message: result.showWarning || `${cueLabel} · ${result.deckName || 'deck'} from sync folder`,
+        lastAction: decision.startShow ? 'Opened and ran cue deck' : 'Opened cue deck',
         error: this.lastError,
       });
     }
@@ -414,6 +547,7 @@ class PlaybackController {
   async syncNow(config) {
     if (config) this.config = { ...this.config, ...config };
     if (!this.config?.eventId) throw new Error('Pick an event first.');
+    if (!String(this.config.syncFolder || '').trim()) throw new Error('Pick a sync folder first.');
     return this.syncCache();
   }
 }

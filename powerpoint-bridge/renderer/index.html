@@ -15,7 +15,7 @@
       <div class="top-actions">
         <button type="button" id="btn-start" class="primary">Start follow</button>
         <button type="button" id="btn-stop">Stop</button>
-        <button type="button" id="btn-sync" class="secondary" hidden>Sync cache</button>
+        <button type="button" id="btn-sync" class="secondary" hidden>Sync decks</button>
         <button type="button" id="btn-capture" class="secondary">Capture stills</button>
         <button type="button" id="btn-save">Save</button>
       </div>
@@ -77,9 +77,16 @@
       </section>
 
       <section id="cache-card" class="card" hidden>
-        <h2>Cached decks</h2>
-        <p class="hint">Downloads .ppt / .pptx from the event asset bucket. Replaces a file when the upload id or size changes.</p>
-        <div id="cache-list" class="cache-list"><p class="hint">Sync cache before the show.</p></div>
+        <h2>Launcher sync folder</h2>
+        <p class="hint">Pick a folder. Sync downloads this event’s decks there. A newer upload replaces the file. Follow ROS cues opens and runs only the matching deck when that cue starts.</p>
+        <label>
+          Sync folder
+          <span class="row">
+            <input id="syncFolder" type="text" spellcheck="false" placeholder="Choose a folder for this event’s PowerPoint files" />
+            <button type="button" id="btn-pick-folder">Browse</button>
+          </span>
+        </label>
+        <div id="cache-list" class="cache-list"><p class="hint">Pick a folder, then Sync decks.</p></div>
       </section>
     </main>
     <div id="toast" hidden></div>

@@ -26,6 +26,8 @@ const els = {
   pptHint: document.getElementById('ppt-hint'),
   cacheCard: document.getElementById('cache-card'),
   cacheList: document.getElementById('cache-list'),
+  syncFolder: document.getElementById('syncFolder'),
+  btnPickFolder: document.getElementById('btn-pick-folder'),
   btnStart: document.getElementById('btn-start'),
   btnSync: document.getElementById('btn-sync'),
   btnCapture: document.getElementById('btn-capture'),
@@ -43,6 +45,7 @@ function formConfig() {
     apiToken: els.apiToken.value.trim(),
     eventId: els.eventSelect.value.trim(),
     bridgeMode,
+    syncFolder: els.syncFolder ? els.syncFolder.value.trim() : '',
   };
 }
 
@@ -53,18 +56,18 @@ function applyModeUi() {
     btn.classList.toggle('active', active);
     btn.setAttribute('aria-selected', active ? 'true' : 'false');
   });
-  if (els.btnStart) els.btnStart.textContent = playback ? 'Follow loaded cue' : 'Start follow';
+  if (els.btnStart) els.btnStart.textContent = playback ? 'Follow ROS cues' : 'Start follow';
   if (els.btnSync) els.btnSync.hidden = !playback;
   if (els.btnCapture) els.btnCapture.hidden = playback;
   if (els.cacheCard) els.cacheCard.hidden = !playback;
   if (els.modeHint) {
     els.modeHint.textContent = playback
-      ? 'ROS PPT Launcher: sync decks, then follow the loaded cue. Opens the new .pptx, then closes the previous one. Do not run both modes on this PC for the same event.'
+      ? 'ROS PPT Launcher: pick a sync folder, download the event decks, then follow ROS. When a PPT cue starts, only that deck opens and runs. Do not run both modes on this PC for the same event.'
       : 'PowerPoint Show with Timers: capture stills and fire cues when a slide is live. Do not run both modes on this PC for the same event.';
   }
   if (els.pptHint) {
     els.pptHint.textContent = playback
-      ? 'PowerPoint can be closed until follow starts. Sync cache before the show so version changes are already on disk.'
+      ? 'If another deck is already open, Follow ROS cues closes it and opens the matching synced file. Start the cue on Run of Show to run slideshow.'
       : 'Open the deck in PowerPoint on this PC, then capture stills. Start follow before Slideshow so live slides fire the mapped cues.';
   }
 }
@@ -79,7 +82,8 @@ function renderCache(rows) {
   els.cacheList.innerHTML = list
     .map((row) => {
       const flag = row.hasPPT ? 'PPT cue' : 'file only';
-      return `<div class="cache-row"><strong>${row.name || 'deck'}</strong><span>cue ${row.itemId} · ${flag}</span><span class="cache-${row.state || 'ok'}">${row.detail || row.state || ''}</span></div>`;
+      const file = row.localName || row.name || 'deck';
+      return `<div class="cache-row"><strong>${file}</strong><span>cue ${row.itemId} · ${flag}</span><span class="cache-${row.state || 'ok'}">${row.detail || row.state || ''}</span></div>`;
     })
     .join('');
 }
@@ -227,6 +231,7 @@ async function load() {
   els.apiBaseUrl.value = cfg.apiBaseUrl || '';
   els.apiToken.value = cfg.apiToken || '';
   bridgeMode = cfg.bridgeMode === 'playback' ? 'playback' : 'follow';
+  if (els.syncFolder) els.syncFolder.value = cfg.syncFolder || '';
   applyModeUi();
   if (cfg.eventId) {
     const opt = document.createElement('option');
@@ -282,10 +287,10 @@ if (els.btnSync) {
   els.btnSync.onclick = async () => {
     try {
       await api.saveConfig(formConfig());
-      els.stError.textContent = 'Syncing cache…';
+      els.stError.textContent = 'Syncing decks…';
       const rows = await api.syncPlayback(formConfig());
       renderCache(rows);
-      toast('Cache synced');
+      toast('Decks synced');
       els.stError.textContent = '';
     } catch (err) {
       els.stError.textContent = err.message || String(err);
@@ -304,11 +309,28 @@ document.getElementById('btn-capture').onclick = async () => {
   }
 };
 
+if (els.btnPickFolder) {
+  els.btnPickFolder.onclick = async () => {
+    const cfg = await api.pickSyncFolder();
+    if (els.syncFolder) els.syncFolder.value = cfg.syncFolder || '';
+    toast(cfg.syncFolder ? 'Sync folder saved' : 'No folder picked');
+  };
+}
+
 document.getElementById('btn-start').onclick = async () => {
   const cfg = formConfig();
   if (!cfg.eventId) {
     els.apiMsg.textContent = 'Pick an event first.';
     return;
+  }
+  if (cfg.bridgeMode === 'playback' && !cfg.syncFolder) {
+    const picked = await api.pickSyncFolder();
+    if (els.syncFolder) els.syncFolder.value = picked.syncFolder || '';
+    cfg.syncFolder = picked.syncFolder || '';
+    if (!cfg.syncFolder) {
+      els.stError.textContent = 'Pick a sync folder first.';
+      return;
+    }
   }
   await api.startBridge(cfg);
 };

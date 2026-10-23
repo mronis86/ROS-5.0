@@ -60,6 +60,13 @@ body {
   gap: 0.45rem;
 }
 
+.row input {
+  flex: 1;
+  width: auto;
+  min-width: 12rem;
+  margin-top: 0;
+}
+
 main {
   display: grid;
   gap: 1rem;

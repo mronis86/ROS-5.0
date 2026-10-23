@@ -45,7 +45,7 @@ function activeController(mode) {
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 860,
-    height: 860,
+    height: 920,
     title: 'ROS PowerPoint Bridge',
     autoHideMenuBar: true,
     backgroundColor: '#0f172a',
@@ -107,4 +107,14 @@ ipcMain.handle('bridge:status', () => {
 ipcMain.handle('playback:sync', async (_e, partial) => {
   const cfg = saveConfig(partial || {});
   return playback.syncNow(cfg);
+});
+ipcMain.handle('playback:pick-folder', async () => {
+  const current = loadConfig();
+  const picked = await dialog.showOpenDialog(mainWindow, {
+    title: 'ROS PPT Launcher sync folder',
+    defaultPath: current.syncFolder || app.getPath('documents'),
+    properties: ['openDirectory', 'createDirectory'],
+  });
+  if (picked.canceled || !picked.filePaths[0]) return current;
+  return saveConfig({ syncFolder: picked.filePaths[0] });
 });

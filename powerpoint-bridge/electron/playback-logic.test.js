@@ -2,6 +2,8 @@ const assert = require('assert');
 const {
   isPptAssetName,
   cacheFileName,
+  syncFileName,
+  shouldReplaceLocalFile,
   preferredAssetForItem,
   decidePlaybackAction,
 } = require('./playback-logic');
@@ -42,6 +44,34 @@ assert.strictEqual(
     currentPath: 'c:\\cache\\a.pptx',
   }).action,
   'keep'
+);
+assert.strictEqual(
+  decidePlaybackAction({
+    hasPPT: true,
+    cachedPath: 'C:\\sync\\cue7.pptx',
+    currentPath: 'C:\\sync\\cue7.pptx',
+    livePath: 'C:\\other\\USCLC.pptx',
+    timerState: 'running',
+  }).action,
+  'swap'
+);
+assert.strictEqual(
+  decidePlaybackAction({
+    hasPPT: true,
+    cachedPath: 'C:\\sync\\cue7.pptx',
+    livePath: 'C:\\sync\\cue7.pptx',
+    timerState: 'running',
+  }).action,
+  'run'
+);
+assert.ok(syncFileName({ itemId: 7, originalName: 'Map.pptx' }, 'CUE 7').startsWith('CUE 7 - Map'));
+assert.strictEqual(
+  shouldReplaceLocalFile({ fileId: 'old', sizeBytes: 10 }, { fileId: 'new', sizeBytes: 10 }),
+  true
+);
+assert.strictEqual(
+  shouldReplaceLocalFile({ fileId: 'a', sizeBytes: 10 }, { fileId: 'a', sizeBytes: 10 }),
+  false
 );
 
 console.log('playback-logic ok');

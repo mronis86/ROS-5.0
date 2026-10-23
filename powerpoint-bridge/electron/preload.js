@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('rosPptBridge', {
   stopBridge: () => ipcRenderer.invoke('bridge:stop'),
   getStatus: () => ipcRenderer.invoke('bridge:status'),
   syncPlayback: (partial) => ipcRenderer.invoke('playback:sync', partial),
+  pickSyncFolder: () => ipcRenderer.invoke('playback:pick-folder'),
   onStatus: (callback) => {
     const handler = (_event, payload) => callback(payload);
     ipcRenderer.on('bridge:status', handler);
