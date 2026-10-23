@@ -12,6 +12,7 @@ import {
   ROS_PROGRAM_TYPE_COLORS,
 } from '../lib/guestRosHelpers';
 import { programTypeSurfaceStyle } from '../lib/rosProgramTypeSplit';
+import { overtimeSignPrefix, useOvertimeSign, type OvertimeSignId } from '../lib/overtimeSign';
 import {
   SPEAKER_LOCATIONS,
   type SpeakerLocation,
@@ -260,14 +261,13 @@ function formatCountdown(totalSeconds: number): string {
 }
 
 /** Desktop-style timer text: MM:SS, or HH:MM:SS when hours are on the clock. */
-function formatLiveClock(seconds: number): string {
+function formatLiveClock(seconds: number, overtimeSign?: OvertimeSignId): string {
   if (!Number.isFinite(seconds)) return '00:00';
-  const isNegative = seconds < 0;
   const absSeconds = Math.abs(Math.floor(seconds));
   const h = Math.floor(absSeconds / 3600);
   const m = Math.floor((absSeconds % 3600) / 60);
   const s = absSeconds % 60;
-  const sign = isNegative ? '-' : '';
+  const sign = overtimeSignPrefix(seconds, overtimeSign);
   if (h === 0) {
     return `${sign}${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
   }
@@ -493,6 +493,7 @@ function mergeRunningSubFromRow(
 }
 
 const RunOfShowMobilePage: React.FC = () => {
+  const overtimeSign = useOvertimeSign();
   const navigate = useNavigate();
   const location = useLocation();
   const { user } = useAuth();
@@ -1587,8 +1588,8 @@ const RunOfShowMobilePage: React.FC = () => {
                     }`}
                   >
                     {effectivePrimaryLive.kind === 'running' && effectivePrimaryRemainingSec != null
-                      ? formatLiveClock(effectivePrimaryRemainingSec)
-                      : formatLiveClock(effectivePrimaryLive.total)}
+                      ? formatLiveClock(effectivePrimaryRemainingSec, overtimeSign)
+                      : formatLiveClock(effectivePrimaryLive.total, overtimeSign)}
                   </div>
                 </div>
               ) : null}
@@ -1597,7 +1598,7 @@ const RunOfShowMobilePage: React.FC = () => {
                   <div className="text-[10px] font-bold uppercase tracking-wide text-violet-200">Sub Cue</div>
                   <div className="truncate text-sm font-semibold text-white">{subLive.cueText}</div>
                   <div className={`mt-1 font-mono text-xl font-bold tabular-nums ${timerColorClass(subRemainingSec)}`}>
-                    {formatLiveClock(subRemainingSec)}
+                    {formatLiveClock(subRemainingSec, overtimeSign)}
                   </div>
                 </div>
               ) : null}

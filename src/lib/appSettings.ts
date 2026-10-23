@@ -19,11 +19,18 @@ import {
   type GreenRoomLayoutId,
   type LogoVariantId,
 } from './branding';
+import {
+  applyOvertimeSignId,
+  getOvertimeSignId,
+  parseOvertimeSignId,
+  type OvertimeSignId,
+} from './overtimeSign';
 
 export type AppSettingsResponse = {
   logoVariantId: LogoVariantId;
   greenRoomLayoutId: GreenRoomLayoutId;
   countdownColorModeId: CountdownColorModeId;
+  overtimeSignId: OvertimeSignId;
   hideFullscreenTimerOption: boolean;
   autoShotTypeFromSpeakers: boolean;
   showLiveSyncStatusBadge: boolean;
@@ -35,10 +42,12 @@ function parseSettings(data: Partial<AppSettingsResponse> & { error?: string }):
   const logoVariantId = data.logoVariantId === 'sinor' ? 'sinor' : 'default';
   const greenRoomLayoutId = parseGreenRoomLayoutId(data.greenRoomLayoutId) ?? 'classic';
   const countdownColorModeId = parseCountdownColorModeId(data.countdownColorModeId) ?? 'standard';
+  const overtimeSignId = parseOvertimeSignId(data.overtimeSignId) ?? 'minus';
   return {
     logoVariantId,
     greenRoomLayoutId,
     countdownColorModeId,
+    overtimeSignId,
     hideFullscreenTimerOption: data.hideFullscreenTimerOption === true,
     autoShotTypeFromSpeakers: data.autoShotTypeFromSpeakers === true,
     showLiveSyncStatusBadge: data.showLiveSyncStatusBadge === true,
@@ -51,6 +60,7 @@ function applySettings(settings: AppSettingsResponse): AppSettingsResponse {
   applyLogoVariantId(settings.logoVariantId);
   applyGreenRoomLayoutId(settings.greenRoomLayoutId);
   applyCountdownColorModeId(settings.countdownColorModeId);
+  applyOvertimeSignId(settings.overtimeSignId);
   applyHideFullscreenTimerOption(settings.hideFullscreenTimerOption);
   applyAutoShotTypeFromSpeakers(settings.autoShotTypeFromSpeakers);
   applyShowLiveSyncStatusBadge(settings.showLiveSyncStatusBadge);
@@ -129,6 +139,27 @@ export async function saveAdminCountdownColorMode(
   return applySettings(parseSettings(data));
 }
 
+export async function saveAdminOvertimeSign(
+  overtimeSignId: OvertimeSignId
+): Promise<AppSettingsResponse> {
+  const res = await adminFetch('/api/admin/app-settings', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ overtimeSignId }),
+  });
+  const data = (await res.json().catch(() => ({}))) as Partial<AppSettingsResponse> & {
+    error?: string;
+  };
+  if (!res.ok) {
+    throw new Error(data.error || `Failed to save overtime sign (${res.status})`);
+  }
+  const parsed = parseSettings(data);
+  if (!parseOvertimeSignId(data.overtimeSignId)) {
+    parsed.overtimeSignId = overtimeSignId;
+  }
+  return applySettings(parsed);
+}
+
 export async function saveAdminHideFullscreenTimerOption(
   hideFullscreenTimerOption: boolean
 ): Promise<AppSettingsResponse> {
@@ -204,6 +235,7 @@ export async function hydrateLogoVariantFromServer(): Promise<LogoVariantId> {
       } catch {
         applyGreenRoomLayoutId(getGreenRoomLayoutId());
         applyCountdownColorModeId(getCountdownColorModeId());
+        applyOvertimeSignId(getOvertimeSignId());
         applyHideFullscreenTimerOption(getHideFullscreenTimerOption());
         applyAutoShotTypeFromSpeakers(getAutoShotTypeFromSpeakers());
         applyShowLiveSyncStatusBadge(getShowLiveSyncStatusBadge());

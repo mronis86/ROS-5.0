@@ -8,6 +8,7 @@ import { NeonBackupService, BackupData, AutoBackupLease } from '../services/neon
 import { getBackupPreviewStats } from '../lib/backupPreview';
 import { apiJsonHeaders } from '../lib/sessionAuth';
 import { getCountdownPrimaryHex, useCountdownColorMode, RAINBOW_COUNTDOWN_GRADIENT } from '../lib/countdownColor';
+import { overtimeSignPrefix, useOvertimeSign } from '../lib/overtimeSign';
 import {
   findTopPreshowCue,
   isPreshowArmedForKey,
@@ -511,6 +512,7 @@ const RunOfShowPage: React.FC = () => {
   let event: Event = location.state?.event;
   let userRole: string = location.state?.userRole;
   const countdownColorMode = useCountdownColorMode();
+  const overtimeSign = useOvertimeSign();
   
   // Authentication state
   const { user, loading: authLoading } = useAuth();
@@ -7135,12 +7137,11 @@ const RunOfShowPage: React.FC = () => {
       return '00:00';
     }
     
-    const isNegative = seconds < 0;
     const absSeconds = Math.abs(seconds);
     const hours = Math.floor(absSeconds / 3600);
     const minutes = Math.floor((absSeconds % 3600) / 60);
     const secs = Math.floor(absSeconds % 60);
-    const sign = isNegative ? '-' : '';
+    const sign = overtimeSignPrefix(seconds, overtimeSign);
     if (hours === 0) {
       return `${sign}${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
     }
@@ -7155,12 +7156,11 @@ const RunOfShowPage: React.FC = () => {
       return '00:00';
     }
     
-    const isNegative = seconds < 0;
     const absSeconds = Math.abs(seconds);
     const hours = Math.floor(absSeconds / 3600);
     const minutes = Math.floor((absSeconds % 3600) / 60);
     const secs = Math.floor(absSeconds % 60);
-    const sign = isNegative ? '-' : '';
+    const sign = overtimeSignPrefix(seconds, overtimeSign);
     
     // If hours are 0, show MM:SS format
     if (hours === 0) {

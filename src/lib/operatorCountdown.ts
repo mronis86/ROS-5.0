@@ -1,3 +1,5 @@
+import { overtimeSignPrefix } from './overtimeSign';
+
 /** Programmable operator countdown — display shape aligned with sub-cue timers. */
 
 export type OperatorCountdownRow = {
@@ -181,7 +183,7 @@ export function formatOperatorCountdownTime(remainingSeconds: number): string {
   const hours = Math.floor(abs / 3600);
   const minutes = Math.floor((abs % 3600) / 60);
   const seconds = Math.floor(abs % 60);
-  const prefix = remainingSeconds < 0 ? '-' : '';
+  const prefix = overtimeSignPrefix(remainingSeconds);
   if (hours === 0) {
     return `${prefix}${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
   }

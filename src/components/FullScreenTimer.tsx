@@ -6,6 +6,7 @@ import {
   countdownColorForRemaining,
   useCountdownColorMode,
 } from '../lib/countdownColor';
+import { overtimeSignPrefix, useOvertimeSign } from '../lib/overtimeSign';
 import { isPreshowTimerMessage, findTopPreshowCue } from '../lib/preshowCountdown';
 import { shouldUsePreshowRainbow } from '../lib/usePreshowRainbow';
 import { AltTimerBadge } from './AltTimerBadge';
@@ -87,6 +88,7 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
   const [localTimerInterval, setLocalTimerInterval] = useState<NodeJS.Timeout | null>(null);
   const [serverSyncedTimers, setServerSyncedTimers] = useState<Set<number>>(new Set());
   const countdownColorMode = useCountdownColorMode();
+  const overtimeSign = useOvertimeSign();
   const stageMessageForColor =
     [hybridTimerData?.timerMessage, supabaseMessage].find((m: any) => m?.enabled) ?? null;
   const timerRunningForRainbow = !!(
@@ -210,7 +212,7 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
     const hours = Math.floor(abs / 3600);
     const minutes = Math.floor((abs % 3600) / 60);
     const seconds = abs % 60;
-    const prefix = remaining < 0 ? '-' : '';
+    const prefix = overtimeSignPrefix(remaining, overtimeSign);
     if (hours === 0) {
       return `${prefix}${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
     }
@@ -613,12 +615,11 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
 
   // Helper function to format time (same as RunOfShowPage) - handles negative values
   const formatTime = (seconds: number) => {
-    const isNegative = seconds < 0;
     const absSeconds = Math.abs(seconds);
     const hours = Math.floor(absSeconds / 3600);
     const minutes = Math.floor((absSeconds % 3600) / 60);
     const secs = Math.floor(absSeconds % 60);
-    const sign = isNegative ? '-' : '';
+    const sign = overtimeSignPrefix(seconds, overtimeSign);
     if (hours === 0) {
       return `${sign}${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
     }

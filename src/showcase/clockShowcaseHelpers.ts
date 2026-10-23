@@ -1,14 +1,14 @@
 import { countdownColorForRemaining } from '../lib/countdownColor';
+import { overtimeSignPrefix } from '../lib/overtimeSign';
 
 /** Clock page helpers — mirrors production Clock.tsx color/time logic. */
 
 export function formatClockTime(seconds: number): string {
-  const isNegative = seconds < 0;
   const absSeconds = Math.abs(seconds);
   const hours = Math.floor(absSeconds / 3600);
   const minutes = Math.floor((absSeconds % 3600) / 60);
   const secs = Math.floor(absSeconds % 60);
-  const sign = isNegative ? '-' : '';
+  const sign = overtimeSignPrefix(seconds);
   if (hours === 0) {
     return `${sign}${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   }

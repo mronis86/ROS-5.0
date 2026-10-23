@@ -9,6 +9,7 @@ import {
   LOGO_VARIANT_CHANGE_EVENT,
   type GreenRoomLayoutId,
 } from '../lib/branding';
+import { overtimeSignPrefix, useOvertimeSign } from '../lib/overtimeSign';
 // import { driftDetector } from '../services/driftDetector'; // REMOVED: Using WebSocket-only approach
 import { socketClient } from '../services/socket-client';
 import { apiClient, getApiBaseUrl } from '../services/api-client';
@@ -127,6 +128,7 @@ const GreenRoomPage: React.FC = () => {
     numberOfDays: 1
   };
   const [schedule, setSchedule] = useState<ScheduleItem[]>([]);
+  const overtimeSign = useOvertimeSign();
   const [currentTime, setCurrentTime] = useState(new Date());
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1746,12 +1748,11 @@ const GreenRoomPage: React.FC = () => {
 
   // Helper function to format time (same as RunOfShowPage) - handles negative values
   const formatTime = (seconds: number) => {
-    const isNegative = seconds < 0;
     const absSeconds = Math.abs(seconds);
     const hours = Math.floor(absSeconds / 3600);
     const minutes = Math.floor((absSeconds % 3600) / 60);
     const secs = Math.floor(absSeconds % 60);
-    const sign = isNegative ? '-' : '';
+    const sign = overtimeSignPrefix(seconds, overtimeSign);
     if (hours === 0) {
       return `${sign}${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
     }

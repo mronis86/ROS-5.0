@@ -24,6 +24,7 @@ import { useEventDisplaySyncGate } from '../hooks/useEventDisplaySyncGate';
 import DisplaySyncPausedBanner from '../components/DisplaySyncPausedBanner';
 import { speakersForSlots } from '../lib/micManager';
 import { getCountdownPrimaryHex, useCountdownColorMode, RAINBOW_COUNTDOWN_GRADIENT } from '../lib/countdownColor';
+import { overtimeSignPrefix, useOvertimeSign } from '../lib/overtimeSign';
 import { usePreshowRainbow } from '../lib/usePreshowRainbow';
 import { findTopPreshowCue } from '../lib/preshowCountdown';
 import { formatShowDelayBanner } from '../lib/showDelay';
@@ -94,6 +95,7 @@ const PhotoViewPage: React.FC = () => {
   const [events, setEvents] = useState<Event[]>([]);
   const [eventsLoading, setEventsLoading] = useState(true);
   const countdownColorMode = useCountdownColorMode();
+  const overtimeSign = useOvertimeSign();
 
   // Sync event from URL/location when navigating externally (e.g. from Run of Show link)
   useEffect(() => {
@@ -996,12 +998,11 @@ const PhotoViewPage: React.FC = () => {
       return '00:00';
     }
     
-    const isNegative = seconds < 0;
     const absSeconds = Math.abs(seconds);
     const hours = Math.floor(absSeconds / 3600);
     const minutes = Math.floor((absSeconds % 3600) / 60);
     const secs = Math.floor(absSeconds % 60);
-    const sign = isNegative ? '-' : '';
+    const sign = overtimeSignPrefix(seconds, overtimeSign);
     if (hours === 0) {
       return `${sign}${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
     }
@@ -1217,13 +1218,12 @@ const PhotoViewPage: React.FC = () => {
       return '00:00';
     }
     
-    const isNegative = seconds < 0;
     const absSeconds = Math.abs(seconds);
     const hours = Math.floor(absSeconds / 3600);
     const minutes = Math.floor((absSeconds % 3600) / 60);
     const secs = absSeconds % 60;
     
-    const sign = isNegative ? '-' : '';
+    const sign = overtimeSignPrefix(seconds, overtimeSign);
     if (hours === 0) {
       return `${sign}${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
     }

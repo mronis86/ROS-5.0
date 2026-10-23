@@ -1,5 +1,6 @@
 import React from 'react';
 import { formatLedCountdown } from '../../lib/ledClock';
+import { useOvertimeSign } from '../../lib/overtimeSign';
 import type { LedTimerSnapshot } from '../../hooks/useLedOutputTimer';
 import type { LedOutputClock } from '../../types/ledClock';
 
@@ -11,6 +12,7 @@ type LedClockOverlayProps = {
 };
 
 const LedClockOverlay: React.FC<LedClockOverlayProps> = ({ clock, timer, preview = false }) => {
+  useOvertimeSign();
   const remaining =
     timer?.remainingSeconds ?? (preview ? 14 * 60 + 32 : null);
 

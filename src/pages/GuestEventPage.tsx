@@ -15,6 +15,7 @@ import GuestSpeakersModal from '../components/guest/GuestSpeakersModal';
 import AppLogo from '../components/AppLogo';
 import AppBrandTitle from '../components/AppBrandTitle';
 import { shouldUsePreshowRainbow } from '../lib/usePreshowRainbow';
+import { overtimeSignPrefix, useOvertimeSign } from '../lib/overtimeSign';
 import { findTopPreshowCue } from '../lib/preshowCountdown';
 import {
   GUEST_COLUMN_FILTER_STORAGE_KEY,
@@ -59,6 +60,7 @@ function formatClock(totalSeconds: number): string {
 type SpeakerPanel = 'photos' | 'info';
 
 const GuestEventPage: React.FC = () => {
+  const overtimeSign = useOvertimeSign();
   const [searchParams] = useSearchParams();
   const token = (searchParams.get('token') || '').trim();
 
@@ -390,9 +392,7 @@ const GuestEventPage: React.FC = () => {
                       }`}
                     >
                       {remaining != null
-                        ? remaining < 0
-                          ? `+${formatClock(Math.abs(remaining))}`
-                          : formatClock(remaining)
+                        ? `${overtimeSignPrefix(remaining, overtimeSign)}${formatClock(Math.abs(remaining))}`
                         : formatClock(elapsedSeconds)}
                     </p>
                   ) : (

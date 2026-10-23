@@ -12,6 +12,7 @@ import {
   saveOperatorTimerPresets,
 } from '../lib/operatorCountdown';
 import { startSecondTicker } from '../utils/secondTicker';
+import { useOvertimeSign } from '../lib/overtimeSign';
 
 export type OperatorCountdownModalProps = {
   isOpen: boolean;
@@ -45,6 +46,7 @@ const OperatorCountdownModal: React.FC<OperatorCountdownModalProps> = ({
   variant = 'modal',
   onPopOut,
 }) => {
+  useOvertimeSign();
   const [presets, setPresets] = useState<OperatorTimerPreset[]>([]);
   const [customLabel, setCustomLabel] = useState('Custom');
   const [customMinutes, setCustomMinutes] = useState(5);

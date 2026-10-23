@@ -28,10 +28,17 @@ import {
   type CountdownColorModeId,
 } from '../lib/branding';
 import {
+  OVERTIME_SIGN_OPTIONS,
+  applyOvertimeSignId,
+  getOvertimeSignId,
+  type OvertimeSignId,
+} from '../lib/overtimeSign';
+import {
   fetchAdminAppSettings,
   saveAdminLogoVariant,
   saveAdminGreenRoomLayout,
   saveAdminCountdownColorMode,
+  saveAdminOvertimeSign,
   saveAdminHideFullscreenTimerOption,
   saveAdminAutoShotTypeFromSpeakers,
   saveAdminShowLiveSyncStatusBadge,
@@ -520,6 +527,7 @@ export default function AdminPage() {
   const [countdownColorModeId, setCountdownColorModeIdState] = useState<CountdownColorModeId>(() =>
     getCountdownColorModeId()
   );
+  const [overtimeSignId, setOvertimeSignIdState] = useState<OvertimeSignId>(() => getOvertimeSignId());
   const [hideFullscreenTimerOption, setHideFullscreenTimerOptionState] = useState(
     () => getHideFullscreenTimerOption()
   );
@@ -779,6 +787,7 @@ export default function AdminPage() {
     logoVariantId: LogoVariantId;
     greenRoomLayoutId: GreenRoomLayoutId;
     countdownColorModeId: CountdownColorModeId;
+    overtimeSignId: OvertimeSignId;
     hideFullscreenTimerOption: boolean;
     autoShotTypeFromSpeakers: boolean;
     showLiveSyncStatusBadge: boolean;
@@ -788,12 +797,14 @@ export default function AdminPage() {
     applyLogoVariantId(settings.logoVariantId);
     applyGreenRoomLayoutId(settings.greenRoomLayoutId);
     applyCountdownColorModeId(settings.countdownColorModeId);
+    applyOvertimeSignId(settings.overtimeSignId || 'minus');
     applyHideFullscreenTimerOption(settings.hideFullscreenTimerOption);
     applyAutoShotTypeFromSpeakers(settings.autoShotTypeFromSpeakers);
     applyShowLiveSyncStatusBadge(settings.showLiveSyncStatusBadge);
     setLogoVariantIdState(settings.logoVariantId);
     setGreenRoomLayoutIdState(settings.greenRoomLayoutId);
     setCountdownColorModeIdState(settings.countdownColorModeId);
+    setOvertimeSignIdState(settings.overtimeSignId || 'minus');
     setHideFullscreenTimerOptionState(settings.hideFullscreenTimerOption);
     setAutoShotTypeFromSpeakersState(settings.autoShotTypeFromSpeakers);
     setShowLiveSyncStatusBadgeState(settings.showLiveSyncStatusBadge);
@@ -857,6 +868,23 @@ export default function AdminPage() {
       setLogoSettingsNeedsMigration(false);
     } catch (err) {
       setLogoSettingsError(err instanceof Error ? err.message : 'Failed to save countdown color');
+    } finally {
+      setLogoSettingsSaving(false);
+    }
+  };
+
+  const handleOvertimeSignChange = async (id: OvertimeSignId) => {
+    if (logoSettingsSaving || logoSettingsNeedsMigration) return;
+    applyOvertimeSignId(id);
+    setOvertimeSignIdState(id);
+    setLogoSettingsSaving(true);
+    setLogoSettingsError(null);
+    try {
+      const settings = await saveAdminOvertimeSign(id);
+      applyAllLogoSettings({ ...settings, overtimeSignId: settings.overtimeSignId || id, needsMigration: false });
+      setLogoSettingsNeedsMigration(false);
+    } catch (err) {
+      setLogoSettingsError(err instanceof Error ? err.message : 'Failed to save overtime sign');
     } finally {
       setLogoSettingsSaving(false);
     }
@@ -4347,6 +4375,50 @@ export default function AdminPage() {
                         style={{ color: mode.previewHex }}
                       >
                         12:34
+                      </span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="mt-8 pt-6 border-t border-slate-700">
+            <h3 className="text-base font-semibold text-white">Overtime clock sign</h3>
+            <p className="text-slate-400 text-sm mt-1 mb-4">
+              How every clock shows time past zero — Clock, Fullscreen Timer, Run of Show, Director View,
+              Show Control, Photo View, and LED. Pick minus or plus; all pages use the same sign.
+            </p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {OVERTIME_SIGN_OPTIONS.map((option) => {
+                const selected = overtimeSignId === option.id;
+                return (
+                  <button
+                    key={option.id}
+                    type="button"
+                    onClick={() => void handleOvertimeSignChange(option.id)}
+                    disabled={logoSettingsSaving || logoSettingsLoading || logoSettingsNeedsMigration}
+                    className={`rounded-xl border p-4 text-left transition-colors disabled:opacity-60 ${
+                      selected
+                        ? 'border-blue-500 bg-blue-950/30 ring-1 ring-blue-500/40'
+                        : 'border-slate-700 bg-slate-900/40 hover:border-slate-500'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="font-semibold text-white">{option.label}</p>
+                        <p className="mt-1 text-sm text-slate-400">{option.description}</p>
+                      </div>
+                      <span
+                        className={`mt-0.5 h-4 w-4 shrink-0 rounded-full border ${
+                          selected ? 'border-blue-400 bg-blue-500' : 'border-slate-500'
+                        }`}
+                        aria-hidden
+                      />
+                    </div>
+                    <div className="mt-4 flex min-h-[48px] items-center justify-center rounded-lg bg-black px-3 py-2">
+                      <span className="font-mono text-2xl font-bold tabular-nums tracking-tight text-red-400">
+                        {option.preview}
                       </span>
                     </div>
                   </button>

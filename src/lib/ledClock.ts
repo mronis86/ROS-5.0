@@ -1,4 +1,5 @@
 import type { LedOutputClock } from '../types/ledClock';
+import { overtimeSignPrefix } from './overtimeSign';
 
 export const DEFAULT_LED_OUTPUT_CLOCK: LedOutputClock = {
   enabled: false,
@@ -104,12 +105,11 @@ function normalizeWeight(value: unknown): LedOutputClock['fontWeight'] {
 
 /** Countdown display — matches Run of Show / Clock (allows negative overtime). */
 export function formatLedCountdown(seconds: number): string {
-  const isNegative = seconds < 0;
   const absSeconds = Math.abs(seconds);
   const hours = Math.floor(absSeconds / 3600);
   const minutes = Math.floor((absSeconds % 3600) / 60);
   const secs = Math.floor(absSeconds % 60);
-  const sign = isNegative ? '-' : '';
+  const sign = overtimeSignPrefix(seconds);
   if (hours === 0) {
     return `${sign}${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   }

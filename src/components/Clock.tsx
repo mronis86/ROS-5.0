@@ -7,6 +7,7 @@ import {
   countdownColorForRemaining,
   useCountdownColorMode,
 } from '../lib/countdownColor';
+import { overtimeSignPrefix, useOvertimeSign } from '../lib/overtimeSign';
 import { findTopPreshowCue, isPreshowTimerMessage } from '../lib/preshowCountdown';
 import { shouldUsePreshowRainbow } from '../lib/usePreshowRainbow';
 import { AltTimerBadge } from './AltTimerBadge';
@@ -85,6 +86,7 @@ const Clock: React.FC<ClockProps> = ({
   const [lastActiveStartTime, setLastActiveStartTime] = useState<string | null>(null);
   const [clockOffset, setClockOffset] = useState<number>(0); // Offset between client and server clocks in ms
   const countdownColorMode = useCountdownColorMode();
+  const overtimeSign = useOvertimeSign();
   const stageMessageForColor =
     [hybridTimerData?.timerMessage, supabaseMessage].find((m: any) => m?.enabled) ?? null;
   const activeTimerItemId =
@@ -882,12 +884,11 @@ const Clock: React.FC<ClockProps> = ({
 
   // Helper function to format time (same as RunOfShowPage) - handles negative values
   const formatTime = (seconds: number) => {
-    const isNegative = seconds < 0;
     const absSeconds = Math.abs(seconds);
     const hours = Math.floor(absSeconds / 3600);
     const minutes = Math.floor((absSeconds % 3600) / 60);
     const secs = Math.floor(absSeconds % 60);
-    const sign = isNegative ? '-' : '';
+    const sign = overtimeSignPrefix(seconds, overtimeSign);
     if (hours === 0) {
       return `${sign}${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
     }
@@ -1418,7 +1419,7 @@ const Clock: React.FC<ClockProps> = ({
             const hours = Math.floor(absRemaining / 3600);
             const minutes = Math.floor((absRemaining % 3600) / 60);
             const seconds = absRemaining % 60;
-            const prefix = remaining < 0 ? '-' : '';
+            const prefix = overtimeSignPrefix(remaining, overtimeSign);
             if (hours === 0) {
               return `${prefix}${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
             }
@@ -1541,7 +1542,7 @@ const Clock: React.FC<ClockProps> = ({
               const hours = Math.floor(absRemaining / 3600);
               const minutes = Math.floor((absRemaining % 3600) / 60);
               const seconds = absRemaining % 60;
-              const prefix = remaining < 0 ? '-' : '';
+              const prefix = overtimeSignPrefix(remaining, overtimeSign);
               
               if (hours > 0) {
                 return `${prefix}${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;

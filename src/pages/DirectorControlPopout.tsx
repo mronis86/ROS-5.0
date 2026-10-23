@@ -7,6 +7,7 @@ import { socketClient } from '../services/socket-client';
 import { formatCueDisplay, ROS_PROGRAM_TYPE_COLORS } from '../lib/guestRosHelpers';
 import { programTypeSurfaceStyle } from '../lib/rosProgramTypeSplit';
 import { isIndentedScheduleItem } from '../lib/scheduleStartTime';
+import { overtimeSignPrefix, useOvertimeSign, type OvertimeSignId } from '../lib/overtimeSign';
 
 type Row = {
   id: number;
@@ -40,10 +41,10 @@ function formatDuration(total: number): string {
   return `${m}:${String(r).padStart(2, '0')}`;
 }
 
-function formatRemaining(total: number, elapsed: number): string {
+function formatRemaining(total: number, elapsed: number, overtimeSign?: OvertimeSignId): string {
   const left = total - elapsed;
   const body = formatDuration(Math.abs(left));
-  return left < 0 ? `+${body}` : body;
+  return `${overtimeSignPrefix(left, overtimeSign)}${body}`;
 }
 
 function cueOf(item: Row): string {
@@ -107,6 +108,7 @@ function ProgramBadge({ type }: { type?: string }) {
 }
 
 const DirectorControlPopout: React.FC = () => {
+  const overtimeSign = useOvertimeSign();
   const location = useLocation();
   const { user } = useAuth();
   const params = new URLSearchParams(location.search);
@@ -283,8 +285,8 @@ const DirectorControlPopout: React.FC = () => {
     const startMs = new Date(timer.started_at).getTime();
     if (!Number.isFinite(startMs)) return { label: formatDuration(total), overtime: false };
     const elapsed = Math.floor((Date.now() + clockOffset - startMs) / 1000);
-    return { label: formatRemaining(total, elapsed), overtime: total - elapsed < 0 };
-  }, [current, timer, clockOffset, tick]);
+    return { label: formatRemaining(total, elapsed, overtimeSign), overtime: total - elapsed < 0 };
+  }, [current, timer, clockOffset, tick, overtimeSign]);
 
   const go = useCallback(async () => {
     if (!eventId || !user?.id || !next || going.current) return;

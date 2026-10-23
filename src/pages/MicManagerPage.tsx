@@ -15,6 +15,7 @@ import {
   formatSpeakerLocation,
 } from '../showcase/photoShowcaseHelpers';
 import { countdownColorForRemaining } from '../lib/countdownColor';
+import { overtimeSignPrefix, useOvertimeSign } from '../lib/overtimeSign';
 import { usePreshowRainbow } from '../lib/usePreshowRainbow';
 import { findTopPreshowCue } from '../lib/preshowCountdown';
 import { programTypeSurfaceStyle } from '../lib/rosProgramTypeSplit';
@@ -142,15 +143,15 @@ function formatCueDisplay(cue: unknown): string {
 
 function formatTime(seconds: number): string {
   if (!Number.isFinite(seconds)) return '00:00';
-  const isNegative = seconds < 0;
   const abs = Math.abs(Math.floor(seconds));
   const h = Math.floor(abs / 3600);
   const m = Math.floor((abs % 3600) / 60);
   const s = abs % 60;
+  const sign = overtimeSignPrefix(seconds);
   if (h === 0) {
-    return `${isNegative ? '-' : ''}${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+    return `${sign}${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
   }
-  return `${isNegative ? '-' : ''}${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  return `${sign}${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
 function countdownColor(remaining: number, hasTimer: boolean): string {
@@ -164,6 +165,7 @@ function progressColor(remaining: number): string {
 }
 
 const MicManagerPage: React.FC = () => {
+  useOvertimeSign();
   const location = useLocation();
   const navigate = useNavigate();
   const q = new URLSearchParams(location.search);

@@ -15,6 +15,7 @@ import { EventSelectorDropdown } from '../components/EventSelectorDropdown';
 import { useEventDisplaySyncGate } from '../hooks/useEventDisplaySyncGate';
 import DisplaySyncPausedBanner from '../components/DisplaySyncPausedBanner';
 import { countdownColorForRemaining } from '../lib/countdownColor';
+import { overtimeSignPrefix, useOvertimeSign } from '../lib/overtimeSign';
 import { usePreshowRainbow } from '../lib/usePreshowRainbow';
 import { findTopPreshowCue } from '../lib/preshowCountdown';
 import {
@@ -193,15 +194,15 @@ const durLabel = (item: ScheduleItem) => {
 
 const clock = (sec: number) => {
   if (!Number.isFinite(sec)) return '00:00';
-  const n = sec < 0;
   const a = Math.abs(Math.floor(sec));
   const h = Math.floor(a / 3600);
   const m = Math.floor((a % 3600) / 60);
   const s = a % 60;
+  const sign = overtimeSignPrefix(sec);
   if (h === 0) {
-    return `${n ? '-' : ''}${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+    return `${sign}${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
   }
-  return `${n ? '-' : ''}${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  return `${sign}${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 };
 
 const otLabel = (mins: number) => {
@@ -289,6 +290,7 @@ const progressColor = (remaining: number) => {
 };
 
 const OperatorCueDisplayPage: React.FC = () => {
+  useOvertimeSign();
   const { search } = useLocation();
   const navigate = useNavigate();
   const q = new URLSearchParams(search);

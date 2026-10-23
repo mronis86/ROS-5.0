@@ -33,6 +33,7 @@ import {
 import { moveColumnInOrder, parseCustomColumnOrderKey } from '../lib/rosColumnOrder';
 import { isIndentedScheduleItem } from '../lib/scheduleStartTime';
 import { countdownColorForRemaining } from '../lib/countdownColor';
+import { overtimeSignPrefix, useOvertimeSign, type OvertimeSignId } from '../lib/overtimeSign';
 import { findTopPreshowCue } from '../lib/preshowCountdown';
 import { shouldUsePreshowRainbow } from '../lib/usePreshowRainbow';
 import {
@@ -134,8 +135,7 @@ function formatClock(totalSeconds: number): string {
   return `${m}:${String(r).padStart(2, '0')}`;
 }
 
-function formatHms(totalSeconds: number): string {
-  const neg = totalSeconds < 0;
+function formatHms(totalSeconds: number, overtimeSign?: OvertimeSignId): string {
   const s = Math.floor(Math.abs(totalSeconds));
   const h = Math.floor(s / 3600);
   const m = Math.floor((s % 3600) / 60);
@@ -144,7 +144,7 @@ function formatHms(totalSeconds: number): string {
     h > 0
       ? `${h}:${String(m).padStart(2, '0')}:${String(r).padStart(2, '0')}`
       : `${m}:${String(r).padStart(2, '0')}`;
-  return neg ? `+${body}` : body;
+  return `${overtimeSignPrefix(totalSeconds, overtimeSign)}${body}`;
 }
 
 function clampZoom(value: number): number {
@@ -330,6 +330,7 @@ function cueLabel(item: RosRow | GuestScheduleItem | null | undefined): string {
 }
 
 const DirectorViewPage: React.FC = () => {
+  const overtimeSign = useOvertimeSign();
   const { user } = useAuth();
   const location = useLocation();
   const params = new URLSearchParams(location.search);
@@ -1503,7 +1504,7 @@ const DirectorViewPage: React.FC = () => {
 
   const timerDisplay = hasTimer
     ? remainingSeconds < 0
-      ? formatHms(remainingSeconds)
+      ? formatHms(remainingSeconds, overtimeSign)
       : formatClock(remainingSeconds)
     : '—:—';
   const timerColor = hasTimer

@@ -18,6 +18,7 @@ import {
   type CateringNoteCategory,
 } from '../lib/cateringNotes';
 import { countdownColorForRemaining } from '../lib/countdownColor';
+import { overtimeSignPrefix, useOvertimeSign } from '../lib/overtimeSign';
 import { usePreshowRainbow } from '../lib/usePreshowRainbow';
 import { findTopPreshowCue } from '../lib/preshowCountdown';
 import { programTypeSurfaceStyle } from '../lib/rosProgramTypeSplit';
@@ -84,15 +85,15 @@ function formatCue(item: ScheduleItem): string {
 
 function formatTime(seconds: number): string {
   if (!Number.isFinite(seconds)) return '00:00';
-  const isNegative = seconds < 0;
   const abs = Math.abs(Math.floor(seconds));
   const h = Math.floor(abs / 3600);
   const m = Math.floor((abs % 3600) / 60);
   const s = abs % 60;
+  const sign = overtimeSignPrefix(seconds);
   if (h === 0) {
-    return `${isNegative ? '-' : ''}${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+    return `${sign}${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
   }
-  return `${isNegative ? '-' : ''}${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  return `${sign}${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
 function countdownColor(remaining: number, hasTimer: boolean): string {
@@ -145,6 +146,7 @@ function noteItemId(note: CateringNoteRow): number | null {
 }
 
 const CateringEventPage: React.FC = () => {
+  useOvertimeSign();
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
