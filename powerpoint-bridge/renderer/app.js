@@ -31,6 +31,12 @@ const els = {
   btnStart: document.getElementById('btn-start'),
   btnSync: document.getElementById('btn-sync'),
   btnCapture: document.getElementById('btn-capture'),
+  btnLiveStart: document.getElementById('btn-live-start'),
+  btnLiveStop: document.getElementById('btn-live-stop'),
+  liveViewUrl: document.getElementById('liveViewUrl'),
+  stLivecap: document.getElementById('st-livecap'),
+  stLivecapSrc: document.getElementById('st-livecap-src'),
+  livecapError: document.getElementById('livecap-error'),
 };
 
 let loadedEvents = [];
@@ -38,6 +44,8 @@ let loadedEvents = [];
 let eventFilter = 'upcoming';
 /** @type {'follow' | 'playback'} */
 let bridgeMode = 'follow';
+/** @type {'screen' | 'camera'} */
+let liveCaptureSource = 'screen';
 
 function formConfig() {
   return {
@@ -46,6 +54,7 @@ function formConfig() {
     eventId: els.eventSelect.value.trim(),
     bridgeMode,
     syncFolder: els.syncFolder ? els.syncFolder.value.trim() : '',
+    liveCaptureSource,
   };
 }
 
@@ -70,6 +79,28 @@ function applyModeUi() {
       ? 'If another deck is already open, Follow ROS cues closes it and opens the matching synced file. Start the cue on Run of Show to run slideshow.'
       : 'Open the deck in PowerPoint on this PC, then capture stills. Start follow before Slideshow so live slides fire the mapped cues.';
   }
+}
+
+function applyCaptureSourceUi() {
+  document.querySelectorAll('[data-capture-source]').forEach((btn) => {
+    const active = btn.getAttribute('data-capture-source') === liveCaptureSource;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-selected', active ? 'true' : 'false');
+  });
+  if (els.stLivecapSrc) {
+    els.stLivecapSrc.textContent = liveCaptureSource === 'camera' ? 'Camera / NDI' : 'Screen';
+  }
+}
+
+function applyLiveCapture(status) {
+  if (!status) return;
+  if (status.source === 'camera' || status.source === 'screen') {
+    liveCaptureSource = status.source;
+    applyCaptureSourceUi();
+  }
+  if (els.stLivecap) els.stLivecap.textContent = status.active ? 'On' : 'Off';
+  if (els.liveViewUrl && status.viewUrl != null) els.liveViewUrl.value = status.viewUrl || '';
+  if (els.livecapError) els.livecapError.textContent = status.error || '';
 }
 
 function renderCache(rows) {
@@ -197,7 +228,7 @@ function fillEvents(events, selectedId) {
 
 function setEventFilter(next) {
   eventFilter = next === 'past' || next === 'all' ? next : 'upcoming';
-  document.querySelectorAll('.event-tab').forEach((btn) => {
+  document.querySelectorAll('[data-event-filter]').forEach((btn) => {
     const active = btn.getAttribute('data-event-filter') === eventFilter;
     btn.classList.toggle('active', active);
     btn.setAttribute('aria-selected', active ? 'true' : 'false');
@@ -238,6 +269,8 @@ async function load() {
   bridgeMode = cfg.bridgeMode === 'playback' ? 'playback' : 'follow';
   if (els.syncFolder) els.syncFolder.value = cfg.syncFolder || '';
   applyModeUi();
+  liveCaptureSource = cfg.liveCaptureSource === 'camera' ? 'camera' : 'screen';
+  applyCaptureSourceUi();
   if (cfg.eventId) {
     const opt = document.createElement('option');
     opt.value = cfg.eventId;
@@ -246,6 +279,7 @@ async function load() {
     els.eventSelect.value = cfg.eventId;
   }
   applyStatus(await api.getStatus());
+  applyLiveCapture(await api.getLiveCapture());
 }
 
 document.getElementById('btn-save').onclick = async () => {
@@ -271,7 +305,7 @@ document.getElementById('btn-load-events').onclick = async () => {
   }
 };
 
-document.querySelectorAll('.event-tab').forEach((btn) => {
+document.querySelectorAll('[data-event-filter]').forEach((btn) => {
   btn.onclick = () => setEventFilter(btn.getAttribute('data-event-filter') || 'upcoming');
 });
 
@@ -342,5 +376,34 @@ document.getElementById('btn-start').onclick = async () => {
 
 document.getElementById('btn-stop').onclick = () => api.stopBridge();
 
+document.querySelectorAll('[data-capture-source]').forEach((btn) => {
+  btn.onclick = async () => {
+    liveCaptureSource = btn.getAttribute('data-capture-source') === 'camera' ? 'camera' : 'screen';
+    applyCaptureSourceUi();
+    await api.saveConfig({ liveCaptureSource });
+  };
+});
+
+if (els.btnLiveStart) {
+  els.btnLiveStart.onclick = async () => {
+    try {
+      await api.saveConfig(formConfig());
+      if (els.livecapError) els.livecapError.textContent = '';
+      applyLiveCapture(await api.startLiveCapture(formConfig()));
+      toast('Live capture started');
+    } catch (err) {
+      if (els.livecapError) els.livecapError.textContent = err.message || String(err);
+    }
+  };
+}
+
+if (els.btnLiveStop) {
+  els.btnLiveStop.onclick = async () => {
+    applyLiveCapture(await api.stopLiveCapture());
+    toast('Live capture stopped');
+  };
+}
+
 api.onStatus(applyStatus);
+if (api.onLiveCapture) api.onLiveCapture(applyLiveCapture);
 void load();

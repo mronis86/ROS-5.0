@@ -1,5 +1,10 @@
 /** Wall-clock VO / BGM callouts — metadata only; also written into Notes HTML. */
 
+/** Event-wide popup switch. Missing / undefined means on. */
+export function voAlertsEnabledFromSettings(settings: { voAlertsEnabled?: unknown } | null | undefined): boolean {
+  return settings?.voAlertsEnabled !== false;
+}
+
 export type AudioCalloutKind = 'vo' | 'bgm';
 
 export interface VoCue {
@@ -86,6 +91,82 @@ export function notesHtmlIsChipsOnly(html: string): boolean {
   return withoutChips.length === 0;
 }
 
+export function notesHtmlHasChip(html: string): boolean {
+  const raw = String(html || '');
+  return (
+    /data-ros-callout\s*=\s*["']?1["']?/i.test(raw) ||
+    /data-settle-cue\s*=\s*["']?1["']?/i.test(raw) ||
+    /data-stage-direction\s*=\s*["']?1["']?/i.test(raw) ||
+    /<ul\b[^>]*>[\s\S]*?<span[^>]*font-weight:\s*700/i.test(raw)
+  );
+}
+
+function notesHtmlHasTrailingSpacer(html: string): boolean {
+  return /data-ros-notes-continue\s*=\s*["']?1["']?[^>]*>[\s\S]*<\/p>\s*$/i.test(String(html || '').trim());
+}
+
+/** Keep one blank line after chips so the next keystroke is normal text. */
+export function withNotesTypingSpacer(html: string): string {
+  const raw = String(html || '');
+  const withoutEmpty = stripNotesEditorTypingSpacers(raw);
+  if (!notesHtmlHasChip(withoutEmpty)) return withoutEmpty;
+  return `${withoutEmpty}${NOTES_EDITOR_TYPING_SPACER}`;
+}
+
+function isNotesChipList(el: Element | null): el is HTMLElement {
+  if (!el || el.tagName !== 'UL') return false;
+  return (
+    el.getAttribute('data-ros-callout') === '1' ||
+    el.getAttribute('data-settle-cue') === '1' ||
+    el.getAttribute('data-stage-direction') === '1' ||
+    !!el.querySelector('span[style*="font-weight"]')
+  );
+}
+
+function resetNotesTypingFormat(): void {
+  try {
+    document.execCommand('removeFormat', false, undefined);
+    document.execCommand('unlink', false, undefined);
+    if (document.queryCommandState('bold')) document.execCommand('bold', false, undefined);
+    if (document.queryCommandState('italic')) document.execCommand('italic', false, undefined);
+    if (document.queryCommandState('underline')) document.execCommand('underline', false, undefined);
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Enter inside a chip jumps to a plain line after it. */
+export function handleNotesChipEnter(
+  editor: HTMLElement | null | undefined,
+  event: { key: string; shiftKey: boolean; preventDefault: () => void }
+): boolean {
+  if (!editor || event.key !== 'Enter' || event.shiftKey) return false;
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return false;
+  let node: Node | null = sel.anchorNode;
+  if (node?.nodeType === Node.TEXT_NODE) node = node.parentElement;
+  const el = node as HTMLElement | null;
+  if (!el || !editor.contains(el)) return false;
+  const chipList = el.closest('ul');
+  if (!isNotesChipList(chipList) || !editor.contains(chipList)) return false;
+
+  event.preventDefault();
+  let next = chipList.nextElementSibling as HTMLElement | null;
+  if (!next || next.getAttribute('data-ros-notes-continue') !== '1') {
+    chipList.insertAdjacentHTML('afterend', NOTES_EDITOR_TYPING_SPACER);
+    next = chipList.nextElementSibling as HTMLElement | null;
+  }
+  if (!next) return true;
+  const inner = (next.querySelector('span') as HTMLElement | null) || next;
+  const range = document.createRange();
+  range.selectNodeContents(inner);
+  range.collapse(true);
+  sel.removeAllRanges();
+  sel.addRange(range);
+  resetNotesTypingFormat();
+  return true;
+}
+
 /** Remove empty editor typing spacers from HTML (for save / storage). Keeps spacers with real text. */
 export function stripNotesEditorTypingSpacers(html: string): string {
   return String(html || '')
@@ -113,16 +194,11 @@ export function ensureNotesEditorTypingSpace(editor: HTMLElement | null | undefi
   if (!editor) return;
   const html = editor.innerHTML || '';
   // Already has a continue spacer at the end
-  if (/data-ros-notes-continue\s*=\s*["']?1["']?[^>]*>[\s\S]*<\/p>\s*$/i.test(html.trim())) {
+  if (notesHtmlHasTrailingSpacer(html)) {
     placeCaretInNotesFreeform(editor);
     return;
   }
-  // Only add when there is at least one chip-style list in the notes
-  const hasChip =
-    /data-settle-cue\s*=\s*["']?1["']?/i.test(html) ||
-    /data-stage-direction\s*=\s*["']?1["']?/i.test(html) ||
-    /<ul\b[^>]*>[\s\S]*?<span[^>]*font-weight:\s*700/i.test(html);
-  if (!hasChip) return;
+  if (!notesHtmlHasChip(html)) return;
 
   editor.insertAdjacentHTML('beforeend', NOTES_EDITOR_TYPING_SPACER);
   placeCaretInNotesFreeform(editor);
@@ -142,15 +218,7 @@ export function placeCaretInNotesFreeform(editor: HTMLElement | null | undefined
     range.collapse(false);
     sel?.removeAllRanges();
     sel?.addRange(range);
-    try {
-      // Drop bold/italic/underline left over from chip selection
-      document.execCommand('removeFormat', false, undefined);
-      if (document.queryCommandState('bold')) document.execCommand('bold', false, undefined);
-      if (document.queryCommandState('italic')) document.execCommand('italic', false, undefined);
-      if (document.queryCommandState('underline')) document.execCommand('underline', false, undefined);
-    } catch {
-      /* ignore */
-    }
+    resetNotesTypingFormat();
   } catch {
     /* ignore */
   }
@@ -163,7 +231,7 @@ export function buildCalloutNotesHtml(chipText: string, kind?: AudioCalloutKind)
   const border = isBgm ? '#2dd4bf' : '#fbbf24';
   const color = isBgm ? '#ecfdf5' : '#fffbeb';
   return (
-    `<ul style="margin:0.4em 0;padding-left:1.4em;list-style-type:disc;font-size:1em;">` +
+    `<ul data-ros-callout="1" style="margin:0.4em 0;padding-left:1.4em;list-style-type:disc;font-size:1em;">` +
     `<li style="margin:0.25em 0;">` +
     `<span style="font-weight:700;line-height:1.4;background:${bg};color:${color};` +
     `border:1px solid ${border};border-radius:5px;padding:0.2em 0.5em;display:inline-block;">` +
@@ -212,8 +280,8 @@ export function syncCalloutsIntoNotes(
   const sorted = [...next].sort((a, b) => a.time.localeCompare(b.time));
   const block = sorted.map((vo) => buildCalloutNotesHtml(formatCalloutChipText(vo), vo.kind)).join('');
   if (!block) return result;
-  if (!result.trim()) return block;
-  return `${block}${result}`;
+  if (!result.trim()) return withNotesTypingSpacer(block);
+  return withNotesTypingSpacer(`${block}${result}`);
 }
 
 export function normalizeVoCues(raw: unknown): VoCue[] {
@@ -276,8 +344,8 @@ export function prependSettleCueNote(notes: string, cueRaw: string): string {
     return existing;
   }
   const block = buildSettleCueNotesHtml(cueRaw);
-  if (!existing.trim()) return block;
-  return `${block}${existing}`;
+  if (!existing.trim()) return withNotesTypingSpacer(block);
+  return withNotesTypingSpacer(`${block}${existing}`);
 }
 
 /** Preset Stage Direction lines (also allow custom free text). */
@@ -320,6 +388,6 @@ export function prependStageDirectionNote(notes: string, directionRaw: string): 
     return existing;
   }
   const block = buildStageDirectionNotesHtml(directionRaw);
-  if (!existing.trim()) return block;
-  return `${block}${existing}`;
+  if (!existing.trim()) return withNotesTypingSpacer(block);
+  return withNotesTypingSpacer(`${block}${existing}`);
 }

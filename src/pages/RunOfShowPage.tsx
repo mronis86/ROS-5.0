@@ -68,7 +68,9 @@ import {
   normalizeVoCues,
   syncCalloutsIntoNotes,
   ensureNotesEditorTypingSpace,
-  stripNotesEditorTypingSpacers,
+  handleNotesChipEnter,
+  withNotesTypingSpacer,
+  voAlertsEnabledFromSettings,
 } from '../lib/audioCallouts';
 import { boostNotesContrastHtml } from '../lib/notesContrast';
 import {
@@ -2887,6 +2889,9 @@ const RunOfShowPage: React.FC = () => {
   // Toast notification state
   const [showTimeToast, setShowTimeToast] = useState(false);
   const [timeToastEnabled, setTimeToastEnabled] = useState(false); // Off by default; toggle in Operator Actions
+  /** Event-wide VO/BGM popups. Default on; switch lives in the VO/BGM editor. */
+  const [voAlertsEnabled, setVoAlertsEnabled] = useState(true);
+  const voAlertsEnabledRef = useRef(true);
   /** Per event. Hidden until Operator Actions turns the Mitti column on. */
   const [mittiWatchColumnEnabled, setMittiWatchColumnEnabled] = useState(false);
   /** Per event. Hidden until Operator Actions turns the AV column on. */
@@ -3015,6 +3020,10 @@ const RunOfShowPage: React.FC = () => {
   useEffect(() => {
     isUserEditingRef.current = isUserEditing;
   }, [isUserEditing]);
+
+  useEffect(() => {
+    voAlertsEnabledRef.current = voAlertsEnabled;
+  }, [voAlertsEnabled]);
 
   useEffect(() => {
     const prev = scheduleRef.current || [];
@@ -3469,17 +3478,27 @@ const RunOfShowPage: React.FC = () => {
   ]);
 
   // VO/MUSIC alert: venue wall-clock → absolute UTC instant (same moment for every client).
-  // Sticky until dismiss; 10m catch-up so background-tab throttling does not miss it forever.
-  // Independent of the early/late Time Toast toggle.
+  // Only on a calendar show day (and that cue's day). Sticky until dismiss; 10m catch-up
+  // so background-tab throttling does not miss it forever. Independent of Time Toast.
   useEffect(() => {
     const tick = () => {
+      if (!voAlertsEnabled) {
+        setActiveVoAlert(null);
+        return;
+      }
       const synced = getSyncedNow(clockOffset);
+      const showDay = getEventDayNumberForDate(event?.date, event?.numberOfDays, synced);
+      if (showDay == null) {
+        setActiveVoAlert(null);
+        return;
+      }
       const fallbackTz = resolveShowTimezone(
         calendarTimezoneRef.current,
         eventTimezone
       );
       let found: { itemId: number; segmentName: string; vo: VoCue } | null = null;
       for (const item of schedule) {
+        if ((item.day || 1) !== showDay) continue;
         const vos = item.voCues;
         if (!vos?.length) continue;
         for (const vo of vos) {
@@ -3505,7 +3524,7 @@ const RunOfShowPage: React.FC = () => {
     tick();
     const id = window.setInterval(tick, 1000);
     return () => window.clearInterval(id);
-  }, [schedule, dismissedVoAlerts, eventTimezone, clockOffset]);
+  }, [schedule, dismissedVoAlerts, eventTimezone, clockOffset, event?.date, event?.numberOfDays, voAlertsEnabled]);
 
   // Top PreShow/End cue: 5-min warning popup + auto load/start at scheduled start.
   // Popup: all roles (so anyone can confirm show day). Auto-start: Operator always,
@@ -5667,6 +5686,7 @@ const RunOfShowPage: React.FC = () => {
           track_was_durations: trackWasDurations,
           ...(Object.keys(originalDurations).length > 0 && { original_durations: originalDurations }),
           ...autoRollSettingsPatch(autoRollArmedRef.current),
+          voAlertsEnabled: voAlertsEnabledRef.current !== false,
         }
       });
       console.log('✅ Schedule data backed up with settings');
@@ -5760,6 +5780,7 @@ const RunOfShowPage: React.FC = () => {
           track_was_durations: trackWasDurations,
           ...(Object.keys(originalDurations).length > 0 && { original_durations: originalDurations }),
           ...autoRollSettingsPatch(autoRollArmedRef.current),
+          voAlertsEnabled: voAlertsEnabledRef.current !== false,
         }
       };
 
@@ -6577,8 +6598,7 @@ const RunOfShowPage: React.FC = () => {
     const live = editor?.innerHTML ?? '';
     const liveEmpty = !live.replace(/<br\s*\/?>/gi, '').replace(/&nbsp;/gi, '').trim();
     let content = liveEmpty && tempNotesHtml ? tempNotesHtml : live || tempNotesHtml;
-    // Editor may have temporary empty typing spacers under chips — don't persist those
-    content = stripNotesEditorTypingSpacers(content);
+    content = withNotesTypingSpacer(content);
 
     if (editingNotesItem === -1) {
       // Save to modal form
@@ -8125,7 +8145,7 @@ const RunOfShowPage: React.FC = () => {
           event_date: event.date,
           schedule_items: scheduleWithDurationSeconds,
           custom_columns: customColumns,
-          settings: { eventName, masterStartTime, dayStartTimes, completedDays, numberOfDays: event?.numberOfDays, timezone: eventTimezone, lastSaved: new Date().toISOString(), show_mode: showMode, track_was_durations: trackWasDurations, ...(Object.keys(originalDurations).length > 0 && { original_durations: originalDurations }), ...(Object.keys(lockedStartTimes).length > 0 && { locked_start_times: Object.fromEntries(Object.entries(lockedStartTimes).map(([k, v]) => [String(k), v])) }), ...autoRollSettingsPatch(autoRollArmedRef.current) }
+          settings: { eventName, masterStartTime, dayStartTimes, completedDays, numberOfDays: event?.numberOfDays, timezone: eventTimezone, lastSaved: new Date().toISOString(), show_mode: showMode, track_was_durations: trackWasDurations, ...(Object.keys(originalDurations).length > 0 && { original_durations: originalDurations }), ...(Object.keys(lockedStartTimes).length > 0 && { locked_start_times: Object.fromEntries(Object.entries(lockedStartTimes).map(([k, v]) => [String(k), v])) }), ...autoRollSettingsPatch(autoRollArmedRef.current), voAlertsEnabled: voAlertsEnabledRef.current !== false }
         }, { userId: user.id, userName: user.full_name || user.email || 'Unknown', userRole: currentUserRole || 'VIEWER' }).catch(err => console.error('Reset restore save failed:', err));
       }
     }
@@ -8507,7 +8527,7 @@ const RunOfShowPage: React.FC = () => {
   const applyNotesChipToOpenEditor = useCallback(
     (itemId: number, notesHtml: string) => {
       if (!showNotesModal || editingNotesItem !== itemId) return;
-      const html = notesForEditor(stripNotesEditorTypingSpacers(notesHtml));
+      const html = notesForEditor(withNotesTypingSpacer(notesHtml));
       setTempNotesHtml(html);
       window.requestAnimationFrame(() => {
         const editor =
@@ -8942,6 +8962,7 @@ const RunOfShowPage: React.FC = () => {
             ),
           }),
           ...autoRollSettingsPatch(autoRollArmedRef.current),
+          voAlertsEnabled: voAlertsEnabledRef.current !== false,
         },
         version: scheduleVersionRef.current,
         ...(allowEmpty ? { allow_empty_schedule: true } : {}),
@@ -9232,6 +9253,7 @@ const RunOfShowPage: React.FC = () => {
         
         setMittiWatchColumnEnabled(data.settings?.mittiWatchColumn === true);
         setAvWatchColumnEnabled(data.settings?.avWatchColumn === true);
+        setVoAlertsEnabled(voAlertsEnabledFromSettings(data.settings));
         if (data.settings?.eventName) setEventName(data.settings.eventName);
         if (data.settings?.masterStartTime) setMasterStartTime(data.settings.masterStartTime);
         if (data.settings?.dayStartTimes) setDayStartTimes(data.settings.dayStartTimes);
@@ -9458,6 +9480,7 @@ const RunOfShowPage: React.FC = () => {
         rememberSyncedSchedule(data);
         setMittiWatchColumnEnabled(data.settings?.mittiWatchColumn === true);
         setAvWatchColumnEnabled(data.settings?.avWatchColumn === true);
+        setVoAlertsEnabled(voAlertsEnabledFromSettings(data.settings));
         if (data.settings?.eventName) setEventName(data.settings.eventName);
         if (data.settings?.masterStartTime) setMasterStartTime(data.settings.masterStartTime);
         if (data.settings?.dayStartTimes) setDayStartTimes(data.settings.dayStartTimes);
@@ -9603,6 +9626,9 @@ const RunOfShowPage: React.FC = () => {
       if (data?.settings?.avWatchColumn !== undefined) {
         setAvWatchColumnEnabled(data.settings.avWatchColumn === true);
       }
+      if (data?.settings?.voAlertsEnabled !== undefined) {
+        setVoAlertsEnabled(voAlertsEnabledFromSettings(data.settings));
+      }
     };
 
     const callbacks = {
@@ -9661,6 +9687,9 @@ const RunOfShowPage: React.FC = () => {
             }
             if (data.settings.avWatchColumn !== undefined) {
               setAvWatchColumnEnabled(data.settings.avWatchColumn === true);
+            }
+            if (data.settings.voAlertsEnabled !== undefined) {
+              setVoAlertsEnabled(voAlertsEnabledFromSettings(data.settings));
             }
             if (data.settings.eventName !== undefined) {
               setEventName(data.settings.eventName);
@@ -10846,6 +10875,7 @@ const RunOfShowPage: React.FC = () => {
           show_mode: showMode,
           track_was_durations: trackWasDurations,
           ...autoRollSettingsPatch(autoRollArmedRef.current),
+          voAlertsEnabled: voAlertsEnabledRef.current !== false,
         },
         schedule_items: restoredData.scheduleData,
         custom_columns: restoredData.customColumnsData,
@@ -10935,7 +10965,7 @@ const RunOfShowPage: React.FC = () => {
     DatabaseService.saveRunOfShowData({
       event_id: event.id,
       event_name: event?.name || 'Event',
-      settings: { show_mode: showMode, track_was_durations: trackWasDurations, numberOfDays: event?.numberOfDays, ...autoRollSettingsPatch(autoRollArmedRef.current) },
+      settings: { show_mode: showMode, track_was_durations: trackWasDurations, numberOfDays: event?.numberOfDays, ...autoRollSettingsPatch(autoRollArmedRef.current), voAlertsEnabled: voAlertsEnabledRef.current !== false },
       schedule_items: scheduleToSave,
       custom_columns: customColsToSave,
       event_date: event?.date ?? undefined
@@ -16806,7 +16836,7 @@ const RunOfShowPage: React.FC = () => {
                     <>
                       <div className="font-bold text-black">Time Toast is on</div>
                       <div className="mt-1.5 font-medium text-neutral-900">
-                        Shows a popup when a cue starts early, late, or on time. VO/BGM callouts still show even if this is off.
+                        Shows a popup when a cue starts early, late, or on time. VO/BGM pop-ups are a separate switch in the VO / BGM editor.
                       </div>
                       <div className="mt-1.5 text-sm font-medium text-neutral-700">Click to turn off</div>
                     </>
@@ -16814,7 +16844,7 @@ const RunOfShowPage: React.FC = () => {
                     <>
                       <div className="font-bold text-black">Time Toast is off</div>
                       <div className="mt-1.5 font-medium text-neutral-900">
-                        Turn on to get popup alerts when a cue starts early, late, or on time. VO/BGM callouts still show either way.
+                        Turn on to get popup alerts when a cue starts early, late, or on time. VO/BGM pop-ups are a separate switch in the VO / BGM editor.
                       </div>
                       <div className="mt-1.5 text-sm font-medium text-neutral-700">Click to turn on</div>
                     </>
@@ -17973,6 +18003,7 @@ const RunOfShowPage: React.FC = () => {
                                  track_was_durations: trackWasDurations,
                                  ...(Object.keys(originalDurations).length > 0 && { original_durations: originalDurations }),
                                  ...autoRollSettingsPatch(autoRollArmedRef.current),
+          voAlertsEnabled: voAlertsEnabledRef.current !== false,
                                }
                              };
                              
@@ -19293,18 +19324,32 @@ const RunOfShowPage: React.FC = () => {
        {showVoModal && editingVoItemId !== null && (
          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
            <div className="bg-slate-800 rounded-xl p-6 max-w-xl w-full shadow-xl border border-slate-500/50">
-             <h2 className="text-xl font-bold text-white mb-1">VO &amp; Background Music</h2>
-             <p className="text-slate-300 text-sm mb-4">
-               Adds formatted text into Notes for{' '}
-               <span className="text-white font-semibold">
+             <div className="mb-3 flex items-center justify-between gap-3">
+               <h2 className="text-xl font-bold text-white">VO &amp; Background Music</h2>
+               <label className="flex shrink-0 cursor-pointer items-center gap-2 text-sm text-slate-200">
+                 <input
+                   type="checkbox"
+                   checked={voAlertsEnabled}
+                   onChange={(e) => {
+                     const next = e.target.checked;
+                     setVoAlertsEnabled(next);
+                     voAlertsEnabledRef.current = next;
+                     if (!next) setActiveVoAlert(null);
+                     if (!event?.id || currentUserRole === 'VIEWER') return;
+                     settingsSaveRequestedRef.current = true;
+                     handleUserEditing();
+                     saveToAPI();
+                   }}
+                 />
+                 Pop-ups
+               </label>
+             </div>
+             <p className="mb-4 text-sm text-slate-400">
+               Timed note on{' '}
+               <span className="font-semibold text-slate-200">
                  {schedule.find((s) => s.id === editingVoItemId)?.segmentName || 'this cue'}
                </span>
-               . Times are <span className="text-white font-medium">venue wall clock</span> (
-               <span className="font-mono text-cyan-300">
-                 {resolveShowTimezone(calendarTimezoneRef.current, eventTimezone)}
-               </span>
-               ) — every client fires at the same absolute moment. Does{' '}
-               <span className="text-white font-medium">not</span> change duration or start times.
+               .
              </p>
 
              <ul className="space-y-2 mb-4 max-h-56 overflow-y-auto">
@@ -19779,6 +19824,12 @@ const RunOfShowPage: React.FC = () => {
                    fontFamily: 'system-ui, -apple-system, sans-serif'
                  }}
                  data-placeholder="Start typing your notes here..."
+                 onKeyDown={(e) => {
+                   const editor = e.currentTarget as HTMLDivElement;
+                   if (handleNotesChipEnter(editor, e)) {
+                     setTempNotesHtml(editor.innerHTML);
+                   }
+                 }}
                  onInput={(e) => {
                    setTempNotesHtml((e.currentTarget as HTMLDivElement).innerHTML);
                  }}

@@ -7,6 +7,7 @@ const { BridgeController } = require('./bridge-controller');
 const { PlaybackController } = require('./playback-controller');
 const { validateApi, listCalendarEvents } = require('./railway-client');
 const ppt = require('./ppt-com');
+const liveCapture = require('./live-capture');
 
 function showCrash(err) {
   const message = err && err.stack ? err.stack : String(err || 'Unknown error');
@@ -35,6 +36,12 @@ function sendStatus(status) {
   }
 }
 
+function sendLiveCapture(status) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('live-capture:status', status);
+  }
+}
+
 const follow = new BridgeController({ onStatus: sendStatus });
 const playback = new PlaybackController({ onStatus: sendStatus, cacheRoot });
 
@@ -45,7 +52,7 @@ function activeController(mode) {
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 860,
-    height: 920,
+    height: 1020,
     title: 'ROS PowerPoint Bridge',
     autoHideMenuBar: true,
     backgroundColor: '#0f172a',
@@ -61,11 +68,18 @@ function createWindow() {
   });
 }
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  liveCapture.init({ onStatus: sendLiveCapture });
+  createWindow();
+});
 app.on('window-all-closed', () => {
   follow.stop();
   playback.stop();
+  void liveCapture.stop({ silent: true });
   if (process.platform !== 'darwin') app.quit();
+});
+app.on('before-quit', () => {
+  void liveCapture.stop({ silent: true });
 });
 
 ipcMain.handle('config:load', () => loadConfig());
@@ -118,3 +132,6 @@ ipcMain.handle('playback:pick-folder', async () => {
   if (picked.canceled || !picked.filePaths[0]) return current;
   return saveConfig({ syncFolder: picked.filePaths[0] });
 });
+ipcMain.handle('live-capture:start', (_e, partial) => liveCapture.start(partial || {}));
+ipcMain.handle('live-capture:stop', () => liveCapture.stop());
+ipcMain.handle('live-capture:status', () => liveCapture.getState());

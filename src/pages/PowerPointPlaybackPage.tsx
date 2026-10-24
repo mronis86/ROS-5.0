@@ -31,6 +31,9 @@ type PlaybackSession = {
   queuedCommand: { id?: string; action?: string; slideIndex?: number | null } | null;
   loadedItemId: number | null;
   loadedCue?: LoadedCue | null;
+  liveCaptureUrl?: string;
+  liveCaptureActive?: boolean;
+  liveCaptureSource?: 'screen' | 'camera' | '';
 };
 
 type PreviewSlide = {
@@ -158,6 +161,21 @@ function cueFromItem(item: any): ScheduleCue | null {
     segmentName: String(item.segmentName || item.segment_name || ''),
     hasPPT: !!(item.hasPPT ?? item.has_ppt),
   };
+}
+
+function isVdoViewUrl(raw: string | undefined) {
+  const s = String(raw || '').trim();
+  if (!s) return false;
+  try {
+    const u = new URL(s);
+    return (
+      u.protocol === 'https:' &&
+      (u.hostname === 'vdo.ninja' || u.hostname === 'www.vdo.ninja') &&
+      !!(u.searchParams.get('view') || u.searchParams.get('scene'))
+    );
+  } catch {
+    return false;
+  }
 }
 
 const PowerPointPlaybackPage: React.FC = () => {
@@ -525,6 +543,38 @@ const PowerPointPlaybackPage: React.FC = () => {
         {session?.lastError ? (
           <div className="mt-2 text-sm text-rose-300">{session.lastError}</div>
         ) : null}
+
+        {session?.liveCaptureActive && isVdoViewUrl(session.liveCaptureUrl) ? (
+          <div className="mt-4">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-[11px] font-bold uppercase tracking-wide text-orange-300">
+                Live capture
+                {session.liveCaptureSource === 'camera' ? ' · camera' : ' · screen'}
+              </div>
+              <a
+                href={session.liveCaptureUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="text-[11px] font-semibold text-orange-200 underline-offset-2 hover:underline"
+              >
+                Open full view
+              </a>
+            </div>
+            <div className="mt-2 overflow-hidden rounded-xl border border-orange-500/50 bg-black">
+              <iframe
+                title="Live capture from the show PC"
+                src={session.liveCaptureUrl}
+                className="aspect-video w-full bg-black"
+                allow="autoplay; fullscreen"
+                referrerPolicy="no-referrer"
+              />
+            </div>
+          </div>
+        ) : (
+          <p className="mt-4 text-xs text-slate-500">
+            Start Live Capture on the PowerPoint Bridge to see this PC’s screen or camera here.
+          </p>
+        )}
 
         {/paused|Manual/i.test(session?.lastCommand || '') ? (
           <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded border border-amber-800/70 bg-amber-950/40 px-3 py-2 text-sm text-amber-100">

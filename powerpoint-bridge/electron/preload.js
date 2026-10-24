@@ -12,9 +12,17 @@ contextBridge.exposeInMainWorld('rosPptBridge', {
   getStatus: () => ipcRenderer.invoke('bridge:status'),
   syncPlayback: (partial) => ipcRenderer.invoke('playback:sync', partial),
   pickSyncFolder: () => ipcRenderer.invoke('playback:pick-folder'),
+  startLiveCapture: (partial) => ipcRenderer.invoke('live-capture:start', partial),
+  stopLiveCapture: () => ipcRenderer.invoke('live-capture:stop'),
+  getLiveCapture: () => ipcRenderer.invoke('live-capture:status'),
   onStatus: (callback) => {
     const handler = (_event, payload) => callback(payload);
     ipcRenderer.on('bridge:status', handler);
     return () => ipcRenderer.removeListener('bridge:status', handler);
+  },
+  onLiveCapture: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on('live-capture:status', handler);
+    return () => ipcRenderer.removeListener('live-capture:status', handler);
   },
 });

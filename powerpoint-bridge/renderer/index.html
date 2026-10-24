@@ -62,6 +62,28 @@
       </section>
 
       <section class="card">
+        <h2>Live Capture</h2>
+        <p class="hint">Sends a live picture from this PC to this event’s PPT Launcher. Screen is the desktop. Camera includes a webcam or an NDI virtual camera.</p>
+        <div class="event-tabs" role="tablist" aria-label="Live capture source">
+          <button type="button" class="event-tab active" data-capture-source="screen" role="tab" aria-selected="true">Screen</button>
+          <button type="button" class="event-tab" data-capture-source="camera" role="tab" aria-selected="false">Camera / NDI</button>
+        </div>
+        <div class="row">
+          <button type="button" id="btn-live-start" class="primary">Start live capture</button>
+          <button type="button" id="btn-live-stop">Stop</button>
+        </div>
+        <div class="status-grid">
+          <div><span class="k">Capture</span><span id="st-livecap">Off</span></div>
+          <div><span class="k">Source</span><span id="st-livecap-src">Screen</span></div>
+        </div>
+        <label>
+          Launcher view link
+          <input id="liveViewUrl" type="text" readonly spellcheck="false" />
+        </label>
+        <p id="livecap-error" class="error"></p>
+      </section>
+
+      <section class="card">
         <h2>PowerPoint</h2>
         <p id="ppt-hint" class="hint">Open the deck in PowerPoint on this PC, then capture stills. Start follow before Slideshow so live slides fire the mapped cues.</p>
         <div class="status-grid">

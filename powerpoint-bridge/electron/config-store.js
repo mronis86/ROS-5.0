@@ -9,6 +9,8 @@ const DEFAULTS = {
   eventId: '',
   bridgeMode: 'follow',
   syncFolder: '',
+  liveCaptureSource: 'screen',
+  liveCaptureRooms: {},
 };
 
 function configPath() {
@@ -33,6 +35,12 @@ function saveConfig(partial) {
     next.bridgeMode = next.bridgeMode === 'playback' ? 'playback' : 'follow';
   }
   if (next.syncFolder != null) next.syncFolder = String(next.syncFolder || '').trim();
+  if (next.liveCaptureSource != null) {
+    next.liveCaptureSource = next.liveCaptureSource === 'camera' ? 'camera' : 'screen';
+  }
+  if (next.liveCaptureRooms != null && typeof next.liveCaptureRooms !== 'object') {
+    next.liveCaptureRooms = {};
+  }
   fs.mkdirSync(path.dirname(configPath()), { recursive: true });
   fs.writeFileSync(configPath(), JSON.stringify(next, null, 2), 'utf8');
   return next;

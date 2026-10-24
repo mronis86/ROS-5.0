@@ -55,7 +55,8 @@ import {
   prependStageDirectionNote,
   syncCalloutsIntoNotes,
   ensureNotesEditorTypingSpace,
-  stripNotesEditorTypingSpacers,
+  handleNotesChipEnter,
+  withNotesTypingSpacer,
 } from '../lib/audioCallouts';
 import { calculateScheduleStartTime } from '../lib/scheduleStartTime';
 
@@ -2900,7 +2901,7 @@ const ContentReviewPage: React.FC = () => {
   const saveDisplayItemNotes = useCallback(async () => {
     if (!displayItem || !eventId || isSavingNotes) return;
     const live = notesEditorRef.current?.innerHTML ?? notesDraft;
-    const nextNotes = stripNotesEditorTypingSpacers(live);
+    const nextNotes = withNotesTypingSpacer(live);
     setIsSavingNotes(true);
     setNotesSaveMessage(null);
     const result = await saveCuePatch(displayItem.id, (it) => ({ ...it, notes: nextNotes }));
@@ -4871,6 +4872,15 @@ const ContentReviewPage: React.FC = () => {
                           ref={notesEditorRef}
                           contentEditable
                           suppressContentEditableWarning
+                          onKeyDown={(e) => {
+                            const editor = e.currentTarget as HTMLDivElement;
+                            if (handleNotesChipEnter(editor, e)) {
+                              const html = editor.innerHTML;
+                              setNotesDraft(html);
+                              setNotesDirty(html !== (displayItem.notes ?? ''));
+                              setNotesSaveMessage(null);
+                            }
+                          }}
                           onInput={(e) => {
                             const html = (e.currentTarget as HTMLDivElement).innerHTML;
                             setNotesDraft(html);
