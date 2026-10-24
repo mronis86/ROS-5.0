@@ -616,17 +616,17 @@ const PowerPointPlaybackPage: React.FC = () => {
                 ? ` · ${session?.slideCount || previews.length} slides`
                 : ''}
             </div>
-            <div className="grid gap-3 md:grid-cols-2">
+            <div className="flex flex-wrap items-start gap-3">
               {[
-                { slide: currentSlide, label: 'Current', live: true },
-                { slide: nextSlide, label: 'Next', live: false },
-              ].map(({ slide, label, live }) => (
+                { slide: currentSlide, label: 'Current', live: true, widthClass: 'w-full max-w-[18rem]' },
+                { slide: nextSlide, label: 'Next', live: false, widthClass: 'w-full max-w-[13.5rem]' },
+              ].map(({ slide, label, live, widthClass }) => (
                 <button
                   key={label}
                   type="button"
                   disabled={!!sending || !slide}
                   onClick={() => slide && void sendCommand('goto', slide.slideIndex)}
-                  className={`overflow-hidden rounded-xl border text-left ${
+                  className={`${widthClass} overflow-hidden rounded-xl border text-left ${
                     live
                       ? 'border-orange-400 ring-2 ring-orange-400/60'
                       : 'border-slate-700 hover:border-slate-500'
