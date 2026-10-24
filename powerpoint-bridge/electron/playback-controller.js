@@ -4,6 +4,7 @@ const ppt = require('./ppt-com');
 const {
   fetchPlaybackManifest,
   fetchPlaybackStatus,
+  fetchPlaybackAsset,
   reportPlaybackLive,
   uploadPlaybackPreviews,
   httpFetch,
@@ -16,7 +17,6 @@ const {
 } = require('./playback-logic');
 
 const MANIFEST_NAME = 'ros-ppt-sync.json';
-const SYNC_EVERY_MS = 15 * 1000;
 
 class PlaybackController {
   constructor({ onStatus, cacheRoot } = {}) {
@@ -179,14 +179,15 @@ class PlaybackController {
     }
     this.busy = true;
     try {
-      if (forceSync || !this.assets.length || Date.now() - this.lastSyncAt > SYNC_EVERY_MS) {
-        await this.syncCache();
+      if (forceSync || !this.assets.length) {
+        await this.syncCache({ missingOnly: true });
       }
       const playback = await fetchPlaybackStatus(
         this.config.apiBaseUrl,
         this.config.apiToken,
         this.config.eventId
       );
+      this.mergePreferredFiles(playback?.preferredFiles);
       const loadedItemId = playback?.session?.loadedItemId ?? playback?.session?.loadedCue?.itemId ?? null;
       const loadedCue = playback?.session?.loadedCue || null;
       const queued = playback?.session?.queuedCommand || null;
@@ -220,7 +221,53 @@ class PlaybackController {
     }
   }
 
-  async syncCache() {
+  cacheFilesList() {
+    this.readManifest();
+    return Object.entries(this.manifest.files || {})
+      .map(([itemId, row]) => ({
+        itemId: Number(itemId),
+        fileId: row?.fileId ? String(row.fileId) : '',
+      }))
+      .filter((row) => Number.isFinite(row.itemId) && row.fileId);
+  }
+
+  mergePreferredFiles(preferred) {
+    if (!Array.isArray(preferred) || !preferred.length) return;
+    for (const row of preferred) {
+      const itemId = Number(row?.itemId);
+      const fileId = row?.fileId != null ? String(row.fileId) : '';
+      if (!Number.isFinite(itemId) || !fileId) continue;
+      const existing = (this.assets || []).find((asset) => Number(asset.itemId) === itemId && asset.preferred);
+      if (existing) {
+        existing.fileId = fileId;
+        existing.originalName = row.originalName || existing.originalName;
+        existing.sizeBytes = row.sizeBytes != null ? Number(row.sizeBytes) : existing.sizeBytes;
+      } else {
+        this.assets.push({
+          itemId,
+          fileId,
+          originalName: row.originalName || 'deck.pptx',
+          sizeBytes: row.sizeBytes != null ? Number(row.sizeBytes) : null,
+          preferred: true,
+          hasPPT: true,
+          downloadUrl: null,
+        });
+      }
+    }
+  }
+
+  isLiveOpenItem(itemId) {
+    return !!(
+      this.currentPath &&
+      itemId != null &&
+      Number(itemId) === Number(this.currentItemId)
+    );
+  }
+
+  async syncCache(opts = {}) {
+    const replace = opts.replace === true;
+    const missingOnly = opts.missingOnly === true;
+    const onlyItemId = opts.onlyItemId != null ? Number(opts.onlyItemId) : null;
     const remote = await fetchPlaybackManifest(
       this.config.apiBaseUrl,
       this.config.apiToken,
@@ -245,9 +292,9 @@ class PlaybackController {
       const previous = this.manifest.files[itemKey] || {};
       const previousPath = previous.localName ? path.join(dir, previous.localName) : dest;
       keep.add(dest.toLowerCase());
-      let state = 'ok';
-      let detail = 'Synced';
-      const replace = shouldReplaceLocalFile(
+      let state = fs.existsSync(dest) || fs.existsSync(previousPath) ? 'ok' : 'missing';
+      let detail = state === 'ok' ? 'Synced' : 'Not on disk';
+      const needsReplace = shouldReplaceLocalFile(
         {
           fileId: previous.fileId,
           sizeBytes: previous.sizeBytes ?? (fs.existsSync(dest) ? fs.statSync(dest).size : null),
@@ -255,10 +302,33 @@ class PlaybackController {
         },
         { fileId: asset.fileId, sizeBytes: asset.sizeBytes }
       );
-      if (replace) {
+      const missing = !fs.existsSync(dest) && !fs.existsSync(previousPath);
+      const targeted = Number.isFinite(onlyItemId) && Number(asset.itemId) === onlyItemId;
+      const shouldDownload =
+        needsReplace &&
+        !this.isLiveOpenItem(asset.itemId) &&
+        (replace || targeted || (missingOnly && missing));
+      if (needsReplace && !shouldDownload) {
+        state = previous.fileId && String(previous.fileId) !== String(asset.fileId) ? 'newer' : state;
+        detail = this.isLiveOpenItem(asset.itemId)
+          ? 'Open deck stays as-is'
+          : 'Newer version waiting for Push';
+        nextFiles[itemKey] = {
+          fileId: previous.fileId || asset.fileId,
+          sizeBytes: previous.sizeBytes ?? (fs.existsSync(previousPath) ? fs.statSync(previousPath).size : null),
+          localName: previous.localName || localName,
+          originalName: previous.originalName || asset.originalName,
+        };
+      } else if (shouldDownload) {
         if (!asset.downloadUrl) {
           state = 'missing';
           detail = 'No download URL';
+          nextFiles[itemKey] = {
+            fileId: previous.fileId || asset.fileId,
+            sizeBytes: previous.sizeBytes ?? null,
+            localName: previous.localName || localName,
+            originalName: previous.originalName || asset.originalName,
+          };
         } else {
           try {
             if (previousPath && previousPath.toLowerCase() !== dest.toLowerCase() && fs.existsSync(previousPath)) {
@@ -267,23 +337,36 @@ class PlaybackController {
             await this.downloadFile(asset.downloadUrl, dest);
             state = previous.fileId ? 'replaced' : 'ok';
             detail = previous.fileId ? 'Replaced newer version' : 'Downloaded';
+            nextFiles[itemKey] = {
+              fileId: asset.fileId,
+              sizeBytes: asset.sizeBytes ?? (fs.existsSync(dest) ? fs.statSync(dest).size : null),
+              localName,
+              originalName: asset.originalName,
+            };
           } catch (err) {
             state = 'missing';
             detail = err.message || 'Download failed';
+            nextFiles[itemKey] = {
+              fileId: previous.fileId || asset.fileId,
+              sizeBytes: previous.sizeBytes ?? null,
+              localName: previous.localName || localName,
+              originalName: previous.originalName || asset.originalName,
+            };
           }
         }
+      } else {
+        nextFiles[itemKey] = {
+          fileId: previous.fileId || asset.fileId,
+          sizeBytes: previous.sizeBytes ?? (fs.existsSync(dest) ? fs.statSync(dest).size : null),
+          localName: previous.localName || localName,
+          originalName: previous.originalName || asset.originalName,
+        };
       }
-      nextFiles[itemKey] = {
-        fileId: asset.fileId,
-        sizeBytes: asset.sizeBytes ?? (fs.existsSync(dest) ? fs.statSync(dest).size : null),
-        localName,
-        originalName: asset.originalName,
-      };
       rows.push({
-        fileId: asset.fileId,
+        fileId: nextFiles[itemKey].fileId,
         itemId: asset.itemId,
         name: asset.originalName,
-        localName,
+        localName: nextFiles[itemKey].localName,
         hasPPT: !!asset.hasPPT,
         preferred: !!asset.preferred,
         state,
@@ -346,6 +429,59 @@ class PlaybackController {
     }
   }
 
+  async syncOne(itemId, fileId) {
+    if (this.isLiveOpenItem(itemId)) {
+      this.emit({ lastAction: 'Skipped live deck', message: 'Open deck stays as-is' });
+      return { skipped: true };
+    }
+    let asset = null;
+    if (fileId) {
+      try {
+        asset = await fetchPlaybackAsset(
+          this.config.apiBaseUrl,
+          this.config.apiToken,
+          this.config.eventId,
+          fileId
+        );
+      } catch {
+        asset = null;
+      }
+    }
+    if (!asset?.downloadUrl) {
+      const rows = await this.syncCache({
+        replace: false,
+        onlyItemId: Number.isFinite(Number(itemId)) ? Number(itemId) : null,
+      });
+      return { rows };
+    }
+    this.mergePreferredFiles([asset]);
+    const cueLabel = `Cue ${asset.itemId || itemId}`;
+    const dest = this.localPathFor(asset, cueLabel);
+    this.readManifest();
+    const itemKey = String(asset.itemId || itemId);
+    const previous = this.manifest.files[itemKey] || {};
+    const previousPath = previous.localName ? path.join(this.syncDir(), previous.localName) : dest;
+    if (previousPath && previousPath.toLowerCase() !== dest.toLowerCase() && fs.existsSync(previousPath)) {
+      try { fs.unlinkSync(previousPath); } catch { /* ignore */ }
+    }
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    await this.downloadFile(asset.downloadUrl, dest);
+    this.manifest.files[itemKey] = {
+      fileId: String(asset.fileId),
+      sizeBytes: asset.sizeBytes ?? (fs.existsSync(dest) ? fs.statSync(dest).size : null),
+      localName: path.basename(dest),
+      originalName: asset.originalName,
+    };
+    this.writeManifest();
+    this.lastSyncAt = Date.now();
+    this.emit({
+      lastAction: `Pushed ${asset.originalName || cueLabel}`,
+      message: `Downloaded ${asset.originalName || cueLabel}`,
+      error: '',
+    });
+    return { ok: true, path: dest, asset };
+  }
+
   async followLoadedCue(loadedItemId, loadedCue = null, livePath = null, slideshowActive = false) {
     const cueLabel = loadedCue?.cueLabel || (loadedItemId != null ? `Cue ${loadedItemId}` : '');
     const timerState = loadedCue?.timerState || null;
@@ -371,7 +507,25 @@ class PlaybackController {
       this.emit({ loadedCueLabel: '', message: 'No cue loaded' });
       return;
     }
-    const asset = preferredAssetForItem(this.assets, loadedItemId);
+    let asset = preferredAssetForItem(this.assets, loadedItemId);
+    if (asset && !this.isLiveOpenItem(loadedItemId)) {
+      this.readManifest();
+      const local = this.manifest.files[String(loadedItemId)] || {};
+      if (
+        !local.fileId ||
+        shouldReplaceLocalFile(
+          { ...local, path: this.localPathFor(asset, cueLabel) },
+          { fileId: asset.fileId, sizeBytes: asset.sizeBytes }
+        )
+      ) {
+        try {
+          await this.syncOne(loadedItemId, asset.fileId);
+          asset = preferredAssetForItem(this.assets, loadedItemId) || asset;
+        } catch (err) {
+          this.lastError = err.message || 'Could not download the newer deck';
+        }
+      }
+    }
     const cachedPath = asset ? this.localPathFor(asset, cueLabel) : null;
     const cachedExists = cachedPath && fs.existsSync(cachedPath);
     const hasPPT = this.cuesWithPpt.includes(Number(loadedItemId)) || !!asset?.hasPPT;
@@ -546,6 +700,19 @@ class PlaybackController {
       this.lastCommandId = command.id;
       return;
     }
+    if (action === 'sync') {
+      try {
+        this.lastError = '';
+        await this.syncOne(command.itemId, command.fileId);
+        this.emit({ lastAction: 'Pushed new deck', error: '' });
+      } catch (err) {
+        this.lastError = err.message || 'Could not download the new deck';
+        this.emit({ lastAction: 'Push failed', error: this.lastError });
+      }
+      this.lastCommandId = command.id;
+      await this.reportAndRefresh(true);
+      return;
+    }
     if (action === 'next') result = await ppt.nextSlide();
     else if (action === 'prev') result = await ppt.prevSlide();
     else if (action === 'goto') result = await ppt.gotoSlide(command.slideIndex);
@@ -599,11 +766,26 @@ class PlaybackController {
       this.emit({ error: this.lastError, lastAction: 'Manual open failed' });
       return;
     }
+    if (!this.isLiveOpenItem(asset.itemId)) {
+      this.readManifest();
+      const local = this.manifest.files[String(asset.itemId)] || {};
+      if (
+        !local.fileId ||
+        shouldReplaceLocalFile(local, { fileId: asset.fileId, sizeBytes: asset.sizeBytes })
+      ) {
+        try {
+          await this.syncOne(asset.itemId, asset.fileId);
+          asset = preferredAssetForItem(this.assets, asset.itemId) || asset;
+        } catch {
+          /* try whatever is on disk */
+        }
+      }
+    }
     const cueLabel = `Cue ${asset.itemId}`;
     let dest = this.localPathFor(asset, cueLabel);
     if (!dest || !fs.existsSync(dest)) {
       try {
-        await this.syncCache();
+        await this.syncOne(asset.itemId, asset.fileId);
       } catch {
         /* still try recorded path */
       }
@@ -744,6 +926,7 @@ class PlaybackController {
       currentFileId: this.currentFileId,
       cacheOk: this.cacheRows.filter((r) => r.state === 'ok' || r.state === 'replaced').length,
       cacheTotal: this.cacheRows.length,
+      cacheFiles: this.cacheFilesList(),
       lastCommand: this.status.lastAction || '',
       lastCommandId: this.lastCommandId,
       lastError: this.lastError || '',
@@ -755,7 +938,7 @@ class PlaybackController {
     if (config) this.config = { ...this.config, ...config };
     if (!this.config?.eventId) throw new Error('Pick an event first.');
     if (!String(this.config.syncFolder || '').trim()) throw new Error('Pick a sync folder first.');
-    return this.syncCache();
+    return this.syncCache({ replace: true });
   }
 }
 

@@ -106,6 +106,7 @@ import { mapOperatorCountdownRow, operatorCountdownRemaining, formatOperatorCoun
 import ShowVsRehearsalPanel from '../components/ShowVsRehearsalPanel';
 import TimeToastIcon from '../components/TimeToastIcon';
 import AssetRetentionNotice, { formatCueFileExpiry, formatCueFileSize } from '../components/AssetRetentionNotice';
+import { OperatorPptPendingDecks } from '../components/PptPendingDeckBanner';
 // import { driftDetector } from '../services/driftDetector'; // REMOVED: Using WebSocket-only approach
 import ScheduleRow from './ScheduleRow';
 import StartTimeColumnCell from '../components/StartTimeColumnCell';
@@ -17403,6 +17404,9 @@ const RunOfShowPage: React.FC = () => {
 
       {/* Schedule Container */}
       <div className="max-w-[95%] mx-auto px-6" style={{ paddingTop: `${schedulePaddingTopPx}px` }}>
+        {currentUserRole === 'OPERATOR' && event?.id ? (
+          <OperatorPptPendingDecks eventId={String(event.id)} />
+        ) : null}
         <div className="bg-slate-800 rounded-xl p-4 shadow-2xl" style={{ transform: 'scale(0.75)', transformOrigin: 'top center', width: '133.33%', marginLeft: '-16.67%' }}>
           <div className="flex justify-between items-center mb-6">
             <div>

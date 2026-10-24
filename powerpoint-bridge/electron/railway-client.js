@@ -131,6 +131,14 @@ async function fetchPlaybackStatus(apiBaseUrl, apiToken, eventId) {
   return railwayFetch(apiBaseUrl, apiToken, `/api/powerpoint/${encodeURIComponent(eventId)}/playback`);
 }
 
+async function fetchPlaybackAsset(apiBaseUrl, apiToken, eventId, fileId) {
+  return railwayFetch(
+    apiBaseUrl,
+    apiToken,
+    `/api/powerpoint/${encodeURIComponent(eventId)}/playback/asset/${encodeURIComponent(fileId)}`
+  );
+}
+
 async function reportPlaybackLive(apiBaseUrl, apiToken, eventId, payload) {
   return railwayFetch(
     apiBaseUrl,
@@ -179,6 +187,7 @@ module.exports = {
   reportLive,
   fetchPlaybackManifest,
   fetchPlaybackStatus,
+  fetchPlaybackAsset,
   reportPlaybackLive,
   reportLiveCapture,
   uploadPlaybackPreviews,

@@ -1229,7 +1229,7 @@ function buildRailwayHealthMeta() {
     uptimeSeconds: Math.floor(process.uptime()),
     env: process.env.NODE_ENV || 'development',
     powerpointRoutes: true,
-    apiRevision: 'dl-20261024a',
+    apiRevision: 'dl-20261024b',
   };
 }
 

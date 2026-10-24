@@ -5,6 +5,7 @@ import { apiAuthFetch, apiJsonHeaders } from '../lib/sessionAuth';
 import { socketClient } from '../services/socket-client';
 import { DatabaseService } from '../services/database';
 import { normalizeCueLabel } from '../lib/cueCards';
+import PptPendingDeckBanner, { type PptPendingDeckUpdate } from '../components/PptPendingDeckBanner';
 
 type LoadedCue = {
   itemId: number | null;
@@ -192,11 +193,13 @@ const PowerPointPlaybackPage: React.FC = () => {
   const [sending, setSending] = useState<string | null>(null);
   const [previews, setPreviews] = useState<PreviewSlide[]>([]);
   const [rosCue, setRosCue] = useState<RosCue | null>(null);
+  const [pendingUpdates, setPendingUpdates] = useState<PptPendingDeckUpdate[]>([]);
   const [, setSeenTick] = useState(0);
 
   const applyPlayback = useCallback((data: any) => {
     if (data?.session) setSession(data.session as PlaybackSession);
     if (Array.isArray(data?.previews)) setPreviews(data.previews as PreviewSlide[]);
+    if (Array.isArray(data?.pendingUpdates)) setPendingUpdates(data.pendingUpdates as PptPendingDeckUpdate[]);
   }, []);
 
   const loadCues = useCallback(async () => {
@@ -305,7 +308,13 @@ const PowerPointPlaybackPage: React.FC = () => {
     ) => {
       if (!eventId || sending) return;
       const opts = typeof extra === 'number' ? { slideIndex: extra } : extra || {};
-      setSending(action === 'open' && opts.fileId ? `open:${opts.fileId}` : action);
+      setSending(
+        action === 'open' && opts.fileId
+          ? `open:${opts.fileId}`
+          : action === 'sync' && opts.fileId
+            ? `sync:${opts.fileId}`
+            : action
+      );
       setError(null);
       try {
         const res = await fetch(
@@ -475,6 +484,13 @@ const PowerPointPlaybackPage: React.FC = () => {
           {error}
         </div>
       ) : null}
+
+      <PptPendingDeckBanner
+        className="mx-4 mt-3"
+        pending={pendingUpdates}
+        pushingId={sending && sending.startsWith('sync:') ? sending.slice(5) : null}
+        onPush={(update) => void sendCommand('sync', { itemId: update.itemId, fileId: update.fileId })}
+      />
 
       {!session?.connected ? (
         <div className="mx-4 mt-3 rounded border border-amber-800/70 bg-amber-950/40 px-3 py-2 text-sm text-amber-100">
@@ -767,6 +783,7 @@ const PowerPointPlaybackPage: React.FC = () => {
             {preferred.map((asset) => {
               const cue = asset.itemId != null ? cues.find((row) => row.id === asset.itemId) : null;
               const active = currentCue?.itemId != null && asset.itemId === currentCue.itemId;
+              const pending = pendingUpdates.find((row) => row.itemId === asset.itemId) || null;
               return (
                 <div
                   key={asset.fileId}
@@ -795,6 +812,23 @@ const PowerPointPlaybackPage: React.FC = () => {
                       <span className="rounded-full bg-slate-600 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-slate-100">
                         Open
                       </span>
+                    ) : null}
+                    {pending ? (
+                      <>
+                        <span className="rounded-full bg-violet-700 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-violet-50">
+                          New deck
+                        </span>
+                        <button
+                          type="button"
+                          disabled={!!sending}
+                          onClick={() =>
+                            void sendCommand('sync', { itemId: pending.itemId, fileId: pending.fileId })
+                          }
+                          className="rounded bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-violet-500 disabled:opacity-50"
+                        >
+                          {sending === `sync:${pending.fileId}` ? 'Pushing…' : 'Push to helper'}
+                        </button>
+                      </>
                     ) : null}
                     <button
                       type="button"
