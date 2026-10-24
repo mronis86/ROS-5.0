@@ -590,32 +590,6 @@ const PowerPointPlaybackPage: React.FC = () => {
           </div>
         ) : null}
 
-        <div className="mt-5 rounded-lg border border-slate-700 bg-slate-900/60 p-3">
-          <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Show control</div>
-          <div className="mt-2 flex flex-wrap gap-2">
-            <button
-              type="button"
-              disabled={!!sending}
-              onClick={() => void sendCommand('start')}
-              className="rounded bg-emerald-800 px-4 py-2 text-sm font-semibold text-emerald-50 hover:bg-emerald-700 disabled:opacity-50"
-            >
-              Start slideshow
-            </button>
-            <button
-              type="button"
-              disabled={!!sending}
-              onClick={() => void sendCommand('end')}
-              className="rounded bg-rose-900 px-4 py-2 text-sm font-semibold text-rose-50 hover:bg-rose-800 disabled:opacity-50"
-            >
-              End slideshow & close PowerPoint
-            </button>
-          </div>
-          <p className="mt-2 text-xs text-slate-500">
-            End closes the slideshow and quits PowerPoint. Cue auto-open stays paused until you resume
-            or a new cue starts.
-          </p>
-        </div>
-
         <div className="mt-4">
           <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Slide navigation</div>
           <div className="mt-2 flex flex-wrap items-end gap-2">
@@ -659,17 +633,17 @@ const PowerPointPlaybackPage: React.FC = () => {
         </div>
 
         {currentSlide || nextSlide || previews.length > 0 ? (
-          <div className="mt-5">
-            <div className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">
+          <div className="mx-auto mt-5 w-full max-w-[66rem]">
+            <div className="mb-2 text-center text-[11px] font-bold uppercase tracking-wide text-slate-400">
               Slide previews
               {session?.slideCount || previews.length
                 ? ` · ${session?.slideCount || previews.length} slides`
                 : ''}
             </div>
-            <div className="flex flex-wrap items-start gap-3">
+            <div className="flex flex-wrap items-start justify-center gap-6">
               {[
-                { slide: currentSlide, label: 'Current', live: true, widthClass: 'w-full max-w-[18rem]' },
-                { slide: nextSlide, label: 'Next', live: false, widthClass: 'w-full max-w-[13.5rem]' },
+                { slide: currentSlide, label: 'Current', live: true, widthClass: 'w-full max-w-[36rem]' },
+                { slide: nextSlide, label: 'Next', live: false, widthClass: 'w-full max-w-[28rem]' },
               ].map(({ slide, label, live, widthClass }) => (
                 <button
                   key={label}
@@ -704,36 +678,40 @@ const PowerPointPlaybackPage: React.FC = () => {
               ))}
             </div>
             {previews.length > 0 ? (
-              <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
-                {previews.map((slide) => {
-                  const isLive = liveIndex === slide.slideIndex;
-                  const isNext = liveIndex != null && slide.slideIndex === liveIndex + 1;
-                  return (
-                    <button
-                      key={slide.pptSlideId}
-                      type="button"
-                      disabled={!!sending}
-                      onClick={() => void sendCommand('goto', slide.slideIndex)}
-                      className={`w-24 shrink-0 overflow-hidden rounded-md border text-left ${
-                        isLive
-                          ? 'border-orange-400 ring-1 ring-orange-400/70'
-                          : isNext
-                            ? 'border-sky-600'
-                            : 'border-slate-700 hover:border-slate-500'
-                      }`}
-                    >
-                      <PreviewImage slide={slide} />
-                      <div
-                        className={`px-1.5 py-1 text-[10px] font-semibold ${
-                          isLive ? 'bg-orange-950/80 text-orange-100' : 'bg-slate-900 text-slate-300'
-                        }`}
-                      >
-                        {slide.slideIndex}
-                        {isLive ? ' · Live' : isNext ? ' · Next' : ''}
-                      </div>
-                    </button>
-                  );
-                })}
+              <div className="mt-4 overflow-hidden rounded-xl border border-slate-700 bg-slate-900/70">
+                <div className="ppt-preview-strip overflow-x-auto px-3 pb-2 pt-3">
+                  <div className="mx-auto flex w-max gap-2">
+                    {previews.map((slide) => {
+                      const isLive = liveIndex === slide.slideIndex;
+                      const isNext = liveIndex != null && slide.slideIndex === liveIndex + 1;
+                      return (
+                        <button
+                          key={slide.pptSlideId}
+                          type="button"
+                          disabled={!!sending}
+                          onClick={() => void sendCommand('goto', slide.slideIndex)}
+                          className={`w-24 shrink-0 overflow-hidden rounded-lg border text-left ${
+                            isLive
+                              ? 'border-orange-400 ring-1 ring-orange-400/70'
+                              : isNext
+                                ? 'border-sky-600'
+                                : 'border-slate-700 hover:border-slate-500'
+                          }`}
+                        >
+                          <PreviewImage slide={slide} />
+                          <div
+                            className={`px-1.5 py-1 text-[10px] font-semibold ${
+                              isLive ? 'bg-orange-950/80 text-orange-100' : 'bg-slate-900 text-slate-300'
+                            }`}
+                          >
+                            {slide.slideIndex}
+                            {isLive ? ' · Live' : isNext ? ' · Next' : ''}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
               </div>
             ) : session?.connected && session?.deckName ? (
               <p className="mt-3 text-xs text-slate-500">
@@ -746,6 +724,30 @@ const PowerPointPlaybackPage: React.FC = () => {
             Capturing small slide thumbnails before the slideshow starts…
           </p>
         ) : null}
+      </section>
+
+      <section className="mx-4 mt-4 flex justify-center">
+        <div className="w-full max-w-[66rem] rounded-lg border border-slate-700 bg-slate-800/80 px-3 py-2 text-center">
+          <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Show control</div>
+          <div className="mt-1.5 flex flex-wrap justify-center gap-2">
+            <button
+              type="button"
+              disabled={!!sending}
+              onClick={() => void sendCommand('start')}
+              className="rounded bg-emerald-800 px-3 py-1.5 text-xs font-semibold text-emerald-50 hover:bg-emerald-700 disabled:opacity-50"
+            >
+              Start slideshow
+            </button>
+            <button
+              type="button"
+              disabled={!!sending}
+              onClick={() => void sendCommand('end')}
+              className="rounded bg-rose-900 px-3 py-1.5 text-xs font-semibold text-rose-50 hover:bg-rose-800 disabled:opacity-50"
+            >
+              End slideshow & close PowerPoint
+            </button>
+          </div>
+        </div>
       </section>
 
       <section className="mx-4 mt-4 rounded-xl border border-slate-700 bg-slate-800/50 p-4">

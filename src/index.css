@@ -44,6 +44,25 @@ html:not(.led-output-broadcast) #root {
   background: #94a3b8;
 }
 
+.ppt-preview-strip {
+  scrollbar-width: thin;
+  scrollbar-color: #8b5cf6 #1e293b;
+}
+.overflow-x-auto.ppt-preview-strip::-webkit-scrollbar {
+  height: 6px;
+}
+.overflow-x-auto.ppt-preview-strip::-webkit-scrollbar-track {
+  background: #1e293b;
+  border-radius: 999px;
+}
+.overflow-x-auto.ppt-preview-strip::-webkit-scrollbar-thumb {
+  background: #8b5cf6;
+  border-radius: 999px;
+}
+.overflow-x-auto.ppt-preview-strip::-webkit-scrollbar-thumb:hover {
+  background: #a78bfa;
+}
+
 /* Custom focus styles */
 input:focus, select:focus, textarea:focus {
   outline: none;
