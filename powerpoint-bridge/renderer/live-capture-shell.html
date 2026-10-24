@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>ROS Live Capture</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #0b1220; }
+      .bar {
+        height: 48px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+        padding: 0 0.85rem;
+        background: #0f172a;
+        border-bottom: 1px solid #2a3a52;
+        color: #e8eef7;
+        font-family: "Segoe UI", system-ui, sans-serif;
+      }
+      .bar strong { font-size: 0.92rem; }
+      .bar span { color: #93a4bd; font-size: 0.78rem; }
+      button {
+        border: 1px solid #2a3a52;
+        background: #7f1d1d;
+        color: #fecaca;
+        border-radius: 8px;
+        padding: 0.35rem 0.75rem;
+        font-weight: 650;
+        cursor: pointer;
+      }
+      button:hover { background: #991b1b; }
+    </style>
+  </head>
+  <body>
+    <div class="bar">
+      <div>
+        <strong>Live Capture</strong>
+        <span>Screen share asks for a display first. Close returns to the bridge.</span>
+      </div>
+      <button type="button" id="close">Close</button>
+    </div>
+    <script>
+      document.getElementById('close').onclick = () => window.captureShell.close();
+    </script>
+  </body>
+</html>

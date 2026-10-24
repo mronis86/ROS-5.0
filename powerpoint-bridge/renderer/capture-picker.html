@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Pick what to share</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0b1220;
+        --card: #152033;
+        --border: #2a3a52;
+        --text: #e8eef7;
+        --muted: #93a4bd;
+        --accent: #8b5cf6;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: "Segoe UI", system-ui, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+      }
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        padding: 0.85rem 1.1rem;
+        border-bottom: 1px solid var(--border);
+        background: #0f172a;
+        position: sticky;
+        top: 0;
+      }
+      h1 { margin: 0; font-size: 1rem; }
+      p { margin: 0; color: var(--muted); font-size: 0.8rem; }
+      button {
+        border: 1px solid var(--border);
+        background: #243247;
+        color: var(--text);
+        border-radius: 8px;
+        padding: 0.4rem 0.75rem;
+        cursor: pointer;
+      }
+      main { padding: 0.9rem 1.1rem 1.2rem; }
+      h2 {
+        margin: 0.85rem 0 0.5rem;
+        font-size: 0.72rem;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+        gap: 0.65rem;
+      }
+      .src {
+        display: block;
+        width: 100%;
+        padding: 0;
+        overflow: hidden;
+        text-align: left;
+        background: var(--card);
+      }
+      .src:hover { border-color: var(--accent); }
+      .src img {
+        display: block;
+        width: 100%;
+        aspect-ratio: 16 / 9;
+        object-fit: cover;
+        background: #020617;
+      }
+      .src span {
+        display: block;
+        padding: 0.4rem 0.55rem 0.5rem;
+        font-size: 0.78rem;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .empty { color: var(--muted); font-size: 0.85rem; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div>
+        <h1>Pick a screen</h1>
+        <p>Choose a display. Close goes back to the bridge. Cancel stays in Live Capture so you can pick a camera instead.</p>
+      </div>
+      <div>
+        <button type="button" id="windows">Show windows</button>
+        <button type="button" id="cancel">Cancel</button>
+        <button type="button" id="close-all" style="background:#7f1d1d;color:#fecaca">Close</button>
+      </div>
+    </header>
+    <main>
+      <h2>Screens</h2>
+      <div id="screens" class="grid"></div>
+      <h2>Windows</h2>
+      <div id="windows" class="grid"></div>
+    </main>
+    <script>
+      const screensEl = document.getElementById('screens');
+      const windowsEl = document.getElementById('windows');
+      document.getElementById('cancel').onclick = () => window.capturePicker.cancel();
+      document.getElementById('close-all').onclick = () => window.capturePicker.closeAll();
+      document.getElementById('windows').onclick = () => window.capturePicker.showWindows();
+
+      function card(source) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'src';
+        btn.innerHTML = `<img alt="" src="${source.thumbnail}" /><span></span>`;
+        btn.querySelector('span').textContent = source.name || source.id;
+        btn.onclick = () => window.capturePicker.pick(source.id);
+        return btn;
+      }
+
+      function fill(el, list) {
+        el.innerHTML = '';
+        if (!list.length) {
+          el.innerHTML = '<p class="empty">None found</p>';
+          return;
+        }
+        list.forEach((source) => el.appendChild(card(source)));
+      }
+
+      window.capturePicker.onSources((payload) => {
+        fill(screensEl, payload.screens || []);
+        fill(windowsEl, payload.windows || []);
+      });
+    </script>
+  </body>
+</html>

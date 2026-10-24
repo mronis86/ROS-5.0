@@ -342,7 +342,15 @@ const PowerPointPlaybackPage: React.FC = () => {
         if (action === 'end') {
           setSession((prev) =>
             prev
-              ? { ...prev, slideshowActive: false, deckName: '', currentIndex: null, slideCount: prev.slideCount }
+              ? {
+                  ...prev,
+                  slideshowActive: false,
+                  deckName: '',
+                  currentIndex: null,
+                  slideCount: 0,
+                  currentItemId: null,
+                  currentFileId: null,
+                }
               : prev
           );
         }
@@ -375,12 +383,16 @@ const PowerPointPlaybackPage: React.FC = () => {
     };
   }, [cues, rosCue, session]);
 
-  const liveIndex = session?.currentIndex != null && session.currentIndex > 0 ? session.currentIndex : null;
-  const currentSlide =
-    (liveIndex != null ? previews.find((slide) => slide.slideIndex === liveIndex) : null) || stubSlide(liveIndex);
-  const nextSlide =
-    (liveIndex != null ? previews.find((slide) => slide.slideIndex === liveIndex + 1) : null) ||
-    stubSlide(liveIndex != null && session?.slideCount && liveIndex < session.slideCount ? liveIndex + 1 : null);
+  const deckOpen = !!(session?.connected && String(session.deckName || '').trim());
+  const liveIndex =
+    deckOpen && session?.currentIndex != null && session.currentIndex > 0 ? session.currentIndex : null;
+  const currentSlide = deckOpen
+    ? (liveIndex != null ? previews.find((slide) => slide.slideIndex === liveIndex) : null) || stubSlide(liveIndex)
+    : null;
+  const nextSlide = deckOpen
+    ? (liveIndex != null ? previews.find((slide) => slide.slideIndex === liveIndex + 1) : null) ||
+      stubSlide(liveIndex != null && session?.slideCount && liveIndex < session.slideCount ? liveIndex + 1 : null)
+    : null;
 
   const helperSeen = isFreshSeen(session?.lastSeen || null);
   const wrongMode = !session?.connected && helperSeen && session?.helperMode === 'follow';
@@ -414,9 +426,9 @@ const PowerPointPlaybackPage: React.FC = () => {
           <h1 className="text-lg font-semibold text-white">ROS PPT Launcher</h1>
           <p className="truncate text-xs text-slate-400">
             {eventName}
-            {session?.deckName ? ` · ${session.deckName}` : ''}
-            {session?.slideCount || previews.length
-              ? ` · ${session?.currentIndex || '—'} / ${session?.slideCount || previews.length} slides`
+            {deckOpen && session?.deckName ? ` · ${session.deckName}` : ''}
+            {deckOpen && (session?.slideCount || session?.currentIndex)
+              ? ` · ${session?.currentIndex || '—'} / ${session?.slideCount || '—'} slides`
               : ''}
             {` · cache ${session?.cacheOk || 0}/${session?.cacheTotal || 0}`}
           </p>
@@ -530,11 +542,11 @@ const PowerPointPlaybackPage: React.FC = () => {
       <section className="mx-4 mt-4 rounded-xl border border-slate-700 bg-slate-800/80 p-4">
         <div className="text-[11px] font-bold uppercase tracking-wide text-orange-300">Live deck</div>
         <div className="mt-1 text-lg font-semibold text-white">
-          {session?.deckName || 'No deck open'}
+          {deckOpen ? session?.deckName : 'No deck open'}
         </div>
         <div className="mt-2 text-3xl font-bold tabular-nums text-orange-200">
-          {session?.currentIndex != null || session?.slideCount || previews.length
-            ? `Slide ${session?.currentIndex || '—'} of ${session?.slideCount || previews.length || '—'}`
+          {deckOpen && (session?.currentIndex != null || session?.slideCount)
+            ? `Slide ${session?.currentIndex || '—'} of ${session?.slideCount || '—'}`
             : 'Waiting for deck'}
         </div>
         <div className="mt-1 text-sm text-slate-400">
@@ -545,36 +557,26 @@ const PowerPointPlaybackPage: React.FC = () => {
         ) : null}
 
         {session?.liveCaptureActive && isVdoViewUrl(session.liveCaptureUrl) ? (
-          <div className="mt-4">
-            <div className="flex items-center justify-between gap-2">
-              <div className="text-[11px] font-bold uppercase tracking-wide text-orange-300">
-                Live capture
-                {session.liveCaptureSource === 'camera' ? ' · camera' : ' · screen'}
-              </div>
-              <a
-                href={session.liveCaptureUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="text-[11px] font-semibold text-orange-200 underline-offset-2 hover:underline"
-              >
-                Open full view
-              </a>
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-violet-500/40 bg-violet-950/40 px-3 py-1.5">
+            <div className="text-xs font-semibold text-violet-100">
+              Live capture is on
+              {session.liveCaptureSource === 'camera' ? ' · camera' : ' · screen'}
             </div>
-            <div className="mt-2 overflow-hidden rounded-xl border border-orange-500/50 bg-black">
-              <iframe
-                title="Live capture from the show PC"
-                src={session.liveCaptureUrl}
-                className="aspect-video w-full bg-black"
-                allow="autoplay; fullscreen"
-                referrerPolicy="no-referrer"
-              />
-            </div>
+            <button
+              type="button"
+              onClick={() => {
+                window.open(
+                  session.liveCaptureUrl,
+                  'ros-live-capture',
+                  'popup=yes,width=1280,height=720,menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=yes'
+                );
+              }}
+              className="rounded bg-violet-700 px-3 py-1 text-xs font-semibold text-violet-50 hover:bg-violet-600"
+            >
+              Pop out
+            </button>
           </div>
-        ) : (
-          <p className="mt-4 text-xs text-slate-500">
-            Start Live Capture on the PowerPoint Bridge to see this PC’s screen or camera here.
-          </p>
-        )}
+        ) : null}
 
         {/paused|Manual/i.test(session?.lastCommand || '') ? (
           <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded border border-amber-800/70 bg-amber-950/40 px-3 py-2 text-sm text-amber-100">
@@ -632,7 +634,7 @@ const PowerPointPlaybackPage: React.FC = () => {
           </div>
         </div>
 
-        {currentSlide || nextSlide || previews.length > 0 ? (
+        {deckOpen && (currentSlide || nextSlide || previews.length > 0) ? (
           <div className="mx-auto mt-5 w-full max-w-[66rem]">
             <div className="mb-2 text-center text-[11px] font-bold uppercase tracking-wide text-slate-400">
               Slide previews
@@ -713,13 +715,13 @@ const PowerPointPlaybackPage: React.FC = () => {
                   </div>
                 </div>
               </div>
-            ) : session?.connected && session?.deckName ? (
+            ) : deckOpen ? (
               <p className="mt-3 text-xs text-slate-500">
                 Capturing small slide thumbnails before the slideshow starts…
               </p>
             ) : null}
           </div>
-        ) : session?.connected && session?.deckName ? (
+        ) : deckOpen ? (
           <p className="mt-4 text-sm text-slate-400">
             Capturing small slide thumbnails before the slideshow starts…
           </p>

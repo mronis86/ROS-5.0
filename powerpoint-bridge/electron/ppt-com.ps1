@@ -177,6 +177,72 @@ function Try-OpenPath($app, $path) {
   return $null
 }
 
+function Try-OpenHidden($app, $path) {
+  $existing = Find-Presentation $app $path
+  if ($existing) { return $existing }
+  $fromPv = Try-ProtectedView $app $path
+  if ($fromPv) { return $fromPv }
+  try { return $app.Presentations.Open($path, $false, $false, $false) } catch {}
+  try { return $app.Presentations.Open($path, 0, 0, 0) } catch {}
+  return $null
+}
+
+function Start-Show-OnTop($app, $pres) {
+  if (-not $pres) { return $false }
+  try {
+    if ($app -and $app.SlideShowWindows.Count -gt 0) {
+      $live = $null
+      try { $live = $app.SlideShowWindows.Item(1).Presentation } catch {}
+      if ($live -and ((Normalize-Path $live.FullName) -eq (Normalize-Path $pres.FullName))) {
+        Focus-Show $app $pres
+        return $true
+      }
+    }
+  } catch {}
+  try {
+    $settings = $pres.SlideShowSettings
+    $settings.ShowType = 1
+    $settings.LoopUntilStopped = 0
+    try { $settings.RangeType = 1 } catch {}
+    $settings.Run() | Out-Null
+    Start-Sleep -Milliseconds 80
+    Focus-Show $app $pres
+    try { return ([int]$app.SlideShowWindows.Count -gt 0) } catch { return $true }
+  } catch {
+    return $false
+  }
+}
+
+function Close-Others-KeepShow($app, $keepPath) {
+  $keep = Normalize-Path $keepPath
+  $list = @()
+  try { $list = @($app.Presentations) } catch { return }
+  foreach ($p in $list) {
+    try {
+      if ($keep -and ((Normalize-Path $p.FullName) -eq $keep)) { continue }
+      try { $p.Saved = $true } catch {}
+      try { $p.Close() } catch {}
+    } catch {}
+  }
+}
+
+function Swap-To-Presentation($app, $path) {
+  Unblock-Deck $path
+  $opened = Try-OpenHidden $app $path
+  if (-not $opened) { $opened = Try-OpenPath $app $path }
+  if (-not $opened) { return Open-Presentation $app $path }
+
+  $started = Start-Show-OnTop $app $opened
+  if (-not $started) { return Open-Presentation $app $path }
+
+  Close-Others-KeepShow $app $path
+  try {
+    if ([int]$app.SlideShowWindows.Count -lt 1) { Start-Show-OnTop $app $opened | Out-Null }
+  } catch {}
+  Focus-Show $app $opened
+  return $opened
+}
+
 function Open-Presentation($app, $path) {
   Unblock-Deck $path
   Exit-Shows $app
@@ -365,9 +431,20 @@ if ($Command -eq 'open' -or $Command -eq 'swap') {
     Write-Json @{ ok = $false; error = 'Cached deck file is missing. Click Sync decks, then Follow ROS cues.' }
     exit 0
   }
-  Close-AllPresentations $ppt $FilePath
-  $pres = Open-Presentation $ppt $FilePath
-  $started = Start-Show $pres
+  $pres = Find-Presentation $ppt $FilePath
+  $otherOpen = $false
+  try { $otherOpen = -not $pres -and [int]$ppt.Presentations.Count -gt 0 } catch {}
+  if ($pres) {
+    $started = Start-Show $pres
+  } elseif ($otherOpen) {
+    $pres = Swap-To-Presentation $ppt $FilePath
+    $started = $false
+    try { $started = [int]$ppt.SlideShowWindows.Count -gt 0 } catch {}
+    if (-not $started) { $started = Start-Show $pres }
+  } else {
+    $pres = Open-Presentation $ppt $FilePath
+    $started = Start-Show $pres
+  }
   if (-not $started) {
     try {
       $pptPath = Join-Path $env:ProgramFiles 'Microsoft Office\root\Office16\POWERPNT.EXE'

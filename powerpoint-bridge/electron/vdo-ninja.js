@@ -22,8 +22,10 @@ function ensureRoom(rooms, eventId) {
 }
 
 function buildPushUrl(streamId, password, source) {
-  const flags = source === 'camera' ? 'webcam&autostart' : 'screenshare&autostart';
-  return `https://vdo.ninja/?push=${encodeURIComponent(streamId)}&password=${encodeURIComponent(password)}&${flags}&cleanoutput&label=ROS`;
+  const base = `https://vdo.ninja/?push=${encodeURIComponent(streamId)}&password=${encodeURIComponent(password)}&label=ROS`;
+  if (source === 'camera') return `${base}&webcam`;
+  if (source === 'screen') return `${base}&screenshare&noaudio`;
+  return base;
 }
 
 function buildViewUrl(streamId, password) {
