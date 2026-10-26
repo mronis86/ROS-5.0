@@ -1200,6 +1200,7 @@ export interface EventCueFile {
   version?: number;
   versionCount?: number;
   isCurrent?: boolean;
+  versionedName?: string;
 }
 
 export const apiClient = new ApiClient();

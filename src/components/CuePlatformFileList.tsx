@@ -11,9 +11,11 @@ function uploadedLabel(iso?: string | null): string {
 
 function sortFiles(files: EventCueFile[]): EventCueFile[] {
   return [...files].sort((a, b) => {
-    const name = String(a.originalName || '').localeCompare(String(b.originalName || ''), undefined, {
-      sensitivity: 'base',
-    });
+    const name = String(a.versionedName || a.originalName || '').localeCompare(
+      String(b.versionedName || b.originalName || ''),
+      undefined,
+      { sensitivity: 'base' }
+    );
     if (name) return name;
     return (Number(b.version) || 0) - (Number(a.version) || 0);
   });
@@ -59,7 +61,7 @@ export default function CuePlatformFileList({
                   onClick={() => onOpen(file.id)}
                   className="text-left text-cyan-300 hover:underline font-medium truncate"
                 >
-                  {file.originalName}
+                  {file.versionedName || file.originalName}
                 </button>
                 {versioned ? (
                   <span

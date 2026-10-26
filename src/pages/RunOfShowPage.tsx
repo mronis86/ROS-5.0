@@ -8732,7 +8732,7 @@ const RunOfShowPage: React.FC = () => {
       const response = await fetch(result.url);
       if (!response.ok) throw new Error('Could not download file.');
       const blob = await response.blob();
-      const suggestedName = file.originalName || 'download';
+      const suggestedName = file.versionedName || file.originalName || 'download';
       const picker = (window as any).showSaveFilePicker as
         | undefined
         | ((opts: {
@@ -8786,7 +8786,9 @@ const RunOfShowPage: React.FC = () => {
         if (result?.file) {
           setPlatformCueFiles((prev) => [...prev, result.file]);
           if ((result.file.versionCount || 1) > 1) {
-            notes.push(`Saved as version ${result.file.version} of ${result.file.originalName} (now current).`);
+            notes.push(
+              `Saved as ${result.file.versionedName || result.file.originalName} (now current).`
+            );
           }
         }
       }
@@ -8813,7 +8815,7 @@ const RunOfShowPage: React.FC = () => {
       } else {
         await refreshPlatformCueFiles(event.id);
       }
-      setPlatformUploadNote(`Now using version ${result?.file?.version || ''} of ${file.originalName}`.trim());
+      setPlatformUploadNote(`Now using ${result?.file?.versionedName || file.versionedName || file.originalName}.`);
     } catch (err: any) {
       setPlatformUploadError(err?.message || 'Could not switch version.');
     } finally {
