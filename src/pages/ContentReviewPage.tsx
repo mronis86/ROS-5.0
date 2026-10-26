@@ -58,6 +58,8 @@ import {
   handleNotesChipEnter,
   withNotesTypingSpacer,
 } from '../lib/audioCallouts';
+import { suggestNoteLabelActions, removePlainLineFromNotesHtml } from '../lib/notesLabelSuggest';
+import NotesLabelSuggestBanner from '../components/NotesLabelSuggestBanner';
 import { calculateScheduleStartTime } from '../lib/scheduleStartTime';
 
 type ContentReviewFollowMode = 'solo' | 'drive' | 'follow';
@@ -806,6 +808,7 @@ const ContentReviewPage: React.FC = () => {
   });
   const [editModeEnabled, setEditModeEnabled] = useState(false);
   const [notesDraft, setNotesDraft] = useState('');
+  const [notesVoCues, setNotesVoCues] = useState<VoCue[]>([]);
   const [notesDirty, setNotesDirty] = useState(false);
   const [isSavingNotes, setIsSavingNotes] = useState(false);
   const [notesSaveMessage, setNotesSaveMessage] = useState<string | null>(null);
@@ -858,6 +861,8 @@ const ContentReviewPage: React.FC = () => {
   const [isSavingSpeakers, setIsSavingSpeakers] = useState(false);
   const [speakersSaveMessage, setSpeakersSaveMessage] = useState<string | null>(null);
   const notesEditorRef = useRef<HTMLDivElement>(null);
+  const notesVoCuesRef = useRef<VoCue[]>([]);
+  notesVoCuesRef.current = notesVoCues;
   /** Width of review+stream column on large screens (px). */
   const [sideRailWidthPx, setSideRailWidthPx] = useState(416);
   const [isLgLayout, setIsLgLayout] = useState(false);
@@ -2788,6 +2793,7 @@ const ContentReviewPage: React.FC = () => {
 
       const notes = item?.notes ?? '';
       setNotesDraft(notes);
+      setNotesVoCues(Array.isArray(item?.voCues) ? item.voCues.map((vo) => ({ ...vo })) : []);
       setNotesDirty(false);
       setNotesSaveMessage(null);
       setSegmentDraft(item?.segmentName ?? '');
@@ -2854,6 +2860,7 @@ const ContentReviewPage: React.FC = () => {
 
     if (!notesDirtyRef.current) {
       setNotesDraft(displayItem.notes ?? '');
+      setNotesVoCues(Array.isArray(displayItem.voCues) ? displayItem.voCues.map((vo) => ({ ...vo })) : []);
       if (editModeEnabled && notesEditorRef.current) {
         notesEditorRef.current.innerHTML = notesForEditor(displayItem.notes ?? '');
         ensureNotesEditorTypingSpace(notesEditorRef.current);
@@ -2904,7 +2911,11 @@ const ContentReviewPage: React.FC = () => {
     const nextNotes = withNotesTypingSpacer(live);
     setIsSavingNotes(true);
     setNotesSaveMessage(null);
-    const result = await saveCuePatch(displayItem.id, (it) => ({ ...it, notes: nextNotes }));
+    const result = await saveCuePatch(displayItem.id, (it) => ({
+      ...it,
+      notes: nextNotes,
+      voCues: notesVoCues.length ? notesVoCues : undefined,
+    }));
     if (result.ok) {
       setNotesDraft(nextNotes);
       setNotesDirty(false);
@@ -2917,7 +2928,58 @@ const ContentReviewPage: React.FC = () => {
       setNotesSaveMessage(result.error || 'Save failed');
     }
     setIsSavingNotes(false);
-  }, [displayItem, eventId, isSavingNotes, notesDraft, saveCuePatch]);
+  }, [displayItem, eventId, isSavingNotes, notesDraft, notesVoCues, saveCuePatch]);
+
+  const notesLabelSuggestions = useMemo(
+    () =>
+      suggestNoteLabelActions(notesDraft, {
+        fallbackCue: String(displayItem?.customFields?.cue || '').trim(),
+        existingVoCues: notesVoCues,
+      }),
+    [displayItem, notesDraft, notesVoCues]
+  );
+
+  const convertNotesLabelHint = useCallback(
+    (hint: { type: 'vo' | 'settle'; line: string; kind?: 'vo' | 'bgm'; time?: string | null; label?: string; cuePrefix?: string }, time?: string) => {
+      if (!displayItem) return;
+      const editor = notesEditorRef.current;
+      let html = editor?.innerHTML || notesDraft;
+      html = removePlainLineFromNotesHtml(html, hint.line);
+      if (hint.type === 'vo') {
+        const nextTime = String(time || hint.time || '').trim();
+        if (!nextTime) return;
+        const vo: VoCue = {
+          id: `vo_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+          time: nextTime,
+          label: String(hint.label || '').trim(),
+          kind: hint.kind === 'bgm' ? 'bgm' : 'vo',
+          ...(hint.cuePrefix ? { cuePrefix: hint.cuePrefix } : {}),
+        };
+        const previous = notesVoCuesRef.current;
+        const next = [...previous, vo].sort((a, b) => a.time.localeCompare(b.time));
+        html = syncCalloutsIntoNotes(html, previous, next);
+        notesVoCuesRef.current = next;
+        setNotesVoCues(next);
+      } else {
+        const cue = String(hint.cuePrefix || displayItem.customFields?.cue || '').trim();
+        if (!cue) {
+          alert('Set a CUE number on this row first, or type the cue in the settle line.');
+          return;
+        }
+        html = prependSettleCueNote(html, cue);
+      }
+      html = withNotesTypingSpacer(html);
+      if (editor) {
+        editor.innerHTML = notesForEditor(html);
+        ensureNotesEditorTypingSpace(editor);
+        html = editor.innerHTML;
+      }
+      setNotesDraft(html);
+      setNotesDirty(true);
+      setNotesSaveMessage(null);
+    },
+    [displayItem, notesDraft, notesVoCues]
+  );
 
   const saveDisplayItemSegment = useCallback(async () => {
     if (!displayItem || !eventId || isSavingSegment) return;
@@ -3150,6 +3212,7 @@ const ContentReviewPage: React.FC = () => {
     });
     if (result.ok) {
       setNotesDraft(nextNotes);
+      setNotesVoCues(next);
       setNotesDirty(false);
       if (notesEditorRef.current) {
         notesEditorRef.current.innerHTML = notesForEditor(nextNotes);
@@ -4845,6 +4908,11 @@ const ContentReviewPage: React.FC = () => {
                     <div className="space-y-2 p-4">
                       <div className="rounded border border-slate-600 bg-slate-900/80 p-2">
                         <div className="mb-2 flex flex-wrap items-center gap-1.5 border-b border-slate-700 pb-2">
+                          <NotesLabelSuggestBanner
+                            suggestions={notesLabelSuggestions}
+                            fallbackCue={String(displayItem.customFields?.cue || '').trim()}
+                            onConvert={(hint, time) => convertNotesLabelHint(hint, time)}
+                          />
                           <button type="button" onClick={() => applyNotesFormatting('bold')} className="rounded border border-slate-500 px-2 py-1 text-xs font-bold text-slate-200 hover:bg-slate-700">B</button>
                           <button type="button" onClick={() => applyNotesFormatting('italic')} className="rounded border border-slate-500 px-2 py-1 text-xs italic text-slate-200 hover:bg-slate-700">I</button>
                           <button type="button" onClick={() => applyNotesFormatting('underline')} className="rounded border border-slate-500 px-2 py-1 text-xs underline text-slate-200 hover:bg-slate-700">U</button>
@@ -4906,9 +4974,15 @@ const ContentReviewPage: React.FC = () => {
                         <button
                           type="button"
                           onClick={() => {
-                            setNotesDraft(displayItem.notes ?? '');
+                            const notes = displayItem.notes ?? '';
+                            setNotesDraft(notes);
+                            setNotesVoCues(Array.isArray(displayItem.voCues) ? displayItem.voCues.map((vo) => ({ ...vo })) : []);
                             setNotesDirty(false);
                             setNotesSaveMessage(null);
+                            if (notesEditorRef.current) {
+                              notesEditorRef.current.innerHTML = notesForEditor(notes);
+                              ensureNotesEditorTypingSpace(notesEditorRef.current);
+                            }
                           }}
                           disabled={isSavingNotes}
                           className="rounded border border-slate-500 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"

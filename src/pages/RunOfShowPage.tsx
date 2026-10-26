@@ -70,8 +70,12 @@ import {
   ensureNotesEditorTypingSpace,
   handleNotesChipEnter,
   withNotesTypingSpacer,
+  prependSettleCueNote,
   voAlertsEnabledFromSettings,
 } from '../lib/audioCallouts';
+import { suggestNoteLabelActions, removePlainLineFromNotesHtml } from '../lib/notesLabelSuggest';
+import NotesLabelSuggestBanner from '../components/NotesLabelSuggestBanner';
+import CueReorderNumberModal from '../components/CueReorderNumberModal';
 import { boostNotesContrastHtml } from '../lib/notesContrast';
 import {
   getEventLocalHHMM,
@@ -1483,6 +1487,9 @@ const RunOfShowPage: React.FC = () => {
   }, [preshowShowDayArmed]);
   /** In-progress notes HTML while the modal is open (survives tab hide / schedule sync). */
   const [tempNotesHtml, setTempNotesHtml] = useState('');
+  const [tempNotesVoCues, setTempNotesVoCues] = useState<VoCue[]>([]);
+  const tempNotesVoCuesRef = useRef<VoCue[]>([]);
+  tempNotesVoCuesRef.current = tempNotesVoCues;
   const notesEditorRef = useRef<HTMLDivElement | null>(null);
   const [showSpeakersModal, setShowSpeakersModal] = useState(false);
   const [editingSpeakersItem, setEditingSpeakersItem] = useState<number | null>(null);
@@ -1916,6 +1923,7 @@ const RunOfShowPage: React.FC = () => {
   const [showPublicBulkModal, setShowPublicBulkModal] = useState(false);
   const [publicBulkSelectedIds, setPublicBulkSelectedIds] = useState<number[]>([]);
   const [showMoveRowsModal, setShowMoveRowsModal] = useState(false);
+  const [showCueReorderModal, setShowCueReorderModal] = useState(false);
   const [moveRowsStep, setMoveRowsStep] = useState<1 | 2>(1);
   const [moveRowsSelectedIds, setMoveRowsSelectedIds] = useState<Set<number>>(new Set());
   const [moveRowsTargetPosition, setMoveRowsTargetPosition] = useState(0); // 0-based index in movable parent list (insert after this index)
@@ -6607,14 +6615,24 @@ const RunOfShowPage: React.FC = () => {
 
     if (editingNotesItem === -1) {
       // Save to modal form
-      setModalForm((prev) => ({ ...prev, notes: content }));
+      setModalForm((prev) => ({
+        ...prev,
+        notes: content,
+        voCues: tempNotesVoCues.length ? tempNotesVoCues : undefined,
+      }));
     } else {
       // Save to existing schedule item
       const oldValue = schedule.find((item) => item.id === editingNotesItem)?.notes || '';
       const item = schedule.find((row) => row.id === editingNotesItem);
       setSchedule((prev) =>
         prev.map((scheduleItem) =>
-          scheduleItem.id === editingNotesItem ? { ...scheduleItem, notes: content } : scheduleItem
+          scheduleItem.id === editingNotesItem
+            ? {
+                ...scheduleItem,
+                notes: content,
+                voCues: tempNotesVoCues.length ? tempNotesVoCues : undefined,
+              }
+            : scheduleItem
         )
       );
 
@@ -6638,6 +6656,7 @@ const RunOfShowPage: React.FC = () => {
     setShowNotesModal(false);
     setEditingNotesItem(null);
     setTempNotesHtml('');
+    setTempNotesVoCues([]);
     handleModalClosed();
   };
 
@@ -8547,6 +8566,64 @@ const RunOfShowPage: React.FC = () => {
     [showNotesModal, editingNotesItem]
   );
 
+  const notesFallbackCue = useMemo(() => {
+    if (editingNotesItem == null || editingNotesItem === -1) return '';
+    const item = schedule.find((row) => row.id === editingNotesItem);
+    return String(item?.customFields?.cue || '').trim();
+  }, [editingNotesItem, schedule]);
+
+  const notesLabelSuggestions = useMemo(
+    () =>
+      suggestNoteLabelActions(tempNotesHtml, {
+        fallbackCue: notesFallbackCue,
+        existingVoCues: tempNotesVoCues,
+      }),
+    [notesFallbackCue, tempNotesHtml, tempNotesVoCues]
+  );
+
+  const convertNotesLabelHint = useCallback(
+    (hint: { type: 'vo' | 'settle'; line: string; kind?: 'vo' | 'bgm'; time?: string | null; label?: string; cuePrefix?: string }, time?: string) => {
+      const editor =
+        (notesEditorRef.current as HTMLElement | null) ||
+        (document.getElementById('notes-editor') as HTMLElement | null);
+      let html = editor?.innerHTML || tempNotesHtml;
+      html = removePlainLineFromNotesHtml(html, hint.line);
+      if (hint.type === 'vo') {
+        const nextTime = String(time || hint.time || '').trim();
+        if (!nextTime) return;
+        const venueTz = resolveShowTimezone(calendarTimezoneRef.current, eventTimezone);
+        const vo: VoCue = {
+          id: `vo_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+          time: nextTime,
+          label: String(hint.label || '').trim(),
+          kind: hint.kind === 'bgm' ? 'bgm' : 'vo',
+          timeZone: venueTz,
+          ...(hint.cuePrefix ? { cuePrefix: hint.cuePrefix } : {}),
+        };
+        const previous = tempNotesVoCuesRef.current;
+        const next = [...previous, vo].sort((a, b) => a.time.localeCompare(b.time));
+        html = syncCalloutsIntoNotes(html, previous, next);
+        tempNotesVoCuesRef.current = next;
+        setTempNotesVoCues(next);
+      } else {
+        const cue = String(hint.cuePrefix || notesFallbackCue).trim();
+        if (!cue) {
+          alert('Set a CUE number on this row first, or type the cue in the settle line.');
+          return;
+        }
+        html = prependSettleCueNote(html, cue);
+      }
+      html = notesForEditor(withNotesTypingSpacer(html));
+      if (editor) {
+        editor.innerHTML = html;
+        ensureNotesEditorTypingSpace(editor);
+        html = editor.innerHTML;
+      }
+      setTempNotesHtml(html);
+    },
+    [eventTimezone, notesFallbackCue, tempNotesHtml, tempNotesVoCues]
+  );
+
   // Load notes into temp state + editor once when the modal opens (not on schedule sync).
   useEffect(() => {
     if (!showNotesModal || editingNotesItem === null) {
@@ -8554,13 +8631,17 @@ const RunOfShowPage: React.FC = () => {
     }
 
     let initial = '';
+    let initialVos: VoCue[] = [];
     if (editingNotesItem === -1) {
       initial = notesForEditor(modalForm.notes || '');
+      initialVos = Array.isArray(modalForm.voCues) ? modalForm.voCues.map((vo: VoCue) => ({ ...vo })) : [];
     } else {
       const item = schedule.find((row) => row.id === editingNotesItem);
       initial = notesForEditor(item?.notes || '');
+      initialVos = Array.isArray(item?.voCues) ? item.voCues.map((vo) => ({ ...vo })) : [];
     }
     setTempNotesHtml(initial);
+    setTempNotesVoCues(initialVos);
 
     // Wait for the contentEditable node to mount, then seed it once.
     const frame = window.requestAnimationFrame(() => {
@@ -14731,6 +14812,28 @@ const RunOfShowPage: React.FC = () => {
         );
       })()}
 
+      {showCueReorderModal && (currentUserRole === 'EDITOR' || currentUserRole === 'OPERATOR') && (
+        <CueReorderNumberModal
+          schedule={schedule}
+          day={selectedDay}
+          isChild={(item) => isIndentedScheduleItem(item, indentedCues)}
+          onClose={() => setShowCueReorderModal(false)}
+          onApply={(nextSchedule, summary) => {
+            setSchedule(nextSchedule);
+            logChange(
+              'FIELD_UPDATE',
+              `Renumbered ${summary.changeCount} cue label${summary.changeCount === 1 ? '' : 's'} on Day ${selectedDay}`,
+              {
+                changeType: 'CUE_RENUMBER',
+                details: summary,
+              }
+            );
+            handleUserEditing();
+            setShowCueReorderModal(false);
+          }}
+        />
+      )}
+
       {/* Running Timer Popup */}
       {showRunningTimerPopup && runningTimerInfo && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
@@ -16762,7 +16865,17 @@ const RunOfShowPage: React.FC = () => {
                     </span>
                   </div>
                 )}
-                {(currentUserRole === 'EDITOR' || currentUserRole === 'OPERATOR') && showMode === 'in-show' && (
+                {(currentUserRole === 'EDITOR' || currentUserRole === 'OPERATOR') && showMode !== 'in-show' && (
+                  <button
+                    type="button"
+                    onClick={() => setShowCueReorderModal(true)}
+                    className="px-2 py-1 bg-slate-600 hover:bg-slate-500 text-white text-sm rounded transition-colors whitespace-nowrap"
+                    title="Relabel cue numbers. Does not move rows."
+                  >
+                    ReCue#
+                  </button>
+                )}
+                {(currentUserRole === 'EDITOR' || currentUserRole === 'OPERATOR') && (
                   <button
                     type="button"
                     onClick={() => {
@@ -19848,7 +19961,14 @@ const RunOfShowPage: React.FC = () => {
              
              {/* Single Rich Text Editor */}
              <div className="flex-shrink-0 min-h-0 mb-2">
-               <label className="block text-white text-sm mb-2">Notes:</label>
+               <div className="mb-2 flex items-center gap-2">
+                 <label className="text-white text-sm">Notes:</label>
+                 <NotesLabelSuggestBanner
+                   suggestions={notesLabelSuggestions}
+                   fallbackCue={notesFallbackCue}
+                   onConvert={(hint, time) => convertNotesLabelHint(hint, time)}
+                 />
+               </div>
                <div
                  id="notes-editor"
                  ref={notesEditorRef}
@@ -19888,6 +20008,7 @@ const RunOfShowPage: React.FC = () => {
                    setShowNotesModal(false);
                    setEditingNotesItem(null);
                    setTempNotesHtml('');
+                   setTempNotesVoCues([]);
                    handleModalClosed();
                  }}
                  className="flex-1 px-6 py-3 bg-slate-600 hover:bg-slate-500 text-white font-semibold rounded-lg transition-colors"
