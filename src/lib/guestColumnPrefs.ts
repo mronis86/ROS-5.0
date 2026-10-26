@@ -94,9 +94,11 @@ export function loadGuestVisibleColumns(storageKey: string): GuestVisibleColumns
 
 export function loadStickyStart(storageKey: string): boolean {
   try {
-    return localStorage.getItem(storageKey) === 'true';
+    const raw = localStorage.getItem(storageKey);
+    if (raw === null) return true;
+    return raw === 'true';
   } catch {
-    return false;
+    return true;
   }
 }
 

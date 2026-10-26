@@ -2039,9 +2039,11 @@ const RunOfShowPage: React.FC = () => {
   /** When true, Start sits fixed beside CUE (outside horizontal scroll). */
   const [stickyStartColumn, setStickyStartColumn] = useState(() => {
     try {
-      return localStorage.getItem('rosStickyStartColumn') === 'true';
+      const raw = localStorage.getItem('rosStickyStartColumn');
+      if (raw === null) return true;
+      return raw === 'true';
     } catch {
-      return false;
+      return true;
     }
   });
   useEffect(() => {

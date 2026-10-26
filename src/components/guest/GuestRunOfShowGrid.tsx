@@ -90,7 +90,7 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
   timerRunning = false,
   timerLoaded = false,
   visibleColumns = GUEST_VISIBLE_COLUMNS,
-  stickyStartColumn = false,
+  stickyStartColumn = true,
   columnOrder,
   customColumns = [],
   visibleCustomColumns = {},
