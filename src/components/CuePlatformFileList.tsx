@@ -1,5 +1,6 @@
 import React from 'react';
 import type { EventCueFile } from '../services/api-client';
+import { cueFileDisplayName } from '../lib/cueFileVersions';
 import { formatCueFileExpiry, formatCueFileSize } from './AssetRetentionNotice';
 
 function uploadedLabel(iso?: string | null): string {
@@ -11,11 +12,9 @@ function uploadedLabel(iso?: string | null): string {
 
 function sortFiles(files: EventCueFile[]): EventCueFile[] {
   return [...files].sort((a, b) => {
-    const name = String(a.versionedName || a.originalName || '').localeCompare(
-      String(b.versionedName || b.originalName || ''),
-      undefined,
-      { sensitivity: 'base' }
-    );
+    const name = cueFileDisplayName(a).localeCompare(cueFileDisplayName(b), undefined, {
+      sensitivity: 'base',
+    });
     if (name) return name;
     return (Number(b.version) || 0) - (Number(a.version) || 0);
   });
@@ -45,6 +44,7 @@ export default function CuePlatformFileList({
     <div className="space-y-2">
       {rows.map((file) => {
         const versioned = (file.versionCount || 1) > 1;
+        const displayName = cueFileDisplayName(file);
         return (
           <div
             key={file.id}
@@ -61,7 +61,7 @@ export default function CuePlatformFileList({
                   onClick={() => onOpen(file.id)}
                   className="text-left text-cyan-300 hover:underline font-medium truncate"
                 >
-                  {file.versionedName || file.originalName}
+                  {displayName}
                 </button>
                 {versioned ? (
                   <span

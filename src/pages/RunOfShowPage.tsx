@@ -107,6 +107,7 @@ import ShowVsRehearsalPanel from '../components/ShowVsRehearsalPanel';
 import TimeToastIcon from '../components/TimeToastIcon';
 import AssetRetentionNotice from '../components/AssetRetentionNotice';
 import CuePlatformFileList from '../components/CuePlatformFileList';
+import { cueFileDisplayName } from '../lib/cueFileVersions';
 import { OperatorPptPendingDecks } from '../components/PptPendingDeckBanner';
 // import { driftDetector } from '../services/driftDetector'; // REMOVED: Using WebSocket-only approach
 import ScheduleRow from './ScheduleRow';
@@ -8732,7 +8733,7 @@ const RunOfShowPage: React.FC = () => {
       const response = await fetch(result.url);
       if (!response.ok) throw new Error('Could not download file.');
       const blob = await response.blob();
-      const suggestedName = file.versionedName || file.originalName || 'download';
+      const suggestedName = cueFileDisplayName(file);
       const picker = (window as any).showSaveFilePicker as
         | undefined
         | ((opts: {
@@ -8786,9 +8787,7 @@ const RunOfShowPage: React.FC = () => {
         if (result?.file) {
           setPlatformCueFiles((prev) => [...prev, result.file]);
           if ((result.file.versionCount || 1) > 1) {
-            notes.push(
-              `Saved as ${result.file.versionedName || result.file.originalName} (now current).`
-            );
+            notes.push(`Saved as ${cueFileDisplayName(result.file)} (now current).`);
           }
         }
       }
@@ -8815,7 +8814,7 @@ const RunOfShowPage: React.FC = () => {
       } else {
         await refreshPlatformCueFiles(event.id);
       }
-      setPlatformUploadNote(`Now using ${result?.file?.versionedName || file.versionedName || file.originalName}.`);
+      setPlatformUploadNote(`Now using ${cueFileDisplayName(result?.file || file)}.`);
     } catch (err: any) {
       setPlatformUploadError(err?.message || 'Could not switch version.');
     } finally {
