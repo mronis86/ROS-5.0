@@ -1091,6 +1091,15 @@ class ApiClient {
     );
   }
 
+  async preferEventCueFile(fileId: string, eventId?: string) {
+    const result = await this.request<{ ok: boolean; file: EventCueFile; files: EventCueFile[] }>(
+      `/api/event-cue-files/${encodeURIComponent(fileId)}/prefer`,
+      { method: 'POST' }
+    );
+    if (eventId) this.cache.delete(`eventCueFiles_${eventId}`);
+    return result;
+  }
+
   async deleteEventCueFile(fileId: string, eventId?: string) {
     const result = await this.request<{ ok: boolean }>(
       `/api/event-cue-files/${encodeURIComponent(fileId)}`,
@@ -1187,6 +1196,10 @@ export interface EventCueFile {
   uploadedByName?: string | null;
   createdAt: string;
   expiresAt: string;
+  preferredAt?: string | null;
+  version?: number;
+  versionCount?: number;
+  isCurrent?: boolean;
 }
 
 export const apiClient = new ApiClient();

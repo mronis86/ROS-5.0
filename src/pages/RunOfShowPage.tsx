@@ -105,7 +105,8 @@ import TimedMarkerModal, { TimedMarkerModalResult } from '../components/TimedMar
 import { mapOperatorCountdownRow, operatorCountdownRemaining, formatOperatorCountdownTime } from '../lib/operatorCountdown';
 import ShowVsRehearsalPanel from '../components/ShowVsRehearsalPanel';
 import TimeToastIcon from '../components/TimeToastIcon';
-import AssetRetentionNotice, { formatCueFileExpiry, formatCueFileSize } from '../components/AssetRetentionNotice';
+import AssetRetentionNotice from '../components/AssetRetentionNotice';
+import CuePlatformFileList from '../components/CuePlatformFileList';
 import { OperatorPptPendingDecks } from '../components/PptPendingDeckBanner';
 // import { driftDetector } from '../services/driftDetector'; // REMOVED: Using WebSocket-only approach
 import ScheduleRow from './ScheduleRow';
@@ -1501,6 +1502,8 @@ const RunOfShowPage: React.FC = () => {
   const [platformCueFiles, setPlatformCueFiles] = useState<EventCueFile[]>([]);
   const [platformUploadBusy, setPlatformUploadBusy] = useState(false);
   const [platformUploadError, setPlatformUploadError] = useState<string | null>(null);
+  const [platformUploadNote, setPlatformUploadNote] = useState<string | null>(null);
+  const [platformUsingVersionId, setPlatformUsingVersionId] = useState<string | null>(null);
   const [platformUploadDragOver, setPlatformUploadDragOver] = useState(false);
   const platformFileInputRef = useRef<HTMLInputElement | null>(null);
   const [showViewAssetsModal, setShowViewAssetsModal] = useState(false);
@@ -8775,18 +8778,46 @@ const RunOfShowPage: React.FC = () => {
     }
     setPlatformUploadBusy(true);
     setPlatformUploadError(null);
+    setPlatformUploadNote(null);
     try {
+      const notes: string[] = [];
       for (const file of files) {
         const result = await apiClient.uploadEventCueFile(event.id, editingAssetsItem, file);
         if (result?.file) {
           setPlatformCueFiles((prev) => [...prev, result.file]);
+          if ((result.file.versionCount || 1) > 1) {
+            notes.push(`Saved as version ${result.file.version} of ${result.file.originalName} (now current).`);
+          }
         }
       }
       await refreshPlatformCueFiles(event.id);
+      if (notes.length) setPlatformUploadNote(notes.join(' '));
     } catch (err: any) {
       setPlatformUploadError(err?.message || 'Upload failed.');
     } finally {
       setPlatformUploadBusy(false);
+    }
+  };
+
+  const handleUsePlatformCueFileVersion = async (file: EventCueFile) => {
+    if (!event?.id) return;
+    setPlatformUsingVersionId(file.id);
+    setPlatformUploadError(null);
+    try {
+      const result = await apiClient.preferEventCueFile(file.id, event.id);
+      if (Array.isArray(result?.files) && result.files.length) {
+        setPlatformCueFiles((prev) => {
+          const others = prev.filter((row) => row.itemId !== file.itemId);
+          return [...others, ...result.files];
+        });
+      } else {
+        await refreshPlatformCueFiles(event.id);
+      }
+      setPlatformUploadNote(`Now using version ${result?.file?.version || ''} of ${file.originalName}`.trim());
+    } catch (err: any) {
+      setPlatformUploadError(err?.message || 'Could not switch version.');
+    } finally {
+      setPlatformUsingVersionId(null);
     }
   };
 
@@ -20289,7 +20320,7 @@ const RunOfShowPage: React.FC = () => {
                        {platformUploadBusy ? 'Uploading…' : 'Drag a file here, or click to upload'}
                      </div>
                      <div className="mt-1 text-xs text-slate-400">
-                       Any file type · max 200 MB
+                       Any file type · max 200 MB · same name becomes the next version
                      </div>
                    </div>
                  </>
@@ -20300,46 +20331,18 @@ const RunOfShowPage: React.FC = () => {
                {platformUploadError && (
                  <p className="text-sm text-red-300">{platformUploadError}</p>
                )}
-               {modalPlatformFiles.length > 0 ? (
-                 <div className="space-y-2">
-                   {modalPlatformFiles.map((file) => (
-                     <div key={file.id} className="flex flex-wrap items-center justify-between gap-2 rounded bg-slate-800 px-3 py-2">
-                       <div className="min-w-0">
-                         <button
-                           type="button"
-                           onClick={() => void openPlatformCueFile(file.id)}
-                           className="text-left text-cyan-300 hover:underline font-medium truncate"
-                         >
-                           {file.originalName}
-                         </button>
-                         <div className="text-xs text-slate-400">
-                           {formatCueFileSize(file.sizeBytes)}
-                           {file.sizeBytes ? ' · ' : ''}
-                           Deletes {formatCueFileExpiry(file.expiresAt) || 'in 4 months'}
-                         </div>
-                       </div>
-                       <div className="flex items-center gap-2">
-                         <button
-                           type="button"
-                           onClick={() => void downloadPlatformCueFile(file)}
-                           className="px-3 py-1.5 bg-cyan-700 hover:bg-cyan-600 text-white text-sm rounded"
-                         >
-                           Download
-                         </button>
-                         <button
-                           type="button"
-                           onClick={() => void handleDeletePlatformCueFile(file.id)}
-                           className="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white text-sm rounded"
-                         >
-                           Delete
-                         </button>
-                       </div>
-                     </div>
-                   ))}
-                 </div>
-               ) : (
-                 <p className="text-sm text-slate-400">No platform files on this cue yet.</p>
+               {platformUploadNote && (
+                 <p className="text-sm text-emerald-200">{platformUploadNote}</p>
                )}
+               <CuePlatformFileList
+                 files={modalPlatformFiles}
+                 canEdit
+                 usingId={platformUsingVersionId}
+                 onOpen={(fileId) => void openPlatformCueFile(fileId)}
+                 onDownload={(file) => void downloadPlatformCueFile(file)}
+                 onDelete={(fileId) => void handleDeletePlatformCueFile(fileId)}
+                 onUseVersion={(file) => void handleUsePlatformCueFileVersion(file)}
+               />
              </div>
              
              <div className="space-y-4">
@@ -20441,31 +20444,11 @@ const RunOfShowPage: React.FC = () => {
              {modalPlatformFiles.length > 0 && (
                <div className="mb-4 space-y-2">
                  <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-300">Uploaded to ROS</h3>
-                 {modalPlatformFiles.map((file) => (
-                   <div key={file.id} className="rounded-lg border border-slate-600 bg-slate-700 p-3 flex flex-wrap items-center justify-between gap-2">
-                     <div className="min-w-0">
-                       <button
-                         type="button"
-                         onClick={() => void openPlatformCueFile(file.id)}
-                         className="text-cyan-300 hover:underline font-semibold"
-                       >
-                         {file.originalName}
-                       </button>
-                       <div className="text-xs text-slate-400 mt-1">
-                         {formatCueFileSize(file.sizeBytes)}
-                         {file.sizeBytes ? ' · ' : ''}
-                         Deletes {formatCueFileExpiry(file.expiresAt) || 'in 4 months'}
-                       </div>
-                     </div>
-                     <button
-                       type="button"
-                       onClick={() => void downloadPlatformCueFile(file)}
-                       className="px-3 py-1.5 bg-cyan-700 hover:bg-cyan-600 text-white text-sm rounded"
-                     >
-                       Download
-                     </button>
-                   </div>
-                 ))}
+                 <CuePlatformFileList
+                   files={modalPlatformFiles}
+                   onOpen={(fileId) => void openPlatformCueFile(fileId)}
+                   onDownload={(file) => void downloadPlatformCueFile(file)}
+                 />
                </div>
              )}
              
