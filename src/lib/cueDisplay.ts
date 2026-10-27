@@ -4,6 +4,10 @@ export function isDelayProgramType(programType?: string | null): boolean {
   return String(programType || '').trim().toLowerCase() === 'delay block';
 }
 
+export function isShowBreakProgramType(programType?: string | null): boolean {
+  return String(programType || '').trim().toLowerCase() === 'show break';
+}
+
 export function formatCueNumber(cue: string | number | undefined | null): string {
   if (cue === 0) return 'CUE 0';
   if (cue == null) return 'CUE';
@@ -31,6 +35,7 @@ export function resolveScheduleCueLabel(
   fallbackItemId?: number | string | null
 ): string {
   if (isDelayProgramType(item?.programType)) return 'DELAY';
+  if (isShowBreakProgramType(item?.programType)) return 'BREAK';
   const raw = item?.customFields?.cue ?? item?.cue;
   if (raw != null && String(raw).trim() !== '') {
     return formatCueNumber(raw as string | number);
@@ -56,6 +61,7 @@ export function resolveLiveCueLabel(options: {
   } | null;
 }): string {
   if (isDelayProgramType(options.item?.programType)) return 'DELAY';
+  if (isShowBreakProgramType(options.item?.programType)) return 'BREAK';
   const fromItem = options.item?.customFields?.cue ?? options.item?.cue;
   if (fromItem != null && String(fromItem).trim() !== '') {
     return formatCueNumber(fromItem as string | number);

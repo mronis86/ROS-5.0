@@ -230,6 +230,7 @@ export const GUEST_PROGRAM_TYPE_COLORS: Record<string, string> = {
   'Break F&B/B2B': '#EC4899',
   'Breakout Session': '#20B2AA',
   'Delay Block': '#7C3AED',
+  'Show Break': '#0E7490',
   TBD: '#6B7280',
   KILLED: '#DC2626',
   'Full-Stage/Ted-Talk': '#EA580C',

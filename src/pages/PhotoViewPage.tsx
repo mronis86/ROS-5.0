@@ -2366,7 +2366,7 @@ const PhotoViewPage: React.FC = () => {
   const isPhotoPreviewFollowRow = (item: ScheduleItem) => {
     if (isIndentedScheduleItem(item, indentedCues)) return false;
     if (isKilledScheduleItem(item)) return false;
-    return String(item.programType || '').trim() !== 'Delay Block';
+    return String(item.programType || '').trim() !== 'Delay Block' && String(item.programType || '').trim() !== 'Show Break';
   };
 
   // Current cue plus the next 2 main cues (skip sub-cues / delay so speaker photos stay visible)

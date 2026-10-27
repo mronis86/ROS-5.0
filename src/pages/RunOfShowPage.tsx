@@ -128,6 +128,15 @@ import {
   shouldApplyShowStartOvertime,
 } from '../lib/scheduleStartTime';
 import {
+  SHOW_BREAK_PROGRAM_TYPE,
+  isScheduleOnlyProgramType,
+  isShowBreakProgramType,
+  lastShowBreakIndexBefore,
+  normalizeBreakStartTime,
+  parseBreakStartTimeToSeconds,
+  sameShowSession,
+} from '../lib/showBreak';
+import {
   isTimedMarkerItem,
   normalizeMarkerAbsoluteSeconds,
   normalizeMarkerOffsetSeconds,
@@ -346,6 +355,8 @@ interface ScheduleItem {
   markerAbsoluteSeconds?: number;
   /** Clock page display: 'countdown' | 'countUp' | 'timeOfDay' (swap + progress bar) | 'todOnly' (time of day only) */
   timerDisplay?: 'countdown' | 'countUp' | 'timeOfDay' | 'todOnly';
+  /** HH:MM restart clock on a Show Break row. */
+  breakStartTime?: string | null;
   /** Optional VO / BGM chips in Notes (prototype) — metadata only, not timeline rows */
   voCues?: VoCue[];
 }
@@ -406,6 +417,7 @@ function scheduleItemSignature(item: any): string {
     asText(item.markerAbsoluteSeconds),
     asText(item.timerDisplay),
     item.isStartCue ? '1' : '',
+    asText(item.breakStartTime),
     JSON.stringify(item.voCues || []),
   ].join('\u001f');
 }
@@ -474,7 +486,7 @@ function ensureScheduleTimerIds(
 
   let changed = false;
   const next = items.map((item) => {
-    if (!item || item.programType === 'Delay Block') return item;
+    if (!item || isScheduleOnlyProgramType(item.programType)) return item;
     const existing = typeof item.timerId === 'string' ? item.timerId.trim() : '';
     if (existing) {
       return existing === item.timerId ? item : { ...item, timerId: existing };
@@ -1484,6 +1496,9 @@ const RunOfShowPage: React.FC = () => {
   const [showInsertRowModal, setShowInsertRowModal] = useState(false);
   const [insertRowPosition, setInsertRowPosition] = useState<number | null>(null);
   const [showDelayBlockModal, setShowDelayBlockModal] = useState(false);
+  const [showShowBreakModal, setShowShowBreakModal] = useState(false);
+  const [showBreakLabel, setShowBreakLabel] = useState('Evening');
+  const [showBreakStartTime, setShowBreakStartTime] = useState('17:00');
   const [timedMarkerModal, setTimedMarkerModal] = useState<{
     mode: 'add' | 'edit';
     parentId: number;
@@ -2564,6 +2579,8 @@ const RunOfShowPage: React.FC = () => {
     'bg-slate-950/90 ring-1 ring-inset ring-slate-600/40';
   const DELAY_BLOCK_ROW_CLASS =
     'bg-violet-950/90 ring-2 ring-inset ring-violet-400';
+  const SHOW_BREAK_ROW_CLASS =
+    'bg-cyan-950/90 ring-2 ring-inset ring-cyan-400';
 
   /** True only while the cue timer is actually running (not merely loaded). */
   const isCueRunningOnStage = (itemId: number) => {
@@ -2584,6 +2601,9 @@ const RunOfShowPage: React.FC = () => {
   };
   const isDelayBlock = (itemId: number) =>
     schedule.some(item => item.id === itemId && item.programType === 'Delay Block');
+  const isShowBreakRow = (itemId: number) =>
+    schedule.some((item) => item.id === itemId && isShowBreakProgramType(item.programType));
+  const isScheduleOnlyRow = (itemId: number) => isDelayBlock(itemId) || isShowBreakRow(itemId);
 
   const isHybridTimerRunning = (timer: any) =>
     Boolean(
@@ -2599,9 +2619,9 @@ const RunOfShowPage: React.FC = () => {
     const hybridRunning = isHybridTimerRunning(hybrid);
     const runningIds = Object.keys(activeTimers)
       .map((key) => Number(key))
-      .filter((id) => Number.isFinite(id) && activeTimers[id] && !isDelayBlock(id));
+      .filter((id) => Number.isFinite(id) && activeTimers[id] && !isScheduleOnlyRow(id));
 
-    if (hybridRunning && hybridId != null && !isDelayBlock(hybridId)) {
+    if (hybridRunning && hybridId != null && !isScheduleOnlyRow(hybridId)) {
       return hybridId;
     }
     if (runningIds.length > 0) {
@@ -2609,7 +2629,7 @@ const RunOfShowPage: React.FC = () => {
       return runningIds[runningIds.length - 1];
     }
     if (hybridRunning && hybridId != null) return hybridId;
-    if (activeItemId != null && !isDelayBlock(activeItemId)) return activeItemId;
+    if (activeItemId != null && !isScheduleOnlyRow(activeItemId)) return activeItemId;
     return null;
   }, [
     hybridTimerData?.activeTimer,
@@ -2667,18 +2687,27 @@ const RunOfShowPage: React.FC = () => {
           backgroundImage:
             'repeating-linear-gradient(135deg, rgba(167,139,250,0.14) 0, rgba(167,139,250,0.14) 10px, rgba(46,16,101,0.12) 10px, rgba(46,16,101,0.12) 20px)',
         }
-      : {}),
+      : isShowBreakProgramType(item.programType)
+        ? {
+            backgroundColor: '#083344',
+            backgroundImage:
+              'repeating-linear-gradient(135deg, rgba(34,211,238,0.14) 0, rgba(34,211,238,0.14) 10px, rgba(8,51,68,0.12) 10px, rgba(8,51,68,0.12) 20px)',
+          }
+        : {}),
     ...extra,
   });
 
   const getRowContainerClass = (itemId: number, index: number) =>
-    isDelayBlock(itemId) && !isItemDimmed(itemId)
+    isShowBreakRow(itemId) && !isItemDimmed(itemId)
+      ? SHOW_BREAK_ROW_CLASS
+      : isDelayBlock(itemId) && !isItemDimmed(itemId)
       ? DELAY_BLOCK_ROW_CLASS
       : rowClassNames.get(itemId) || (index % 2 === 0 ? 'bg-slate-800' : 'bg-slate-900');
 
   /** CUE + Timer columns: neutral unless completed/stopped, or timed marker linked to loaded parent. */
   const getSideColumnRowClass = (itemId: number, index: number) => {
     if (isItemDimmed(itemId)) return COMPLETED_ROW_CLASS;
+    if (isShowBreakRow(itemId)) return SHOW_BREAK_ROW_CLASS;
     if (isDelayBlock(itemId)) return DELAY_BLOCK_ROW_CLASS;
     const row = schedule.find((s) => s.id === itemId);
     if (row?.isTimedMarker) {
@@ -2701,7 +2730,7 @@ const RunOfShowPage: React.FC = () => {
     customFields?: Record<string, unknown>;
     voCues?: VoCue[];
   }): React.CSSProperties =>
-    isItemDimmed(item.id) || item.programType === 'Delay Block'
+    isItemDimmed(item.id) || isScheduleOnlyProgramType(item.programType)
       ? getRowContainerStyle(item)
       : {
           height: getRowHeight(
@@ -4148,6 +4177,7 @@ const RunOfShowPage: React.FC = () => {
       showBreakoutRoomModal ||
       showOtherRoomModal ||
       showDelayBlockModal ||
+      showShowBreakModal ||
       !!timedMarkerModal ||
       showCustomColumnModal ||
       showPublicBulkModal;
@@ -4167,7 +4197,7 @@ const RunOfShowPage: React.FC = () => {
         startCountdownTimer();
       }
     }
-  }, [isUserEditing, showSpeakersModal, showNotesModal, showVoModal, showAssetsModal, showParticipantsModal, showBackupModal, showExcelImportModal, showAgendaImportModal, showCSVImportModal, showGoogleSheetExportModal, showImportEventModal, showSpeakerManagerModal, showAddModal, showBreakoutRoomModal, showOtherRoomModal, showDelayBlockModal, timedMarkerModal, showCustomColumnModal, showPublicBulkModal, event?.id, startCountdownTimer, scheduleSyncState]);
+  }, [isUserEditing, showSpeakersModal, showNotesModal, showVoModal, showAssetsModal, showParticipantsModal, showBackupModal, showExcelImportModal, showAgendaImportModal, showCSVImportModal, showGoogleSheetExportModal, showImportEventModal, showSpeakerManagerModal, showAddModal, showBreakoutRoomModal, showOtherRoomModal, showDelayBlockModal, showShowBreakModal, timedMarkerModal, showCustomColumnModal, showPublicBulkModal, event?.id, startCountdownTimer, scheduleSyncState]);
   
   
   // Load user role from navigation state or localStorage
@@ -5907,6 +5937,7 @@ const RunOfShowPage: React.FC = () => {
       showBreakoutRoomModal ||
       showOtherRoomModal ||
       showDelayBlockModal ||
+      showShowBreakModal ||
       timedMarkerModal ||
       showCustomColumnModal ||
       showPublicBulkModal
@@ -11874,7 +11905,7 @@ const RunOfShowPage: React.FC = () => {
     const item: ScheduleItem = {
       ...newItem,
       id: newItem.id && newItem.id > 0 ? newItem.id : modalDraftItemId && modalDraftItemId > 0 ? modalDraftItemId : Date.now(),
-      timerId: generateRandomTimerId(),
+      timerId: isScheduleOnlyProgramType(newItem.programType) ? '' : generateRandomTimerId(),
       isIndented: isIndentedItem,
       // Main cues default public; indented / timed markers stay private unless explicitly set
       isPublic: isIndentedItem ? false : newItem.isPublic !== false,
@@ -11994,6 +12025,39 @@ const RunOfShowPage: React.FC = () => {
       customFields: {},
     });
     setShowDelayBlockModal(false);
+  };
+
+  const addShowBreak = () => {
+    const restart = normalizeBreakStartTime(showBreakStartTime);
+    if (!restart) {
+      alert('Enter a restart time for the next session.');
+      return;
+    }
+    const label = String(showBreakLabel || '').trim() || 'Show Break';
+    addScheduleItem({
+      cue: '',
+      day: delayBlockDay,
+      programType: SHOW_BREAK_PROGRAM_TYPE,
+      shotType: '',
+      segmentName: label,
+      durationHours: 0,
+      durationMinutes: 0,
+      durationSeconds: 0,
+      notes: '',
+      assets: '',
+      speakers: '',
+      speakersText: '',
+      hasPPT: false,
+      hasQA: false,
+      needsRecording: false,
+      timerId: '',
+      isPublic: false,
+      isIndented: false,
+      timerDisplay: 'countdown',
+      breakStartTime: restart,
+      customFields: {},
+    });
+    setShowShowBreakModal(false);
   };
 
   // Add a breakout room (sub-indented cue) for a Breakout Session
@@ -13586,23 +13650,34 @@ const RunOfShowPage: React.FC = () => {
       return calculateStartTime(parentIndex);
     }
 
-    // Get the appropriate start time for this day
     const itemDay = currentItem.day || 1;
-    const startTime = dayStartTimes[itemDay] || masterStartTime;
-    
-    // If no start time is set for this day, return blank
-    if (!startTime) return '';
-    
-    // Calculate total seconds from the beginning of this day up to this item
+    if (isShowBreakProgramType(currentItem.programType)) {
+      const breakSec = parseBreakStartTimeToSeconds(currentItem.breakStartTime);
+      if (breakSec == null) return '';
+      return formatScheduleClock(breakSec, startTimeDisplayMode);
+    }
+
+    const breakIdx = lastShowBreakIndexBefore(schedule, index, itemDay);
+    const breakSec =
+      breakIdx >= 0 ? parseBreakStartTimeToSeconds(schedule[breakIdx]?.breakStartTime) : null;
+    if (breakIdx >= 0 && breakSec == null) return '';
+
+    const startTime = breakSec != null ? '' : dayStartTimes[itemDay] || masterStartTime;
+    if (breakSec == null && !startTime) return '';
+
     let totalSeconds = 0;
-    for (let i = 0; i < index; i++) {
+    const sumFrom = breakIdx >= 0 ? breakIdx + 1 : 0;
+    for (let i = sumFrom; i < index; i++) {
       const item = schedule[i];
-      // Only count items from the same day and non-indented items
       if ((item.day || 1) === itemDay && itemCountsTowardStartTime(item, indentedCues)) {
         totalSeconds += (item.durationHours || 0) * 3600 + (item.durationMinutes || 0) * 60 + (item.durationSeconds || 0);
       }
     }
-    
+
+    if (breakSec != null) {
+      return formatScheduleClock(breakSec + totalSeconds, startTimeDisplayMode);
+    }
+
     const parts = startTime.split(':').map(Number);
     const hours = parts[0];
     const minutes = parts[1];
@@ -13822,6 +13897,7 @@ const RunOfShowPage: React.FC = () => {
     if (!liveStartAnchor) return null;
     const row = schedule[index];
     if (!row || index <= liveStartAnchor.anchorIndex || (row.day || 1) !== liveStartAnchor.day) return null;
+    if (!sameShowSession(schedule, liveStartAnchor.anchorIndex, index)) return null;
     return liveStartAnchor.offsetMinutes;
   };
 
@@ -13880,8 +13956,12 @@ const RunOfShowPage: React.FC = () => {
       const itemDay = item.day || 1;
       const currentItemDay = currentItem.day || 1;
       
-      // Only count overtime from the same day and non-indented items
-      if (itemDay === currentItemDay && itemCountsTowardStartTime(item, indentedCues)) {
+      // Only count overtime from the same day, same session, and non-indented items
+      if (
+        itemDay === currentItemDay &&
+        itemCountsTowardStartTime(item, indentedCues) &&
+        sameShowSession(schedule, i, index)
+      ) {
         totalOvertimeMinutes += overtimeMinutes[item.id] || 0;
       }
     }
@@ -13930,7 +14010,8 @@ const RunOfShowPage: React.FC = () => {
       if (
         liveStartAnchor &&
         index > liveStartAnchor.anchorIndex &&
-        currentItemDay === liveStartAnchor.day
+        currentItemDay === liveStartAnchor.day &&
+        sameShowSession(schedule, liveStartAnchor.anchorIndex, index)
       ) {
         overtimeMap.set(item.id, liveStartAnchor.offsetMinutes);
         return;
@@ -13942,8 +14023,12 @@ const RunOfShowPage: React.FC = () => {
         const prevItem = schedule[i];
         const prevItemDay = prevItem.day || 1;
         
-        // Only count overtime from the same day and non-indented items
-        if (prevItemDay === currentItemDay && itemCountsTowardStartTime(prevItem, indentedCues)) {
+        // Only count overtime from the same day, same session, and non-indented items
+        if (
+          prevItemDay === currentItemDay &&
+          itemCountsTowardStartTime(prevItem, indentedCues) &&
+          sameShowSession(schedule, i, index)
+        ) {
           totalOvertime += overtimeMinutes[prevItem.id] || 0;
         }
       }
@@ -18225,6 +18310,23 @@ const RunOfShowPage: React.FC = () => {
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
+                              if (!beginRowAction(item.id, 'modal')) return;
+                              setActiveJumpMenu(null);
+                              setInsertRowPosition(schedule.findIndex(scheduleItem => scheduleItem.id === item.id));
+                              setDelayBlockDay(item.day || selectedDay);
+                              setShowBreakLabel('Evening');
+                              setShowBreakStartTime('17:00');
+                              setShowShowBreakModal(true);
+                            }}
+                            className="w-full px-4 py-2 text-left text-cyan-100 hover:bg-slate-600 flex items-center gap-2"
+                            title="Insert a Show Break after this row — next session starts on a new clock"
+                          >
+                            <span>⏸</span>
+                            <span>Add Show Break</span>
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
                               if (!beginRowAction(item.id, 'idle')) return;
                               setActiveJumpMenu(null);
                               addTimedMarkerAfter(item.id);
@@ -19137,7 +19239,7 @@ const RunOfShowPage: React.FC = () => {
                    >
                     <div className="flex flex-col items-center justify-center h-full gap-1">
                       <div className="text-sm font-mono text-slate-300">
-                        {item.programType === 'Delay Block' ? 'SCHEDULE ONLY' : (item.timerId || 'TIMER')}
+                        {isScheduleOnlyProgramType(item.programType) ? 'SCHEDULE ONLY' : (item.timerId || 'TIMER')}
                       </div>
                       <div className="flex flex-col gap-1">
                         {isTimedMarkerItem(item) ? (
@@ -19164,7 +19266,7 @@ const RunOfShowPage: React.FC = () => {
                           <>
                             <button
                               onClick={async () => {
-                                if (item.programType === 'Delay Block') return;
+                                if (isScheduleOnlyProgramType(item.programType)) return;
                                 console.log('🔥🔥🔥 LOAD BUTTON CLICKED!');
                                 console.log('🔥🔥🔥 currentUserRole:', currentUserRole);
                                 console.log('🔥🔥🔥 item.id:', item.id);
@@ -19189,17 +19291,17 @@ const RunOfShowPage: React.FC = () => {
                                   console.error('🔥🔥🔥 loadCue failed:', error);
                                 }
                               }}
-                              disabled={item.programType === 'Delay Block' || activeItemId === item.id || currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR'}
+                              disabled={isScheduleOnlyProgramType(item.programType) || activeItemId === item.id || currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR'}
                               className={`px-3 py-1 rounded text-sm font-bold transition-colors ${
-                                item.programType === 'Delay Block' || currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR'
+                                isScheduleOnlyProgramType(item.programType) || currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR'
                                   ? 'bg-gray-500 text-gray-300 cursor-not-allowed'
                                   : activeItemId === item.id
                                     ? 'bg-blue-600 text-white cursor-default'
                                     : 'bg-slate-600 hover:bg-slate-500 text-white'
                               }`}
-                              title={item.programType === 'Delay Block' ? 'Delay Blocks only adjust the schedule' : currentUserRole === 'VIEWER' ? 'Viewers cannot load cues' : currentUserRole === 'EDITOR' ? 'Editors cannot load cues' : 'Load this cue'}
+                              title={isScheduleOnlyProgramType(item.programType) ? 'This row only splits or holds the schedule' : currentUserRole === 'VIEWER' ? 'Viewers cannot load cues' : currentUserRole === 'EDITOR' ? 'Editors cannot load cues' : 'Load this cue'}
                             >
-                              {item.programType === 'Delay Block' ? 'DELAY' : activeItemId === item.id ? 'LOADED' : 'LOAD'}
+                              {isShowBreakProgramType(item.programType) ? 'BREAK' : item.programType === 'Delay Block' ? 'DELAY' : activeItemId === item.id ? 'LOADED' : 'LOAD'}
                             </button>
                             <button
                               onClick={async () => {
@@ -19209,9 +19311,9 @@ const RunOfShowPage: React.FC = () => {
                                 }
                                 await toggleTimer(item.id);
                               }}
-                              disabled={item.programType === 'Delay Block' || activeItemId !== item.id || (activeTimers[item.id] ? false : Object.keys(activeTimers).length > 0) || currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR'}
+                              disabled={isScheduleOnlyProgramType(item.programType) || activeItemId !== item.id || (activeTimers[item.id] ? false : Object.keys(activeTimers).length > 0) || currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR'}
                               className={`px-3 py-1 rounded text-sm font-bold transition-colors ${
-                                item.programType === 'Delay Block' || currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR'
+                                isScheduleOnlyProgramType(item.programType) || currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR'
                                   ? 'bg-gray-500 text-gray-300 cursor-not-allowed'
                                   : activeTimers[item.id]
                                     ? isResolumeRunningRow
@@ -19221,7 +19323,7 @@ const RunOfShowPage: React.FC = () => {
                                     ? 'bg-green-600 hover:bg-green-500 text-white'
                                     : 'bg-slate-600 text-slate-400 cursor-not-allowed'
                               }`}
-                              title={item.programType === 'Delay Block' ? 'Delay Blocks do not run timers' : currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR' ? 'Only OPERATORs can start/stop timers' : (activeTimers[item.id] ? 'Stop timer' : 'Start timer')}
+                              title={isScheduleOnlyProgramType(item.programType) ? 'This row does not run a timer' : currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR' ? 'Only OPERATORs can start/stop timers' : (activeTimers[item.id] ? 'Stop timer' : 'Start timer')}
                             >
                               {activeTimers[item.id] ? 'STOP' : 'START'}
                             </button>
@@ -19343,6 +19445,59 @@ const RunOfShowPage: React.FC = () => {
                 className="rounded bg-violet-600 px-4 py-2 font-medium text-white hover:bg-violet-500"
               >
                 Add Delay
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {showShowBreakModal && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-md rounded-lg border border-slate-600 bg-slate-800 shadow-2xl">
+            <div className="border-b border-slate-600 px-5 py-4">
+              <h2 className="text-lg font-semibold text-white">Add Show Break</h2>
+              <p className="mt-1 text-sm text-slate-300">
+                Splits this day into a new session. Rows below start from the restart time, not the morning clock.
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-3 p-5">
+              <label className="text-sm text-slate-200">
+                Session name
+                <input
+                  type="text"
+                  value={showBreakLabel}
+                  onChange={(e) => setShowBreakLabel(e.target.value)}
+                  className="mt-1 w-full rounded border border-slate-500 bg-slate-700 px-3 py-2 text-white focus:border-cyan-400 focus:outline-none"
+                  placeholder="Evening"
+                />
+              </label>
+              <label className="text-sm text-slate-200">
+                Restart time
+                <input
+                  type="time"
+                  value={showBreakStartTime}
+                  onChange={(e) => setShowBreakStartTime(e.target.value)}
+                  className="mt-1 w-full rounded border border-slate-500 bg-slate-700 px-3 py-2 text-white focus:border-cyan-400 focus:outline-none"
+                />
+              </label>
+            </div>
+            <div className="flex justify-end gap-2 border-t border-slate-600 px-5 py-4">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowShowBreakModal(false);
+                  setInsertRowPosition(null);
+                  handleModalClosed();
+                }}
+                className="rounded bg-slate-600 px-4 py-2 text-white hover:bg-slate-500"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={addShowBreak}
+                className="rounded bg-cyan-700 px-4 py-2 font-medium text-white hover:bg-cyan-600"
+              >
+                Add Show Break
               </button>
             </div>
           </div>

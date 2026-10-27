@@ -122,6 +122,7 @@ const TYPE_COLOR: Record<string, string> = {
   'Break F&B/B2B': '#EC4899',
   'Breakout Session': '#20B2AA',
   'Delay Block': '#7C3AED',
+  'Show Break': '#0E7490',
   Podium: '#8B4513',
   Panel: '#404040',
   'PreShow': '#8B5CF6',

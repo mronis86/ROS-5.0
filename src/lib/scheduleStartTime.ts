@@ -1,4 +1,11 @@
 import { formatScheduleClock } from './scheduleClockFormat';
+import {
+  breakStartTimeOf,
+  isShowBreakProgramType,
+  lastShowBreakIndexBefore,
+  parseBreakStartTimeToSeconds,
+  sameShowSession,
+} from './showBreak';
 import { resolveTimedMarkerDisplayTime } from './timedMarker';
 
 export interface ScheduleStartItem {
@@ -14,6 +21,8 @@ export interface ScheduleStartItem {
   durationHours?: number;
   durationMinutes?: number;
   durationSeconds?: number;
+  /** HH:MM restart clock on a Show Break row. */
+  breakStartTime?: string | null;
 }
 
 export type IndentedCueLookup =
@@ -43,6 +52,7 @@ export function itemCountsTowardStartTime(
 ): boolean {
   if (!item) return false;
   if (isKilledScheduleItem(item)) return false;
+  if (isShowBreakProgramType(item.programType)) return false;
   if (isIndentedScheduleItem(item, indentedLookup)) return false;
   return true;
 }
@@ -131,11 +141,22 @@ export function calculateScheduleStartTime(
     }
 
     const itemDay = current.day || 1;
-    const startTime = dayStartFor(itemDay, masterStartTime, dayStartTimes);
-    if (!startTime) return '';
+    if (isShowBreakProgramType(current.programType)) {
+      const breakSec = parseBreakStartTimeToSeconds(breakStartTimeOf(current));
+      if (breakSec == null) return '';
+      return formatScheduleClock(breakSec, 'hm');
+    }
+
+    const breakIdx = lastShowBreakIndexBefore(schedule, idx, itemDay);
+    const breakSec =
+      breakIdx >= 0 ? parseBreakStartTimeToSeconds(breakStartTimeOf(schedule[breakIdx])) : null;
+    if (breakIdx >= 0 && breakSec == null) return '';
+    const startTime = breakSec != null ? '' : dayStartFor(itemDay, masterStartTime, dayStartTimes);
+    if (breakSec == null && !startTime) return '';
 
     let totalSeconds = 0;
-    for (let i = 0; i < idx; i++) {
+    const sumFrom = breakIdx >= 0 ? breakIdx + 1 : 0;
+    for (let i = sumFrom; i < idx; i++) {
       const item = schedule[i];
       if ((item.day || 1) === itemDay && itemCountsTowardStartTime(item, indentedLookup)) {
         totalSeconds +=
@@ -143,6 +164,10 @@ export function calculateScheduleStartTime(
           (Number(item.durationMinutes) || 0) * 60 +
           (Number(item.durationSeconds) || 0);
       }
+    }
+
+    if (breakSec != null) {
+      return formatScheduleClock(breakSec + totalSeconds, 'hm');
     }
 
     const parts = startTime.split(':').map(Number);
@@ -187,6 +212,7 @@ export function shouldApplyShowStartOvertime(opts: {
     return false;
   }
   const startCueDay = schedule[startCueIndex]?.day || 1;
-  return rowDay === startCueDay;
+  if (rowDay !== startCueDay) return false;
+  return sameShowSession(schedule, startCueIndex, rowIndex);
 }
 
