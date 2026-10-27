@@ -7,6 +7,7 @@ import { DatabaseService } from '../services/database';
 import { useAuth } from '../contexts/AuthContext';
 import { canSelectOperatorRole } from '../services/auth-service';
 import RoleSelectionModal from '../components/RoleSelectionModal';
+import { sessionRoleLabel } from '../lib/sessionRoleLabels';
 import { parseBoardAgenda, rowsLookTimed, type BoardAgendaRow } from '../lib/boardAgenda';
 
 type SessionRole = 'VIEWER' | 'EDITOR' | 'OPERATOR';
@@ -508,7 +509,7 @@ const EventBoardPage: React.FC = () => {
             {saving ? <span className="text-[11px] text-slate-500">Saving…</span> : null}
             <span className="text-xs text-slate-400">
               <span className="hidden sm:inline">Role: </span>
-              <span className="font-semibold text-white">{userRole}</span>
+              <span className="font-semibold text-white">{sessionRoleLabel(userRole)}</span>
             </span>
             <button
               type="button"

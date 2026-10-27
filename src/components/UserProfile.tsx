@@ -25,8 +25,8 @@ const UserProfile: React.FC<UserProfileProps> = ({ onClose }) => {
 
   const roles = [
     { value: 'VIEWER', label: 'Viewer (Read Only)' },
-    { value: 'OPERATOR', label: 'Operator (Limited Editing)' },
-    { value: 'EDITOR', label: 'Editor (Full Access)' },
+    { value: 'OPERATOR', label: 'Operator' },
+    { value: 'EDITOR', label: 'Content Editor' },
   ];
 
   useEffect(() => {

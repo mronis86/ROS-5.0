@@ -182,6 +182,7 @@ import {
   HEAD_TABLE_PROGRAM_TYPE,
   ROS_PROGRAM_TYPE_COLORS,
 } from '../lib/guestRosHelpers';
+import { sessionRoleLabel } from '../lib/sessionRoleLabels';
 
 import {
   SPEAKER_LOCATIONS,
@@ -327,6 +328,8 @@ interface ScheduleItem {
   timerId: string;
   customFields: Record<string, string>;
   isPublic: boolean;
+  /** When false, Photo View and Operator Large view skip this cue. Missing means show. */
+  forPhotos?: boolean;
   isIndented: boolean;
   /**
    * Grouped timed marker under a parent cue (like indented timers):
@@ -394,6 +397,7 @@ function scheduleItemSignature(item: any): string {
     asText(item.timerId),
     customSorted,
     item.isPublic ? '1' : '',
+    item.forPhotos === false ? '' : '1',
     item.isIndented ? '1' : '',
     item.isTimedMarker ? '1' : '',
     asText(item.markerTimeMode),
@@ -1061,6 +1065,7 @@ const RunOfShowPage: React.FC = () => {
     if (fieldName === 'hasPPT') return { ...item, hasPPT: asBool };
     if (fieldName === 'hasQA') return { ...item, hasQA: asBool };
     if (fieldName === 'isPublic') return { ...item, isPublic: asBool };
+    if (fieldName === 'forPhotos') return { ...item, forPhotos: asBool };
     if (fieldName === 'timerDisplay') return { ...item, timerDisplay: asString as any };
     if (fieldName === 'voCues') {
       try {
@@ -1121,6 +1126,7 @@ const RunOfShowPage: React.FC = () => {
       'hasPPT',
       'hasQA',
       'isPublic',
+      'forPhotos',
       'timerDisplay',
       'voCues',
     ]);
@@ -16788,7 +16794,7 @@ const RunOfShowPage: React.FC = () => {
               {/* Role Display - Left Side */}
               <div className="flex items-center gap-3">
                 <div className="text-sm text-slate-300">
-                  Role: <span className="font-semibold text-white">{currentUserRole}</span>
+                  Role: <span className="font-semibold text-white">{sessionRoleLabel(currentUserRole)}</span>
                 </div>
                 <button
                   onClick={() => setShowRoleChangeModal(true)}
@@ -16871,11 +16877,12 @@ const RunOfShowPage: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => setShowCueReorderModal(true)}
-                    className="inline-flex items-center justify-center gap-0 px-2 py-1 bg-slate-600 hover:bg-slate-500 text-white text-sm leading-none rounded transition-colors whitespace-nowrap"
+                    className="inline-flex items-center justify-center px-2 py-1 bg-slate-600 hover:bg-slate-500 text-white text-sm leading-none rounded transition-colors whitespace-nowrap"
                     title="Relabel cue numbers. Does not move rows."
                   >
-                    <span>ReCue</span>
-                    <span className="inline-flex h-[1em] items-center translate-y-[0.08em]">#</span>
+                    <span className="leading-none">
+                      ReCue<span className="inline-block ml-px translate-y-[0.08em]">#</span>
+                    </span>
                   </button>
                 )}
                 {(currentUserRole === 'EDITOR' || currentUserRole === 'OPERATOR') && (
@@ -16890,7 +16897,7 @@ const RunOfShowPage: React.FC = () => {
                     className="inline-flex items-center justify-center gap-1 px-2 py-1 bg-slate-600 hover:bg-slate-500 text-white text-sm leading-none rounded transition-colors whitespace-nowrap"
                     title="Reorder rows below the current loaded/running cue"
                   >
-                    <span className="inline-flex h-[1em] items-center translate-y-[0.06em]" aria-hidden>
+                    <span className="leading-none -translate-y-[0.12em]" aria-hidden>
                       ↕
                     </span>
                     <span>Move</span>

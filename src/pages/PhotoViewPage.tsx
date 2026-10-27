@@ -30,6 +30,7 @@ import { usePreshowRainbow } from '../lib/usePreshowRainbow';
 import { findTopPreshowCue } from '../lib/preshowCountdown';
 import { formatShowDelayBanner } from '../lib/showDelay';
 import { programTypeSurfaceStyle } from '../lib/rosProgramTypeSplit';
+import { ROS_PROGRAM_TYPE_COLORS } from '../lib/guestRosHelpers';
 import { formatCueNumber, formatTimerCueStatus, resolveScheduleCueLabel, shouldKeepExistingRunningTimer } from '../lib/cueDisplay';
 import { computeLiveStartAnchor, type LiveStartAnchor } from '../lib/liveStartProjection';
 import {
@@ -66,6 +67,7 @@ interface ScheduleItem {
   };
   isPublic?: boolean;
   isIndented?: boolean;
+  forPhotos?: boolean;
 }
 
 const PhotoViewPage: React.FC = () => {
@@ -593,8 +595,13 @@ const PhotoViewPage: React.FC = () => {
 
   // Filter schedule by selected day (multi-day events)
   const filteredSchedule = React.useMemo(
-    () => schedule.filter((item) => (item.day || 1) === selectedDay),
-    [schedule, selectedDay]
+    () =>
+      schedule.filter((item) => {
+        if ((item.day || 1) !== selectedDay) return false;
+        if (item.forPhotos === false && String(item.id) !== String(activeItemId)) return false;
+        return true;
+      }),
+    [schedule, selectedDay, activeItemId]
   );
 
   // Reset all states function (called from WebSocket reset event)
@@ -2389,24 +2396,8 @@ const PhotoViewPage: React.FC = () => {
     window.history.replaceState({}, '', url.toString());
   }, []);
 
-  // Program type colors
   const programTypeColors: { [key: string]: string } = {
-    'Podium Transition': '#8B4513',  // Dark Brown
-    'Panel Transition': '#404040',   // Darker Grey
-    'Sub Cue': '#F3F4F6',           // Light Grey
-    'No Transition': '#059669',      // Bright Teal
-    'Video': '#F59E0B',              // Bright Yellow/Orange
-    'Panel+Remote': '#1E40AF',       // Darker Blue
-    'Remote Only': '#60A5FA',        // Light Blue
-    'Break F&B/B2B': '#EC4899',              // Bright Pink
-    'Breakout Session': '#20B2AA',           // Seafoam
-    'Delay Block': '#7C3AED',                 // Violet
-    'TBD': '#6B7280',                // Medium Gray
-    'KILLED': '#DC2626',             // Bright Red
-    'Podium': '#8B4513',             // Brown
-    'Panel': '#404040',              // Dark Grey
-    'PreShow': '#8B5CF6',
-  'EndShow': '#8B5CF6',        // Purple
+    ...ROS_PROGRAM_TYPE_COLORS,
   };
 
   if (isLoading) {

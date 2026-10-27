@@ -25,7 +25,8 @@ import {
   DISPLAY_SESSION_PICK_TIME_ALERT,
 } from '../lib/displaySession';
 import { itemMarkedByComms, itemNeedsRecording } from '../lib/cueRecording';
-import { programTypeSurfaceStyle } from '../lib/rosProgramTypeSplit';
+import { programTypeSurfaceStyle, programTypeTextColor } from '../lib/rosProgramTypeSplit';
+import { ROS_PROGRAM_TYPE_COLORS } from '../lib/guestRosHelpers';
 import {
   enrichExternalSyncTimer,
   externalSyncStatusClass,
@@ -63,6 +64,7 @@ type ScheduleItem = {
   hasPPT?: boolean;
   hasQA?: boolean;
   isPublic?: boolean;
+  forPhotos?: boolean;
   isStartCue?: boolean;
   isIndented?: boolean;
   needsRecording?: boolean;
@@ -134,22 +136,7 @@ function saveLayoutMode(mode: OperatorLayoutMode) {
 }
 
 const TYPE_COLOR: Record<string, string> = {
-  'Podium Transition': '#8B4513',
-  'Panel Transition': '#404040',
-  'Sub Cue': '#6B7280',
-  'No Transition': '#059669',
-  Video: '#F59E0B',
-  'Panel+Remote': '#1E40AF',
-  'Remote Only': '#60A5FA',
-  'Break F&B/B2B': '#EC4899',
-  'Breakout Session': '#20B2AA',
-  'Delay Block': '#7C3AED',
-  TBD: '#6B7280',
-  KILLED: '#DC2626',
-  Podium: '#8B4513',
-  Panel: '#404040',
-  'PreShow': '#8B5CF6',
-  'EndShow': '#8B5CF6',
+  ...ROS_PROGRAM_TYPE_COLORS,
 };
 
 function loadVisibleFields(): Set<FieldId> {
@@ -876,7 +863,15 @@ const OperatorCueDisplayPage: React.FC = () => {
     if (live && (live.day || 1) !== day) setDay(live.day || 1);
   }, [activeId, schedule, day]);
 
-  const dayRows = useMemo(() => schedule.filter((s) => (s.day || 1) === day), [schedule, day]);
+  const dayRows = useMemo(
+    () =>
+      schedule.filter((s) => {
+        if ((s.day || 1) !== day) return false;
+        if (s.forPhotos === false && Number(s.id) !== activeId) return false;
+        return true;
+      }),
+    [schedule, day, activeId]
+  );
 
   const current = useMemo(() => {
     if (activeId != null) {
@@ -1002,8 +997,11 @@ const OperatorCueDisplayPage: React.FC = () => {
         label: 'TYPE',
         node: current.programType ? (
           <span
-            className="inline-block px-2 py-1 rounded text-xs font-semibold text-white"
-            style={programTypeSurfaceStyle(current.programType, TYPE_COLOR, '#475569')}
+            className="inline-block px-2 py-1 rounded text-xs font-semibold"
+            style={{
+              ...programTypeSurfaceStyle(current.programType, TYPE_COLOR, '#475569'),
+              color: programTypeTextColor(current.programType),
+            }}
           >
             {current.programType}
           </span>
@@ -1188,8 +1186,11 @@ const OperatorCueDisplayPage: React.FC = () => {
     if (colId === 'programType') {
       return item.programType ? (
         <span
-          className="inline-block px-1.5 py-0.5 rounded text-[11px] font-semibold text-white truncate max-w-full"
-          style={programTypeSurfaceStyle(item.programType, TYPE_COLOR, '#475569')}
+          className="inline-block px-1.5 py-0.5 rounded text-[11px] font-semibold truncate max-w-full"
+          style={{
+            ...programTypeSurfaceStyle(item.programType, TYPE_COLOR, '#475569'),
+            color: programTypeTextColor(item.programType),
+          }}
         >
           {item.programType}
         </span>

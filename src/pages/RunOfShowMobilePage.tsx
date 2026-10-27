@@ -12,6 +12,7 @@ import {
   ROS_PROGRAM_TYPE_COLORS,
 } from '../lib/guestRosHelpers';
 import { programTypeSurfaceStyle } from '../lib/rosProgramTypeSplit';
+import { sessionRoleLabel } from '../lib/sessionRoleLabels';
 import { overtimeSignPrefix, useOvertimeSign, type OvertimeSignId } from '../lib/overtimeSign';
 import {
   SPEAKER_LOCATIONS,
@@ -964,12 +965,12 @@ const RunOfShowMobilePage: React.FC = () => {
 
             <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="rounded-md border border-slate-600 bg-slate-800/90 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-slate-200">
-                Role: {sessionRole}
+                Role: {sessionRoleLabel(sessionRole)}
               </span>
             </div>
             {isViewer ? (
               <div className="rounded-md border border-amber-500/40 bg-amber-950/35 px-2.5 py-2 text-[11px] leading-snug text-amber-100">
-                <span className="font-semibold">Viewer</span> — this rundown is read-only. Choose Editor or Operator when launching the event to make changes.
+                <span className="font-semibold">Viewer</span> — this rundown is read-only. Choose Content Editor or Operator when launching the event to make changes.
               </div>
             ) : isOperator ? (
               <div className="rounded-md border border-sky-500/40 bg-sky-950/35 px-2.5 py-2 text-[11px] leading-snug text-sky-100">
