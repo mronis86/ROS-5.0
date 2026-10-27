@@ -8905,7 +8905,7 @@ app.get('/api/show-start-overtime/:eventId', async (req, res) => {
     console.log(`📊 Fetching show start overtime for event: ${eventId}`);
     
     const result = await pool.query(
-      'SELECT * FROM show_start_overtime WHERE event_id = $1',
+      'SELECT * FROM show_start_overtime WHERE event_id = $1 ORDER BY updated_at DESC NULLS LAST LIMIT 1',
       [eventId]
     );
     
@@ -8966,14 +8966,11 @@ app.post('/api/start-cue-selection', async (req, res) => {
     const itemIdBigInt = BigInt(item_id);
     console.log(`🔍 Using item_id as BigInt: ${itemIdBigInt}`);
     
-    // Insert or update start cue selection in show_start_overtime table
-    // We'll use this table to track both the selection and any overtime
+    // One START row per event. Moving the star must not keep an old overtime value.
+    await pool.query('DELETE FROM show_start_overtime WHERE event_id = $1', [event_id]);
     const result = await pool.query(
       `INSERT INTO show_start_overtime (event_id, item_id, show_start_overtime, created_at, updated_at)
        VALUES ($1, $2, 0, NOW(), NOW())
-       ON CONFLICT (event_id, item_id)
-       DO UPDATE SET 
-         updated_at = NOW()
        RETURNING *`,
       [event_id, itemIdBigInt.toString()]
     );

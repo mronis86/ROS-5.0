@@ -8043,7 +8043,6 @@ const RunOfShowPage: React.FC = () => {
       
     // Set visual indicator
     setLastLoadedCueId(numericItemId);
-    armLiveStartProjection();
     
     // Try to save last loaded CUE (will fail gracefully if migration not run)
     try {
@@ -18375,6 +18374,11 @@ const RunOfShowPage: React.FC = () => {
                          // Toggle: if this cue is already the START cue, unset it; otherwise set it
                          const newStartCueId = startCueId === item.id ? null : item.id;
                          setStartCueId(newStartCueId);
+                         // Moving ★ must not keep a leftover show-start offset on the new row.
+                         setShowStartOvertime(0);
+                         if (event?.id) {
+                           void DatabaseService.clearShowStartOvertime(event.id);
+                         }
                          
                          // Save START cue selection to main schedule table
                          if (event?.id) {

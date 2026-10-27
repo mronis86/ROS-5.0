@@ -1,16 +1,13 @@
 /**
  * In-Show live Start projection.
  *
- * Saved overtime only knows how long each cue ran, not the dead time between cues,
- * so the cascade drifts from the real clock. This anchors rows after the live cue to
- * what actually happened: the running cue's real start + its timer (or now, if it is
- * already over), or "now" for the next row when nothing is running.
+ * Only while a cue is running. Gaps (after Clear/Reset, or between morning and
+ * evening) stay on planned Start. "Now vs next cue" was sliding the rest of the
+ * day early and looked like overtime coming back.
  */
 import { eventLocalSecondsOfDay } from './eventLocalClock';
 
 const DAY_SECONDS = 86400;
-/** Actual starts older than this are treated as stale (previous rehearsal / day). */
-const MAX_ACTUAL_START_AGE_MS = 12 * 3600 * 1000;
 
 /** Settings key: false after Reset/Clear until the next cue is loaded or started. */
 export function parseLiveStartProjectionArmed(value: unknown): boolean {
@@ -62,53 +59,21 @@ export function computeLiveStartAnchor(args: {
   nowMs: number;
   timeZone: string;
 }): LiveStartAnchor | null {
-  const { schedule, countsTowardStart, plannedStartSec, running, actualStarts, nowMs, timeZone } = args;
+  const { schedule, countsTowardStart, plannedStartSec, running, nowMs, timeZone } = args;
   const nowLocal = eventLocalSecondsOfDay(nowMs, timeZone);
 
-  if (running && Number.isFinite(running.startedAtMs)) {
-    const idx = schedule.findIndex((s) => s.id === running.itemId);
-    if (idx < 0 || !countsTowardStart(schedule[idx])) return null;
-    const planned = plannedStartSec(idx);
-    if (planned == null) return null;
-    const startLocal = eventLocalSecondsOfDay(running.startedAtMs, timeZone);
-    const elapsed = Math.max(0, wrapDaySeconds(nowLocal - startLocal));
-    const projectedEnd = startLocal + Math.max(running.durationSec, elapsed);
-    const offsetSec = wrapDaySeconds(projectedEnd - (planned + rowDurationSec(schedule[idx])));
-    return {
-      anchorIndex: idx,
-      day: schedule[idx].day || 1,
-      offsetMinutes: Math.round(offsetSec / 60),
-    };
-  }
-
-  let lastIdx = -1;
-  let lastMs = -Infinity;
-  for (const [rawId, ms] of Object.entries(actualStarts)) {
-    if (!Number.isFinite(ms) || ms > nowMs || nowMs - ms > MAX_ACTUAL_START_AGE_MS) continue;
-    const idx = schedule.findIndex((s) => s.id === Number(rawId));
-    if (idx < 0 || !countsTowardStart(schedule[idx])) continue;
-    if (ms > lastMs) {
-      lastMs = ms;
-      lastIdx = idx;
-    }
-  }
-  if (lastIdx < 0) return null;
-
-  const day = schedule[lastIdx].day || 1;
-  let nextIdx = -1;
-  for (let j = lastIdx + 1; j < schedule.length; j++) {
-    if ((schedule[j].day || 1) !== day) break;
-    if (countsTowardStart(schedule[j])) {
-      nextIdx = j;
-      break;
-    }
-  }
-  if (nextIdx < 0) return null;
-  const planned = plannedStartSec(nextIdx);
+  if (!running || !Number.isFinite(running.startedAtMs)) return null;
+  const idx = schedule.findIndex((s) => s.id === running.itemId);
+  if (idx < 0 || !countsTowardStart(schedule[idx])) return null;
+  const planned = plannedStartSec(idx);
   if (planned == null) return null;
+  const startLocal = eventLocalSecondsOfDay(running.startedAtMs, timeZone);
+  const elapsed = Math.max(0, wrapDaySeconds(nowLocal - startLocal));
+  const projectedEnd = startLocal + Math.max(running.durationSec, elapsed);
+  const offsetSec = wrapDaySeconds(projectedEnd - (planned + rowDurationSec(schedule[idx])));
   return {
-    anchorIndex: lastIdx,
-    day,
-    offsetMinutes: Math.round(wrapDaySeconds(nowLocal - planned) / 60),
+    anchorIndex: idx,
+    day: schedule[idx].day || 1,
+    offsetMinutes: Math.round(offsetSec / 60),
   };
 }
