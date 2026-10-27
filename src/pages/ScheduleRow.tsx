@@ -259,6 +259,13 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
 
   const canEditRecording = currentUserRole !== 'VIEWER';
   const flexOrder = (key: string): number => columnFlexOrder?.[key] ?? 999;
+  /** Delay banner must sit after Start, Type, and Duration — not at flex order 0. */
+  const splitBannerOrder =
+    Math.max(
+      visibleColumns.start ? flexOrder('start') : 0,
+      visibleColumns.programType ? flexOrder('programType') : 0,
+      visibleColumns.duration ? flexOrder('duration') : 0
+    ) + 1;
 
   const setNeedsRecording = (next: boolean) => {
     if (isLockedByOther) return;
@@ -683,7 +690,10 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
         );
       })()}
       {item.programType === 'Delay Block' ? (
-        <div className="flex min-w-0 flex-1 items-center justify-between gap-24 overflow-hidden border-r border-violet-400/60 px-12 py-2">
+        <div
+          className="flex min-w-0 flex-1 items-center justify-between gap-24 overflow-hidden border-r border-violet-400/60 px-12 py-2"
+          style={{ order: splitBannerOrder }}
+        >
           {[0, 1, 2].map((marker) => (
             <span
               key={marker}
