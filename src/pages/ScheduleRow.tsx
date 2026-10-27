@@ -1527,7 +1527,6 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
               // Don't unlock/blur immediately — same 5s idle as typing (handleUserEditing timeout)
             }}
             onClick={(e) => e.stopPropagation()}
-            onMouseDown={(e) => e.stopPropagation()}
             className={`w-full min-w-0 max-w-full rounded border text-sm py-1 px-2 disabled:opacity-70 disabled:cursor-not-allowed ${cellFocus}`}
             disabled={isLockedByOther || currentUserRole === 'VIEWER'}
             title={isLockedByOther ? lockLabel : currentUserRole === 'VIEWER' ? 'Only EDITORs and OPERATORs can change' : 'Clock page: Countdown, Count Up, Time of Day, or TOD Only'}
