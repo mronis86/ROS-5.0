@@ -88,7 +88,11 @@ import {
   wallClockStartUtcMs,
   eventLocalSecondsOfDay,
 } from '../lib/eventLocalClock';
-import { computeLiveStartAnchor, type LiveStartAnchor } from '../lib/liveStartProjection';
+import {
+  computeLiveStartAnchor,
+  parseLiveStartProjectionArmed,
+  type LiveStartAnchor,
+} from '../lib/liveStartProjection';
 import RoleSelectionModal from '../components/RoleSelectionModal';
 import OSCModal from '../components/OSCModal';
 import OSCModalSimple from '../components/OSCModalSimple';
@@ -1615,6 +1619,11 @@ const RunOfShowPage: React.FC = () => {
   const [showClearOffsetsConfirmModal, setShowClearOffsetsConfirmModal] = useState(false);
   const [offsetAdjustTarget, setOffsetAdjustTarget] = useState<'root' | 'prev'>('root');
   const [trackWasDurations, setTrackWasDurations] = useState(false);
+  const [liveStartProjectionArmed, setLiveStartProjectionArmed] = useState(true);
+  const liveStartProjectionArmedRef = useRef(true);
+  useEffect(() => {
+    liveStartProjectionArmedRef.current = liveStartProjectionArmed;
+  }, [liveStartProjectionArmed]);
   const [showCompletedHighlight, setShowCompletedHighlight] = useState(() => {
     try {
       const raw = localStorage.getItem('rosShowCompletedHighlight');
@@ -1719,6 +1728,7 @@ const RunOfShowPage: React.FC = () => {
     DatabaseService.getShowSettings(event.id).then(s => {
       setShowMode(s.showMode);
       setTrackWasDurations(s.trackWasDurations);
+      setLiveStartProjectionArmed(parseLiveStartProjectionArmed(s.liveStartProjection));
       setRehearsalBaseline(parseRehearsalBaseline(s.rehearsalBaseline));
       setPreshowShowDayArmed(parsePreshowShowDay(s.preshowShowDay));
       setAutoRollArmed(resolveAutoRoll(s.autoRoll, event.id));
@@ -8033,6 +8043,7 @@ const RunOfShowPage: React.FC = () => {
       
     // Set visual indicator
     setLastLoadedCueId(numericItemId);
+    armLiveStartProjection();
     
     // Try to save last loaded CUE (will fail gracefully if migration not run)
     try {
@@ -8251,6 +8262,7 @@ const RunOfShowPage: React.FC = () => {
     setHybridTimerData({ activeTimer: null });
     setOvertimeMinutes({}); // Clear all overtime indicators
     setShowStartOvertime(0); // Clear show start overtime
+    disarmLiveStartProjection();
     // Note: Do NOT clear startCueId - the star is just a marker, not overtime data
     
     // Clear show start overtime from database
@@ -8424,14 +8436,17 @@ const RunOfShowPage: React.FC = () => {
     try {
       await DatabaseService.clearOvertimeMinutes(event.id);
       await DatabaseService.clearShowStartOvertime(event.id);
+      await DatabaseService.clearCueActualStarts(event.id);
       setOvertimeMinutes({});
       setShowStartOvertime(0);
+      setCueActualStarts({});
+      disarmLiveStartProjection();
       logChange('CLEAR_SHOW_OFFSETS', 'Cleared all schedule overtime offsets for this show', {
         fieldName: 'overtimeOffsets',
         oldValue: 'present',
         newValue: 'cleared',
       });
-      console.log('✅ Cleared show offsets (overtime minutes + show start overtime)');
+      console.log('✅ Cleared show offsets (overtime minutes + show start overtime + live est)');
     } catch (error) {
       console.error('❌ Failed to clear show offsets:', error);
       alert('Could not clear offsets. Please try again.');
@@ -9553,6 +9568,9 @@ const RunOfShowPage: React.FC = () => {
             eventTimezoneRef.current
           )
         );
+        if (data.settings && 'live_start_projection' in data.settings) {
+          setLiveStartProjectionArmed(parseLiveStartProjectionArmed((data.settings as any).live_start_projection));
+        }
         if (data.settings?.locked_start_times && typeof data.settings.locked_start_times === 'object') {
           const mapped: Record<number, string> = {};
           for (const [k, v] of Object.entries(data.settings.locked_start_times as Record<string, unknown>)) {
@@ -10686,10 +10704,14 @@ const RunOfShowPage: React.FC = () => {
         lockedStartTimes?: Record<string, string> | null;
         preshowShowDay?: unknown;
         autoRoll?: unknown;
+        liveStartProjection?: boolean;
       }) => {
         if (data.event_id === event?.id) {
           if (data.showMode === 'rehearsal' || data.showMode === 'in-show') setShowMode(data.showMode);
           if (typeof data.trackWasDurations === 'boolean') setTrackWasDurations(data.trackWasDurations);
+          if (typeof data.liveStartProjection === 'boolean') {
+            setLiveStartProjectionArmed(parseLiveStartProjectionArmed(data.liveStartProjection));
+          }
           if (data.rehearsalBaseline !== undefined) {
             setRehearsalBaseline(parseRehearsalBaseline(data.rehearsalBaseline));
           }
@@ -12634,6 +12656,7 @@ const RunOfShowPage: React.FC = () => {
           is_active: true,
           started_at: now.toISOString(),
         });
+        armLiveStartProjection();
         completePriorCuesOnDay(itemId);
         logChange('TIMER_STARTED', `Cue started running`, {
           itemId,
@@ -13698,8 +13721,25 @@ const RunOfShowPage: React.FC = () => {
    * In-Show: rows after the live cue follow the real clock (actual start of the running cue,
    * or now when nothing is running) instead of only the saved per-cue overtime.
    */
+  const persistLiveStartProjectionArmed = (armed: boolean) => {
+    liveStartProjectionArmedRef.current = armed;
+    setLiveStartProjectionArmed(armed);
+    if (event?.id) {
+      void DatabaseService.saveShowModeWithBaseline(event.id, { liveStartProjection: armed });
+    }
+  };
+
+  const armLiveStartProjection = () => {
+    if (liveStartProjectionArmedRef.current) return;
+    persistLiveStartProjectionArmed(true);
+  };
+
+  const disarmLiveStartProjection = () => {
+    persistLiveStartProjectionArmed(false);
+  };
+
   const liveStartAnchor = useMemo((): LiveStartAnchor | null => {
-    if (showMode !== 'in-show') return null;
+    if (showMode !== 'in-show' || !liveStartProjectionArmed) return null;
     const active = hybridTimerData?.activeTimer;
     const activeRunning =
       !!active && (active.timer_state === 'running' || (active.is_running === true && active.is_active !== false));
@@ -13735,6 +13775,7 @@ const RunOfShowPage: React.FC = () => {
     return anchor;
   }, [
     showMode,
+    liveStartProjectionArmed,
     hybridTimerData?.activeTimer,
     cueActualStarts,
     schedule,

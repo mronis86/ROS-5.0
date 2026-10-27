@@ -4660,6 +4660,7 @@ app.get('/api/show-mode/:eventId', async (req, res) => {
         lockedStartTimes: null,
         preshowShowDay: null,
         autoRoll: null,
+        liveStartProjection: true,
         displaySyncEnabled: await loadDisplaySyncEnabled(pool, eventId),
       });
     }
@@ -4682,6 +4683,7 @@ app.get('/api/show-mode/:eventId', async (req, res) => {
         : null;
     const autoRoll =
       settings.auto_roll && typeof settings.auto_roll === 'object' ? settings.auto_roll : null;
+    const liveStartProjection = settings.live_start_projection !== false;
     const displaySyncEnabled = await loadDisplaySyncEnabled(pool, eventId);
     res.json({
       showMode,
@@ -4690,6 +4692,7 @@ app.get('/api/show-mode/:eventId', async (req, res) => {
       lockedStartTimes,
       preshowShowDay,
       autoRoll,
+      liveStartProjection,
       displaySyncEnabled,
     });
   } catch (error) {
@@ -4712,6 +4715,7 @@ app.patch('/api/show-mode/:eventId', async (req, res) => {
       clearPreshowShowDay,
       autoRoll,
       clearAutoRoll,
+      liveStartProjection,
     } = req.body;
     const updates = {};
     if (showMode === 'rehearsal' || showMode === 'in-show') {
@@ -4719,6 +4723,9 @@ app.patch('/api/show-mode/:eventId', async (req, res) => {
     }
     if (typeof trackWasDurations === 'boolean') {
       updates.track_was_durations = trackWasDurations;
+    }
+    if (typeof liveStartProjection === 'boolean') {
+      updates.live_start_projection = liveStartProjection;
     }
     if (clearRehearsalBaseline === true) {
       updates.rehearsal_baseline = null;
@@ -4790,7 +4797,7 @@ app.patch('/api/show-mode/:eventId', async (req, res) => {
     if (Object.keys(updates).length === 0) {
       return res.status(400).json({
         error:
-          'Provide showMode, trackWasDurations, rehearsalBaseline, lockedStartTimes, preshowShowDay, and/or autoRoll',
+          'Provide showMode, trackWasDurations, rehearsalBaseline, lockedStartTimes, preshowShowDay, autoRoll, and/or liveStartProjection',
       });
     }
     const result = await pool.query(
@@ -4822,6 +4829,7 @@ app.patch('/api/show-mode/:eventId', async (req, res) => {
         : null;
     const currentAutoRoll =
       settings.auto_roll && typeof settings.auto_roll === 'object' ? settings.auto_roll : null;
+    const currentLiveStartProjection = settings.live_start_projection !== false;
     // CRITICAL: Only include showMode in broadcast when we actually updated it.
     // When only trackWasDurations was sent, omit showMode so clients don't overwrite in-show with stale/default.
     const payload = { event_id: eventId, trackWasDurations: currentTrackWasDurations };
@@ -4838,6 +4846,9 @@ app.patch('/api/show-mode/:eventId', async (req, res) => {
     if (autoRoll || clearAutoRoll === true) {
       payload.autoRoll = currentAutoRoll;
     }
+    if (typeof liveStartProjection === 'boolean') {
+      payload.liveStartProjection = currentLiveStartProjection;
+    }
     broadcastUpdate(eventId, 'showModeUpdate', payload);
     res.json({
       showMode: currentShowMode,
@@ -4846,6 +4857,7 @@ app.patch('/api/show-mode/:eventId', async (req, res) => {
       lockedStartTimes: currentLockedStartTimes,
       preshowShowDay: currentPreshowShowDay,
       autoRoll: currentAutoRoll,
+      liveStartProjection: currentLiveStartProjection,
     });
   } catch (error) {
     console.error('Error updating show mode:', error);
@@ -8795,6 +8807,18 @@ app.post('/api/cue-actual-starts', async (req, res) => {
   } catch (error) {
     console.error('❌ Error saving cue actual start:', error);
     res.status(500).json({ error: 'Failed to save cue actual start', details: error.message });
+  }
+});
+
+app.delete('/api/cue-actual-starts/:eventId', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    await clearCueActualStarts(eventId);
+    broadcastUpdate(eventId, 'cueActualStartsCleared', { event_id: eventId });
+    res.status(204).send();
+  } catch (error) {
+    console.error('❌ Error clearing cue actual starts:', error);
+    res.status(500).json({ error: 'Failed to clear cue actual starts', details: error.message });
   }
 });
 

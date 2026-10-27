@@ -12,6 +12,11 @@ const DAY_SECONDS = 86400;
 /** Actual starts older than this are treated as stale (previous rehearsal / day). */
 const MAX_ACTUAL_START_AGE_MS = 12 * 3600 * 1000;
 
+/** Settings key: false after Reset/Clear until the next cue is loaded or started. */
+export function parseLiveStartProjectionArmed(value: unknown): boolean {
+  return value !== false;
+}
+
 export type LiveStartAnchor = {
   /** Schedule index of the cue the projection is anchored to; rows after it shift. */
   anchorIndex: number;

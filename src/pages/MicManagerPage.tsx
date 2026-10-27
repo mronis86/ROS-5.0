@@ -46,7 +46,11 @@ import {
   isIndentedScheduleItem,
   itemCountsTowardStartTime,
 } from '../lib/scheduleStartTime';
-import { computeLiveStartAnchor, type LiveStartAnchor } from '../lib/liveStartProjection';
+import {
+  computeLiveStartAnchor,
+  parseLiveStartProjectionArmed,
+  type LiveStartAnchor,
+} from '../lib/liveStartProjection';
 import {
   eventLocalSecondsOfDay,
   getSyncedNow,
@@ -225,6 +229,7 @@ const MicManagerPage: React.FC = () => {
   /** Kept for AV / Mitti / Resolume LOADED·RUNNING feedback. */
   const [activeTimerMeta, setActiveTimerMeta] = useState<any | null>(null);
   const [showMode, setShowMode] = useState<'rehearsal' | 'in-show'>('rehearsal');
+  const [liveStartProjectionArmed, setLiveStartProjectionArmed] = useState(true);
   const [overtimeMinutes, setOvertimeMinutes] = useState<Record<number, number>>({});
   const [showStartOvertime, setShowStartOvertime] = useState(0);
   const [startCueId, setStartCueId] = useState<number | null>(null);
@@ -362,6 +367,7 @@ const MicManagerPage: React.FC = () => {
           ? data.settings.show_mode
           : null;
       setShowMode(modeFromRos || showSettings.showMode);
+      setLiveStartProjectionArmed(parseLiveStartProjectionArmed(showSettings.liveStartProjection));
       setOvertimeMinutes(overtimeData || {});
       const overtimeValue =
         showStartOvertimeData != null
@@ -469,9 +475,13 @@ const MicManagerPage: React.FC = () => {
         event_id: string;
         showMode?: 'rehearsal' | 'in-show';
         lockedStartTimes?: Record<string, string> | null;
+        liveStartProjection?: boolean;
       }) => {
         if (data.event_id !== eventIdRef.current) return;
         if (data.showMode === 'rehearsal' || data.showMode === 'in-show') setShowMode(data.showMode);
+        if (typeof data.liveStartProjection === 'boolean') {
+          setLiveStartProjectionArmed(parseLiveStartProjectionArmed(data.liveStartProjection));
+        }
         if (data.lockedStartTimes !== undefined) {
           setLockedStartTimes(parseLockedStartTimes(data.lockedStartTimes));
         }
@@ -655,6 +665,7 @@ const MicManagerPage: React.FC = () => {
   }, [showMode]);
 
   const liveStartAnchor = useMemo((): LiveStartAnchor | null => {
+    if (!liveStartProjectionArmed) return null;
     if (showMode !== 'in-show') return null;
     const runningId = timerRunning && activeItemId != null ? Number(activeItemId) : NaN;
     const runningStartMs = Number.isFinite(runningId)
@@ -691,6 +702,7 @@ const MicManagerPage: React.FC = () => {
     return anchor;
   }, [
     showMode,
+    liveStartProjectionArmed,
     timerRunning,
     activeItemId,
     startedAt,

@@ -333,6 +333,7 @@ class ApiClient {
     lockedStartTimes: Record<string, string> | null;
     preshowShowDay: any | null;
     autoRoll: any | null;
+    liveStartProjection: boolean;
     displaySyncEnabled: boolean;
   }> {
     const result = await this.request(`/api/show-mode/${eventId}`, {}, `showMode_${eventId}`, 60 * 1000);
@@ -352,6 +353,7 @@ class ApiClient {
           : null,
       autoRoll:
         result?.autoRoll && typeof result.autoRoll === 'object' ? result.autoRoll : null,
+      liveStartProjection: result?.liveStartProjection !== false,
       displaySyncEnabled: result?.displaySyncEnabled !== false,
     };
   }
@@ -487,6 +489,7 @@ class ApiClient {
       clearPreshowShowDay?: boolean;
       autoRoll?: Record<string, unknown> | null;
       clearAutoRoll?: boolean;
+      liveStartProjection?: boolean;
     }
   ) {
     const result = await this.request(`/api/show-mode/${eventId}`, {

@@ -40,7 +40,11 @@ import {
   DISPLAY_SESSION_MAX_LABEL,
   DISPLAY_SESSION_PICK_TIME_ALERT,
 } from '../lib/displaySession';
-import { computeLiveStartAnchor, type LiveStartAnchor } from '../lib/liveStartProjection';
+import {
+  computeLiveStartAnchor,
+  parseLiveStartProjectionArmed,
+  type LiveStartAnchor,
+} from '../lib/liveStartProjection';
 import {
   eventLocalSecondsOfDay,
   getSyncedNow,
@@ -174,6 +178,7 @@ const GreenRoomPage: React.FC = () => {
   const [startCueId, setStartCueId] = useState<number | null>(null);
   const [syncCountdown, setSyncCountdown] = useState<number>(20);
   const [showMode, setShowMode] = useState<'rehearsal' | 'in-show'>('rehearsal');
+  const [liveStartProjectionArmed, setLiveStartProjectionArmed] = useState(true);
   const [lockedStartTimes, setLockedStartTimes] = useState<Record<number, string>>({});
   const [cueActualStarts, setCueActualStarts] = useState<Record<number, number>>({});
   const [liveProjectionTick, setLiveProjectionTick] = useState(0);
@@ -624,7 +629,7 @@ const GreenRoomPage: React.FC = () => {
   }, [showMode]);
 
   const liveStartAnchor = useMemo((): LiveStartAnchor | null => {
-    if (showMode !== 'in-show') return null;
+    if (showMode !== 'in-show' || !liveStartProjectionArmed) return null;
     const running = timerState === 'running' && activeItemId != null;
     const runningId = running ? Number(activeItemId) : NaN;
     const runningRow = Number.isFinite(runningId) ? timerProgress[runningId] : undefined;
@@ -662,6 +667,7 @@ const GreenRoomPage: React.FC = () => {
     return anchor;
   }, [
     showMode,
+    liveStartProjectionArmed,
     timerState,
     activeItemId,
     timerProgress,
@@ -799,6 +805,7 @@ const GreenRoomPage: React.FC = () => {
             );
             const currentShowMode = modeFromRos || showModeData;
             setShowMode(currentShowMode);
+            setLiveStartProjectionArmed(parseLiveStartProjectionArmed(showSettings?.liveStartProjection));
             const overtimeDataMap = overtimeData || {};
             let overtimeValue = 0;
             let startCueIdValue: number | null = null;
@@ -1248,6 +1255,7 @@ const GreenRoomPage: React.FC = () => {
             : null;
         const currentShowMode = modeFromRos || showModeData;
         setShowMode(currentShowMode);
+        setLiveStartProjectionArmed(parseLiveStartProjectionArmed(showSettings?.liveStartProjection));
         
         if (overtimeData) {
           freshOvertimeData = currentShowMode === 'rehearsal' ? {} : overtimeData;
@@ -1637,11 +1645,15 @@ const GreenRoomPage: React.FC = () => {
         showMode?: 'rehearsal' | 'in-show';
         trackWasDurations?: boolean;
         lockedStartTimes?: Record<string, string> | null;
+        liveStartProjection?: boolean;
       }) => {
         if (data.event_id === event?.id) {
           if (data.showMode === 'rehearsal' || data.showMode === 'in-show') {
             setShowMode(data.showMode);
             apiClient.invalidateShowModeCache(event.id);
+          }
+          if (typeof data.liveStartProjection === 'boolean') {
+            setLiveStartProjectionArmed(parseLiveStartProjectionArmed(data.liveStartProjection));
           }
           if (data.lockedStartTimes !== undefined) {
             setLockedStartTimes(parseLockedStartTimes(data.lockedStartTimes));

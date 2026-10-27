@@ -521,6 +521,7 @@ export class DatabaseService {
     lockedStartTimes: Record<string, string> | null;
     preshowShowDay: any | null;
     autoRoll: any | null;
+    liveStartProjection: boolean;
     displaySyncEnabled: boolean;
   }> {
     try {
@@ -532,6 +533,7 @@ export class DatabaseService {
         lockedStartTimes: result?.lockedStartTimes ?? null,
         preshowShowDay: result?.preshowShowDay ?? null,
         autoRoll: result?.autoRoll ?? null,
+        liveStartProjection: result?.liveStartProjection !== false,
         displaySyncEnabled: result?.displaySyncEnabled !== false,
       };
     } catch (error) {
@@ -543,6 +545,7 @@ export class DatabaseService {
         lockedStartTimes: null,
         preshowShowDay: null,
         autoRoll: null,
+        liveStartProjection: true,
         displaySyncEnabled: true,
       };
     }
@@ -655,6 +658,7 @@ export class DatabaseService {
       clearPreshowShowDay?: boolean;
       autoRoll?: Record<string, unknown> | null;
       clearAutoRoll?: boolean;
+      liveStartProjection?: boolean;
     }
   ): Promise<boolean> {
     try {
@@ -1722,6 +1726,19 @@ export class DatabaseService {
     } catch (error) {
       console.error('❌ Error loading cue actual starts:', error);
       return {};
+    }
+  }
+
+  static async clearCueActualStarts(eventId: string): Promise<boolean> {
+    try {
+      const response = await DatabaseService.apiFetch(`${API_BASE_URL}/api/cue-actual-starts/${eventId}`, {
+        method: 'DELETE',
+        headers: apiJsonHeaders(),
+      });
+      return response.ok || response.status === 204;
+    } catch (error) {
+      console.warn('⚠️ Failed to clear cue actual starts:', error);
+      return false;
     }
   }
 

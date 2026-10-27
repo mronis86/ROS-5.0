@@ -42,6 +42,7 @@ interface SocketCallbacks {
     trackWasDurations?: boolean;
     rehearsalBaseline?: any;
     lockedStartTimes?: Record<string, string> | null;
+    liveStartProjection?: boolean;
   }) => void; // Global show mode and track-was-durations / rehearsal baseline / locked starts
   onDisplaySyncUpdate?: (data: { event_id: string; displaySyncEnabled: boolean }) => void;
   onMicAssignmentsUpdate?: (data: { event_id: string; assignments?: Record<string, any>; changes?: any[] }) => void;

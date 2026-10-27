@@ -33,7 +33,11 @@ import {
   formatExternalSyncStatusLine,
 } from '../lib/externalSyncLabel';
 import { resolveScheduleCueLabel } from '../lib/cueDisplay';
-import { computeLiveStartAnchor, type LiveStartAnchor } from '../lib/liveStartProjection';
+import {
+  computeLiveStartAnchor,
+  parseLiveStartProjectionArmed,
+  type LiveStartAnchor,
+} from '../lib/liveStartProjection';
 import {
   eventLocalSecondsOfDay,
   getSyncedNow,
@@ -311,6 +315,7 @@ const OperatorCueDisplayPage: React.FC = () => {
   /** Frozen Enter In-Show starts — WAS under Start (same blob as ROS). */
   const [lockedStartTimes, setLockedStartTimes] = useState<Record<number, string>>({});
   const [showMode, setShowMode] = useState<'rehearsal' | 'in-show'>('rehearsal');
+  const [liveStartProjectionArmed, setLiveStartProjectionArmed] = useState(true);
   const [cueActualStarts, setCueActualStarts] = useState<Record<number, number>>({});
   const [eventTimezone, setEventTimezone] = useState('America/New_York');
   const [liveProjectionTick, setLiveProjectionTick] = useState(0);
@@ -521,6 +526,7 @@ const OperatorCueDisplayPage: React.FC = () => {
   }, [showMode]);
 
   const liveStartAnchor = useMemo((): LiveStartAnchor | null => {
+    if (!liveStartProjectionArmed) return null;
     if (showMode !== 'in-show') return null;
     const running =
       !!timer && (timer.timer_state === 'running' || (timer.is_running === true && timer.is_active !== false));
@@ -559,6 +565,7 @@ const OperatorCueDisplayPage: React.FC = () => {
     return anchor;
   }, [
     showMode,
+    liveStartProjectionArmed,
     timer,
     cueActualStarts,
     schedule,
@@ -715,6 +722,7 @@ const OperatorCueDisplayPage: React.FC = () => {
       else if (showSettings?.showMode === 'in-show' || showSettings?.showMode === 'rehearsal') {
         setShowMode(showSettings.showMode);
       }
+      setLiveStartProjectionArmed(parseLiveStartProjectionArmed(showSettings?.liveStartProjection));
       const tz =
         (typeof data.settings?.timezone === 'string' && data.settings.timezone) ||
         event?.timezone ||
@@ -803,9 +811,13 @@ const OperatorCueDisplayPage: React.FC = () => {
         event_id: string;
         showMode?: 'rehearsal' | 'in-show';
         lockedStartTimes?: Record<string, string> | null;
+        liveStartProjection?: boolean;
       }) => {
         if (d.event_id !== event.id) return;
         if (d.showMode === 'rehearsal' || d.showMode === 'in-show') setShowMode(d.showMode);
+        if (typeof d.liveStartProjection === 'boolean') {
+          setLiveStartProjectionArmed(parseLiveStartProjectionArmed(d.liveStartProjection));
+        }
         if (d.lockedStartTimes === undefined) return;
         if (d.lockedStartTimes && typeof d.lockedStartTimes === 'object') {
           const mapped: Record<number, string> = {};

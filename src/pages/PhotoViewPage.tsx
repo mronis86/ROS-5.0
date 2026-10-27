@@ -33,7 +33,11 @@ import { formatShowDelayBanner } from '../lib/showDelay';
 import { programTypeSurfaceStyle, programTypeTextColor } from '../lib/rosProgramTypeSplit';
 import { ROS_PROGRAM_TYPE_COLORS } from '../lib/guestRosHelpers';
 import { formatCueNumber, formatTimerCueStatus, resolveScheduleCueLabel, shouldKeepExistingRunningTimer } from '../lib/cueDisplay';
-import { computeLiveStartAnchor, type LiveStartAnchor } from '../lib/liveStartProjection';
+import {
+  computeLiveStartAnchor,
+  parseLiveStartProjectionArmed,
+  type LiveStartAnchor,
+} from '../lib/liveStartProjection';
 import {
   eventLocalSecondsOfDay,
   getSyncedNow,
@@ -484,6 +488,7 @@ const PhotoViewPage: React.FC = () => {
   const [selectedDay, setSelectedDay] = useState<number>(1);
   const [showEventSelector, setShowEventSelector] = useState(false);
   const [showMode, setShowMode] = useState<'rehearsal' | 'in-show'>('rehearsal');
+  const [liveStartProjectionArmed, setLiveStartProjectionArmed] = useState(true);
   const [trackWasDurations, setTrackWasDurations] = useState(false);
   const [originalDurations, setOriginalDurations] = useState<Record<number, { durationHours: number; durationMinutes: number; durationSeconds: number }>>({});
   /** Frozen Enter In-Show starts for WAS under Start. */
@@ -498,7 +503,7 @@ const PhotoViewPage: React.FC = () => {
   }, [showMode]);
 
   const liveStartAnchor = useMemo((): LiveStartAnchor | null => {
-    if (showMode !== 'in-show') return null;
+    if (showMode !== 'in-show' || !liveStartProjectionArmed) return null;
     const active = hybridTimerData?.activeTimer;
     const activeRunning =
       !!active && (active.timer_state === 'running' || (active.is_running === true && active.is_active !== false));
@@ -537,6 +542,7 @@ const PhotoViewPage: React.FC = () => {
     return anchor;
   }, [
     showMode,
+    liveStartProjectionArmed,
     hybridTimerData?.activeTimer,
     cueActualStarts,
     schedule,
@@ -1313,6 +1319,9 @@ const PhotoViewPage: React.FC = () => {
           if (typeof data.settings?.track_was_durations === 'boolean') {
             setTrackWasDurations(data.settings.track_was_durations === true);
           }
+          if (data.settings && 'live_start_projection' in data.settings) {
+            setLiveStartProjectionArmed(parseLiveStartProjectionArmed(data.settings.live_start_projection));
+          }
 
           const overtimeData = await DatabaseService.getOvertimeMinutes(id);
           setCueActualStarts(await DatabaseService.getCueActualStarts(id));
@@ -1730,6 +1739,7 @@ const PhotoViewPage: React.FC = () => {
         showMode?: 'rehearsal' | 'in-show';
         trackWasDurations?: boolean;
         lockedStartTimes?: Record<string, string> | null;
+        liveStartProjection?: boolean;
       }) => {
         if (data.event_id === event?.id) {
           console.log('📡 PhotoView: showModeUpdate', data.showMode, data.trackWasDurations);
@@ -1737,6 +1747,9 @@ const PhotoViewPage: React.FC = () => {
             setShowMode(data.showMode);
           }
           if (typeof data.trackWasDurations === 'boolean') setTrackWasDurations(data.trackWasDurations);
+          if (typeof data.liveStartProjection === 'boolean') {
+            setLiveStartProjectionArmed(parseLiveStartProjectionArmed(data.liveStartProjection));
+          }
           if (data.lockedStartTimes !== undefined) {
             if (data.lockedStartTimes && typeof data.lockedStartTimes === 'object') {
               const mapped: Record<number, string> = {};
