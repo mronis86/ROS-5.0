@@ -242,6 +242,21 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
     onRowEditStart?.(item.id);
   };
 
+  const alertIfLocked = (e?: { preventDefault?: () => void; stopPropagation?: () => void }) => {
+    if (!isLockedByOther) return false;
+    e?.preventDefault?.();
+    e?.stopPropagation?.();
+    alert(lockLabel);
+    return true;
+  };
+
+  const beginCellEdit = () => {
+    if (alertIfLocked()) return false;
+    claimRowLock();
+    handleUserEditing();
+    return true;
+  };
+
   const canEditRecording = currentUserRole !== 'VIEWER';
   const flexOrder = (key: string): number => columnFlexOrder?.[key] ?? 999;
 
@@ -382,12 +397,26 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
           style={{ width: columnWidths.programType, order: flexOrder('programType') }}
         >
+          <div
+            className="w-full"
+            onMouseDown={(e) => {
+              if (!isLockedByOther) return;
+              e.preventDefault();
+              e.stopPropagation();
+              alert(lockLabel);
+            }}
+          >
           <select
             value={item.programType || ''}
             onFocus={handleSelectFocus}
             onBlur={handleSelectBlur}
             onChange={(e) => {
-              if (isLockedByOther) return;
+              if (isLockedByOther) {
+                alert(lockLabel);
+                return;
+              }
+              claimRowLock();
+              handleUserEditing();
               if (currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') {
                 alert('Only EDITORs can edit program type. Please change your role to EDITOR.');
                 return;
@@ -463,6 +492,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
               </option>
             ))}
           </select>
+          </div>
         </div>
       )}
       {/* Duration column (after Program Type) */}
@@ -487,15 +517,30 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
           style={{ width: columnWidths.duration, minHeight: durationChanged ? 'auto' : undefined, order: flexOrder('duration') }}
           title={durationChanged ? 'Duration changed from original' : undefined}
         >
-          <div className="flex items-center gap-2">
+          <div
+            className="flex items-center gap-2"
+            onMouseDown={(e) => {
+              if (!isLockedByOther) return;
+              e.preventDefault();
+              e.stopPropagation();
+              alert(lockLabel);
+            }}
+          >
             <input 
               type="number" 
               min="0" 
               max="23" 
               value={item.durationHours}
-              onFocus={claimRowLock}
-              onChange={(e) => {
+              onFocus={() => {
                 if (isLockedByOther) return;
+                claimRowLock();
+                handleUserEditing();
+              }}
+              onChange={(e) => {
+                if (isLockedByOther) {
+                  alert(lockLabel);
+                  return;
+                }
                 handleUserEditing();
                 if (currentUserRole === 'VIEWER') {
                   alert('Only EDITORs and OPERATORs can edit duration. Please change your role to EDITOR or OPERATOR.');
@@ -533,9 +578,16 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
               min="0" 
               max="59" 
               value={item.durationMinutes}
-              onFocus={claimRowLock}
-              onChange={(e) => {
+              onFocus={() => {
                 if (isLockedByOther) return;
+                claimRowLock();
+                handleUserEditing();
+              }}
+              onChange={(e) => {
+                if (isLockedByOther) {
+                  alert(lockLabel);
+                  return;
+                }
                 handleUserEditing();
                 if (currentUserRole === 'VIEWER') {
                   alert('Only EDITORs and OPERATORs can edit duration. Please change your role to EDITOR or OPERATOR.');
@@ -573,9 +625,16 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
               min="0" 
               max="59" 
               value={item.durationSeconds}
-              onFocus={claimRowLock}
-              onChange={(e) => {
+              onFocus={() => {
                 if (isLockedByOther) return;
+                claimRowLock();
+                handleUserEditing();
+              }}
+              onChange={(e) => {
+                if (isLockedByOther) {
+                  alert(lockLabel);
+                  return;
+                }
                 handleUserEditing();
                 if (currentUserRole === 'VIEWER') {
                   alert('Only EDITORs and OPERATORs can edit duration. Please change your role to EDITOR or OPERATOR.');
@@ -700,10 +759,10 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
               <textarea
                 value={item.segmentName}
                 rows={Math.max(2, String(item.segmentName || '').split(/\r\n|\r|\n/).length)}
-                onFocus={claimRowLock}
+                onFocus={() => beginCellEdit()}
+                onMouseDown={(e) => { if (alertIfLocked(e)) return; }}
                 onChange={(e) => {
-                  if (isLockedByOther) return;
-                  handleUserEditing();
+                  if (!beginCellEdit()) return;
                   if (currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') {
                     alert('Only EDITORs can edit segment names. Please change your role to EDITOR.');
                     return;
@@ -752,10 +811,10 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
             <input
               type="text"
               value={item.segmentName}
-              onFocus={claimRowLock}
+              onFocus={() => beginCellEdit()}
+              onMouseDown={(e) => { if (alertIfLocked(e)) return; }}
               onChange={(e) => {
-                if (isLockedByOther) return;
-                handleUserEditing();
+                if (!beginCellEdit()) return;
                 if (currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') {
                   alert('Only EDITORs can edit segment names. Please change your role to EDITOR.');
                   return;
@@ -811,12 +870,16 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
           style={{ width: columnWidths.shotType, overflow: 'visible', zIndex: 1, order: flexOrder('shotType') }}
         >
+          <div
+            className="w-full"
+            onMouseDown={(e) => { if (alertIfLocked(e)) return; }}
+          >
           <select 
             value={item.shotType}
             onFocus={handleSelectFocus}
             onBlur={handleSelectBlur}
             onChange={(e) => {
-              if (isLockedByOther) return;
+              if (!beginCellEdit()) return;
               if (currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') {
                 alert('Only EDITORs can edit shot type. Please change your role to EDITOR.');
                 return;
@@ -868,6 +931,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
               <option key={type} value={type}>{type}</option>
             ))}
           </select>
+          </div>
         </div>
       )}
       {/* PPT/QA column (after Shot Type) */}
@@ -876,15 +940,16 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
           style={{ width: columnWidths.pptQA, order: flexOrder('pptQA') }}
         >
-          <div className="flex items-center gap-2">
+          <div
+            className="flex items-center gap-2"
+            onMouseDown={(e) => { if (alertIfLocked(e)) return; }}
+          >
             <label className="flex items-center gap-1">
               <input
                 type="checkbox"
                 checked={!!item.hasPPT}
                 onChange={(e) => {
-                  if (isLockedByOther) return;
-                  claimRowLock();
-                  handleUserEditing();
+                  if (!beginCellEdit()) return;
                   if (currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') {
                     alert('Only EDITORs can edit PPT settings. Please change your role to EDITOR.');
                     return;
@@ -921,9 +986,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
                 type="checkbox"
                 checked={!!item.hasQA}
                 onChange={(e) => {
-                  if (isLockedByOther) return;
-                  claimRowLock();
-                  handleUserEditing();
+                  if (!beginCellEdit()) return;
                   if (currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') {
                     alert('Only EDITORs can edit Q&A settings. Please change your role to EDITOR.');
                     return;
@@ -963,7 +1026,10 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative overflow-visible"
           style={{ width: columnWidths.recording, order: flexOrder('recording') }}
         >
-          <label className="group/rec-tip relative flex flex-col items-center gap-0.5">
+          <label
+            className="group/rec-tip relative flex flex-col items-center gap-0.5"
+            onMouseDown={(e) => { if (alertIfLocked(e)) return; }}
+          >
             <input
               type="checkbox"
               checked={!!item.needsRecording}
@@ -1006,11 +1072,15 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
           className="px-2 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
           style={{ width: 88, order: (columnFlexOrder?.recording ?? 6) + 0.5 }}
         >
-          <label className="flex flex-col items-center gap-0.5">
+          <label
+            className="flex flex-col items-center gap-0.5"
+            onMouseDown={(e) => { if (alertIfLocked(e)) return; }}
+          >
             <input
               type="checkbox"
               checked={!!item.mittiWatch}
               onChange={(e) => {
+                if (!beginCellEdit()) return;
                 void persistMittiWatch?.(item.id, e.target.checked);
               }}
               disabled={isLockedByOther || currentUserRole === 'VIEWER' || !persistMittiWatch}
@@ -1038,11 +1108,15 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
           className="px-2 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
           style={{ width: 72, order: (columnFlexOrder?.recording ?? 6) + 0.6 }}
         >
-          <label className="flex flex-col items-center gap-0.5">
+          <label
+            className="flex flex-col items-center gap-0.5"
+            onMouseDown={(e) => { if (alertIfLocked(e)) return; }}
+          >
             <input
               type="checkbox"
               checked={!!item.avWatch}
               onChange={(e) => {
+                if (!beginCellEdit()) return;
                 void persistAvWatch?.(item.id, e.target.checked);
               }}
               disabled={isLockedByOther || currentUserRole === 'VIEWER' || !persistAvWatch}
@@ -1077,6 +1151,8 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
+                  if (alertIfLocked(e)) return;
+                  claimRowLock();
                   handleModalEditing?.();
                   setTempVoCues?.(Array.isArray(item.voCues) ? item.voCues.map((v: any) => ({ ...v })) : []);
                   setEditingVoItemId?.(item.id);
@@ -1091,10 +1167,12 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
+                  if (alertIfLocked(e)) return;
                   if (currentUserRole === 'OPERATOR') {
                     alert('Only EDITORs can add Stage Direction notes. Please change your role to EDITOR.');
                     return;
                   }
+                  claimRowLock();
                   handleModalEditing?.();
                   setShowStageDirectionModal(true);
                 }}
@@ -1121,7 +1199,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
                   if (prevNotes.includes(noteText)) {
                     return;
                   }
-                  handleUserEditing?.();
+                  if (!beginCellEdit()) return;
                   const nextNotes = prependSettleCueNote(item.notes || '', cue);
                   setSchedule((prev: any[]) =>
                     prev.map((scheduleItem) =>
@@ -1367,10 +1445,9 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
           <input
             type="checkbox"
             checked={!!item.isPublic}
+            onMouseDown={(e) => { if (alertIfLocked(e)) return; }}
             onChange={(e) => {
-              if (isLockedByOther) return;
-              claimRowLock();
-              handleUserEditing();
+              if (!beginCellEdit()) return;
               if (currentUserRole === 'VIEWER') {
                 alert('Viewers cannot change public status. Please change your role to EDITOR or OPERATOR.');
                 return;
@@ -1412,10 +1489,14 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
         >
           <select
             value={item.timerDisplay === 'todOnly' ? 'todOnly' : item.timerDisplay === 'countUp' ? 'countUp' : (item.timerDisplay === 'timeOfDay' || item.useTimeOfDay === true) ? 'timeOfDay' : 'countdown'}
-            onFocus={claimRowLock}
+            onFocus={() => beginCellEdit()}
             onBlur={handleSelectBlur}
+            onMouseDown={(e) => {
+              if (alertIfLocked(e)) return;
+              e.stopPropagation();
+            }}
             onChange={(e) => {
-              if (isLockedByOther) return;
+              if (!beginCellEdit()) return;
               if (currentUserRole === 'VIEWER') {
                 alert('Only EDITORs and OPERATORs can change Counter display. Please change your role.');
                 return;
@@ -1479,6 +1560,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
                 return;
               }
               claimRowLock();
+              handleModalEditing();
               setEditingParticipantsItem && setEditingParticipantsItem(item.id);
               setShowParticipantsModal && setShowParticipantsModal(true);
             }}
@@ -1503,10 +1585,10 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
           >
             <textarea
               value={(item.customFields && item.customFields[column.name]) || ''}
-              onFocus={() => { claimRowLock(); handleUserEditing(); }}
+              onFocus={() => beginCellEdit()}
+              onMouseDown={(e) => { if (alertIfLocked(e)) return; }}
               onChange={(e) => {
-                if (isLockedByOther) return;
-                handleUserEditing();
+                if (!beginCellEdit()) return;
                 const oldValue = (item.customFields && item.customFields[column.name]) || '';
                 setSchedule((prev: any[]) => prev.map(scheduleItem => 
                   scheduleItem.id === item.id 

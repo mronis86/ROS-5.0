@@ -807,6 +807,7 @@ const ContentReviewPage: React.FC = () => {
     production: [],
   });
   const [editModeEnabled, setEditModeEnabled] = useState(false);
+  const editModeEnabledRef = useRef(false);
   const [notesDraft, setNotesDraft] = useState('');
   const [notesVoCues, setNotesVoCues] = useState<VoCue[]>([]);
   const [notesDirty, setNotesDirty] = useState(false);
@@ -928,6 +929,9 @@ const ContentReviewPage: React.FC = () => {
     rowLocksRef.current = rowLocks;
   }, [rowLocks]);
   useEffect(() => {
+    editModeEnabledRef.current = editModeEnabled;
+  }, [editModeEnabled]);
+  useEffect(() => {
     customColumnsRef.current = customColumns;
   }, [customColumns]);
   useEffect(() => {
@@ -1046,6 +1050,8 @@ const ContentReviewPage: React.FC = () => {
       claimRowEditLock(rowId);
       if (editingIdleTimeoutRef.current) clearTimeout(editingIdleTimeoutRef.current);
       editingIdleTimeoutRef.current = setTimeout(() => {
+        // Edit On holds the row until they turn it off or leave the cue.
+        if (editModeEnabledRef.current) return;
         if (localEditingRowIdRef.current === rowId) {
           releaseRowEditLock(rowId);
         }
@@ -1090,10 +1096,9 @@ const ContentReviewPage: React.FC = () => {
       if (!eventId || viewerOnly) return { ok: false, error: 'Unavailable' };
       const lock = rowLocksRef.current[itemId];
       if (lock && String(lock.userId) !== String(driverIdRef.current)) {
-        return {
-          ok: false,
-          error: `${lock.userName || 'Someone'} is editing this cue`,
-        };
+        const error = `${lock.userName || 'Someone'} is editing this cue`;
+        window.alert(error);
+        return { ok: false, error };
       }
 
       const currentLocal = scheduleRef.current.find((i) => i.id === itemId);
@@ -1160,6 +1165,8 @@ const ContentReviewPage: React.FC = () => {
               : customColumnsRef.current,
             settings: existing.settings || {},
             version: scheduleVersionRef.current,
+            schedule_row_patch: true,
+            edited_item_ids: [itemId],
           },
           {
             userId: driverIdRef.current,
@@ -2653,6 +2660,20 @@ const ContentReviewPage: React.FC = () => {
   const displayCueLockLabel = isDisplayCueLockedByOther
     ? `${displayCueLock?.userName || 'Someone'} is editing`
     : null;
+  const canEditCue = editModeEnabled && !isDisplayCueLockedByOther && !viewerOnly;
+
+  const alertIfCueLocked = () => {
+    if (!isDisplayCueLockedByOther) return false;
+    window.alert(displayCueLockLabel || 'Someone is editing this cue');
+    return true;
+  };
+
+  const beginCueFieldEdit = () => {
+    if (alertIfCueLocked()) return false;
+    if (!displayItem || viewerOnly) return false;
+    claimRowEditLock(displayItem.id);
+    return true;
+  };
 
   const scheduleStartById = useMemo(() => {
     const map = new Map<number, string>();
@@ -2677,6 +2698,10 @@ const ContentReviewPage: React.FC = () => {
   useEffect(() => {
     if (isDisplayCueLockedByOther && editModeEnabled) {
       setEditModeEnabled(false);
+    }
+    if (isDisplayCueLockedByOther) {
+      setShowVoModal(false);
+      setShowStageDirectionModal(false);
     }
   }, [isDisplayCueLockedByOther, editModeEnabled]);
 
@@ -2942,6 +2967,7 @@ const ContentReviewPage: React.FC = () => {
   const convertNotesLabelHint = useCallback(
     (hint: { type: 'vo' | 'settle'; line: string; kind?: 'vo' | 'bgm'; time?: string | null; label?: string; cuePrefix?: string }, time?: string) => {
       if (!displayItem) return;
+      if (alertIfCueLocked()) return;
       const editor = notesEditorRef.current;
       let html = editor?.innerHTML || notesDraft;
       html = removePlainLineFromNotesHtml(html, hint.line);
@@ -2978,7 +3004,7 @@ const ContentReviewPage: React.FC = () => {
       setNotesDirty(true);
       setNotesSaveMessage(null);
     },
-    [displayItem, notesDraft, notesVoCues]
+    [displayItem, notesDraft, notesVoCues, isDisplayCueLockedByOther, displayCueLockLabel]
   );
 
   const saveDisplayItemSegment = useCallback(async () => {
@@ -3301,6 +3327,7 @@ const ContentReviewPage: React.FC = () => {
   );
 
   const applyNotesFormatting = useCallback((action: string, value?: string) => {
+    if (alertIfCueLocked()) return;
     const editor = notesEditorRef.current;
     if (!editor) return;
     editor.focus();
@@ -3330,7 +3357,7 @@ const ContentReviewPage: React.FC = () => {
     setNotesDraft(html);
     setNotesDirty(html !== (displayItem?.notes ?? ''));
     setNotesSaveMessage(null);
-  }, [displayItem?.notes]);
+  }, [displayItem?.notes, isDisplayCueLockedByOther, displayCueLockLabel]);
 
   return (
     <div className="fixed inset-x-0 bottom-0 top-[var(--app-header-height)] z-0 flex flex-col bg-slate-900 text-white">
@@ -3692,7 +3719,13 @@ const ContentReviewPage: React.FC = () => {
                             else cueButtonRefs.current.delete(it.id);
                           }}
                           onClick={() => setSelectedId(it.id)}
-                          title={followMode === 'follow' ? 'Turn off Follow to select cues' : undefined}
+                          title={
+                            followMode === 'follow'
+                              ? 'Turn off Follow to select cues'
+                              : cueLockedByOther
+                                ? `${cueLock?.userName || 'Someone'} is editing`
+                                : undefined
+                          }
                           className="flex min-w-0 flex-1 rounded-md text-left disabled:cursor-not-allowed"
                         >
                           <div
@@ -4129,7 +4162,20 @@ const ContentReviewPage: React.FC = () => {
                 </div>
               </div>
             ) : (
-              <div className="mx-auto max-w-5xl space-y-4">
+              <div
+                className="mx-auto max-w-5xl space-y-4"
+                onFocusCapture={() => {
+                  if (canEditCue) beginCueFieldEdit();
+                }}
+                onMouseDownCapture={(e) => {
+                  if (!isDisplayCueLockedByOther) return;
+                  const target = e.target as HTMLElement | null;
+                  if (target?.closest('input, textarea, select, button, [contenteditable="true"]')) {
+                    e.preventDefault();
+                    alertIfCueLocked();
+                  }
+                }}
+              >
                 {isDisplayCueLockedByOther ? (
                   <div className="rounded-lg border border-amber-500/60 bg-amber-950/40 px-4 py-2.5 text-sm text-amber-100">
                     <span className="font-semibold text-amber-50">
@@ -4163,7 +4209,7 @@ const ContentReviewPage: React.FC = () => {
                     <div className="border-b border-slate-600 bg-slate-800/90 px-3 py-2 md:col-span-2 md:border-b-0 md:border-r">
                       <div className="min-w-0">
                         <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Cue</span>
-                        {editModeEnabled ? (
+                        {canEditCue ? (
                           <div className="mt-1 space-y-2">
                             <input
                               type="text"
@@ -4290,7 +4336,7 @@ const ContentReviewPage: React.FC = () => {
                     <div className="border-b border-slate-600 px-3 py-2 md:col-span-2 md:border-b-0 md:border-r">
                       <div className="min-w-0">
                         <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Duration</span>
-                        {editModeEnabled ? (
+                        {canEditCue ? (
                           <div className="mt-1 space-y-2">
                             <div className="grid grid-cols-3 gap-1.5">
                               <input
@@ -4399,7 +4445,7 @@ const ContentReviewPage: React.FC = () => {
                           <OtherRoomBadge room={displayItem.otherRoom} />
                         </div>
                       ) : null}
-                      {editModeEnabled ? (
+                      {canEditCue ? (
                         <div className="mt-1 space-y-1.5">
                           <input
                             type="text"
@@ -4460,7 +4506,7 @@ const ContentReviewPage: React.FC = () => {
                   <div className="grid grid-cols-1 gap-0 border-b border-slate-600 sm:grid-cols-2">
                     <div className="border-b border-slate-600 p-4 sm:border-b-0 sm:border-r">
                       <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Shot</div>
-                      {editModeEnabled ? (
+                      {canEditCue ? (
                         <div className="mt-1 space-y-2">
                           <select
                             value={shotDraft}
@@ -4520,7 +4566,7 @@ const ContentReviewPage: React.FC = () => {
                     </div>
                     <div className="p-4">
                       <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">PPT / Q&A</div>
-                      {editModeEnabled ? (
+                      {canEditCue ? (
                         <div className="mt-1 space-y-2">
                           <div className="flex flex-wrap items-center gap-3">
                             <label className="inline-flex items-center gap-2 text-sm text-slate-100">
@@ -4600,7 +4646,7 @@ const ContentReviewPage: React.FC = () => {
                     <span className="text-xs font-bold uppercase tracking-wide text-slate-200">
                       Speakers (slots 1–7)
                     </span>
-                    {!editModeEnabled ? (
+                    {!canEditCue ? (
                       <button
                         type="button"
                         onClick={() => setSpeakerDetailsExpanded((prev) => !prev)}
@@ -4611,7 +4657,7 @@ const ContentReviewPage: React.FC = () => {
                       </button>
                     ) : null}
                   </div>
-                  {editModeEnabled ? (
+                  {canEditCue ? (
                     <div className="space-y-2 p-2">
                       <div className="mb-1 flex items-center justify-between gap-2">
                         <span className="text-xs font-semibold text-slate-300">Edit Participants ({speakerDraft.length}/7)</span>
@@ -4849,7 +4895,7 @@ const ContentReviewPage: React.FC = () => {
                   <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-600 bg-slate-700 px-4 py-2">
                     <span className="text-xs font-bold uppercase tracking-wide text-slate-200">Notes</span>
                     <div className="flex flex-wrap items-center gap-2">
-                      {editModeEnabled && !isDisplayCueLockedByOther ? (
+                      {canEditCue ? (
                         <>
                           <button
                             type="button"
@@ -4877,9 +4923,13 @@ const ContentReviewPage: React.FC = () => {
                           </button>
                         </>
                       ) : null}
-                      {editModeEnabled ? (
+                      {canEditCue ? (
                         <span className="text-[10px] font-semibold uppercase tracking-wide text-violet-300">
                           Edit mode
+                        </span>
+                      ) : isDisplayCueLockedByOther ? (
+                        <span className="text-[10px] font-semibold uppercase tracking-wide text-amber-200">
+                          {displayCueLockLabel}
                         </span>
                       ) : null}
                     </div>
@@ -4904,7 +4954,7 @@ const ContentReviewPage: React.FC = () => {
                       })}
                     </div>
                   ) : null}
-                  {editModeEnabled ? (
+                  {canEditCue ? (
                     <div className="space-y-2 p-4">
                       <div className="rounded border border-slate-600 bg-slate-900/80 p-2">
                         <div className="mb-2 flex flex-wrap items-center gap-1.5 border-b border-slate-700 pb-2">
@@ -5016,7 +5066,7 @@ const ContentReviewPage: React.FC = () => {
                   <div className="border-b border-slate-600 bg-slate-700 px-4 py-2 text-xs font-bold uppercase tracking-wide text-slate-200">
                     Assets
                   </div>
-                  {editModeEnabled ? (
+                  {canEditCue ? (
                     <div className="space-y-2 p-4">
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Assets list</span>
@@ -5156,7 +5206,7 @@ const ContentReviewPage: React.FC = () => {
                   const readOnlyCols = allDefinedCols.filter(
                     (col) => (displayItem.customFields?.[col.id] ?? '').toString().trim().length > 0
                   );
-                  const cols = editModeEnabled ? allDefinedCols : readOnlyCols;
+                  const cols = canEditCue ? allDefinedCols : readOnlyCols;
                   if (!cols.length) return null;
                   return (
                     <div className="rounded-lg border border-slate-600 bg-slate-800">
@@ -5170,7 +5220,7 @@ const ContentReviewPage: React.FC = () => {
                             className="border-b border-slate-700 p-3 sm:border-r sm:[&:nth-child(2n)]:border-r-0"
                           >
                             <div className="text-[10px] font-semibold uppercase text-slate-500">{col.name}</div>
-                            {editModeEnabled ? (
+                            {canEditCue ? (
                               <textarea
                                 value={(customFieldsDraft[col.id] ?? '').toString()}
                                 onChange={(e) => {
@@ -5190,7 +5240,7 @@ const ContentReviewPage: React.FC = () => {
                           </div>
                         ))}
                       </div>
-                      {editModeEnabled ? (
+                      {canEditCue ? (
                         <div className="flex flex-wrap items-center gap-2 border-t border-slate-700 px-3 py-2">
                           <button
                             type="button"
@@ -5245,6 +5295,12 @@ const ContentReviewPage: React.FC = () => {
                         const isSubSelected = selectedRow?.id === sub.id;
                         const subKilled = sub.programType === 'KILLED';
                         const subBar = programColor(sub.programType);
+                        const subLock = rowLocks[sub.id];
+                        const subLockedByOther = !!(
+                          subLock &&
+                          subLock.userId &&
+                          String(subLock.userId) !== String(driverId)
+                        );
                         const subCols = customColumns.filter(
                           (col) => (sub.customFields?.[col.id] ?? '').toString().trim().length > 0
                         );
@@ -5252,7 +5308,9 @@ const ContentReviewPage: React.FC = () => {
                           <div
                             key={sub.id}
                             className={`flex overflow-hidden rounded-lg border bg-slate-800/95 shadow-md ${
-                              isSubSelected
+                              subLockedByOther
+                                ? 'border-amber-500/70 ring-2 ring-amber-400/40'
+                                : isSubSelected
                                 ? 'border-cyan-500 ring-2 ring-cyan-500/40'
                                 : 'border-slate-600'
                             }`}
@@ -5280,6 +5338,11 @@ const ContentReviewPage: React.FC = () => {
                                     <span className="text-cyan-500/90">↳ </span>
                                     {formatCueDisplay(cueLabel(sub))}
                                   </div>
+                                  {subLockedByOther ? (
+                                    <div className="mt-1 text-[11px] font-semibold text-amber-200">
+                                      {subLock?.userName || 'Someone'} is editing
+                                    </div>
+                                  ) : null}
                                   <div
                                     className="mt-1.5 inline-block rounded border px-2 py-0.5 text-[10px] font-semibold"
                                     style={{
@@ -6023,8 +6086,11 @@ const ContentReviewPage: React.FC = () => {
               <button
                 type="button"
                 className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-60"
-                onClick={() => void saveVoCuesFromModal()}
-                disabled={isSavingVoCues}
+                onClick={() => {
+                  if (alertIfCueLocked()) return;
+                  void saveVoCuesFromModal();
+                }}
+                disabled={isSavingVoCues || isDisplayCueLockedByOther}
               >
                 {isSavingVoCues ? 'Saving…' : 'Save to Notes'}
               </button>

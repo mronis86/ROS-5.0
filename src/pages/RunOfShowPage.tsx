@@ -2678,6 +2678,9 @@ const RunOfShowPage: React.FC = () => {
     return index % 2 === 0 ? 'bg-slate-800' : 'bg-slate-900';
   };
 
+  const sideLockClass = (itemId: number) =>
+    isRowLockedByOther(itemId) ? ' bg-amber-950/40 ring-2 ring-inset ring-amber-400' : '';
+
   const getSideColumnRowStyle = (item: {
     id: number;
     programType?: string;
@@ -3021,6 +3024,8 @@ const RunOfShowPage: React.FC = () => {
   const localEditingRowIdRef = useRef<number | null>(null);
   const rowLockHeartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const modalLockRowIdRef = useRef<number | null>(null);
+  /** Row + fields owned by an open Notes/Speakers/Assets/VO/Participants editor. */
+  const openFieldEditorRef = useRef<{ rowId: number; fields: string[] } | null>(null);
   const releaseRowEditLockRef = useRef<(rowId: number) => void>(() => {});
   const finishEditingSessionRef = useRef<() => void>(() => {});
   const startCountdownTimerRef = useRef<() => void>(() => {});
@@ -3491,6 +3496,11 @@ const RunOfShowPage: React.FC = () => {
     } catch (err) {
       console.warn('Could not publish the row before unlocking', err);
     }
+    if (openFieldEditorRef.current || modalLockRowIdRef.current != null) {
+      console.log('✏️ Field editor still open — keeping edit loop and row lock');
+      setIsUserEditing(true);
+      return;
+    }
     const rowId = localEditingRowIdRef.current;
     if (rowId != null && modalLockRowIdRef.current !== rowId) {
       releaseRowEditLock(rowId);
@@ -3545,6 +3555,15 @@ const RunOfShowPage: React.FC = () => {
 
     if (activeModalRow != null) {
       modalLockRowIdRef.current = activeModalRow;
+      const fields =
+        showNotesModal
+          ? ['notes', 'voCues']
+          : showVoModal
+            ? ['voCues', 'notes']
+            : showAssetsModal
+              ? ['assets']
+              : ['speakers', 'speakersText'];
+      openFieldEditorRef.current = { rowId: activeModalRow, fields };
       claimRowEditLock(activeModalRow);
       return;
     }
@@ -3552,6 +3571,7 @@ const RunOfShowPage: React.FC = () => {
     if (modalLockRowIdRef.current != null) {
       const rowId = modalLockRowIdRef.current;
       modalLockRowIdRef.current = null;
+      openFieldEditorRef.current = null;
       releaseRowEditLock(rowId);
     }
   }, [
@@ -4054,6 +4074,10 @@ const RunOfShowPage: React.FC = () => {
 
   // Function to resume editing when modal closes
   const handleModalClosed = useCallback(() => {
+    if (openFieldEditorRef.current || modalLockRowIdRef.current != null) {
+      console.log('✏️ Transient action closed — field editor still owns the edit loop');
+      return;
+    }
     console.log('✏️ Modal closed - unlocking/blurring and resuming sync in 5 seconds');
     
     // Set timeout to resume syncing after 5 seconds
@@ -4064,6 +4088,36 @@ const RunOfShowPage: React.FC = () => {
     
     setEditingTimeout(timeout);
   }, []);
+
+  /** Notes / speakers / assets / VO actually closed — allow the 5s unlock. */
+  const resumeAfterFieldEditorClose = useCallback(() => {
+    openFieldEditorRef.current = null;
+    modalLockRowIdRef.current = null;
+    handleModalClosed();
+  }, [handleModalClosed]);
+
+  const rowEditorLabel = (rowId: number) => {
+    const lock = rowLocksRef.current[rowId];
+    return lock?.userName ? `${lock.userName} is editing` : 'Someone is editing';
+  };
+
+  const isRowLockedByOther = (rowId: number) => {
+    const lock = rowLocksRef.current[rowId];
+    return Boolean(lock && user?.id && lock.userId !== user.id);
+  };
+
+  /** Pause sync, take the row lock, and tell other users who is editing. */
+  const beginRowAction = (rowId: number, mode: 'idle' | 'modal' = 'idle'): boolean => {
+    if (currentUserRole === 'VIEWER') return false;
+    if (isRowLockedByOther(rowId)) {
+      alert(rowEditorLabel(rowId));
+      return false;
+    }
+    claimRowEditLock(rowId);
+    if (mode === 'modal') handleModalEditing();
+    else handleUserEditing();
+    return true;
+  };
 
   // Pause/resume countdown timer based on modal states and editing
   useEffect(() => {
@@ -4721,6 +4775,7 @@ const RunOfShowPage: React.FC = () => {
 
   const editTimedMarkerTime = (itemId: number) => {
     if (currentUserRole === 'VIEWER') return;
+    if (!beginRowAction(itemId, 'modal')) return;
     const index = schedule.findIndex((item) => item.id === itemId);
     if (index < 0) return;
     const item = schedule[index];
@@ -6737,7 +6792,7 @@ const RunOfShowPage: React.FC = () => {
     setEditingNotesItem(null);
     setTempNotesHtml('');
     setTempNotesVoCues([]);
-    handleModalClosed();
+    resumeAfterFieldEditorClose();
   };
 
   // Save speakers function
@@ -6826,7 +6881,7 @@ const RunOfShowPage: React.FC = () => {
       setSpeakerDbQuery('');
       setSpeakerDbHits([]);
       setSpeakerSyncPending(null);
-      handleModalClosed();
+      resumeAfterFieldEditorClose();
     }
   };
 
@@ -6998,7 +7053,7 @@ const RunOfShowPage: React.FC = () => {
 
     setShowAssetsModal(false);
     setEditingAssetsItem(null);
-    handleModalClosed();
+    resumeAfterFieldEditorClose();
   };
 
   const addAssetRow = () => {
@@ -7089,6 +7144,7 @@ const RunOfShowPage: React.FC = () => {
       
       setShowParticipantsModal(false);
       setEditingParticipantsItem(null);
+      resumeAfterFieldEditorClose();
     }
   };
 
@@ -9124,6 +9180,24 @@ const RunOfShowPage: React.FC = () => {
         });
         for (const [id, snap] of dirtyById) {
           if (!seen.has(id) && snap) scheduleWithDurationSeconds.push(snap);
+        }
+      }
+      const openField = openFieldEditorRef.current;
+      if (openField) {
+        const syncedById = new Map(
+          (lastSyncedScheduleRef.current || []).map((item: any) => [Number(item.id), item])
+        );
+        const synced = syncedById.get(Number(openField.rowId));
+        if (synced) {
+          scheduleWithDurationSeconds = scheduleWithDurationSeconds.map((item) => {
+            if (Number(item.id) !== Number(openField.rowId)) return item;
+            const next = { ...item };
+            for (const field of openField.fields) {
+              next[field] = synced[field];
+            }
+            return next;
+          });
+          console.log('🔒 Save: holding open field-editor row', openField.rowId, openField.fields);
         }
       }
       const rowPatch = !structureChange;
@@ -18004,8 +18078,9 @@ const RunOfShowPage: React.FC = () => {
                      key={`${item.id}-${item.notes?.length || 0}-${item.speakers?.length || 0}`}
                      className={`border-b-2 border-slate-600 flex items-center justify-center gap-1 ${getRowContainerClass(item.id, index)} ${
                        activeJumpMenu === item.id ? 'relative z-[90]' : ''
-                     }`}
+                     }${sideLockClass(item.id)}`}
                      style={getRowContainerStyle(item)}
+                     title={isRowLockedByOther(item.id) ? rowEditorLabel(item.id) : undefined}
                    >
                     <div className={`flex flex-col items-center gap-1 relative ${activeJumpMenu === item.id ? 'z-[90]' : ''}`}>
                       <button
@@ -18015,7 +18090,13 @@ const RunOfShowPage: React.FC = () => {
                             alert('Viewers cannot access row actions. Please change your role to EDITOR or OPERATOR.');
                             return;
                           }
-                          setActiveJumpMenu(activeJumpMenu === item.id ? null : item.id);
+                          if (activeJumpMenu === item.id) {
+                            setActiveJumpMenu(null);
+                            handleModalClosed();
+                            return;
+                          }
+                          if (!beginRowAction(item.id, 'idle')) return;
+                          setActiveJumpMenu(item.id);
                         }}
                         className={`w-5 h-5 text-white rounded flex items-center justify-center text-xs font-bold transition-colors ${
                           currentUserRole === 'VIEWER'
@@ -18023,7 +18104,7 @@ const RunOfShowPage: React.FC = () => {
                             : 'bg-purple-600 hover:bg-purple-500'
                         }`}
                         disabled={currentUserRole === 'VIEWER'}
-                        title="Row actions"
+                        title={isRowLockedByOther(item.id) ? rowEditorLabel(item.id) : 'Row actions'}
                       >
                         #
                       </button>
@@ -18037,7 +18118,7 @@ const RunOfShowPage: React.FC = () => {
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
-                              handleUserEditing();
+                              if (!beginRowAction(item.id, 'idle')) return;
                               
                               // Pause syncing immediately BEFORE the prompt
                               console.log('✏️ Move to row button clicked - pausing sync');
@@ -18055,8 +18136,8 @@ const RunOfShowPage: React.FC = () => {
                                 // Resume syncing after prompt closes
                                 console.log('⏸️ Row jump prompt closed - resuming sync in 5 seconds');
                                 const timeout = setTimeout(() => {
-                                  console.log('⏸️ User stopped editing - resuming sync');
-                                  setIsUserEditing(false);
+                                  console.log('⏸️ Row jump prompt closed');
+                                  finishEditingSessionRef.current();
                                 }, 5000);
                                 setEditingTimeout(timeout);
                                 
@@ -18075,7 +18156,7 @@ const RunOfShowPage: React.FC = () => {
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
-                              handleUserEditing();
+                              if (!beginRowAction(item.id, 'idle')) return;
                               duplicateScheduleItem(item.id);
                               setActiveJumpMenu(null);
                             }}
@@ -18088,7 +18169,7 @@ const RunOfShowPage: React.FC = () => {
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
-                              handleModalEditing();
+                              if (!beginRowAction(item.id, 'modal')) return;
                               setActiveJumpMenu(null);
                               setInsertRowPosition(schedule.findIndex(scheduleItem => scheduleItem.id === item.id));
                               setDelayBlockDay(item.day || selectedDay);
@@ -18104,7 +18185,7 @@ const RunOfShowPage: React.FC = () => {
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
-                              handleUserEditing();
+                              if (!beginRowAction(item.id, 'idle')) return;
                               setActiveJumpMenu(null);
                               addTimedMarkerAfter(item.id);
                             }}
@@ -18129,7 +18210,7 @@ const RunOfShowPage: React.FC = () => {
                                 alert('Only EDITORs can set other room. Please change your role to EDITOR.');
                                 return;
                               }
-                              handleModalEditing();
+                              if (!beginRowAction(item.id, 'modal')) return;
                               setActiveJumpMenu(null);
                               setOtherRoomItemId(item.id);
                               setOtherRoomDraft(item.otherRoom || '');
@@ -18146,7 +18227,7 @@ const RunOfShowPage: React.FC = () => {
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
-                                handleModalEditing();
+                                if (!beginRowAction(item.id, 'modal')) return;
                                 setActiveJumpMenu(null);
                                 setBreakoutRoomParentId(item.id);
                                 setBreakoutRoomsData([{ location: 'Great Hall', title: '' }]);
@@ -18177,8 +18258,7 @@ const RunOfShowPage: React.FC = () => {
                             alert('Viewers cannot add rows. Please change your role to EDITOR or OPERATOR.');
                             return;
                           }
-                          // Pause syncing when inserting new row
-                          handleModalEditing();
+                          if (!beginRowAction(item.id, 'modal')) return;
                           // Use full-schedule index (not day-filtered index) so multi-day
                           // inserts land after this item instead of near the top of the day.
                           const fullIndex = schedule.findIndex(scheduleItem => scheduleItem.id === item.id);
@@ -18192,7 +18272,13 @@ const RunOfShowPage: React.FC = () => {
                             : 'bg-blue-600 hover:bg-blue-500'
                         }`}
                         disabled={currentUserRole === 'VIEWER'}
-                        title={currentUserRole === 'VIEWER' ? 'Viewers cannot add rows' : `Insert row after row ${index + 1}`}
+                        title={
+                          isRowLockedByOther(item.id)
+                            ? rowEditorLabel(item.id)
+                            : currentUserRole === 'VIEWER'
+                              ? 'Viewers cannot add rows'
+                              : `Insert row after row ${index + 1}`
+                        }
                       >
                         +
                       </button>
@@ -18237,8 +18323,9 @@ const RunOfShowPage: React.FC = () => {
                      key={`${item.id}-${item.notes?.length || 0}-${item.speakers?.length || 0}`}
                      className={`border-b-2 border-slate-600 flex flex-col items-center justify-center gap-1 ${getSideColumnRowClass(item.id, index)} ${
                        startPinnedBesideCue ? 'border-r border-slate-600' : ''
-                     }`}
+                     }${sideLockClass(item.id)}`}
                      style={getSideColumnRowStyle(item)}
+                     title={isRowLockedByOther(item.id) ? rowEditorLabel(item.id) : undefined}
                    >
                    <div className="flex items-center gap-1">
                      {/* Star button for marking START cue */}
@@ -18311,9 +18398,15 @@ const RunOfShowPage: React.FC = () => {
                     <input
                       type="text"
                         value={item.customFields.cue ? item.customFields.cue.replace(/^CUE\s*/, '') : ''}
+                      onFocus={() => {
+                        if (currentUserRole === 'VIEWER') return;
+                        if (!beginRowAction(item.id, 'idle')) {
+                          (document.activeElement as HTMLElement | null)?.blur();
+                        }
+                      }}
+                      onBlur={() => handleRowBlur(item.id)}
                       onChange={(e) => {
-                        // Detect user editing
-                        handleUserEditing();
+                        if (!beginRowAction(item.id, 'idle')) return;
                         
                         if (currentUserRole === 'VIEWER') {
                           alert('Viewers cannot edit cue names. Please change your role to EDITOR or OPERATOR.');
@@ -18352,9 +18445,15 @@ const RunOfShowPage: React.FC = () => {
                           }
                         );
                       }}
-                      disabled={currentUserRole === 'VIEWER'}
+                      disabled={currentUserRole === 'VIEWER' || isRowLockedByOther(item.id)}
                       className="w-14 px-1 py-1 border border-slate-600 rounded-r text-center text-lg transition-colors bg-slate-700 text-white focus:outline-none focus:border-blue-500"
-                      title={currentUserRole === 'VIEWER' ? 'Viewers cannot edit cue names' : 'Edit cue number'}
+                      title={
+                        isRowLockedByOther(item.id)
+                          ? rowEditorLabel(item.id)
+                          : currentUserRole === 'VIEWER'
+                            ? 'Viewers cannot edit cue names'
+                            : 'Edit cue number'
+                      }
                       maxLength={4}
                     />
                      </div>
@@ -18362,9 +18461,6 @@ const RunOfShowPage: React.FC = () => {
                     <div className="flex gap-1">
                       <button
                         onClick={() => {
-                          // Detect user editing
-                          handleUserEditing();
-                          
                           if (currentUserRole === 'VIEWER') {
                             alert('Viewers cannot indent/unindent items. Please change your role to EDITOR or OPERATOR.');
                             return;
@@ -18373,10 +18469,8 @@ const RunOfShowPage: React.FC = () => {
                             alert('Timed markers stay grouped under their parent. Delete the marker to remove it.');
                             return;
                           }
-                          
-                          // Use new database-backed indent logic
+                          if (!beginRowAction(item.id, 'idle')) return;
                           toggleIndentedCue(item.id);
-                          
                         }}
                         className={`w-7 h-7 text-white flex items-center justify-center text-lg rounded font-bold transition-colors ${
                           currentUserRole === 'VIEWER'
@@ -18504,7 +18598,7 @@ const RunOfShowPage: React.FC = () => {
                     return (
                       <div
                         key={`sticky-start-${item.id}`}
-                        className={`border-b-2 border-slate-600 flex items-stretch ${getSideColumnRowClass(item.id, index)}`}
+                        className={`border-b-2 border-slate-600 flex items-stretch ${getSideColumnRowClass(item.id, index)}${sideLockClass(item.id)}`}
                         style={{
                           ...getSideColumnRowStyle(item),
                           borderRight: '6px solid #475569',
@@ -18992,8 +19086,9 @@ const RunOfShowPage: React.FC = () => {
                    return (
                    <div 
                      key={`${item.id}-${item.notes?.length || 0}-${item.speakers?.length || 0}`}
-                     className={`border-b-2 border-slate-600 flex flex-col items-center justify-center gap-1 ${getSideColumnRowClass(item.id, index)}`}
+                     className={`border-b-2 border-slate-600 flex flex-col items-center justify-center gap-1 ${getSideColumnRowClass(item.id, index)}${sideLockClass(item.id)}`}
                      style={getSideColumnRowStyle(item)}
+                     title={isRowLockedByOther(item.id) ? rowEditorLabel(item.id) : undefined}
                    >
                     <div className="flex flex-col items-center justify-center h-full gap-1">
                       <div className="text-sm font-mono text-slate-300">
@@ -19794,7 +19889,7 @@ const RunOfShowPage: React.FC = () => {
                  onClick={() => {
                    setShowVoModal(false);
                    setEditingVoItemId(null);
-                   handleModalClosed();
+                   resumeAfterFieldEditorClose();
                  }}
                >
                  Cancel
@@ -19846,7 +19941,7 @@ const RunOfShowPage: React.FC = () => {
                    saveToAPI();
                    setShowVoModal(false);
                    setEditingVoItemId(null);
-                   handleModalClosed();
+                   resumeAfterFieldEditorClose();
                  }}
                >
                  Save
@@ -20133,7 +20228,7 @@ const RunOfShowPage: React.FC = () => {
                    setEditingNotesItem(null);
                    setTempNotesHtml('');
                    setTempNotesVoCues([]);
-                   handleModalClosed();
+                   resumeAfterFieldEditorClose();
                  }}
                  className="flex-1 px-6 py-3 bg-slate-600 hover:bg-slate-500 text-white font-semibold rounded-lg transition-colors"
                >
@@ -20157,7 +20252,7 @@ const RunOfShowPage: React.FC = () => {
                  onClick={() => {
                    setShowSpeakersModal(false);
                    setEditingSpeakersItem(null);
-                   handleModalClosed();
+                   resumeAfterFieldEditorClose();
                  }}
                  className="text-slate-400 hover:text-white text-xl"
                >
@@ -20659,7 +20754,7 @@ const RunOfShowPage: React.FC = () => {
                  onClick={() => {
                    setShowAssetsModal(false);
                    setEditingAssetsItem(null);
-                   handleModalClosed();
+                   resumeAfterFieldEditorClose();
                  }}
                  className="flex-1 px-6 py-3 bg-slate-600 hover:bg-slate-500 text-white font-semibold rounded-lg transition-colors"
                >
@@ -20946,6 +21041,7 @@ const RunOfShowPage: React.FC = () => {
                  onClick={() => {
                    setShowParticipantsModal(false);
                    setEditingParticipantsItem(null);
+                   resumeAfterFieldEditorClose();
                  }}
                  className="text-slate-400 hover:text-white text-xl"
                >
@@ -21122,6 +21218,7 @@ const RunOfShowPage: React.FC = () => {
                    onClick={() => {
                      setShowParticipantsModal(false);
                      setEditingParticipantsItem(null);
+                     resumeAfterFieldEditorClose();
                    }}
                    className="flex-1 px-6 py-3 bg-slate-600 hover:bg-slate-500 text-white font-semibold rounded-lg transition-colors"
                  >
