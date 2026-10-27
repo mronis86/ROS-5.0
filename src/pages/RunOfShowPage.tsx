@@ -16871,10 +16871,11 @@ const RunOfShowPage: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => setShowCueReorderModal(true)}
-                    className="px-2 py-1 bg-slate-600 hover:bg-slate-500 text-white text-sm rounded transition-colors whitespace-nowrap"
+                    className="inline-flex items-center justify-center gap-0 px-2 py-1 bg-slate-600 hover:bg-slate-500 text-white text-sm leading-none rounded transition-colors whitespace-nowrap"
                     title="Relabel cue numbers. Does not move rows."
                   >
-                    ReCue#
+                    <span>ReCue</span>
+                    <span className="inline-flex h-[1em] items-center translate-y-[0.08em]">#</span>
                   </button>
                 )}
                 {(currentUserRole === 'EDITOR' || currentUserRole === 'OPERATOR') && (
@@ -16886,10 +16887,13 @@ const RunOfShowPage: React.FC = () => {
                       setMoveRowsTargetPosition(0);
                       setShowMoveRowsModal(true);
                     }}
-                    className="px-2 py-1 bg-slate-600 hover:bg-slate-500 text-white text-sm rounded transition-colors whitespace-nowrap"
+                    className="inline-flex items-center justify-center gap-1 px-2 py-1 bg-slate-600 hover:bg-slate-500 text-white text-sm leading-none rounded transition-colors whitespace-nowrap"
                     title="Reorder rows below the current loaded/running cue"
                   >
-                    ↕ Move
+                    <span className="inline-flex h-[1em] items-center translate-y-[0.06em]" aria-hidden>
+                      ↕
+                    </span>
+                    <span>Move</span>
                   </button>
                 )}
               </div>

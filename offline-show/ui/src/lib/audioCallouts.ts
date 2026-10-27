@@ -65,7 +65,7 @@ export function buildCalloutNotesHtml(chipText: string, kind?: AudioCalloutKind)
   const border = isBgm ? '#2dd4bf' : '#fbbf24';
   const color = isBgm ? '#ecfdf5' : '#fffbeb';
   return (
-    `<ul style="margin:0.4em 0;padding-left:1.4em;list-style-type:disc;font-size:1em;">` +
+    `<ul style="margin:0.4em 0;padding-left:1.4em;list-style-type:disc;font-size:1em;" data-ros-callout="1">` +
     `<li style="margin:0.25em 0;">` +
     `<span style="font-weight:700;line-height:1.4;background:${bg};color:${color};` +
     `border:1px solid ${border};border-radius:5px;padding:0.2em 0.5em;display:inline-block;">` +
@@ -115,6 +115,39 @@ export function syncCalloutsIntoNotes(
   if (!block) return result;
   if (!result.trim()) return block;
   return `${block}${result}`;
+}
+
+export function formatSettleCueNoteText(cueRaw: string): string {
+  let cue = String(cueRaw || '').trim().replace(/^CUE\s+/i, '').trim();
+  if (!cue) return 'Cue ?.1 - Settle Motion & Presenters';
+  cue = cue.replace(/\.1$/i, '');
+  return `Cue ${cue}.1 - Settle Motion & Presenters`;
+}
+
+export function buildSettleCueNotesHtml(cueRaw: string): string {
+  const chipText = formatSettleCueNoteText(cueRaw);
+  const bg = 'rgba(37, 99, 235, 0.45)';
+  const border = '#60a5fa';
+  const color = '#eff6ff';
+  return (
+    `<ul style="margin:0.4em 0;padding-left:1.4em;list-style-type:disc;font-size:1em;" data-settle-cue="1">` +
+    `<li style="margin:0.25em 0;">` +
+    `<span style="font-weight:700;line-height:1.4;background:${bg};color:${color};` +
+    `border:1px solid ${border};border-radius:5px;padding:0.2em 0.5em;display:inline-block;">` +
+    `${escapeNotesHtml(chipText)}` +
+    `</span></li></ul>`
+  );
+}
+
+export function prependSettleCueNote(notes: string, cueRaw: string): string {
+  const chipText = formatSettleCueNoteText(cueRaw);
+  const existing = notes || '';
+  if (existing.includes(chipText) || existing.includes(escapeNotesHtml(chipText))) {
+    return existing;
+  }
+  const block = buildSettleCueNotesHtml(cueRaw);
+  if (!existing.trim()) return block;
+  return `${block}${existing}`;
 }
 
 export function normalizeVoCues(raw: unknown): VoCue[] {
