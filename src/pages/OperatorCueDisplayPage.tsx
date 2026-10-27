@@ -64,7 +64,6 @@ type ScheduleItem = {
   hasPPT?: boolean;
   hasQA?: boolean;
   isPublic?: boolean;
-  forPhotos?: boolean;
   isStartCue?: boolean;
   isIndented?: boolean;
   needsRecording?: boolean;
@@ -863,15 +862,7 @@ const OperatorCueDisplayPage: React.FC = () => {
     if (live && (live.day || 1) !== day) setDay(live.day || 1);
   }, [activeId, schedule, day]);
 
-  const dayRows = useMemo(
-    () =>
-      schedule.filter((s) => {
-        if ((s.day || 1) !== day) return false;
-        if (s.forPhotos === false && Number(s.id) !== activeId) return false;
-        return true;
-      }),
-    [schedule, day, activeId]
-  );
+  const dayRows = useMemo(() => schedule.filter((s) => (s.day || 1) === day), [schedule, day]);
 
   const current = useMemo(() => {
     if (activeId != null) {

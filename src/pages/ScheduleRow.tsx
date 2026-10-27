@@ -608,70 +608,18 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
               title={isLockedByOther ? lockLabel : currentUserRole === 'VIEWER' ? 'Only EDITORs and OPERATORs can edit duration' : 'Edit seconds'}
             />
           </div>
-          <div className="flex items-center justify-center gap-2 w-full flex-wrap">
-            {durationChanged && (() => {
-              const h = originalDuration!.durationHours ?? 0;
-              const m = originalDuration!.durationMinutes ?? 0;
-              const s = originalDuration!.durationSeconds ?? 0;
-              const totalSec = h * 3600 + m * 60 + s;
-              const wasText = totalSec >= 3600 ? `${h}h ${m}m` : totalSec >= 60 ? `${m} min` : `${s} sec`;
-              return (
-                <div className="text-amber-300 text-base font-semibold text-center" style={{ lineHeight: 1.2 }}>
-                  was {wasText}
-                </div>
-              );
-            })()}
-            <label
-              className={`inline-flex items-center gap-1 text-[11px] leading-none ${
-                currentUserRole === 'VIEWER' || isLockedByOther ? 'text-slate-500' : 'text-slate-200'
-              }`}
-              title={
-                isLockedByOther
-                  ? lockLabel
-                  : currentUserRole === 'VIEWER'
-                    ? 'Viewers cannot change photo visibility'
-                    : 'Show this cue on Photo View and Operator Large view'
-              }
-            >
-              <input
-                type="checkbox"
-                checked={item.forPhotos !== false}
-                onChange={(e) => {
-                  if (isLockedByOther) return;
-                  claimRowLock();
-                  handleUserEditing();
-                  if (currentUserRole === 'VIEWER') {
-                    alert('Viewers cannot change photo visibility. Please change your role to Content Editor or Operator.');
-                    return;
-                  }
-                  const oldValue = item.forPhotos !== false;
-                  const next = e.target.checked;
-                  setSchedule((prev: any[]) =>
-                    prev.map((scheduleItem) =>
-                      scheduleItem.id === item.id ? { ...scheduleItem, forPhotos: next } : scheduleItem
-                    )
-                  );
-                  logChangeDebounced(
-                    `forPhotos_${item.id}`,
-                    'FIELD_UPDATE',
-                    `Updated For Photos for "${item.segmentName}" from ${oldValue ? 'YES' : 'NO'} to ${next ? 'YES' : 'NO'}`,
-                    {
-                      changeType: 'FIELD_CHANGE',
-                      itemId: item.id,
-                      itemName: item.segmentName,
-                      fieldName: 'forPhotos',
-                      oldValue: oldValue ? 'TRUE' : 'FALSE',
-                      newValue: next ? 'TRUE' : 'FALSE',
-                      details: { fieldType: 'checkbox', booleanChange: true },
-                    }
-                  );
-                }}
-                disabled={isLockedByOther || currentUserRole === 'VIEWER'}
-                className="rounded border-slate-500 w-3.5 h-3.5"
-              />
-              For Photos
-            </label>
-          </div>
+          {durationChanged && (() => {
+            const h = originalDuration!.durationHours ?? 0;
+            const m = originalDuration!.durationMinutes ?? 0;
+            const s = originalDuration!.durationSeconds ?? 0;
+            const totalSec = h * 3600 + m * 60 + s;
+            const wasText = totalSec >= 3600 ? `${h}h ${m}m` : totalSec >= 60 ? `${m} min` : `${s} sec`;
+            return (
+              <div className="text-amber-300 text-base font-semibold text-center w-full" style={{ lineHeight: 1.2 }}>
+                was {wasText}
+              </div>
+            );
+          })()}
         </div>
         );
       })()}
@@ -1643,7 +1591,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
     'programType', 'shotType', 'segmentName',
     'durationHours', 'durationMinutes', 'durationSeconds',
     'notes', 'assets', 'speakers', 'speakersText',
-    'hasPPT', 'hasQA', 'needsRecording', 'recordingSource', 'otherRoom', 'isPublic', 'forPhotos',
+    'hasPPT', 'hasQA', 'needsRecording', 'recordingSource', 'otherRoom', 'isPublic',
     'isTimedMarker', 'isIndented', 'markerTimeMode', 'markerOffsetSeconds', 'markerAbsoluteSeconds',
   ] as const;
   for (const field of fieldsToCheck) {

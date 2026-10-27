@@ -328,8 +328,6 @@ interface ScheduleItem {
   timerId: string;
   customFields: Record<string, string>;
   isPublic: boolean;
-  /** When false, Photo View and Operator Large view skip this cue. Missing means show. */
-  forPhotos?: boolean;
   isIndented: boolean;
   /**
    * Grouped timed marker under a parent cue (like indented timers):
@@ -397,7 +395,6 @@ function scheduleItemSignature(item: any): string {
     asText(item.timerId),
     customSorted,
     item.isPublic ? '1' : '',
-    item.forPhotos === false ? '' : '1',
     item.isIndented ? '1' : '',
     item.isTimedMarker ? '1' : '',
     asText(item.markerTimeMode),
@@ -1065,7 +1062,6 @@ const RunOfShowPage: React.FC = () => {
     if (fieldName === 'hasPPT') return { ...item, hasPPT: asBool };
     if (fieldName === 'hasQA') return { ...item, hasQA: asBool };
     if (fieldName === 'isPublic') return { ...item, isPublic: asBool };
-    if (fieldName === 'forPhotos') return { ...item, forPhotos: asBool };
     if (fieldName === 'timerDisplay') return { ...item, timerDisplay: asString as any };
     if (fieldName === 'voCues') {
       try {
@@ -1126,7 +1122,6 @@ const RunOfShowPage: React.FC = () => {
       'hasPPT',
       'hasQA',
       'isPublic',
-      'forPhotos',
       'timerDisplay',
       'voCues',
     ]);
@@ -1560,6 +1555,22 @@ const RunOfShowPage: React.FC = () => {
   const [showClearOffsetsConfirmModal, setShowClearOffsetsConfirmModal] = useState(false);
   const [offsetAdjustTarget, setOffsetAdjustTarget] = useState<'root' | 'prev'>('root');
   const [trackWasDurations, setTrackWasDurations] = useState(false);
+  const [showCompletedHighlight, setShowCompletedHighlight] = useState(() => {
+    try {
+      const raw = localStorage.getItem('rosShowCompletedHighlight');
+      if (raw === null) return true;
+      return raw === 'true';
+    } catch {
+      return true;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem('rosShowCompletedHighlight', showCompletedHighlight ? 'true' : 'false');
+    } catch {
+      /* ignore */
+    }
+  }, [showCompletedHighlight]);
   const [originalDurations, setOriginalDurations] = useState<Record<number, { durationHours: number; durationMinutes: number; durationSeconds: number }>>({});
   /** Start times frozen when entering In-Show — WAS under Start stays on these. */
   const [lockedStartTimes, setLockedStartTimes] = useState<Record<number, string>>({});
@@ -2495,6 +2506,7 @@ const RunOfShowPage: React.FC = () => {
   };
 
   const isItemDimmed = (itemId: number) => {
+    if (!showCompletedHighlight) return false;
     // Only skip dimming while RUNNING. A just-stopped cue can still be "loaded"
     // and must go straight to dimmed-complete (not a bright purple last-loaded flash).
     if (isCueRunningOnStage(itemId)) return false;
@@ -13873,7 +13885,7 @@ const RunOfShowPage: React.FC = () => {
       }
       // Completed/stopped → dimmed purple immediately (even if still "loaded").
       // Only a RUNNING cue stays green over completed.
-      if ((isCompleted || isStopped) && !isCueRunningOnStage(item.id)) {
+      if (showCompletedHighlight && (isCompleted || isStopped) && !isCueRunningOnStage(item.id)) {
         classNames.set(item.id, COMPLETED_ROW_CLASS);
         return;
       }
@@ -13957,7 +13969,8 @@ const RunOfShowPage: React.FC = () => {
     indentedCues,
     activeItemId,
     activeTimers,
-    lastLoadedCueId
+    lastLoadedCueId,
+    showCompletedHighlight,
   ]);
 
   // Handle scroll for grid headers visibility
@@ -17604,6 +17617,7 @@ const RunOfShowPage: React.FC = () => {
                         </button>
                       </div>
                     </div>
+                    <div className="flex items-center gap-4">
                     <div
                       role="group"
                       aria-label="Track was durations"
@@ -17633,6 +17647,19 @@ const RunOfShowPage: React.FC = () => {
                         style={showMode !== 'in-show' ? { pointerEvents: 'none', cursor: 'not-allowed' } : {}}
                       />
                       <span className="text-white text-sm" style={showMode !== 'in-show' ? { pointerEvents: 'none' } : {}}>Track was durations</span>
+                    </div>
+                    <label
+                      className="flex items-center gap-2 select-none cursor-pointer"
+                      title="Dim finished cues. Uncheck to keep the normal row color after a cue stops."
+                    >
+                      <input
+                        type="checkbox"
+                        checked={showCompletedHighlight}
+                        onChange={(e) => setShowCompletedHighlight(e.target.checked)}
+                        className="rounded border-slate-500 w-5 h-5"
+                      />
+                      <span className="text-white text-sm">Show completed</span>
+                    </label>
                     </div>
                   </>
                 )}

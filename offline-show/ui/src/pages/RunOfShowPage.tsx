@@ -757,6 +757,22 @@ const RunOfShowPage: React.FC = () => {
   const [showClearOffsetsConfirmModal, setShowClearOffsetsConfirmModal] = useState(false);
   const [offsetAdjustTarget, setOffsetAdjustTarget] = useState<'root' | 'prev'>('root');
   const [trackWasDurations, setTrackWasDurations] = useState(false);
+  const [showCompletedHighlight, setShowCompletedHighlight] = useState(() => {
+    try {
+      const raw = localStorage.getItem('rosShowCompletedHighlight');
+      if (raw === null) return true;
+      return raw === 'true';
+    } catch {
+      return true;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem('rosShowCompletedHighlight', showCompletedHighlight ? 'true' : 'false');
+    } catch {
+      /* ignore */
+    }
+  }, [showCompletedHighlight]);
   const [originalDurations, setOriginalDurations] = useState<Record<number, { durationHours: number; durationMinutes: number; durationSeconds: number }>>({});
   /** Start times frozen when entering In-Show — WAS under Start stays on these. */
   const [lockedStartTimes, setLockedStartTimes] = useState<Record<number, string>>({});
@@ -1215,7 +1231,7 @@ const RunOfShowPage: React.FC = () => {
     'bg-violet-950/90 ring-2 ring-inset ring-violet-400';
 
   const isItemDimmed = (itemId: number) =>
-    isItemCompleted(itemId) || stoppedItems.has(itemId);
+    showCompletedHighlight && (isItemCompleted(itemId) || stoppedItems.has(itemId));
   const isDelayBlock = (itemId: number) =>
     schedule.some(item => item.id === itemId && item.programType === 'Delay Block');
 
@@ -10333,7 +10349,7 @@ const RunOfShowPage: React.FC = () => {
         classNames.set(item.id, RESOLUME_RUNNING_ROW_CLASS);
         return;
       }
-      if (isCompleted || isStopped) {
+      if (showCompletedHighlight && (isCompleted || isStopped)) {
         classNames.set(item.id, COMPLETED_ROW_CLASS);
         return;
       }
@@ -10376,7 +10392,8 @@ const RunOfShowPage: React.FC = () => {
     indentedCues,
     activeItemId,
     activeTimers,
-    lastLoadedCueId
+    lastLoadedCueId,
+    showCompletedHighlight,
   ]);
 
   // Handle scroll for grid headers visibility
@@ -12834,6 +12851,7 @@ const RunOfShowPage: React.FC = () => {
                         </button>
                       </div>
                     </div>
+                    <div className="flex items-center gap-4">
                     <div
                       role="group"
                       aria-label="Track was durations"
@@ -12863,6 +12881,19 @@ const RunOfShowPage: React.FC = () => {
                         style={showMode !== 'in-show' ? { pointerEvents: 'none', cursor: 'not-allowed' } : {}}
                       />
                       <span className="text-white text-sm" style={showMode !== 'in-show' ? { pointerEvents: 'none' } : {}}>Track was durations</span>
+                    </div>
+                    <label
+                      className="flex items-center gap-2 select-none cursor-pointer"
+                      title="Dim finished cues. Uncheck to keep the normal row color after a cue stops."
+                    >
+                      <input
+                        type="checkbox"
+                        checked={showCompletedHighlight}
+                        onChange={(e) => setShowCompletedHighlight(e.target.checked)}
+                        className="rounded border-slate-500 w-5 h-5"
+                      />
+                      <span className="text-white text-sm">Show completed</span>
+                    </label>
                     </div>
                   </>
                 )}

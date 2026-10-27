@@ -67,7 +67,6 @@ interface ScheduleItem {
   };
   isPublic?: boolean;
   isIndented?: boolean;
-  forPhotos?: boolean;
 }
 
 const PhotoViewPage: React.FC = () => {
@@ -604,19 +603,8 @@ const PhotoViewPage: React.FC = () => {
 
   // Filter schedule by selected day (multi-day events)
   const filteredSchedule = React.useMemo(
-    () =>
-      schedule.filter((item) => {
-        if ((item.day || 1) !== selectedDay) return false;
-        if (
-          item.forPhotos === false &&
-          String(item.id) !== String(activeItemId) &&
-          String(item.id) !== String(lastLoadedCueId)
-        ) {
-          return false;
-        }
-        return true;
-      }),
-    [schedule, selectedDay, activeItemId, lastLoadedCueId]
+    () => schedule.filter((item) => (item.day || 1) === selectedDay),
+    [schedule, selectedDay]
   );
 
   // Reset all states function (called from WebSocket reset event)
