@@ -353,7 +353,7 @@ class ApiClient {
           : null,
       autoRoll:
         result?.autoRoll && typeof result.autoRoll === 'object' ? result.autoRoll : null,
-      liveStartProjection: result?.liveStartProjection !== false,
+      liveStartProjection: result?.liveStartProjection === true,
       displaySyncEnabled: result?.displaySyncEnabled !== false,
     };
   }

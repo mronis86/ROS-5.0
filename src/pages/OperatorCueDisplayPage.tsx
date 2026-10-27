@@ -1050,6 +1050,7 @@ const OperatorCueDisplayPage: React.FC = () => {
       const startStatus = resolveStartTimeStatus({
         isIndented: !!(current && isIndentedScheduleItem(current, indented)),
         showMode: startMode,
+        scheduledLabel: curIdx >= 0 ? baseStart(schedule, curIdx) : '',
         projectedLabel: startNow,
         wasLabel: startWas,
         actualLabel: currentActualLabel || null,
@@ -1219,6 +1220,7 @@ const OperatorCueDisplayPage: React.FC = () => {
       const startStatus = resolveStartTimeStatus({
         isIndented: isIndentedScheduleItem(item, indented),
         showMode: startMode,
+        scheduledLabel: idx >= 0 ? baseStart(schedule, idx) : '',
         projectedLabel: st,
         wasLabel: was,
         actualLabel: cueActualStartLabels[Number(item.id)],

@@ -1,5 +1,10 @@
 import React from 'react';
-import { formatOffsetMinutes, minutesBetweenClockLabels } from '../lib/startTimeStatus';
+import {
+  formatOffsetMinutes,
+  resolveStartTimeStatus,
+  startTimeKindClass,
+  startTimeKindTagClass,
+} from '../lib/startTimeStatus';
 
 export type StartTimeColumnCellProps = {
   itemId: number;
@@ -49,37 +54,29 @@ const StartTimeColumnCell: React.FC<StartTimeColumnCellProps> = ({
   markerTimeMode = 'offset',
   onEditTimedMarker,
 }) => {
-  const scheduledStart = calculateStartTime ? String(calculateStartTime(index)) : null;
-  const wasStart =
-    lockedStartTime && String(lockedStartTime).trim()
-      ? String(lockedStartTime).trim()
-      : scheduledStart;
-  const hasRan = !isIndented && showMode === 'in-show' && !!actualStartLabel;
-  const clockLabel = hasRan
-    ? actualStartLabel!
-    : calculateStartTime && calculateStartTimeWithOvertime
+  const scheduledStart = calculateStartTime ? String(calculateStartTime(index) || '') : '';
+  const overtimeStart =
+    calculateStartTime && calculateStartTimeWithOvertime
       ? String(
-          showMode === 'rehearsal' ? calculateStartTime(index) : calculateStartTimeWithOvertime(index)
-        ) || (isIndented ? '↘' : '')
-      : isIndented
-        ? '↘'
-        : calculateStartTimeWithOvertime
-          ? String(calculateStartTimeWithOvertime(index))
-          : String(index + 1);
-  const startTimeRolled =
-    !isIndented &&
-    showMode === 'in-show' &&
-    !!wasStart &&
-    !!clockLabel &&
-    wasStart !== clockLabel;
-  /** Upcoming adjusted Start is an estimate; once the cue starts we swap est → ran. */
-  const timeKind: 'est' | 'ran' | null = hasRan ? 'ran' : startTimeRolled ? 'est' : null;
-  const primaryLabel = clockLabel;
-  const clockVsWasMinutes = minutesBetweenClockLabels(primaryLabel, wasStart);
-  const actualVsWasMinutes = hasRan ? clockVsWasMinutes : null;
+          (showMode === 'rehearsal' ? calculateStartTime(index) : calculateStartTimeWithOvertime(index)) ||
+            ''
+        )
+      : calculateStartTimeWithOvertime
+        ? String(calculateStartTimeWithOvertime(index) || '')
+        : scheduledStart;
+  const fallbackClock = isIndented ? '↘' : scheduledStart || String(index + 1);
+  const startStatus = resolveStartTimeStatus({
+    isIndented,
+    showMode,
+    scheduledLabel: scheduledStart,
+    projectedLabel: overtimeStart || fallbackClock,
+    wasLabel: lockedStartTime,
+    actualLabel: actualStartLabel,
+  });
+  const primaryLabel = startStatus.clockLabel || fallbackClock;
   const badgeMinutes =
-    clockVsWasMinutes != null
-      ? clockVsWasMinutes
+    startStatus.clockVsWasMinutes != null
+      ? startStatus.clockVsWasMinutes
       : itemId === startCueId
         ? showStartOvertime || 0
         : cumulativeOvertime;
@@ -87,8 +84,9 @@ const StartTimeColumnCell: React.FC<StartTimeColumnCellProps> = ({
   const showOtBadge =
     !isIndented &&
     showMode !== 'rehearsal' &&
+    startStatus.showWas &&
     badgeMinutes !== 0 &&
-    (clockVsWasMinutes != null ||
+    (startStatus.clockVsWasMinutes != null ||
       overtimeMinutes[itemId] ||
       (itemId === startCueId && showStartOvertime !== 0) ||
       (calculateStartTime &&
@@ -115,27 +113,21 @@ const StartTimeColumnCell: React.FC<StartTimeColumnCellProps> = ({
           className={`font-mono text-base font-bold whitespace-nowrap ${
             isTimedMarker
               ? 'text-sky-300'
-              : timeKind === 'ran'
-                ? actualVsWasMinutes == null
-                  ? 'text-white'
-                  : actualVsWasMinutes > 0
-                    ? 'text-red-400'
-                    : 'text-green-400'
-                : 'text-white'
+              : startTimeKindClass(startStatus.timeKind, startStatus.ranVsWasMinutes)
           }`}
         >
-          {timeKind ? (
+          {startStatus.timeKind ? (
             <span
-              className={`mr-1.5 align-middle text-[10px] font-semibold uppercase tracking-wide ${
-                timeKind === 'ran' ? 'text-current' : 'text-amber-400'
-              }`}
+              className={`mr-1.5 align-middle text-[10px] font-semibold uppercase tracking-wide ${startTimeKindTagClass(
+                startStatus.timeKind
+              )}`}
               title={
-                timeKind === 'ran'
+                startStatus.timeKind === 'ran'
                   ? 'When this cue actually started running'
                   : 'Projected Start — updates from the live cue'
               }
             >
-              {timeKind}
+              {startStatus.timeKind}
             </span>
           ) : null}
           {primaryLabel}
@@ -145,8 +137,8 @@ const StartTimeColumnCell: React.FC<StartTimeColumnCellProps> = ({
             {markerTimeMode === 'absolute' ? 'abs' : 'offset'}
           </span>
         ) : null}
-        {startTimeRolled && wasStart && (
-          <span className="text-xs text-slate-400 whitespace-nowrap">was {wasStart}</span>
+        {startStatus.showWas && startStatus.wasLabel && (
+          <span className="text-xs text-slate-400 whitespace-nowrap">was {startStatus.wasLabel}</span>
         )}
         {showOtBadge && (
           <span

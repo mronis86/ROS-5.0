@@ -9,9 +9,9 @@ import { eventLocalSecondsOfDay } from './eventLocalClock';
 
 const DAY_SECONDS = 86400;
 
-/** Settings key: false after Reset/Clear until the next cue is loaded or started. */
+/** Settings key: true only after a cue starts. Missing/false stays on planned times. */
 export function parseLiveStartProjectionArmed(value: unknown): boolean {
-  return value !== false;
+  return value === true;
 }
 
 export type LiveStartAnchor = {

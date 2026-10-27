@@ -2191,6 +2191,7 @@ const GreenRoomPage: React.FC = () => {
               const startStatus = resolveStartTimeStatus({
                 isIndented: isIndentedScheduleItem(item, indentedCues),
                 showMode,
+                scheduledLabel: scheduledStart,
                 projectedLabel: projectedStart,
                 wasLabel: wasStart,
                 actualLabel: cueActualStartLabels[item.id],

@@ -3364,6 +3364,7 @@ const PhotoViewPage: React.FC = () => {
             const startStatus = resolveStartTimeStatus({
               isIndented: !!indentedCues[item.id],
               showMode,
+              scheduledLabel: scheduledStart,
               projectedLabel: startTime,
               wasLabel: wasStart,
               actualLabel: cueActualStartLabels[item.id],

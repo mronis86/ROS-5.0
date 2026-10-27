@@ -36,23 +36,37 @@ export function formatOffsetMinutes(minutes: number, lateEarly = false): string 
 export function resolveStartTimeStatus(opts: {
   isIndented?: boolean;
   showMode?: 'rehearsal' | 'in-show';
+  /** Current cascade (no live estimate, no overtime). */
+  scheduledLabel?: string | null;
   projectedLabel?: string | null;
   wasLabel?: string | null;
   actualLabel?: string | null;
+  /** True only while a running cue is shifting later Starts. */
+  liveProjected?: boolean;
 }): StartTimeStatus {
   const wasLabel = String(opts.wasLabel || '').trim();
   const projected = String(opts.projectedLabel || '').trim();
+  const scheduled = String(opts.scheduledLabel || '').trim() || projected;
   const actual = String(opts.actualLabel || '').trim();
   const hasRan = !opts.isIndented && opts.showMode === 'in-show' && !!actual;
-  const clockLabel = hasRan ? actual : projected;
+  const adjusted =
+    opts.liveProjected === true || (!!projected && !!scheduled && projected !== scheduled);
+  const clockLabel = hasRan
+    ? actual
+    : opts.showMode !== 'in-show'
+      ? projected || scheduled
+      : adjusted
+        ? projected
+        : wasLabel || scheduled || projected;
   const showWas =
     !opts.isIndented &&
     opts.showMode === 'in-show' &&
     !!wasLabel &&
     !!clockLabel &&
-    wasLabel !== clockLabel;
-  const timeKind: StartTimeKind = hasRan ? 'ran' : showWas ? 'est' : null;
-  const clockVsWasMinutes = minutesBetweenClockLabels(clockLabel, wasLabel);
+    wasLabel !== clockLabel &&
+    (hasRan || adjusted);
+  const timeKind: StartTimeKind = hasRan ? 'ran' : adjusted && showWas ? 'est' : null;
+  const clockVsWasMinutes = showWas ? minutesBetweenClockLabels(clockLabel, wasLabel) : null;
   const ranVsWasMinutes = hasRan ? clockVsWasMinutes : null;
   return { clockLabel, timeKind, wasLabel, showWas, ranVsWasMinutes, clockVsWasMinutes };
 }

@@ -533,7 +533,7 @@ export class DatabaseService {
         lockedStartTimes: result?.lockedStartTimes ?? null,
         preshowShowDay: result?.preshowShowDay ?? null,
         autoRoll: result?.autoRoll ?? null,
-        liveStartProjection: result?.liveStartProjection !== false,
+        liveStartProjection: result?.liveStartProjection === true,
         displaySyncEnabled: result?.displaySyncEnabled !== false,
       };
     } catch (error) {
@@ -545,7 +545,7 @@ export class DatabaseService {
         lockedStartTimes: null,
         preshowShowDay: null,
         autoRoll: null,
-        liveStartProjection: true,
+        liveStartProjection: false,
         displaySyncEnabled: true,
       };
     }

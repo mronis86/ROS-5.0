@@ -1619,8 +1619,8 @@ const RunOfShowPage: React.FC = () => {
   const [showClearOffsetsConfirmModal, setShowClearOffsetsConfirmModal] = useState(false);
   const [offsetAdjustTarget, setOffsetAdjustTarget] = useState<'root' | 'prev'>('root');
   const [trackWasDurations, setTrackWasDurations] = useState(false);
-  const [liveStartProjectionArmed, setLiveStartProjectionArmed] = useState(true);
-  const liveStartProjectionArmedRef = useRef(true);
+  const [liveStartProjectionArmed, setLiveStartProjectionArmed] = useState(false);
+  const liveStartProjectionArmedRef = useRef(false);
   useEffect(() => {
     liveStartProjectionArmedRef.current = liveStartProjectionArmed;
   }, [liveStartProjectionArmed]);

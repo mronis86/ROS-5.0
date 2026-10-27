@@ -4660,7 +4660,7 @@ app.get('/api/show-mode/:eventId', async (req, res) => {
         lockedStartTimes: null,
         preshowShowDay: null,
         autoRoll: null,
-        liveStartProjection: true,
+        liveStartProjection: false,
         displaySyncEnabled: await loadDisplaySyncEnabled(pool, eventId),
       });
     }
@@ -4683,7 +4683,7 @@ app.get('/api/show-mode/:eventId', async (req, res) => {
         : null;
     const autoRoll =
       settings.auto_roll && typeof settings.auto_roll === 'object' ? settings.auto_roll : null;
-    const liveStartProjection = settings.live_start_projection !== false;
+    const liveStartProjection = settings.live_start_projection === true;
     const displaySyncEnabled = await loadDisplaySyncEnabled(pool, eventId);
     res.json({
       showMode,
@@ -4829,7 +4829,7 @@ app.patch('/api/show-mode/:eventId', async (req, res) => {
         : null;
     const currentAutoRoll =
       settings.auto_roll && typeof settings.auto_roll === 'object' ? settings.auto_roll : null;
-    const currentLiveStartProjection = settings.live_start_projection !== false;
+    const currentLiveStartProjection = settings.live_start_projection === true;
     // CRITICAL: Only include showMode in broadcast when we actually updated it.
     // When only trackWasDurations was sent, omit showMode so clients don't overwrite in-show with stale/default.
     const payload = { event_id: eventId, trackWasDurations: currentTrackWasDurations };
@@ -5977,6 +5977,9 @@ app.post('/api/run-of-show-data', async (req, res) => {
       }
       if (incomingSettings?.auto_roll === undefined && current.auto_roll && typeof current.auto_roll === 'object') {
         settingsToSave = { ...settingsToSave, auto_roll: current.auto_roll };
+      }
+      if (incomingSettings?.live_start_projection === undefined && typeof current.live_start_projection === 'boolean') {
+        settingsToSave = { ...settingsToSave, live_start_projection: current.live_start_projection };
       }
     }
 
