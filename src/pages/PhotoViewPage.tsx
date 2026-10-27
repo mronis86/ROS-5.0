@@ -378,6 +378,15 @@ const PhotoViewPage: React.FC = () => {
   };
   const [error, setError] = useState<string | null>(null);
   const [activeItemId, setActiveItemId] = useState<number | null>(null);
+  /** Last loaded/running cue — Photo View stays here between cues instead of jumping back to PreShow. */
+  const [lastLoadedCueId, setLastLoadedCueId] = useState<number | null>(null);
+  const lastLoadedCueIdRef = useRef<number | null>(null);
+  const rememberPreviewCue = (rawId: unknown) => {
+    const itemId = parseInt(String(rawId), 10);
+    if (!Number.isFinite(itemId)) return;
+    lastLoadedCueIdRef.current = itemId;
+    setLastLoadedCueId(itemId);
+  };
   const [timerProgress, setTimerProgress] = useState<{[key: number]: {elapsed: number, total: number, startedAt: Date | null}}>({});
   const [timerState, setTimerState] = useState<string | null>(null); // 'loaded' or 'running'
   const [loadedItems, setLoadedItems] = useState<Record<number, boolean>>({});
@@ -598,10 +607,16 @@ const PhotoViewPage: React.FC = () => {
     () =>
       schedule.filter((item) => {
         if ((item.day || 1) !== selectedDay) return false;
-        if (item.forPhotos === false && String(item.id) !== String(activeItemId)) return false;
+        if (
+          item.forPhotos === false &&
+          String(item.id) !== String(activeItemId) &&
+          String(item.id) !== String(lastLoadedCueId)
+        ) {
+          return false;
+        }
         return true;
       }),
-    [schedule, selectedDay, activeItemId]
+    [schedule, selectedDay, activeItemId, lastLoadedCueId]
   );
 
   // Reset all states function (called from WebSocket reset event)
@@ -609,6 +624,8 @@ const PhotoViewPage: React.FC = () => {
   const resetAllStates = () => {
     console.log('🔄 PhotoView: Resetting all states (next 20s sync will repopulate)');
     setActiveItemId(null);
+    setLastLoadedCueId(null);
+    lastLoadedCueIdRef.current = null;
     setTimerState(null);
     setLoadedItems({});
     setTimerProgress({});
@@ -1430,6 +1447,7 @@ const PhotoViewPage: React.FC = () => {
           
           if (activeTimerData && activeTimerData.item_id) {
             setActiveItemId(parseInt(activeTimerData.item_id));
+            rememberPreviewCue(activeTimerData.item_id);
             setTimerState(activeTimerData.timer_state);
             setLoadedItems({ [parseInt(activeTimerData.item_id)]: true });
             
@@ -1454,6 +1472,12 @@ const PhotoViewPage: React.FC = () => {
             setLoadedItems({});
             setHybridTimerData(prev => ({ ...prev, activeTimer: null }));
             setTimerProgress({});
+            rememberPreviewCue(activeTimerData?.last_loaded_cue_id);
+            if (activeTimerData?.last_loaded_cue_id == null && event?.id) {
+              void DatabaseService.getLastLoadedCue(event.id).then((res) => {
+                if (res?.data?.item_id) rememberPreviewCue(res.data.item_id);
+              });
+            }
             console.log('✅ PhotoView: No active timer found on mount');
           }
       }
@@ -1539,8 +1563,12 @@ const PhotoViewPage: React.FC = () => {
           if (data.timer_state === 'running') {
             setTimerState('running');
             setActiveItemId(itemId);
+            rememberPreviewCue(itemId);
             setLoadedItems(prev => ({ ...prev, [itemId]: true }));
           } else if (data.timer_state === 'loaded') {
+            setActiveItemId(itemId);
+            setTimerState('loaded');
+            rememberPreviewCue(itemId);
             setLoadedItems(prev => ({ ...prev, [itemId]: true }));
           }
         }
@@ -1581,6 +1609,7 @@ const PhotoViewPage: React.FC = () => {
         // Update active item and timer state when timer starts
         if (data && data.item_id) {
           setActiveItemId(parseInt(data.item_id));
+          rememberPreviewCue(data.item_id);
           setTimerState('running');
           setLoadedItems(prev => ({ ...prev, [parseInt(data.item_id)]: true }));
           
@@ -1671,7 +1700,11 @@ const PhotoViewPage: React.FC = () => {
             if (data.timer_state === 'running') {
               setActiveItemId(itemId);
               setTimerState('running');
+            } else if (data.timer_state === 'loaded') {
+              setActiveItemId(itemId);
+              setTimerState('loaded');
             }
+            rememberPreviewCue(itemId);
             setLoadedItems({ [itemId]: true });
 
             setTimerProgress({
@@ -1783,6 +1816,7 @@ const PhotoViewPage: React.FC = () => {
             
             if (activeTimerData && activeTimerData.item_id) {
               setActiveItemId(parseInt(activeTimerData.item_id));
+              rememberPreviewCue(activeTimerData.item_id);
               setTimerState(activeTimerData.timer_state);
               setLoadedItems({ [parseInt(activeTimerData.item_id)]: true });
               
@@ -1803,11 +1837,17 @@ const PhotoViewPage: React.FC = () => {
               
               console.log('🔄 PhotoView: Initial sync completed - timer state restored');
       } else {
-              // No active timer
+              // No active timer — keep last cue for preview so we do not snap back to PreShow
         setActiveItemId(null);
         setTimerState(null);
         setLoadedItems({});
         setTimerProgress({});
+              rememberPreviewCue(activeTimerData?.last_loaded_cue_id);
+              if (activeTimerData?.last_loaded_cue_id == null && event?.id) {
+                void DatabaseService.getLastLoadedCue(event.id).then((res) => {
+                  if (res?.data?.item_id) rememberPreviewCue(res.data.item_id);
+                });
+              }
               console.log('🔄 PhotoView: Initial sync completed - no active timer');
             }
       }
@@ -2321,10 +2361,15 @@ const PhotoViewPage: React.FC = () => {
   // Get the current item and next 2 items (same logic as Green Room), filtered by selected day
   const getPreviewItems = () => {
     if (filteredSchedule.length === 0) return [];
-    const currentIndex = activeItemId
-      ? filteredSchedule.findIndex((item) => String(item.id) === String(activeItemId))
+    const previewAnchorId = activeItemId ?? lastLoadedCueId;
+    const currentIndex = previewAnchorId
+      ? filteredSchedule.findIndex((item) => String(item.id) === String(previewAnchorId))
       : -1;
-    if (currentIndex === -1) return filteredSchedule.slice(0, 3);
+    // No live/last cue yet: opening look can start at the top (often PreShow).
+    // After a cue has loaded, never jump back to row 1 between cues.
+    if (currentIndex === -1) {
+      return previewAnchorId != null ? [] : filteredSchedule.slice(0, 3);
+    }
     const endIndex = Math.min(currentIndex + 3, filteredSchedule.length);
     return filteredSchedule.slice(currentIndex, endIndex);
   };
