@@ -112,7 +112,7 @@ export function resolveMicAssignment(
 
 export function speakersForSlots(speakersText?: string): Array<ParsedSpeaker | null> {
   const speakers = parseSpeakers(speakersText);
-  return [1, 2, 3, 4, 5, 6, 7].map((slot) => speakers.find((s) => s.slot === slot) || null);
+  return [1, 2, 3, 4, 5, 6, 7].map((slot) => speakers.find((s) => Number(s.slot) === slot) || null);
 }
 
 export function speakersWithNames(speakersText?: string): ParsedSpeaker[] {

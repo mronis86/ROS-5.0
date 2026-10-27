@@ -46,16 +46,39 @@ export type ParsedSpeaker = {
   photoLink?: string;
 };
 
-export function parseSpeakers(speakersText?: string): ParsedSpeaker[] {
+function speakerPhotoUrl(raw: Record<string, unknown>): string {
+  return String(raw.photoLink || raw.photoUrl || raw.photo_link || '').trim();
+}
+
+export function parseSpeakers(speakersText?: string | unknown[] | null): ParsedSpeaker[] {
   if (!speakersText) return [];
-  try {
-    const parsed = JSON.parse(speakersText);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
+  let parsed: unknown = speakersText;
+  if (typeof speakersText === 'string') {
+    const trimmed = speakersText.trim();
+    if (!trimmed) return [];
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      return [];
+    }
   }
+  if (!Array.isArray(parsed)) return [];
+  return parsed.map((raw, index) => {
+    const speaker = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+    const slotRaw = speaker.slot ?? speaker.slotNumber ?? index + 1;
+    const slot = Number(slotRaw);
+    return {
+      ...(speaker as ParsedSpeaker),
+      slot: Number.isFinite(slot) && slot >= 1 ? slot : index + 1,
+      fullName: String(speaker.fullName || speaker.name || '').trim(),
+      title: speaker.title != null ? String(speaker.title) : undefined,
+      org: speaker.org != null ? String(speaker.org) : undefined,
+      location: speaker.location != null ? String(speaker.location) : undefined,
+      photoLink: speakerPhotoUrl(speaker),
+    };
+  });
 }
 
 export function getSpeakerForSlot(speakersText: string | undefined, slot: number): ParsedSpeaker | null {
-  return parseSpeakers(speakersText).find((s) => s.slot === slot) ?? null;
+  return parseSpeakers(speakersText).find((s) => Number(s.slot) === slot) ?? null;
 }

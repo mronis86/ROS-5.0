@@ -944,20 +944,61 @@ const RunOfShowPage: React.FC = () => {
     return { ...nested, ...details, metadata };
   };
 
+  const unwrapChangeLogStoredValue = (value: unknown, depth = 0): unknown => {
+    if (value == null) return '';
+    if (depth > 4) return value;
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (!trimmed || /^(empty|\(empty\)|null|undefined)$/i.test(trimmed)) return '';
+      if (
+        (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+        (trimmed.startsWith('{') && trimmed.endsWith('}')) ||
+        (trimmed.startsWith('[') && trimmed.endsWith(']'))
+      ) {
+        try {
+          return unwrapChangeLogStoredValue(JSON.parse(trimmed), depth + 1);
+        } catch {
+          return value;
+        }
+      }
+      return value;
+    }
+    if (typeof value === 'object' && !Array.isArray(value)) {
+      const rec = value as Record<string, unknown>;
+      if (rec.notes != null && typeof rec.notes !== 'object') {
+        return unwrapChangeLogStoredValue(rec.notes, depth + 1);
+      }
+      if (rec.value != null && rec.value !== value) {
+        return unwrapChangeLogStoredValue(rec.value, depth + 1);
+      }
+    }
+    return value;
+  };
+
+  const pickChangeLogSide = (...candidates: unknown[]) => {
+    for (const candidate of candidates) {
+      const unwrapped = unwrapChangeLogStoredValue(candidate);
+      if (unwrapped !== '' && unwrapped != null) return unwrapped;
+    }
+    return '';
+  };
+
   const getChangeLogFieldInfo = (change: any) => {
     const details = parseChangeLogDetails(change);
     const action = change?.action || change?.changeType || '';
     const fieldName = String(
       change?.field_name || details.fieldName || details.changeType || ''
     ).trim();
-    const oldValue =
-      change?.old_value !== undefined && change?.old_value !== null
-        ? change.old_value
-        : details.oldValue;
-    const newValue =
-      change?.new_value !== undefined && change?.new_value !== null
-        ? change.new_value
-        : details.newValue;
+    const oldValue = pickChangeLogSide(
+      change?.old_value,
+      details.oldValue,
+      details.old_value
+    );
+    const newValue = pickChangeLogSide(
+      change?.new_value,
+      details.newValue,
+      details.new_value
+    );
     const itemIdRaw = details.itemId ?? details.item_id;
     let itemId =
       itemIdRaw != null && itemIdRaw !== ''
@@ -965,6 +1006,15 @@ const RunOfShowPage: React.FC = () => {
           ? itemIdRaw
           : parseInt(String(itemIdRaw), 10)
         : null;
+    const cueRaw = change?.cue_number ?? details.cueNumber ?? details.cue;
+    if ((itemId == null || Number.isNaN(itemId)) && cueRaw != null && String(cueRaw).trim()) {
+      const cueText = String(cueRaw).replace(/^CUE\s*/i, '').trim();
+      const byCue = schedule.find((s) => {
+        const rowCue = String(s.customFields?.cue || '').replace(/^CUE\s*/i, '').trim();
+        return rowCue === cueText || rowCue === String(cueRaw).trim();
+      });
+      if (byCue) itemId = byCue.id;
+    }
     if ((itemId == null || Number.isNaN(itemId)) && change?.row_number != null) {
       const idx = Number(change.row_number) - 1;
       if (Number.isFinite(idx) && idx >= 0 && idx < schedule.length) {
@@ -1011,12 +1061,17 @@ const RunOfShowPage: React.FC = () => {
     return `${text.slice(0, 180)}…`;
   };
 
+  const changeLogValueHasContent = (value: unknown): boolean =>
+    formatChangeLogPreview(value, true) !== '(empty)';
+
   const isChangeLogFieldRestorable = (change: any): boolean => {
     if (!canAccessAdmin(user)) return false;
     const info = getChangeLogFieldInfo(change);
     if (info.action !== 'FIELD_UPDATE') return false;
     if (!info.fieldName || info.itemId == null) return false;
-    if (info.oldValue === undefined || info.oldValue === null) return false;
+    if (!changeLogValueHasContent(info.oldValue) && !changeLogValueHasContent(info.newValue)) {
+      return false;
+    }
     // Skip non-schedule / settings-only fields
     if (
       [
@@ -1088,7 +1143,7 @@ const RunOfShowPage: React.FC = () => {
     return item;
   };
 
-  const restoreChangeLogPreviousValue = (change: any) => {
+  const restoreChangeLogValue = (change: any, which: 'old' | 'new') => {
     if (!canAccessAdmin(user)) {
       alert('Only Admins can restore values from the change log.');
       return;
@@ -1098,8 +1153,11 @@ const RunOfShowPage: React.FC = () => {
       return;
     }
     const info = getChangeLogFieldInfo(change);
-    if (!isChangeLogFieldRestorable(change) || info.itemId == null) {
-      alert('This change cannot be restored (missing cue/field/previous value).');
+    const preferred = which === 'new' ? info.newValue : info.oldValue;
+    const fallback = which === 'new' ? info.oldValue : info.newValue;
+    const rawValue = changeLogValueHasContent(preferred) ? preferred : fallback;
+    if (!isChangeLogFieldRestorable(change) || info.itemId == null || !changeLogValueHasContent(rawValue)) {
+      alert('This log entry has no text to restore.');
       return;
     }
     const item = schedule.find((s) => s.id === info.itemId);
@@ -1130,13 +1188,13 @@ const RunOfShowPage: React.FC = () => {
       info.fieldName.startsWith('custom_') ||
       Object.prototype.hasOwnProperty.call(item.customFields || {}, info.fieldName);
     if (!canApply) {
-      alert(`Restore is not supported for field "${info.fieldName}" yet. Copy the previous value from the log manually.`);
+      alert(`Restore is not supported for field "${info.fieldName}" yet. Copy the value from the log manually.`);
       return;
     }
 
-    const preview = formatChangeLogPreview(info.oldValue, true);
+    const preview = formatChangeLogPreview(rawValue, true);
     const ok = window.confirm(
-      `Restore previous value for Admin recovery?\n\n` +
+      `${which === 'new' ? 'Restore this logged value' : 'Restore the previous value'} for Admin recovery?\n\n` +
         `Cue: ${item.customFields?.cue || item.segmentName || info.itemId}\n` +
         `Field: ${info.fieldName}\n` +
         `Restore to:\n${preview.slice(0, 500)}${preview.length > 500 ? '…' : ''}\n\n` +
@@ -1161,7 +1219,7 @@ const RunOfShowPage: React.FC = () => {
     handleUserEditing();
     setSchedule((prev) =>
       prev.map((row) =>
-        row.id === info.itemId ? applyRestoredFieldToItem(row, info.fieldName, info.oldValue) : row
+        row.id === info.itemId ? applyRestoredFieldToItem(row, info.fieldName, rawValue) : row
       )
     );
     logChange(
@@ -1173,11 +1231,12 @@ const RunOfShowPage: React.FC = () => {
         itemName: item.segmentName,
         fieldName: info.fieldName,
         oldValue: currentValue,
-        newValue: info.oldValue,
+        newValue: rawValue,
         details: {
           restoredFromChangeLog: true,
           sourceChangeId: change?.id || null,
           restoredByAdmin: true,
+          restoredWhich: which,
         },
       }
     );
@@ -1185,6 +1244,7 @@ const RunOfShowPage: React.FC = () => {
       fieldName: info.fieldName,
       itemId: info.itemId,
       sourceChangeId: change?.id,
+      which,
     });
   };
 
@@ -15147,7 +15207,7 @@ const RunOfShowPage: React.FC = () => {
                 </select>
                 {canAccessAdmin(user) && (
                   <span className="text-xs text-amber-300/90">
-                    Admin: use Restore previous on a field change to undo that edit
+                    Admin: Restore this value puts the logged text back on the cue. Restore previous undoes that edit.
                   </span>
                 )}
               </div>
@@ -15256,12 +15316,22 @@ const RunOfShowPage: React.FC = () => {
                             )}
                           </div>
                           <div className="flex items-center gap-2 shrink-0">
-                            {restorable && (
+                            {restorable && changeLogValueHasContent(newValue) && (
                               <button
                                 type="button"
-                                onClick={() => restoreChangeLogPreviousValue(change)}
+                                onClick={() => restoreChangeLogValue(change, 'new')}
                                 className="px-2 py-1 rounded text-xs font-medium bg-amber-600 hover:bg-amber-500 text-white"
-                                title="Restore the previous (old) value onto this cue"
+                                title="Put this logged value back on the cue"
+                              >
+                                Restore this value
+                              </button>
+                            )}
+                            {restorable && changeLogValueHasContent(oldValue) && (
+                              <button
+                                type="button"
+                                onClick={() => restoreChangeLogValue(change, 'old')}
+                                className="px-2 py-1 rounded text-xs font-medium bg-slate-600 hover:bg-slate-500 text-white"
+                                title="Undo this edit and put the previous value back"
                               >
                                 Restore previous
                               </button>
@@ -15326,7 +15396,10 @@ const RunOfShowPage: React.FC = () => {
                   {changeLog.filter(changeLogEntryMatchesFilters).length === 0 && changeLog.length > 0 && (
                     <p className="text-gray-400 text-center py-6">No changes match this search/filter</p>
                   )}
-                  {changeLog.filter(changeLogEntryMatchesFilters).map((change) => (
+                  {changeLog.filter(changeLogEntryMatchesFilters).map((change) => {
+                    const localInfo = getChangeLogFieldInfo(change);
+                    const localRestorable = isChangeLogFieldRestorable(change);
+                    return (
                     <div key={change.id} className="bg-slate-700 rounded-lg p-4">
                       <div className="flex justify-between items-start mb-2 gap-2">
                         <div className="flex items-center gap-2 flex-wrap">
@@ -15361,12 +15434,22 @@ const RunOfShowPage: React.FC = () => {
                           )}
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
-                          {isChangeLogFieldRestorable(change) && (
+                          {localRestorable && changeLogValueHasContent(localInfo.newValue) && (
                             <button
                               type="button"
-                              onClick={() => restoreChangeLogPreviousValue(change)}
+                              onClick={() => restoreChangeLogValue(change, 'new')}
                               className="px-2 py-1 rounded text-xs font-medium bg-amber-600 hover:bg-amber-500 text-white"
-                              title="Restore the previous (old) value onto this cue"
+                              title="Put this logged value back on the cue"
+                            >
+                              Restore this value
+                            </button>
+                          )}
+                          {localRestorable && changeLogValueHasContent(localInfo.oldValue) && (
+                            <button
+                              type="button"
+                              onClick={() => restoreChangeLogValue(change, 'old')}
+                              className="px-2 py-1 rounded text-xs font-medium bg-slate-600 hover:bg-slate-500 text-white"
+                              title="Undo this edit and put the previous value back"
                             >
                               Restore previous
                             </button>
@@ -15534,7 +15617,8 @@ const RunOfShowPage: React.FC = () => {
                         </div>
                       )}
                     </div>
-                  ))}
+                    );
+                  })}
                   
                   {/* Pending changes */}
                   {Array.from(pendingChanges.entries()).map(([changeKey, pendingChange]) => {

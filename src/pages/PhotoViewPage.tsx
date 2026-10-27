@@ -23,13 +23,14 @@ import {
 import { useEventDisplaySyncGate } from '../hooks/useEventDisplaySyncGate';
 import DisplaySyncPausedBanner from '../components/DisplaySyncPausedBanner';
 import { speakersForSlots } from '../lib/micManager';
+import { getSpeakerForSlot } from '../showcase/photoShowcaseHelpers';
 import { getCountdownPrimaryHex, useCountdownColorMode, RAINBOW_COUNTDOWN_GRADIENT } from '../lib/countdownColor';
 import { overtimeSignPrefix, useOvertimeSign } from '../lib/overtimeSign';
 import { OvertimeClockText, pageClockSignClass } from '../lib/OvertimeClockText';
 import { usePreshowRainbow } from '../lib/usePreshowRainbow';
 import { findTopPreshowCue } from '../lib/preshowCountdown';
 import { formatShowDelayBanner } from '../lib/showDelay';
-import { programTypeSurfaceStyle } from '../lib/rosProgramTypeSplit';
+import { programTypeSurfaceStyle, programTypeTextColor } from '../lib/rosProgramTypeSplit';
 import { ROS_PROGRAM_TYPE_COLORS } from '../lib/guestRosHelpers';
 import { formatCueNumber, formatTimerCueStatus, resolveScheduleCueLabel, shouldKeepExistingRunningTimer } from '../lib/cueDisplay';
 import { computeLiveStartAnchor, type LiveStartAnchor } from '../lib/liveStartProjection';
@@ -2346,7 +2347,16 @@ const PhotoViewPage: React.FC = () => {
   }, [event?.id, eventId]);
 
 
-  // Get the current item and next 2 items (same logic as Green Room), filtered by selected day
+  const speakersJsonForItem = (item?: ScheduleItem | null) =>
+    String(item?.speakersText || item?.speakers || '').trim();
+
+  const isPhotoPreviewFollowRow = (item: ScheduleItem) => {
+    if (isIndentedScheduleItem(item, indentedCues)) return false;
+    if (isKilledScheduleItem(item)) return false;
+    return String(item.programType || '').trim() !== 'Delay Block';
+  };
+
+  // Current cue plus the next 2 main cues (skip sub-cues / delay so speaker photos stay visible)
   const getPreviewItems = () => {
     if (filteredSchedule.length === 0) return [];
     const previewAnchorId = activeItemId ?? lastLoadedCueId;
@@ -2358,21 +2368,14 @@ const PhotoViewPage: React.FC = () => {
     if (currentIndex === -1) {
       return previewAnchorId != null ? [] : filteredSchedule.slice(0, 3);
     }
-    const endIndex = Math.min(currentIndex + 3, filteredSchedule.length);
-    return filteredSchedule.slice(currentIndex, endIndex);
+    const current = filteredSchedule[currentIndex];
+    const upcoming = filteredSchedule
+      .slice(currentIndex + 1)
+      .filter(isPhotoPreviewFollowRow);
+    return [current, ...upcoming.slice(0, 2)];
   };
 
   const previewItems = getPreviewItems();
-
-  const parseSpeakers = (item: ScheduleItem | undefined) => {
-    if (!item?.speakersText) return [] as any[];
-    try {
-      const speakers = JSON.parse(item.speakersText);
-      return Array.isArray(speakers) ? speakers : [];
-    } catch {
-      return [];
-    }
-  };
 
   useEffect(() => {
     if (!broadcastMode) return;
@@ -2555,8 +2558,8 @@ const PhotoViewPage: React.FC = () => {
         speaker,
       }));
     };
-    const currentSlotCards = slotWindow(speakersForSlots(currentItem?.speakersText));
-    const nextSlotCards = slotWindow(speakersForSlots(nextItem?.speakersText));
+    const currentSlotCards = slotWindow(speakersForSlots(speakersJsonForItem(currentItem)));
+    const nextSlotCards = slotWindow(speakersForSlots(speakersJsonForItem(nextItem)));
     const slotMaxWidth =
       currentSlotCards.length <= 2 ? '32%' : currentSlotCards.length <= 4 ? '22%' : '14.5%';
     const cueLabel = currentItem?.customFields?.cue
@@ -2636,15 +2639,14 @@ const PhotoViewPage: React.FC = () => {
                 <div className="mt-1.5 flex items-center gap-2 flex-wrap">
                   {currentItem?.programType ? (
                     <span
-                      className={`px-2 py-0.5 rounded text-[clamp(0.7rem,1.25vw,1rem)] font-semibold ${
-                        currentKilled ? 'text-black' : 'text-white'
-                      }`}
+                      className="px-2 py-0.5 rounded text-[clamp(0.7rem,1.25vw,1rem)] font-semibold"
                       style={{
                         ...programTypeSurfaceStyle(
                           currentItem.programType,
                           programTypeColors,
                           '#475569'
                         ),
+                        color: programTypeTextColor(currentItem.programType),
                         ...(currentKilled ? killedStrike : {}),
                       }}
                     >
@@ -2737,7 +2739,7 @@ const PhotoViewPage: React.FC = () => {
             </div>
 
             {/* Speakers + notes — slot-aware (gaps kept, trailing empties hidden) */}
-            <div className="absolute left-[2%] right-[2%] top-[20%] bottom-[17%] flex gap-[1.5%] min-h-0">
+            <div className="absolute left-[2%] right-[2%] top-[20%] bottom-[18.5%] flex gap-[1.5%] min-h-0">
               <div
                 className={`flex items-stretch justify-center gap-[0.8%] min-w-0 ${
                   hasValidNotes ? 'flex-[1.75]' : 'flex-1'
@@ -2878,7 +2880,7 @@ const PhotoViewPage: React.FC = () => {
             </div>
 
             {/* Next cue strip */}
-            <div className="absolute inset-x-0 bottom-0 h-[15.5%] px-[2.2%] py-[1%] bg-gradient-to-t from-black via-black/90 to-transparent flex items-center gap-4 border-t border-slate-800">
+            <div className="absolute inset-x-0 bottom-0 h-[17%] px-[2.2%] py-[1%] bg-gradient-to-t from-black via-black/90 to-transparent flex items-center gap-4 border-t border-slate-800">
               <div className="shrink-0 w-[10%] text-slate-400 text-[clamp(0.55rem,1vw,0.8rem)] font-bold tracking-widest">
                 NEXT
               </div>
@@ -2893,8 +2895,26 @@ const PhotoViewPage: React.FC = () => {
                         ? formatCueDisplay(nextItem.customFields.cue)
                         : `CUE ${nextItem.id}`}
                     </div>
-                    <div className="text-slate-400 text-[clamp(0.65rem,1.2vw,0.95rem)] truncate">
-                      {nextItem.segmentName || nextItem.programType || '—'}
+                    <div className="mt-0.5 flex items-center gap-1.5 min-w-0">
+                      {nextItem.programType ? (
+                        <span
+                          className="shrink-0 px-1.5 py-0.5 rounded text-[clamp(0.55rem,0.95vw,0.75rem)] font-semibold"
+                          style={{
+                            ...programTypeSurfaceStyle(
+                              nextItem.programType,
+                              programTypeColors,
+                              '#475569'
+                            ),
+                            color: programTypeTextColor(nextItem.programType),
+                            ...(nextKilled ? killedStrike : {}),
+                          }}
+                        >
+                          {nextItem.programType}
+                        </span>
+                      ) : null}
+                      <span className="text-slate-400 text-[clamp(0.65rem,1.2vw,0.95rem)] truncate">
+                        {nextItem.segmentName || '—'}
+                      </span>
                     </div>
                   </div>
                   <div className="flex-1 flex items-center justify-end gap-1.5 overflow-hidden">
@@ -2905,8 +2925,8 @@ const PhotoViewPage: React.FC = () => {
                           <div
                             key={`next-slot-${slotNumber}`}
                             title={`Slot ${slotNumber} · Empty`}
-                            className="h-[72%] aspect-[3/4] rounded border border-dashed border-slate-700 bg-slate-900/40 flex items-center justify-center text-[9px] font-bold tracking-wide text-slate-600"
-                            style={{ maxHeight: '4.5rem' }}
+                            className="h-[80%] aspect-[3/4] rounded border border-dashed border-slate-700 bg-slate-900/40 flex items-center justify-center text-[9px] font-bold tracking-wide text-slate-600"
+                            style={{ maxHeight: '5.75rem' }}
                           >
                             {slotNumber}
                           </div>
@@ -2918,8 +2938,8 @@ const PhotoViewPage: React.FC = () => {
                           src={speaker!.photoLink || '/speaker-placeholder.svg'}
                           alt={speaker!.fullName || `Slot ${slotNumber}`}
                           title={`Slot ${slotNumber}${speaker!.fullName ? ` · ${speaker!.fullName}` : ''}`}
-                          className="h-[72%] aspect-[3/4] object-cover rounded border border-slate-600"
-                          style={{ objectPosition: 'center top', maxHeight: '4.5rem' }}
+                          className="h-[80%] aspect-[3/4] object-cover rounded border border-slate-600"
+                          style={{ objectPosition: 'center top', maxHeight: '5.75rem' }}
                           onError={(e) => {
                             e.currentTarget.onerror = null;
                             e.currentTarget.src = '/speaker-placeholder.svg';
@@ -3538,18 +3558,7 @@ const PhotoViewPage: React.FC = () => {
 
                   {/* SLOT Columns 1-7 - Show Speaker Info - Optimized for Portrait Images */}
                   {[1, 2, 3, 4, 5, 6, 7].map((slotNumber) => {
-                    // Find speaker for this slot
-                    let speakerForSlot = null;
-                    if (item.speakersText) {
-                      try {
-                        const speakers = JSON.parse(item.speakersText);
-                        if (Array.isArray(speakers)) {
-                          speakerForSlot = speakers.find(speaker => speaker.slot === slotNumber);
-                        }
-                      } catch (e) {
-                        console.log('Error parsing speakers:', e);
-                      }
-                    }
+                    const speakerForSlot = getSpeakerForSlot(speakersJsonForItem(item), slotNumber);
 
                     return (
                       <div key={slotNumber} className={`col-span-1 ${slotNumber < 7 ? 'border-r border-slate-600' : ''} p-3 flex flex-col justify-center`}>
