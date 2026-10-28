@@ -1,3 +1,4 @@
-# Pin Railway (Nixpacks) API runtime to Node 22.20.0
+# Pin Railway (Nixpacks) API runtime to Node 24 LTS.
+# Use the major (24), not a patch like 24.22.1 — Nixpacks maps that to nodejs_24.
 [variables]
-NIXPACKS_NODE_VERSION = "22.20.0"
+NIXPACKS_NODE_VERSION = "24"
