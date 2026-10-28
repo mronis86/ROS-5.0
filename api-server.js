@@ -96,6 +96,11 @@ const {
   isShareToken,
 } = require('./lib/event-share-access');
 const {
+  ensureEventAccessRequestsSchema,
+  annotateCalendarEventsForList,
+  registerEventAccessRequestRoutes,
+} = require('./lib/event-access-requests');
+const {
   isMissingGuestTableError,
   ensureGuestLinkSchema,
   ensureGuestLink,
@@ -3178,7 +3183,8 @@ app.get('/api/calendar-events', async (req, res) => {
        WHERE deleted_at IS NULL
        ORDER BY date DESC`
     );
-    const rows = filterCalendarEventsForAuth(
+    const rows = await annotateCalendarEventsForList(
+      pool,
       (result.rows || []).map(normalizeCalendarEvent),
       req.auth
     );
@@ -3212,6 +3218,8 @@ app.get('/api/calendar-events', async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch calendar events' });
   }
 });
+
+registerEventAccessRequestRoutes(app, pool);
 
 app.get('/api/dashboard/summary', async (req, res) => {
   try {
@@ -12203,6 +12211,12 @@ server.listen(PORT, '0.0.0.0', async () => {
       console.log('✅ speakers table synced');
     } catch (err) {
       console.warn('⚠️ speakers table sync skipped:', err.message || err);
+    }
+    try {
+      await ensureEventAccessRequestsSchema(pool);
+      console.log('✅ api_event_access_requests table synced');
+    } catch (err) {
+      console.warn('⚠️ api_event_access_requests sync skipped:', err.message || err);
     }
     try {
       await runContentReviewAssigneesSyncTable(pool);

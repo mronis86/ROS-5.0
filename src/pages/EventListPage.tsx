@@ -42,6 +42,11 @@ import ShareEventAccessModal from '../components/ShareEventAccessModal';
 import SplitEventDaysModal from '../components/SplitEventDaysModal';
 import EventStreamDetailsFields from '../components/EventStreamDetailsFields';
 import StreamBroadcastStatusMark from '../components/StreamBroadcastStatusMark';
+import EventAccessRequestsBanner from '../components/EventAccessRequestsBanner';
+import {
+  eventListAccessState,
+  type EventAccessRequestItem,
+} from '../lib/eventAccessRequest';
 
 type EventListTab = 'upcoming' | 'past' | 'quickMode';
 
@@ -157,6 +162,9 @@ const EventListPage: React.FC = () => {
   const [splitDaysEvent, setSplitDaysEvent] = useState<Event | null>(null);
   const [splitDaysBusy, setSplitDaysBusy] = useState(false);
   const [splitDaysError, setSplitDaysError] = useState<string | null>(null);
+  const [accessRequests, setAccessRequests] = useState<EventAccessRequestItem[]>([]);
+  const [accessReviewBusyId, setAccessReviewBusyId] = useState<string | null>(null);
+  const [requestingEventId, setRequestingEventId] = useState<string | null>(null);
   const isAdminUser = canAccessAdmin(user);
   const canSplitDaysUser = canSplitEventDays(user);
 
@@ -236,6 +244,10 @@ const EventListPage: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    void loadAccessRequests();
+  }, [user]);
+
+  useEffect(() => {
     const tab = (location.state as { tab?: EventListTab } | null)?.tab;
     if (tab === 'quickMode') {
       setActiveTab('quickMode');
@@ -309,7 +321,12 @@ const EventListPage: React.FC = () => {
             timezone: calEvent.schedule_data?.timezone || 'America/New_York',
             eventType: calEvent.schedule_data?.eventType || 'Staged Production',
             recordStreaming: calEvent.schedule_data?.recordStreaming || 'None',
-            streamDetails: parseEventStreamDetails(calEvent.schedule_data?.streamDetails),
+            canAccess: calEvent.canAccess !== false,
+            accessRequestStatus: calEvent.accessRequestStatus || null,
+            streamDetails:
+              calEvent.canAccess === false
+                ? undefined
+                : parseEventStreamDetails(calEvent.schedule_data?.streamDetails),
             workspaceMode: normalizeWorkspaceMode(
               calEvent.schedule_data?.workspaceMode,
               calEvent.schedule_data?.eventType || 'Staged Production'
@@ -391,6 +408,52 @@ const EventListPage: React.FC = () => {
       }
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const loadAccessRequests = async () => {
+    if (!canAccessAccessManager(user)) {
+      setAccessRequests([]);
+      return;
+    }
+    try {
+      const data = await apiClient.getEventAccessRequests();
+      setAccessRequests(Array.isArray(data?.requests) ? data.requests : []);
+    } catch {
+      setAccessRequests([]);
+    }
+  };
+
+  const requestEventAccess = async (event: Event) => {
+    if (eventListAccessState(event) === 'pending') return;
+    const calendarId = event.calendarId || event.id;
+    setRequestingEventId(event.id);
+    try {
+      await apiClient.requestEventAccess(calendarId);
+      setEvents((prev) =>
+        prev.map((row) =>
+          row.id === event.id ? { ...row, accessRequestStatus: 'pending' } : row
+        )
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not send access request.';
+      alert(message);
+    } finally {
+      setRequestingEventId(null);
+    }
+  };
+
+  const reviewAccessRequest = async (requestId: string, action: 'approve' | 'deny') => {
+    setAccessReviewBusyId(requestId);
+    try {
+      await apiClient.reviewEventAccessRequest(requestId, action);
+      setAccessRequests((prev) => prev.filter((row) => row.id !== requestId));
+      await loadEventsFromSupabase();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not update request.';
+      alert(message);
+    } finally {
+      setAccessReviewBusyId(null);
     }
   };
 
@@ -754,6 +817,7 @@ const EventListPage: React.FC = () => {
   };
 
   const openDeleteConfirmModal = (event: Event) => {
+    if (eventListAccessState(event) !== 'open') return;
     setBulkDeleteTargets([]);
     setEventToDelete(event);
     setDeleteConfirmInput('');
@@ -764,6 +828,7 @@ const EventListPage: React.FC = () => {
   const clearQuickModeSelection = () => setQuickModeSelectedIds(new Set());
 
   const openEditModal = (event: Event) => {
+    if (eventListAccessState(event) !== 'open') return;
     setEditingEvent(event);
     const dayLocations = normalizeDayLocations(
       event.location,
@@ -794,9 +859,17 @@ const EventListPage: React.FC = () => {
   };
 
   const launchRunOfShow = (event: Event) => {
-    // Always show role selection modal when clicking Launch
+    if (eventListAccessState(event) !== 'open') {
+      void requestEventAccess(event);
+      return;
+    }
     setSelectedEvent(event);
     setShowRoleModal(true);
+  };
+
+  const openShareAccess = (event: Event) => {
+    if (eventListAccessState(event) !== 'open') return;
+    setShareAccessEvent(event);
   };
 
   const openSplitDaysModal = (event: Event) => {
@@ -999,6 +1072,11 @@ const EventListPage: React.FC = () => {
         <p className="text-sm text-slate-400 mb-1">
           Manage your events and schedules
         </p>
+        {events.some((event) => event.canAccess === false) ? (
+          <p className="mx-auto max-w-xl text-xs text-slate-500">
+            You can see every event. Request access to open one that is not assigned to you.
+          </p>
+        ) : null}
         {canAccessAdmin(user) || canAccessAccessManager(user) || canAccessProductionDashboard(user) || canAccessSpeakerManager(user) ? (
           <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
             {canAccessAdmin(user) ? (
@@ -1043,6 +1121,14 @@ const EventListPage: React.FC = () => {
 
       {/* Main Content */}
       <div className={`mx-auto w-full ${isNarrowViewport ? 'max-w-lg px-3' : 'max-w-7xl px-4 xl:px-6'}`}>
+        {canAccessAccessManager(user) ? (
+          <EventAccessRequestsBanner
+            requests={accessRequests}
+            busyId={accessReviewBusyId}
+            onApprove={(id) => void reviewAccessRequest(id, 'approve')}
+            onDeny={(id) => void reviewAccessRequest(id, 'deny')}
+          />
+        ) : null}
         {!isNarrowViewport ? (
           <>
         {/* Tabs + Add New Event on one row */}
@@ -1277,7 +1363,12 @@ const EventListPage: React.FC = () => {
                     </tr>
                   ) : (
                     filteredEvents.map((event) => (
-                      <tr key={event.id} className="border-b border-slate-600">
+                      <tr
+                        key={event.id}
+                        className={`border-b border-slate-600 ${
+                          eventListAccessState(event) === 'open' ? '' : 'bg-slate-900/70'
+                        }`}
+                      >
                         {activeTab === 'quickMode' && (
                           <td className="px-2 py-2 text-center border-r border-slate-600">
                             <input
@@ -1292,6 +1383,11 @@ const EventListPage: React.FC = () => {
                         <td className="px-3 py-2 text-white font-medium text-sm border-r border-slate-600 min-w-[140px] w-[24%]">
                           <div className="flex items-center gap-2 flex-wrap min-w-0">
                             {event.name}
+                            {eventListAccessState(event) !== 'open' ? (
+                              <span className="inline-flex items-center rounded bg-amber-900/70 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-100">
+                                {eventListAccessState(event) === 'pending' ? 'Requested' : 'Locked'}
+                              </span>
+                            ) : null}
                             {normalizeWorkspaceMode(event.workspaceMode, event.eventType) === 'board' ? (
                               <span className="ml-2 inline-flex items-center rounded bg-emerald-700/90 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white align-middle">
                                 Board
@@ -1392,10 +1488,13 @@ const EventListPage: React.FC = () => {
                           <EventListRowActions
                             layout="table"
                             mode={activeTab === 'quickMode' ? 'quickMode' : 'standard'}
+                            accessState={eventListAccessState(event)}
+                            requesting={requestingEventId === event.id}
                             onLaunch={() => launchRunOfShow(event)}
+                            onRequestAccess={() => void requestEventAccess(event)}
                             onEdit={() => openEditModal(event)}
                             onShareAccess={
-                              activeTab === 'quickMode' ? undefined : () => setShareAccessEvent(event)
+                              activeTab === 'quickMode' ? undefined : () => openShareAccess(event)
                             }
                             onDelete={() => openDeleteConfirmModal(event)}
                             onOpenQuickMode={() => navigate(`/quick-mode?eventId=${encodeURIComponent(event.id)}`)}
@@ -1430,8 +1529,10 @@ const EventListPage: React.FC = () => {
             onBulkDeleteQuickMode={() => openBulkDeleteConfirm(filteredEvents)}
             onClearQuickModeSelection={clearQuickModeSelection}
             onLaunch={launchRunOfShow}
+            onRequestAccess={(event) => void requestEventAccess(event)}
+            requestingEventId={requestingEventId}
             onEdit={openEditModal}
-            onShareAccess={setShareAccessEvent}
+            onShareAccess={openShareAccess}
             onDelete={openDeleteConfirmModal}
             formatDate={formatDate}
             getLocationColor={getLocationColor}

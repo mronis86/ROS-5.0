@@ -108,6 +108,10 @@ export interface Event {
   extendEventControlsEnabled?: boolean;
   /** Which Extend Event Controls modules are on (e.g. civicsBee). */
   extendEventControlModules?: import('../lib/extendEventControls').ExtendEventControlModule[];
+  /** False when this account can see the event but cannot open it yet. */
+  canAccess?: boolean;
+  /** Pending/denied request status for a locked event. */
+  accessRequestStatus?: import('../lib/eventAccessRequest').EventAccessRequestStatus | null;
 }
 
 export interface EventFormData {

@@ -1159,6 +1159,47 @@ class ApiClient {
       body: JSON.stringify({ event_id: eventId }),
     });
   }
+
+  async requestEventAccess(eventId: string) {
+    const result = await this.request<{
+      ok?: boolean;
+      status?: string;
+      requestId?: string;
+      message?: string;
+      error?: string;
+    }>(`/api/calendar-events/${encodeURIComponent(eventId)}/access-request`, {
+      method: 'POST',
+    });
+    this.cache.delete('calendarEvents');
+    return result;
+  }
+
+  async getEventAccessRequests() {
+    return this.request<{
+      requests: Array<{
+        id: string;
+        eventId: string;
+        eventName: string;
+        eventDate: string | null;
+        requesterName: string;
+        requesterEmail: string;
+        createdAt: string;
+      }>;
+    }>('/api/event-access-requests');
+  }
+
+  async reviewEventAccessRequest(requestId: string, action: 'approve' | 'deny') {
+    const result = await this.request<{
+      ok?: boolean;
+      status?: string;
+      message?: string;
+      error?: string;
+    }>(`/api/event-access-requests/${encodeURIComponent(requestId)}/${action}`, {
+      method: 'POST',
+    });
+    this.cache.delete('calendarEvents');
+    return result;
+  }
 }
 
 export interface UserEventNoteRow {

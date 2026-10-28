@@ -3,7 +3,10 @@ import React from 'react';
 type EventListRowActionsProps = {
   layout: 'table' | 'mobile';
   mode: 'standard' | 'quickMode';
+  accessState?: 'open' | 'locked' | 'pending';
+  requesting?: boolean;
   onLaunch?: () => void;
+  onRequestAccess?: () => void;
   onEdit?: () => void;
   onShareAccess?: () => void;
   onDelete: () => void;
@@ -44,12 +47,51 @@ const iconButtonClass =
 const EventListRowActions: React.FC<EventListRowActionsProps> = ({
   layout,
   mode,
+  accessState = 'open',
+  requesting = false,
   onLaunch,
+  onRequestAccess,
   onEdit,
   onShareAccess,
   onDelete,
   onOpenQuickMode,
 }) => {
+  if (mode !== 'quickMode' && accessState !== 'open') {
+    const pending = accessState === 'pending';
+    const label = pending ? 'Requested' : requesting ? 'Sending…' : 'Request Access';
+    if (layout === 'mobile') {
+      return (
+        <button
+          type="button"
+          disabled={pending || requesting}
+          onClick={onRequestAccess}
+          className={`inline-flex min-h-[40px] w-full items-center justify-center rounded-md px-3 py-2 text-sm font-bold ${
+            pending
+              ? 'cursor-default border border-amber-700/60 bg-amber-950/40 text-amber-200'
+              : 'bg-amber-600 text-slate-900 hover:bg-amber-500 disabled:opacity-60'
+          }`}
+        >
+          {label}
+        </button>
+      );
+    }
+    return (
+      <button
+        type="button"
+        disabled={pending || requesting}
+        onClick={onRequestAccess}
+        className={`inline-flex h-8 items-center rounded-md px-2.5 text-xs font-semibold ${
+          pending
+            ? 'cursor-default border border-amber-700/60 bg-amber-950/40 text-amber-200'
+            : 'bg-amber-600 text-slate-900 hover:bg-amber-500 disabled:opacity-60'
+        }`}
+        title={pending ? 'Waiting for approval' : 'Ask Event Managers to grant this event'}
+      >
+        {label}
+      </button>
+    );
+  }
+
   if (mode === 'quickMode') {
     if (layout === 'mobile') {
       return (

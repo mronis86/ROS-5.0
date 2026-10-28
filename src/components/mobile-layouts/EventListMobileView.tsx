@@ -5,6 +5,7 @@ import EventListRowActions from '../EventListRowActions';
 import EventDisplaySyncToggle from '../EventDisplaySyncToggle';
 import EventLocationCell from '../EventLocationCell';
 import StreamBroadcastStatusMark from '../StreamBroadcastStatusMark';
+import { eventListAccessState } from '../../lib/eventAccessRequest';
 
 type Tab = 'upcoming' | 'past' | 'quickMode';
 type MobileSortKey = 'date_asc' | 'date_desc' | 'name_asc';
@@ -34,6 +35,8 @@ type EventListMobileViewProps = {
   onBulkDeleteQuickMode?: () => void;
   onClearQuickModeSelection?: () => void;
   onLaunch: (event: Event) => void;
+  onRequestAccess?: (event: Event) => void;
+  requestingEventId?: string | null;
   onEdit: (event: Event) => void;
   onShareAccess?: (event: Event) => void;
   onDelete: (event: Event) => void;
@@ -67,6 +70,8 @@ const EventListMobileView: React.FC<EventListMobileViewProps> = ({
   quickModeEventCount = 0,
   onBulkDeleteQuickMode,
   onLaunch,
+  onRequestAccess,
+  requestingEventId = null,
   onEdit,
   onShareAccess,
   onDelete,
@@ -322,15 +327,23 @@ const EventListMobileView: React.FC<EventListMobileViewProps> = ({
             const rec = getRecordStreamingShort(event.recordStreaming || 'None');
             const selected = event.id === selectedEventId;
             const timezone = event.timezone || 'America/New_York';
+            const accessState = eventListAccessState(event);
             return (
               <article
                 key={event.id}
                 className={`overflow-hidden rounded-lg border bg-slate-950 shadow-sm ${
-                  selected ? 'border-cyan-400' : 'border-slate-600'
+                  selected ? 'border-cyan-400' : accessState === 'open' ? 'border-slate-600' : 'border-amber-800/60'
                 }`}
               >
                 <div className="space-y-2 px-3 py-2.5">
-                  <h2 className="min-w-0 truncate text-[15px] font-semibold leading-tight text-white">{event.name}</h2>
+                  <h2 className="min-w-0 truncate text-[15px] font-semibold leading-tight text-white">
+                    {event.name}
+                    {accessState !== 'open' ? (
+                      <span className="ml-2 inline-flex align-middle rounded bg-amber-900/70 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-100">
+                        {accessState === 'pending' ? 'Requested' : 'Locked'}
+                      </span>
+                    ) : null}
+                  </h2>
                   <p className="text-[11px] text-slate-400">{formatDate(event.date)}</p>
                   <div className="flex flex-wrap gap-1.5 items-start">
                     <span className="inline-flex items-center gap-1 rounded bg-slate-800 px-2 py-0.5 text-[11px] text-slate-200">
@@ -396,7 +409,10 @@ const EventListMobileView: React.FC<EventListMobileViewProps> = ({
                       <EventListRowActions
                         layout="mobile"
                         mode={activeTab === 'quickMode' ? 'quickMode' : 'standard'}
+                        accessState={accessState}
+                        requesting={requestingEventId === event.id}
                         onLaunch={() => onLaunch(event)}
+                        onRequestAccess={() => onRequestAccess?.(event)}
                         onEdit={() => onEdit(event)}
                         onShareAccess={
                           activeTab === 'quickMode' || !onShareAccess

@@ -25,6 +25,8 @@ export interface CalendarEvent {
   date: string;
   schedule_data: any;
   updated_at?: string;
+  canAccess?: boolean;
+  accessRequestStatus?: 'pending' | 'approved' | 'denied' | null;
 }
 
 export interface RunOfShowData {
