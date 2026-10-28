@@ -3170,7 +3170,11 @@ const RunOfShowPage: React.FC = () => {
         const id = Number(item.id);
         const old = prevById.get(id);
         if (!old || scheduleItemSignature(old) !== scheduleItemSignature(item)) {
-          dirtyRowSnapshotsRef.current.set(id, item);
+          const prevSnap = dirtyRowSnapshotsRef.current.get(id);
+          dirtyRowSnapshotsRef.current.set(
+            id,
+            prevSnap ? mergeNewerCheckboxFields(item, prevSnap) : item
+          );
         }
       }
     }
@@ -9467,6 +9471,53 @@ const RunOfShowPage: React.FC = () => {
     [event?.id, rememberCheckboxRows, rememberSyncedSchedule]
   );
 
+  const persistScheduleCheckboxes = useCallback(
+    async (
+      itemId: number,
+      fields: {
+        hasPPT?: boolean;
+        hasQA?: boolean;
+        needsRecording?: boolean;
+        isPublic?: boolean;
+        source?: 'comms' | 'ros';
+      }
+    ) => {
+      if (!event?.id) return;
+      const id = Number(itemId);
+      const at = Date.now();
+      const { source, ...flagFields } = fields;
+      const stampFields = Object.keys(flagFields);
+      if (typeof flagFields.needsRecording === 'boolean') {
+        if (!stampFields.includes('recordingSource')) stampFields.push('recordingSource');
+      }
+      const stamp = (row: any) =>
+        row && Number(row.id) === id
+          ? stampScheduleCheckboxes(
+              {
+                ...row,
+                ...flagFields,
+                ...(typeof flagFields.needsRecording === 'boolean'
+                  ? { recordingSource: flagFields.needsRecording ? (source || 'ros') : null }
+                  : {}),
+              },
+              stampFields,
+              at
+            )
+          : row;
+      const current = (scheduleRef.current || []).find((row: any) => Number(row.id) === id);
+      if (current) rememberCheckboxRows([stamp(current)]);
+      try {
+        const result = await apiClient.patchScheduleCheckboxes(event.id, itemId, fields);
+        rememberSyncedSchedule(result);
+      } catch (err) {
+        console.warn('Checkbox PATCH failed — falling back to row save', err);
+        await new Promise<void>((resolve) => setTimeout(resolve, 50));
+        await flushSaveToAPIRef.current?.();
+      }
+    },
+    [event?.id, rememberCheckboxRows, rememberSyncedSchedule]
+  );
+
   const persistCueRecording = useCallback(
     async (itemId: number, needsRecording: boolean, source: 'comms' | 'ros' = 'ros') => {
       if (!event?.id) return;
@@ -9487,20 +9538,25 @@ const RunOfShowPage: React.FC = () => {
         const result = await apiClient.setCueRecording(event.id, itemId, needsRecording, source);
         rememberSyncedSchedule(result);
       } catch (err) {
-        console.warn('Recording PATCH failed — falling back to full schedule save', err);
-        await new Promise<void>((resolve) => setTimeout(resolve, 50));
-        await flushSaveToAPIRef.current?.();
+        console.warn('Recording PATCH failed — falling back to checkbox PATCH / row save', err);
+        try {
+          await persistScheduleCheckboxes(itemId, { needsRecording, source });
+        } catch {
+          await new Promise<void>((resolve) => setTimeout(resolve, 50));
+          await flushSaveToAPIRef.current?.();
+        }
       }
     },
-    [event?.id, rememberCheckboxRows, rememberSyncedSchedule]
+    [event?.id, persistScheduleCheckboxes, rememberCheckboxRows, rememberSyncedSchedule]
   );
 
-  // API functions with debouncing
+  // Stable debounce — recreating this on every save callback identity change
+  // cancelled the 2s timer, so checkbox-only edits never reached Neon.
   const saveToAPI = React.useCallback(
     debounce(() => {
-      void performSaveToAPI();
+      void flushSaveToAPIRef.current?.();
     }, 2000),
-    [performSaveToAPI]
+    []
   );
 
   // Debounce utility function
@@ -9532,7 +9588,7 @@ const RunOfShowPage: React.FC = () => {
       console.log('🔄 Loading from API for event:', event.id);
       
       // Add timeout to prevent hanging
-      const dataPromise = DatabaseService.getRunOfShowData(event.id);
+      const dataPromise = DatabaseService.getRunOfShowData(event.id, { bypassCache: true });
       const timeoutPromise = new Promise((_, reject) => 
         setTimeout(() => reject(new Error('Database query timeout after 10 seconds')), 10000)
       );
@@ -9945,10 +10001,8 @@ const RunOfShowPage: React.FC = () => {
                 ...row,
                 mittiWatch: remote.mittiWatch === true,
                 avWatch: remote.avWatch === true,
-                checkboxStamps: remote.checkboxStamps,
-                recordingUpdatedAt: remote.recordingUpdatedAt,
               },
-              row
+              mergeNewerCheckboxFields(row, remote)
             );
           })
         );
@@ -19093,6 +19147,7 @@ const RunOfShowPage: React.FC = () => {
                         saveToAPI={saveToAPI}
                         onNotesChipUpdated={applyNotesChipToOpenEditor}
                         persistCueRecording={persistCueRecording}
+                        persistScheduleCheckboxes={persistScheduleCheckboxes}
                         persistMittiWatch={persistMittiWatch}
                         persistAvWatch={persistAvWatch}
                         onEditTimedMarker={editTimedMarkerTime}

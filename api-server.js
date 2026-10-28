@@ -5074,6 +5074,112 @@ function canAccessCreativeAuth(auth) {
   return !!(auth.isAdmin || auth.isEventManager || auth.isBtsCrew || auth.isCreative);
 }
 
+async function persistScheduleItemsPatch(eventId, nextItems, { userId, userName, userRole }) {
+  const result = await pool.query(
+    `UPDATE run_of_show_data SET
+       schedule_items = $1,
+       last_modified_by = $2,
+       last_modified_by_name = $3,
+       last_modified_by_role = $4,
+       last_change_at = NOW(),
+       updated_at = NOW(),
+       version = COALESCE(version, 1) + 1
+     WHERE event_id = $5
+     RETURNING *`,
+    [JSON.stringify(nextItems), userId || null, userName || 'Editor', userRole || 'EDITOR', eventId]
+  );
+  const savedData = result.rows[0];
+  await regenerateUpstashCache(eventId, savedData);
+  broadcastUpdate(eventId, 'runOfShowDataUpdated', savedData);
+  return savedData;
+}
+
+function parseScheduleItemsJson(raw) {
+  let items = raw;
+  if (typeof items === 'string') {
+    try {
+      items = JSON.parse(items);
+    } catch {
+      items = [];
+    }
+  }
+  return Array.isArray(items) ? items : [];
+}
+
+// PPT / Q&A / Public / REC — immediate single-row write so a later stale full-row save cannot drop the check.
+app.patch('/api/run-of-show-data/:eventId/schedule-checkboxes', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    if (!eventId) return res.status(400).json({ error: 'eventId is required' });
+    if (!canWriteCueRecording(req.auth)) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    if (!userCanAccessEvent(req.auth, eventId)) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    const body = req.body || {};
+    const id = Number(body.item_id ?? body.itemId ?? body.id);
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({ error: 'item_id is required' });
+    }
+    const patch = {};
+    const fields = [];
+    if (typeof body.hasPPT === 'boolean') {
+      patch.hasPPT = body.hasPPT;
+      fields.push('hasPPT');
+    }
+    if (typeof body.hasQA === 'boolean') {
+      patch.hasQA = body.hasQA;
+      fields.push('hasQA');
+    }
+    if (typeof body.isPublic === 'boolean') {
+      patch.isPublic = body.isPublic;
+      fields.push('isPublic');
+    }
+    const recFlag = body.needs_recording ?? body.needsRecording;
+    if (typeof recFlag === 'boolean') {
+      patch.needsRecording = recFlag;
+      fields.push('needsRecording');
+      const markSource =
+        body.source === 'comms' || body.recording_source === 'comms' || req.auth?.isComms === true
+          ? 'comms'
+          : 'ros';
+      patch.recordingSource = recFlag ? markSource : null;
+      fields.push('recordingSource');
+    }
+    if (fields.length === 0) {
+      return res.status(400).json({ error: 'No checkbox fields provided' });
+    }
+
+    const existing = await pool.query('SELECT * FROM run_of_show_data WHERE event_id = $1', [eventId]);
+    if (existing.rows.length === 0) {
+      return res.status(404).json({ error: 'Event not found' });
+    }
+    const items = parseScheduleItemsJson(existing.rows[0].schedule_items);
+    const stampedAt = Date.now();
+    let found = false;
+    const nextItems = items.map((item) => {
+      if (Number(item.id) !== id) return item;
+      found = true;
+      return stampScheduleCheckboxes({ ...item, ...patch }, fields, stampedAt);
+    });
+    if (!found) {
+      return res.status(404).json({ error: 'Cue not found' });
+    }
+
+    const savedData = await persistScheduleItemsPatch(eventId, nextItems, {
+      userId: req.auth?.userId,
+      userName: req.auth?.fullName || req.auth?.email || 'Editor',
+      userRole:
+        patch.recordingSource === 'comms' ? 'COMMS' : (req.auth?.role || 'EDITOR'),
+    });
+    res.json(savedData);
+  } catch (error) {
+    console.error('Error updating schedule checkboxes:', error);
+    res.status(500).json({ error: 'Failed to update schedule checkboxes' });
+  }
+});
+
 app.patch('/api/run-of-show-data/:eventId/recording', async (req, res) => {
   try {
     const { eventId } = req.params;

@@ -42,6 +42,17 @@ export interface ScheduleRowProps {
   onNotesChipUpdated?: (itemId: number, notesHtml: string) => void;
   /** Immediate Neon persist for REC checkbox (avoids debounced full-schedule race on navigate away). */
   persistCueRecording?: (itemId: number, needsRecording: boolean, source: 'comms' | 'ros') => void | Promise<void>;
+  /** Immediate Neon persist for PPT / Q&A / Public (same path as REC). */
+  persistScheduleCheckboxes?: (
+    itemId: number,
+    fields: {
+      hasPPT?: boolean;
+      hasQA?: boolean;
+      needsRecording?: boolean;
+      isPublic?: boolean;
+      source?: 'comms' | 'ros';
+    }
+  ) => void | Promise<void>;
   /** Exclusive next-Mitti-play checkbox. */
   persistMittiWatch?: (itemId: number, enabled: boolean) => void | Promise<void>;
   persistAvWatch?: (itemId: number, enabled: boolean) => void | Promise<void>;
@@ -124,6 +135,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
   saveToAPI,
   onNotesChipUpdated,
   persistCueRecording,
+  persistScheduleCheckboxes,
   persistMittiWatch,
   persistAvWatch,
   calculateStartTimeWithOvertime,
@@ -972,6 +984,9 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
                       ? stampScheduleCheckboxes({ ...scheduleItem, hasPPT: e.target.checked }, ['hasPPT'])
                       : scheduleItem
                   ));
+                  void Promise.resolve(
+                    persistScheduleCheckboxes?.(item.id, { hasPPT: e.target.checked })
+                  ).catch((err) => console.warn('persistScheduleCheckboxes hasPPT failed:', err));
                   logChangeDebounced(
                     `hasPPT_${item.id}`,
                     'FIELD_UPDATE', 
@@ -1009,6 +1024,9 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
                       ? stampScheduleCheckboxes({ ...scheduleItem, hasQA: e.target.checked }, ['hasQA'])
                       : scheduleItem
                   ));
+                  void Promise.resolve(
+                    persistScheduleCheckboxes?.(item.id, { hasQA: e.target.checked })
+                  ).catch((err) => console.warn('persistScheduleCheckboxes hasQA failed:', err));
                   logChangeDebounced(
                     `hasQA_${item.id}`,
                     'FIELD_UPDATE', 
@@ -1470,6 +1488,9 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
                   ? stampScheduleCheckboxes({ ...scheduleItem, isPublic: e.target.checked }, ['isPublic'])
                   : scheduleItem
               ));
+              void Promise.resolve(
+                persistScheduleCheckboxes?.(item.id, { isPublic: e.target.checked })
+              ).catch((err) => console.warn('persistScheduleCheckboxes isPublic failed:', err));
               logChangeDebounced(
                 `isPublic_${item.id}`,
                 'FIELD_UPDATE',
@@ -1721,6 +1742,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
   if (prevProps.saveToAPI !== nextProps.saveToAPI) return false;
   if (prevProps.onNotesChipUpdated !== nextProps.onNotesChipUpdated) return false;
   if (prevProps.persistCueRecording !== nextProps.persistCueRecording) return false;
+  if (prevProps.persistScheduleCheckboxes !== nextProps.persistScheduleCheckboxes) return false;
   if (prevProps.setEditingNotesItem !== nextProps.setEditingNotesItem) return false;
   if (prevProps.setShowNotesModal !== nextProps.setShowNotesModal) return false;
   if (prevProps.setViewingAssetsItem !== nextProps.setViewingAssetsItem) return false;

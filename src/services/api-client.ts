@@ -969,6 +969,31 @@ class ApiClient {
     );
   }
 
+  async patchScheduleCheckboxes(
+    eventId: string,
+    itemId: number,
+    fields: {
+      hasPPT?: boolean;
+      hasQA?: boolean;
+      needsRecording?: boolean;
+      isPublic?: boolean;
+      source?: 'comms' | 'ros';
+    }
+  ) {
+    const result = await this.request<any>(
+      `/api/run-of-show-data/${encodeURIComponent(eventId)}/schedule-checkboxes`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({
+          item_id: itemId,
+          ...fields,
+        }),
+      }
+    );
+    this.cache.delete(`runOfShowData_${eventId}`);
+    return result;
+  }
+
   async setCueRecording(
     eventId: string,
     itemId: number,
