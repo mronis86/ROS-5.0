@@ -256,10 +256,14 @@ const GuestEventPage: React.FC = () => {
               numberOfDays: data.numberOfDays ?? prev.event.numberOfDays,
             },
             timing: mergeGuestStartTiming(prev.timing, {
-              showMode: data.showMode,
-              liveStartProjection: data.liveStartProjection,
-              timezone: data.timezone,
-              lockedStartTimes: data.lockedStartTimes,
+              ...(data.showMode === 'in-show' || data.showMode === 'rehearsal'
+                ? { showMode: data.showMode }
+                : {}),
+              ...(typeof data.liveStartProjection === 'boolean'
+                ? { liveStartProjection: data.liveStartProjection }
+                : {}),
+              ...(typeof data.timezone === 'string' ? { timezone: data.timezone } : {}),
+              ...(data.lockedStartTimes ? { lockedStartTimes: data.lockedStartTimes } : {}),
             }),
           };
         });

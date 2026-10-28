@@ -36,6 +36,7 @@ interface SocketCallbacks {
     } | null;
   }) => void;
   onStartCueSelectionUpdate?: (data: any) => void; // NEW! For start cue selection
+  onCueActualStartsCleared?: (data: any) => void;
   onShowModeUpdate?: (data: {
     event_id: string;
     showMode?: 'rehearsal' | 'in-show';
@@ -326,6 +327,9 @@ class SocketClient {
         case 'startCueSelectionUpdate': // NEW! For start cue selection
           console.log('📡 SocketClient: Received startCueSelectionUpdate event:', message.data);
           this.callbacks.onStartCueSelectionUpdate?.(message.data);
+          break;
+        case 'cueActualStartsCleared':
+          this.callbacks.onCueActualStartsCleared?.(message.data);
           break;
         case 'showModeUpdate': // Global show mode (rehearsal vs in-show)
           this.callbacks.onShowModeUpdate?.(message.data);

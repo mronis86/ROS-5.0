@@ -70,6 +70,45 @@ export type GuestTimingPatch = Partial<GuestStartTiming> & {
   overtimeItemMinutes?: number;
 };
 
+/** ROS settings may use snake_case (saved) or camelCase (socket). */
+export function guestTimingFromRosSettings(settings: unknown): GuestTimingPatch {
+  const s = settings && typeof settings === 'object' ? (settings as Record<string, unknown>) : {};
+  const patch: GuestTimingPatch = {};
+  const mode = s.show_mode ?? s.showMode;
+  if (mode === 'in-show' || mode === 'rehearsal') patch.showMode = mode;
+  if (typeof s.live_start_projection === 'boolean') patch.liveStartProjection = s.live_start_projection;
+  else if (typeof s.liveStartProjection === 'boolean') patch.liveStartProjection = s.liveStartProjection;
+  if (typeof s.timezone === 'string') patch.timezone = s.timezone;
+  const locked = s.locked_start_times ?? s.lockedStartTimes;
+  if (locked && typeof locked === 'object') patch.lockedStartTimes = locked as Record<string, string>;
+  return patch;
+}
+
+export function guestActiveTimerFromRow(row: unknown): GuestActiveTimer | null {
+  if (!row || typeof row !== 'object') return null;
+  const t = row as Record<string, unknown>;
+  const itemId = t.itemId ?? t.item_id;
+  if (itemId == null) return null;
+  const startedAt = t.startedAt ?? t.started_at;
+  const startedMs = startedAt ? new Date(String(startedAt)).getTime() : NaN;
+  const startedLooksReal = Number.isFinite(startedMs) && new Date(startedMs).getUTCFullYear() < 2090;
+  const timerState = String(t.timerState ?? t.timer_state ?? '');
+  return {
+    itemId: itemId as number | string,
+    timerState,
+    isActive: !!(t.isActive ?? t.is_active),
+    isRunning: timerState === 'running' || !!(t.isRunning ?? t.is_running),
+    durationSeconds: Number(t.durationSeconds ?? t.duration_seconds) || 0,
+    elapsedSeconds: Number(t.elapsedSeconds ?? t.elapsed_seconds) || 0,
+    cueIs: String(t.cueIs ?? t.cue_is ?? ''),
+    startedAt: startedLooksReal
+      ? startedAt instanceof Date
+        ? startedAt.toISOString()
+        : String(startedAt)
+      : null,
+  };
+}
+
 export function mergeGuestStartTiming(
   current: GuestStartTiming | undefined,
   patch: GuestTimingPatch
@@ -83,8 +122,12 @@ export function mergeGuestStartTiming(
   }
   if (patch.overtimeReset) {
     next.overtimeMinutes = {};
-  } else if (patch.overtimeMinutes && typeof patch.overtimeMinutes === 'object') {
-    next.overtimeMinutes = { ...next.overtimeMinutes, ...patch.overtimeMinutes };
+  }
+  if (patch.overtimeMinutes && typeof patch.overtimeMinutes === 'object') {
+    next.overtimeMinutes = {
+      ...(patch.overtimeReset ? {} : next.overtimeMinutes),
+      ...patch.overtimeMinutes,
+    };
   }
   if (patch.overtimeItemId != null) {
     next.overtimeMinutes = {
@@ -94,8 +137,12 @@ export function mergeGuestStartTiming(
   }
   if (patch.cueActualStartsCleared) {
     next.cueActualStarts = {};
-  } else if (patch.cueActualStarts && typeof patch.cueActualStarts === 'object') {
-    next.cueActualStarts = { ...next.cueActualStarts, ...patch.cueActualStarts };
+  }
+  if (patch.cueActualStarts && typeof patch.cueActualStarts === 'object') {
+    next.cueActualStarts = {
+      ...(patch.cueActualStartsCleared ? {} : next.cueActualStarts),
+      ...patch.cueActualStarts,
+    };
   }
   if (patch.startCueId !== undefined) {
     const id = patch.startCueId == null ? null : Number(patch.startCueId);

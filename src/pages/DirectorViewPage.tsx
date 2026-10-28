@@ -10,7 +10,15 @@ import {
   operatorUserId,
   personColumnLabel,
 } from '../lib/pinNotesOperator';
-import { stripHtmlNotes, type GuestScheduleItem } from '../lib/eventGuestLinks';
+import {
+  EMPTY_GUEST_START_TIMING,
+  guestActiveTimerFromRow,
+  guestTimingFromRosSettings,
+  mergeGuestStartTiming,
+  stripHtmlNotes,
+  type GuestScheduleItem,
+  type GuestStartTiming,
+} from '../lib/eventGuestLinks';
 import GuestRunOfShowGrid from '../components/guest/GuestRunOfShowGrid';
 import GuestSpeakersModal from '../components/guest/GuestSpeakersModal';
 import TeleprompterClockOverlay, {
@@ -361,6 +369,7 @@ const DirectorViewPage: React.FC = () => {
   const [clockOffset, setClockOffset] = useState(0);
   /** Kept for AV / Mitti / Resolume LOADED·RUNNING feedback. */
   const [activeTimerMeta, setActiveTimerMeta] = useState<any | null>(null);
+  const [startTiming, setStartTiming] = useState<GuestStartTiming>(EMPTY_GUEST_START_TIMING);
   const [tick, setTick] = useState(0);
   const [speakersItemId, setSpeakersItemId] = useState<number | null>(null);
   const [speakerPanel, setSpeakerPanel] = useState<'photos' | 'info'>('photos');
@@ -600,6 +609,7 @@ const DirectorViewPage: React.FC = () => {
       );
       setMasterStartTime(data.settings?.masterStartTime || '');
       setDayStartTimes(data.settings?.dayStartTimes || {});
+      setStartTiming((prev) => mergeGuestStartTiming(prev, guestTimingFromRosSettings(data.settings)));
       if (data.event_name) setEventName(data.event_name);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load event');
@@ -1150,9 +1160,69 @@ const DirectorViewPage: React.FC = () => {
             ? enriched.elapsedSeconds
             : 0;
       setTimerElapsedHint(Number.isFinite(elapsedHint) ? elapsedHint : 0);
+      if (running && startedLooksReal && id != null) {
+        setStartTiming((prev) =>
+          mergeGuestStartTiming(prev, {
+            cueActualStarts: { [String(id)]: new Date(startedMs).toISOString() },
+          })
+        );
+      }
     },
     [clearTimerUi]
   );
+
+  const loadStartTiming = useCallback(async () => {
+    if (!eventId) return;
+    try {
+      const [overtime, actuals, showStart, showSettings] = await Promise.all([
+        DatabaseService.getOvertimeMinutes(eventId),
+        DatabaseService.getCueActualStarts(eventId),
+        DatabaseService.getShowStartOvertime(eventId),
+        DatabaseService.getShowSettings(eventId),
+      ]);
+      const overtimeMinutes: Record<string, number> = {};
+      for (const [id, mins] of Object.entries(overtime || {})) {
+        overtimeMinutes[String(id)] = Number(mins) || 0;
+      }
+      const cueActualStarts: Record<string, string> = {};
+      for (const [id, ms] of Object.entries(actuals || {})) {
+        const n = Number(ms);
+        if (Number.isFinite(n) && new Date(n).getUTCFullYear() < 2090) {
+          cueActualStarts[String(id)] = new Date(n).toISOString();
+        }
+      }
+      const showStartRow = showStart as {
+        item_id?: number;
+        itemId?: number;
+        show_start_overtime?: number;
+        overtimeMinutes?: number;
+      } | null;
+      const startCueRaw = showStartRow?.item_id ?? showStartRow?.itemId;
+      const startCueId = startCueRaw != null ? Number(startCueRaw) : null;
+      setStartTiming((prev) =>
+        mergeGuestStartTiming(prev, {
+          overtimeReset: true,
+          cueActualStartsCleared: true,
+          showMode: showSettings.showMode,
+          liveStartProjection: showSettings.liveStartProjection === true,
+          ...(showSettings.lockedStartTimes && typeof showSettings.lockedStartTimes === 'object'
+            ? { lockedStartTimes: showSettings.lockedStartTimes }
+            : {}),
+          overtimeMinutes,
+          cueActualStarts,
+          startCueId: startCueId != null && Number.isFinite(startCueId) ? startCueId : null,
+          showStartOvertime:
+            Number(showStartRow?.show_start_overtime ?? showStartRow?.overtimeMinutes) || 0,
+        })
+      );
+    } catch {
+      /* keep last known Start column */
+    }
+  }, [eventId]);
+
+  useEffect(() => {
+    void loadStartTiming();
+  }, [loadStartTiming]);
 
   const loadActiveTimer = useCallback(async () => {
     if (!eventId) return;
@@ -1180,6 +1250,7 @@ const DirectorViewPage: React.FC = () => {
       {
         onInitialSync: async () => {
           await loadActiveTimer();
+          await loadStartTiming();
         },
         onTimerUpdated: (data: any) => {
           applyTimer(pickActiveTimer(data) || (data?.item_id != null || data?.itemId != null ? data : null));
@@ -1198,9 +1269,65 @@ const DirectorViewPage: React.FC = () => {
         onActiveTimersUpdated: (data: any) => {
           applyTimer(pickActiveTimer(data));
         },
-        onResetAllStates: () => clearTimerUi(),
-        onRunOfShowDataUpdated: () => {
+        onResetAllStates: () => {
+          clearTimerUi();
+          setStartTiming((prev) =>
+            mergeGuestStartTiming(prev, {
+              overtimeReset: true,
+              cueActualStartsCleared: true,
+              showStartOvertime: 0,
+            })
+          );
+        },
+        onRunOfShowDataUpdated: (data: any) => {
           void loadSchedule();
+          setStartTiming((prev) => mergeGuestStartTiming(prev, guestTimingFromRosSettings(data?.settings)));
+        },
+        onOvertimeUpdate: (data: any) => {
+          const itemId = data?.item_id ?? data?.itemId;
+          if (itemId == null) return;
+          setStartTiming((prev) =>
+            mergeGuestStartTiming(prev, {
+              overtimeItemId: itemId,
+              overtimeItemMinutes: Number(data?.overtimeMinutes ?? data?.overtime_minutes) || 0,
+            })
+          );
+        },
+        onOvertimeReset: () => {
+          setStartTiming((prev) => mergeGuestStartTiming(prev, { overtimeReset: true }));
+        },
+        onShowModeUpdate: (data: any) => {
+          setStartTiming((prev) =>
+            mergeGuestStartTiming(prev, {
+              showMode: data?.showMode,
+              liveStartProjection: data?.liveStartProjection,
+              lockedStartTimes: data?.lockedStartTimes || undefined,
+            })
+          );
+        },
+        onShowStartOvertimeUpdate: (data: any) => {
+          const itemId = data?.item_id ?? data?.itemId;
+          setStartTiming((prev) =>
+            mergeGuestStartTiming(prev, {
+              startCueId: itemId != null ? Number(itemId) : undefined,
+              showStartOvertime: Number(data?.showStartOvertime ?? data?.show_start_overtime) || 0,
+            })
+          );
+        },
+        onShowStartOvertimeReset: () => {
+          setStartTiming((prev) => mergeGuestStartTiming(prev, { showStartOvertime: 0, startCueId: null }));
+        },
+        onStartCueSelectionUpdate: (data: any) => {
+          const itemId = data?.item_id ?? data?.itemId;
+          setStartTiming((prev) =>
+            mergeGuestStartTiming(prev, {
+              startCueId: itemId != null ? Number(itemId) : null,
+              showStartOvertime: 0,
+            })
+          );
+        },
+        onCueActualStartsCleared: () => {
+          setStartTiming((prev) => mergeGuestStartTiming(prev, { cueActualStartsCleared: true }));
         },
         onServerTime: (data: any) => {
           if (data?.serverTime) {
@@ -1219,7 +1346,7 @@ const DirectorViewPage: React.FC = () => {
         /* ignore */
       }
     };
-  }, [eventId, loadSchedule, loadActiveTimer, applyTimer, clearTimerUi]);
+  }, [eventId, loadSchedule, loadStartTiming, loadActiveTimer, applyTimer, clearTimerUi]);
 
   useEffect(() => {
     const id = window.setInterval(() => setTick((n) => n + 1), 250);
@@ -2430,6 +2557,8 @@ const DirectorViewPage: React.FC = () => {
                   visibleCustomColumns={visibleCustomColumns}
                   zoom={rosZoom}
                   followActive={rosViewMode === 'follow'}
+                  startTiming={startTiming}
+                  activeTimer={guestActiveTimerFromRow(activeTimerMeta)}
                   onOpenSpeakers={(id) => setSpeakersItemId(id)}
                 />
               </div>

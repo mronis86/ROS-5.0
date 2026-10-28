@@ -842,6 +842,8 @@ const CreativeEventPage: React.FC = () => {
                 visibleColumns={visibleColumns}
                 stickyStartColumn={stickyStartColumn}
                 columnOrder={columnOrder}
+                startTiming={payload.timing}
+                activeTimer={payload.activeTimer}
                 onOpenSpeakers={(itemId) => {
                   setSpeakersItemId(itemId);
                   setSpeakerPanel('photos');
