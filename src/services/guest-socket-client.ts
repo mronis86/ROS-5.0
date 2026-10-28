@@ -1,16 +1,25 @@
 import { io, Socket } from 'socket.io-client';
 import { getApiBaseUrl } from './api-client';
-import type { GuestActiveTimer, GuestEventPayload } from '../lib/eventGuestLinks';
+import type {
+  GuestActiveTimer,
+  GuestEventPayload,
+  GuestTimingPatch,
+} from '../lib/eventGuestLinks';
 
 export interface GuestSocketCallbacks {
   onInitialSync?: (payload: GuestEventPayload) => void;
   onJoinError?: (error: string, needsMigration?: boolean) => void;
   onTimerUpdated?: (timer: GuestActiveTimer | null) => void;
+  onTimingPatch?: (patch: GuestTimingPatch) => void;
   onScheduleUpdated?: (data: {
     scheduleItems: GuestEventPayload['scheduleItems'];
     masterStartTime?: string;
     dayStartTimes?: Record<number | string, string>;
     numberOfDays?: number;
+    showMode?: 'rehearsal' | 'in-show';
+    liveStartProjection?: boolean;
+    timezone?: string;
+    lockedStartTimes?: Record<string, string>;
   }) => void;
   onIndentedCuesUpdated?: (data: {
     cleared?: boolean;
@@ -113,8 +122,65 @@ class GuestSocketClient {
               masterStartTime: d.masterStartTime as string | undefined,
               dayStartTimes: d.dayStartTimes as Record<number | string, string> | undefined,
               numberOfDays: d.numberOfDays as number | undefined,
+              showMode: d.showMode === 'in-show' || d.showMode === 'rehearsal' ? d.showMode : undefined,
+              liveStartProjection: typeof d.liveStartProjection === 'boolean' ? d.liveStartProjection : undefined,
+              timezone: typeof d.timezone === 'string' ? d.timezone : undefined,
+              lockedStartTimes:
+                d.lockedStartTimes && typeof d.lockedStartTimes === 'object'
+                  ? (d.lockedStartTimes as Record<string, string>)
+                  : undefined,
             });
           }
+          break;
+        case 'overtimeUpdate':
+          if (message.data && typeof message.data === 'object') {
+            const d = message.data as { itemId?: number | string; overtimeMinutes?: number };
+            this.callbacks.onTimingPatch?.({
+              overtimeItemId: d.itemId,
+              overtimeItemMinutes: Number(d.overtimeMinutes) || 0,
+            });
+          }
+          break;
+        case 'overtimeReset':
+          this.callbacks.onTimingPatch?.({ overtimeReset: true });
+          break;
+        case 'showModeUpdate':
+          if (message.data && typeof message.data === 'object') {
+            const d = message.data as {
+              showMode?: 'rehearsal' | 'in-show';
+              liveStartProjection?: boolean;
+              lockedStartTimes?: Record<string, string>;
+            };
+            this.callbacks.onTimingPatch?.({
+              showMode: d.showMode,
+              liveStartProjection: d.liveStartProjection,
+              lockedStartTimes: d.lockedStartTimes,
+            });
+          }
+          break;
+        case 'showStartOvertimeUpdate':
+          if (message.data && typeof message.data === 'object') {
+            const d = message.data as { itemId?: number | string; showStartOvertime?: number };
+            this.callbacks.onTimingPatch?.({
+              startCueId: d.itemId != null ? Number(d.itemId) : undefined,
+              showStartOvertime: Number(d.showStartOvertime) || 0,
+            });
+          }
+          break;
+        case 'showStartOvertimeReset':
+          this.callbacks.onTimingPatch?.({ showStartOvertime: 0, startCueId: null });
+          break;
+        case 'startCueSelectionUpdate':
+          if (message.data && typeof message.data === 'object') {
+            const d = message.data as { startCueId?: number | null };
+            this.callbacks.onTimingPatch?.({
+              startCueId: d.startCueId ?? null,
+              showStartOvertime: 0,
+            });
+          }
+          break;
+        case 'cueActualStartsCleared':
+          this.callbacks.onTimingPatch?.({ cueActualStartsCleared: true });
           break;
         case 'indentedCuesUpdated':
           if (message.data && typeof message.data === 'object') {

@@ -1,4 +1,5 @@
-const API_TOKEN_KEY = 'ros_api_token';
+export const API_TOKEN_KEY = 'ros_api_token';
+export const ROS_SESSION_ENDED_EVENT = 'ros-session-ended';
 
 /**
  * After a 401/429 stopPolling response, clear the stored session so display/OBS
@@ -20,8 +21,18 @@ export function setApiAccessToken(token: string | null): void {
   }
 }
 
+function notifySessionEnded(reason?: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.dispatchEvent(new CustomEvent(ROS_SESSION_ENDED_EVENT, { detail: { reason } }));
+  } catch {
+    /* ignore */
+  }
+}
+
 /** Mark session unusable — clears token and blocks further authenticated fetches. */
 export function clearApiAccessTokenOnAuthFailure(reason?: string): void {
+  if (authDead) return;
   authDead = true;
   try {
     localStorage.removeItem(API_TOKEN_KEY);
@@ -31,6 +42,7 @@ export function clearApiAccessTokenOnAuthFailure(reason?: string): void {
   if (reason) {
     console.warn('[sessionAuth] Cleared API token after auth failure:', reason);
   }
+  notifySessionEnded(reason);
 }
 
 export function authHeaders(): Record<string, string> {

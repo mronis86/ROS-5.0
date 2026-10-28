@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ScheduleRow from '../../pages/ScheduleRow';
 import type { GuestScheduleItem } from '../../lib/eventGuestLinks';
 import {
@@ -25,20 +25,50 @@ import {
   type GuestVisibleColumns,
 } from '../../lib/guestColumnPrefs';
 import { parseCustomColumnOrderKey } from '../../lib/rosColumnOrder';
-import { findParentScheduleIndex, isIndentedScheduleItem, itemCountsTowardStartTime } from '../../lib/scheduleStartTime';
+import StartTimeColumnCell from '../StartTimeColumnCell';
+import {
+  calculateScheduleStartTime,
+  calculateScheduleStartTimeWithOvertime,
+  cumulativeOvertimeMinutesForIndex,
+  itemCountsTowardStartTime,
+} from '../../lib/scheduleStartTime';
+import { computeLiveStartAnchor } from '../../lib/liveStartProjection';
+import { eventLocalSecondsOfDay, resolveShowTimezone } from '../../lib/eventLocalClock';
+import { formatScheduleClock } from '../../lib/scheduleClockFormat';
+import { parseClockToSeconds } from '../../lib/timedMarker';
+import type { GuestActiveTimer, GuestStartTiming } from '../../lib/eventGuestLinks';
+import { EMPTY_GUEST_START_TIMING } from '../../lib/eventGuestLinks';
 
 export type GuestCustomColumn = { id: string; name: string };
 
-function dayStartFor(
-  day: number,
-  masterStartTime?: string,
-  dayStartTimes?: Record<number | string, string>
-): string {
-  if (dayStartTimes) {
-    const keyed = dayStartTimes[day] ?? dayStartTimes[String(day)];
-    if (keyed) return keyed;
+function overtimeMapFromTiming(timing: GuestStartTiming): Record<number, number> {
+  const out: Record<number, number> = {};
+  for (const [id, mins] of Object.entries(timing.overtimeMinutes || {})) {
+    const n = Number(id);
+    if (Number.isFinite(n)) out[n] = Number(mins) || 0;
   }
-  return masterStartTime || '';
+  return out;
+}
+
+function lockedMapFromTiming(timing: GuestStartTiming): Record<number, string> {
+  const out: Record<number, string> = {};
+  for (const [id, label] of Object.entries(timing.lockedStartTimes || {})) {
+    const n = Number(id);
+    if (Number.isFinite(n) && label) out[n] = String(label);
+  }
+  return out;
+}
+
+function actualStartMsFromTiming(timing: GuestStartTiming): Record<number, number> {
+  const out: Record<number, number> = {};
+  for (const [id, iso] of Object.entries(timing.cueActualStarts || {})) {
+    const n = Number(id);
+    const ms = iso ? new Date(iso).getTime() : NaN;
+    if (Number.isFinite(n) && Number.isFinite(ms) && new Date(ms).getUTCFullYear() < 2090) {
+      out[n] = ms;
+    }
+  }
+  return out;
 }
 
 function guestRowClass(
@@ -73,6 +103,8 @@ export interface GuestRunOfShowGridProps {
   zoom?: number;
   /** When true, keep the live cue row in view as the timer advances. */
   followActive?: boolean;
+  startTiming?: GuestStartTiming;
+  activeTimer?: GuestActiveTimer | null;
   onOpenSpeakers: (itemId: number) => void;
   onViewSegmentDetail?: (itemId: number) => void;
 }
@@ -96,6 +128,8 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
   visibleCustomColumns = {},
   zoom,
   followActive = false,
+  startTiming,
+  activeTimer = null,
   onOpenSpeakers,
   onViewSegmentDetail,
 }) => {
@@ -120,6 +154,18 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
 
   const scheduleRows = useMemo(() => schedule.map(toScheduleRowItem), [schedule]);
   const indentedCues = useMemo(() => buildIndentedLookup(schedule), [schedule]);
+  const timing = startTiming || EMPTY_GUEST_START_TIMING;
+  const showMode = timing.showMode === 'in-show' ? 'in-show' : 'rehearsal';
+  const overtimeMinutes = useMemo(() => overtimeMapFromTiming(timing), [timing]);
+  const lockedStartTimes = useMemo(() => lockedMapFromTiming(timing), [timing]);
+  const actualStartMs = useMemo(() => actualStartMsFromTiming(timing), [timing]);
+  const [liveTick, setLiveTick] = useState(0);
+
+  useEffect(() => {
+    if (showMode !== 'in-show' || !timing.liveStartProjection) return;
+    const id = window.setInterval(() => setLiveTick((n) => n + 1), 1000);
+    return () => window.clearInterval(id);
+  }, [showMode, timing.liveStartProjection]);
 
   useEffect(() => {
     if (!followActive || activeItemId == null) return;
@@ -131,46 +177,110 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
   }, [followActive, activeItemId, filteredItems]);
 
   const calculateStartTime = useCallback(
-    (index: number): string => {
-      const indentedLookup = buildIndentedLookup(schedule);
-      const calcAt = (idx: number): string => {
-        const current = schedule[idx];
-        if (!current) return '';
-
-        if (isIndentedScheduleItem(current, indentedLookup)) {
-          const parentIndex = findParentScheduleIndex(schedule, idx, indentedLookup);
-          if (parentIndex < 0) return '';
-          return calcAt(parentIndex);
-        }
-
-        const itemDay = current.day || 1;
-        const startTime = dayStartFor(itemDay, masterStartTime, dayStartTimes);
-        if (!startTime) return '';
-
-        let totalSeconds = 0;
-        for (let i = 0; i < idx; i++) {
-          const item = schedule[i];
-          if ((item.day || 1) === itemDay && itemCountsTowardStartTime(item, indentedLookup)) {
-            totalSeconds +=
-              (Number(item.durationHours) || 0) * 3600 +
-              (Number(item.durationMinutes) || 0) * 60 +
-              (Number(item.durationSeconds) || 0);
-          }
-        }
-
-        const [hours, minutes] = startTime.split(':').map(Number);
-        if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return '';
-        const totalStartSeconds = hours * 3600 + minutes * 60 + totalSeconds;
-        const finalHours = Math.floor(totalStartSeconds / 3600) % 24;
-        const finalMinutes = Math.floor((totalStartSeconds % 3600) / 60);
-        const date = new Date();
-        date.setHours(finalHours, finalMinutes, 0, 0);
-        return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-      };
-      return calcAt(index);
-    },
-    [schedule, masterStartTime, dayStartTimes]
+    (index: number): string =>
+      calculateScheduleStartTime(schedule, index, masterStartTime, dayStartTimes, indentedCues),
+    [schedule, masterStartTime, dayStartTimes, indentedCues]
   );
+
+  const liveStartAnchor = useMemo(() => {
+    if (showMode !== 'in-show' || !timing.liveStartProjection) return null;
+    const running =
+      !!activeTimer &&
+      (activeTimer.isRunning === true || activeTimer.timerState === 'running') &&
+      activeTimer.itemId != null;
+    const runningId = running ? Number(activeTimer.itemId) : null;
+    const startedMs = running
+      ? actualStartMs[runningId as number] ??
+        (activeTimer?.startedAt ? new Date(activeTimer.startedAt).getTime() : NaN)
+      : NaN;
+    const tz = resolveShowTimezone(timing.timezone);
+    const anchor = computeLiveStartAnchor({
+      schedule,
+      countsTowardStart: (row) => itemCountsTowardStartTime(row, indentedCues),
+      plannedStartSec: (index) => parseClockToSeconds(calculateStartTime(index)),
+      running:
+        runningId != null && Number.isFinite(startedMs)
+          ? {
+              itemId: runningId,
+              startedAtMs: startedMs,
+              durationSec: Number(activeTimer?.durationSeconds) || 0,
+            }
+          : null,
+      actualStarts: actualStartMs,
+      nowMs: Date.now(),
+      timeZone: tz,
+    });
+    if (!anchor) return null;
+    const startCueIndex =
+      timing.startCueId != null ? schedule.findIndex((s) => s.id === timing.startCueId) : -1;
+    if (
+      startCueIndex >= 0 &&
+      anchor.anchorIndex < startCueIndex &&
+      (schedule[startCueIndex].day || 1) === anchor.day
+    ) {
+      return null;
+    }
+    return anchor;
+  }, [
+    showMode,
+    timing.liveStartProjection,
+    timing.startCueId,
+    timing.timezone,
+    activeTimer,
+    actualStartMs,
+    schedule,
+    indentedCues,
+    calculateStartTime,
+    liveTick,
+  ]);
+
+  const overtimeOpts = useMemo(
+    () => ({
+      masterStartTime,
+      dayStartTimes,
+      indentedLookup: indentedCues,
+      overtimeMinutes,
+      startCueId: timing.startCueId,
+      showStartOvertime: timing.showStartOvertime,
+      liveOffsetMinutes: liveStartAnchor?.offsetMinutes ?? null,
+      liveAnchorIndex: liveStartAnchor?.anchorIndex ?? null,
+      liveAnchorDay: liveStartAnchor?.day ?? null,
+    }),
+    [
+      masterStartTime,
+      dayStartTimes,
+      indentedCues,
+      overtimeMinutes,
+      timing.startCueId,
+      timing.showStartOvertime,
+      liveStartAnchor,
+    ]
+  );
+
+  const calculateStartTimeWithOvertime = useCallback(
+    (index: number): string => calculateScheduleStartTimeWithOvertime(schedule, index, overtimeOpts),
+    [schedule, overtimeOpts]
+  );
+
+  const actualStartLabels = useMemo(() => {
+    const out: Record<number, string> = {};
+    if (showMode !== 'in-show') return out;
+    const tz = resolveShowTimezone(timing.timezone);
+    const add = (id: number, ms: number) => {
+      if (!Number.isFinite(id) || !Number.isFinite(ms) || new Date(ms).getUTCFullYear() >= 2090) return;
+      out[id] = formatScheduleClock(eventLocalSecondsOfDay(ms, tz));
+    };
+    for (const [id, ms] of Object.entries(actualStartMs)) add(Number(id), ms);
+    if (
+      activeTimer &&
+      (activeTimer.isRunning === true || activeTimer.timerState === 'running') &&
+      activeTimer.startedAt
+    ) {
+      const liveId = Number(activeTimer.itemId);
+      if (!out[liveId]) add(liveId, new Date(activeTimer.startedAt).getTime());
+    }
+    return out;
+  }, [showMode, timing.timezone, actualStartMs, activeTimer]);
 
   const getRowHeight = useCallback(
     (
@@ -324,8 +434,7 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
               0,
               GUEST_COLUMN_WIDTHS.notes
             );
-            const isIndented = Boolean(indentedCues[item.id] || item.isIndented);
-            const startLabel = calculateStartTime(rowIndex) || (isIndented ? '↘' : '—');
+            const isIndented = Boolean(indentedCues[item.id] || item.isIndented || item.isTimedMarker);
 
             return (
               <div
@@ -366,14 +475,35 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
                 </div>
                 {startPinnedBesideCue && (
                   <div
-                    className={`sticky z-20 flex-shrink-0 flex items-center justify-center px-2 ${rowBg}`}
+                    className={`sticky z-20 flex-shrink-0 flex items-stretch ${rowBg}`}
                     style={{
                       left: GUEST_STICKY_START_LEFT_PX,
                       width: GUEST_COLUMN_WIDTHS.start,
                       borderRight: '6px solid #475569',
                     }}
                   >
-                    <span className="text-white font-mono text-base font-bold">{startLabel}</span>
+                    <StartTimeColumnCell
+                      itemId={item.id}
+                      index={rowIndex}
+                      width={GUEST_COLUMN_WIDTHS.start}
+                      isIndented={isIndented}
+                      showMode={showMode}
+                      overtimeMinutes={overtimeMinutes}
+                      startCueId={timing.startCueId}
+                      showStartOvertime={timing.showStartOvertime}
+                      cumulativeOvertime={cumulativeOvertimeMinutesForIndex(
+                        schedule,
+                        rowIndex,
+                        overtimeOpts
+                      )}
+                      lockedStartTime={lockedStartTimes[item.id] || null}
+                      actualStartLabel={actualStartLabels[item.id] || null}
+                      calculateStartTime={calculateStartTime}
+                      calculateStartTimeWithOvertime={calculateStartTimeWithOvertime}
+                      isTimedMarker={item.isTimedMarker === true}
+                      markerTimeMode={item.markerTimeMode === 'absolute' ? 'absolute' : 'offset'}
+                      className={`border-r-0 h-full ${rowBg}`}
+                    />
                   </div>
                 )}
                 <ScheduleRow
@@ -384,10 +514,14 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
                   visibleColumns={scrollColumns}
                   columnFlexOrder={columnFlexOrder}
                   indentedCues={indentedCues}
-                  overtimeMinutes={{}}
-                  startCueId={null}
-                  showStartOvertime={0}
-                  cumulativeOvertime={0}
+                  overtimeMinutes={overtimeMinutes}
+                  startCueId={timing.startCueId}
+                  showStartOvertime={timing.showStartOvertime}
+                  cumulativeOvertime={cumulativeOvertimeMinutesForIndex(
+                    schedule,
+                    rowIndex,
+                    overtimeOpts
+                  )}
                   programTypes={ROS_PROGRAM_TYPES}
                   programTypeColors={ROS_PROGRAM_TYPE_COLORS}
                   shotTypes={ROS_SHOT_TYPES}
@@ -398,8 +532,10 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
                   handleModalClosed={noop}
                   logChangeDebounced={noop}
                   calculateStartTime={calculateStartTime}
-                  calculateStartTimeWithOvertime={calculateStartTime}
-                  showMode="rehearsal"
+                  calculateStartTimeWithOvertime={calculateStartTimeWithOvertime}
+                  showMode={showMode}
+                  lockedStartTime={lockedStartTimes[item.id] || null}
+                  actualStartLabel={actualStartLabels[item.id] || null}
                   displaySpeakersText={displaySpeakersText}
                   getRowHeight={getRowHeight}
                   getSpeakersHeight={getSpeakersHeight}

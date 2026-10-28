@@ -10,6 +10,12 @@ function uploadedLabel(iso?: string | null): string {
   return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
 
+function isPdfCueFile(file: EventCueFile): boolean {
+  const name = String(file.originalName || file.versionedName || '').toLowerCase();
+  const mime = String(file.mimeType || '').toLowerCase();
+  return name.endsWith('.pdf') || mime === 'application/pdf';
+}
+
 function sortFiles(files: EventCueFile[]): EventCueFile[] {
   return [...files].sort((a, b) => {
     const name = cueFileDisplayName(a).localeCompare(cueFileDisplayName(b), undefined, {
@@ -24,18 +30,22 @@ export default function CuePlatformFileList({
   files,
   canEdit = false,
   usingId = null,
+  convertingId = null,
   onOpen,
   onDownload,
   onDelete,
   onUseVersion,
+  onConvertPdf,
 }: {
   files: EventCueFile[];
   canEdit?: boolean;
   usingId?: string | null;
+  convertingId?: string | null;
   onOpen: (fileId: string) => void;
   onDownload: (file: EventCueFile) => void;
   onDelete?: (fileId: string) => void;
   onUseVersion?: (file: EventCueFile) => void;
+  onConvertPdf?: (file: EventCueFile) => void;
 }) {
   const rows = sortFiles(files);
   if (!rows.length) return <p className="text-sm text-slate-400">No platform files on this cue yet.</p>;
@@ -88,6 +98,21 @@ export default function CuePlatformFileList({
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
+              {canEdit && onConvertPdf && isPdfCueFile(file) ? (
+                <button
+                  type="button"
+                  disabled={!!convertingId}
+                  onClick={() => onConvertPdf(file)}
+                  className="px-3 py-1.5 bg-amber-700 hover:bg-amber-600 text-white text-sm rounded disabled:opacity-50"
+                >
+                  {convertingId === file.id ? 'Creating PPT…' : 'Make PowerPoint'}
+                </button>
+              ) : null}
+              {file.convertedFromId ? (
+                <span className="rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide bg-amber-900/70 text-amber-100">
+                  From PDF
+                </span>
+              ) : null}
               {canEdit && versioned && file.isCurrent === false && onUseVersion ? (
                 <button
                   type="button"

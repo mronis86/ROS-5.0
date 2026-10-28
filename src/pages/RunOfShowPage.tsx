@@ -1599,6 +1599,9 @@ const RunOfShowPage: React.FC = () => {
   const [platformUploadError, setPlatformUploadError] = useState<string | null>(null);
   const [platformUploadNote, setPlatformUploadNote] = useState<string | null>(null);
   const [platformUsingVersionId, setPlatformUsingVersionId] = useState<string | null>(null);
+  const [pdfConvertPrompt, setPdfConvertPrompt] = useState<EventCueFile | null>(null);
+  const [pdfConvertQueue, setPdfConvertQueue] = useState<EventCueFile[]>([]);
+  const [pdfConvertBusyId, setPdfConvertBusyId] = useState<string | null>(null);
   const [platformUploadDragOver, setPlatformUploadDragOver] = useState(false);
   const platformFileInputRef = useRef<HTMLInputElement | null>(null);
   const [showViewAssetsModal, setShowViewAssetsModal] = useState(false);
@@ -8964,7 +8967,11 @@ const RunOfShowPage: React.FC = () => {
   }, [event?.id, showAssetsModal, showViewAssetsModal, refreshPlatformCueFiles]);
 
   useEffect(() => {
-    if (!showAssetsModal) setPlatformUploadDragOver(false);
+    if (!showAssetsModal) {
+      setPlatformUploadDragOver(false);
+      setPdfConvertPrompt(null);
+      setPdfConvertQueue([]);
+    }
   }, [showAssetsModal]);
 
   const platformFileCountByItem = useMemo(() => {
@@ -9028,6 +9035,47 @@ const RunOfShowPage: React.FC = () => {
     }
   };
 
+  const isPdfCueUpload = (file: { name?: string; originalName?: string; type?: string; mimeType?: string | null }) => {
+    const name = String(file.originalName || file.name || '').toLowerCase();
+    const mime = String(file.mimeType || file.type || '').toLowerCase();
+    return name.endsWith('.pdf') || mime === 'application/pdf';
+  };
+
+  const advancePdfConvertPrompt = (queue: EventCueFile[]) => {
+    setPdfConvertPrompt(queue[0] || null);
+    setPdfConvertQueue(queue.slice(1));
+  };
+
+  const handleConvertPdfCueFile = async (file: EventCueFile, force = false) => {
+    if (!event?.id) return;
+    setPdfConvertBusyId(file.id);
+    setPlatformUploadError(null);
+    try {
+      const result = await apiClient.convertPdfCueFileToPptx(file.id, event.id, force);
+      if (result?.file) {
+        setPlatformCueFiles((prev) => {
+          if (prev.some((row) => row.id === result.file.id)) return prev;
+          return [...prev, result.file];
+        });
+        await refreshPlatformCueFiles(event.id);
+        const pageBit =
+          result.pages != null
+            ? `${result.pages} slide${result.pages === 1 ? '' : 's'}`
+            : 'slides';
+        const extra = result.truncated ? ` (first ${result.pages} of ${result.totalPages} PDF pages)` : '';
+        setPlatformUploadNote(
+          result.reused
+            ? `PowerPoint already exists for ${cueFileDisplayName(file)}.`
+            : `Added ${cueFileDisplayName(result.file)} (${pageBit}${extra}). PDF kept.`
+        );
+      }
+    } catch (err: any) {
+      setPlatformUploadError(err?.message || 'Could not create PowerPoint from this PDF.');
+    } finally {
+      setPdfConvertBusyId(null);
+    }
+  };
+
   const handlePlatformCueFileUpload = async (fileList: FileList | File[] | null) => {
     if (!event?.id || editingAssetsItem == null || editingAssetsItem <= 0) {
       alert('Save the cue first, then upload files.');
@@ -9046,6 +9094,7 @@ const RunOfShowPage: React.FC = () => {
     setPlatformUploadNote(null);
     try {
       const notes: string[] = [];
+      const uploadedPdfs: EventCueFile[] = [];
       for (const file of files) {
         const result = await apiClient.uploadEventCueFile(event.id, editingAssetsItem, file);
         if (result?.file) {
@@ -9053,10 +9102,14 @@ const RunOfShowPage: React.FC = () => {
           if ((result.file.versionCount || 1) > 1) {
             notes.push(`Saved as ${cueFileDisplayName(result.file)} (now current).`);
           }
+          if (isPdfCueUpload(file) || isPdfCueUpload(result.file)) {
+            uploadedPdfs.push(result.file);
+          }
         }
       }
       await refreshPlatformCueFiles(event.id);
       if (notes.length) setPlatformUploadNote(notes.join(' '));
+      if (uploadedPdfs.length) advancePdfConvertPrompt(uploadedPdfs);
     } catch (err: any) {
       setPlatformUploadError(err?.message || 'Upload failed.');
     } finally {
@@ -20768,7 +20821,7 @@ const RunOfShowPage: React.FC = () => {
                      type="file"
                      multiple
                      className="hidden"
-                     disabled={platformUploadBusy || editingAssetsItem <= 0}
+                     disabled={platformUploadBusy || !!pdfConvertBusyId || editingAssetsItem <= 0}
                      onChange={(e) => {
                        void handlePlatformCueFileUpload(e.target.files);
                        e.currentTarget.value = '';
@@ -20778,26 +20831,26 @@ const RunOfShowPage: React.FC = () => {
                      role="button"
                      tabIndex={0}
                      onClick={() => {
-                       if (platformUploadBusy || editingAssetsItem <= 0) return;
+                       if (platformUploadBusy || !!pdfConvertBusyId || editingAssetsItem <= 0) return;
                        platformFileInputRef.current?.click();
                      }}
                      onKeyDown={(e) => {
                        if (e.key === 'Enter' || e.key === ' ') {
                          e.preventDefault();
-                         if (platformUploadBusy || editingAssetsItem <= 0) return;
+                         if (platformUploadBusy || !!pdfConvertBusyId || editingAssetsItem <= 0) return;
                          platformFileInputRef.current?.click();
                        }
                      }}
                      onDragEnter={(e) => {
                        e.preventDefault();
                        e.stopPropagation();
-                       if (platformUploadBusy || editingAssetsItem <= 0) return;
+                       if (platformUploadBusy || !!pdfConvertBusyId || editingAssetsItem <= 0) return;
                        setPlatformUploadDragOver(true);
                      }}
                      onDragOver={(e) => {
                        e.preventDefault();
                        e.stopPropagation();
-                       if (platformUploadBusy || editingAssetsItem <= 0) return;
+                       if (platformUploadBusy || !!pdfConvertBusyId || editingAssetsItem <= 0) return;
                        e.dataTransfer.dropEffect = 'copy';
                        setPlatformUploadDragOver(true);
                      }}
@@ -20810,12 +20863,12 @@ const RunOfShowPage: React.FC = () => {
                        e.preventDefault();
                        e.stopPropagation();
                        setPlatformUploadDragOver(false);
-                       if (platformUploadBusy || editingAssetsItem <= 0) return;
+                       if (platformUploadBusy || !!pdfConvertBusyId || editingAssetsItem <= 0) return;
                        const dropped = Array.from(e.dataTransfer.files || []);
                        void handlePlatformCueFileUpload(dropped);
                      }}
                      className={`rounded-lg border-2 border-dashed px-4 py-8 text-center transition-colors ${
-                       platformUploadBusy || editingAssetsItem <= 0
+                       platformUploadBusy || !!pdfConvertBusyId || editingAssetsItem <= 0
                          ? 'border-slate-600 bg-slate-800/40 cursor-not-allowed text-slate-500'
                          : platformUploadDragOver
                            ? 'border-cyan-400 bg-cyan-900/40 text-cyan-100 cursor-copy'
@@ -20823,7 +20876,11 @@ const RunOfShowPage: React.FC = () => {
                      }`}
                    >
                      <div className="text-sm font-semibold">
-                       {platformUploadBusy ? 'Uploading…' : 'Drag a file here, or click to upload'}
+                       {platformUploadBusy
+                         ? 'Uploading…'
+                         : pdfConvertBusyId
+                           ? 'Creating PowerPoint from PDF slides…'
+                           : 'Drag a file here, or click to upload'}
                      </div>
                      <div className="mt-1 text-xs text-slate-400">
                        Any file type · max 200 MB · same name becomes the next version
@@ -20844,10 +20901,14 @@ const RunOfShowPage: React.FC = () => {
                  files={modalPlatformFiles}
                  canEdit
                  usingId={platformUsingVersionId}
+                 convertingId={pdfConvertBusyId}
                  onOpen={(fileId) => void openPlatformCueFile(fileId)}
                  onDownload={(file) => void downloadPlatformCueFile(file)}
                  onDelete={(fileId) => void handleDeletePlatformCueFile(fileId)}
                  onUseVersion={(file) => void handleUsePlatformCueFileVersion(file)}
+                 onConvertPdf={(file) => {
+                   setPdfConvertPrompt(file);
+                 }}
                />
              </div>
              
@@ -20908,6 +20969,51 @@ const RunOfShowPage: React.FC = () => {
                </div>
              </div>
              
+             {pdfConvertPrompt ? (
+               <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4">
+                 <div className="w-full max-w-md rounded-xl border border-slate-600 bg-slate-800 p-5 shadow-2xl">
+                   <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-400">
+                     PDF uploaded
+                   </p>
+                   <h3 className="mt-1 text-lg font-bold text-white">Is this a presentation?</h3>
+                   <p className="mt-2 text-sm text-slate-300">
+                     We’ll keep{' '}
+                     <span className="font-medium text-white">{cueFileDisplayName(pdfConvertPrompt)}</span>{' '}
+                     and add a PowerPoint of its slides (one picture per page). This is for assets only — it
+                     does not change the PowerPoint helper.
+                   </p>
+                   <div className="mt-5 flex flex-wrap gap-2">
+                     <button
+                       type="button"
+                       disabled={!!pdfConvertBusyId}
+                       onClick={() => {
+                         const file = pdfConvertPrompt;
+                         const rest = pdfConvertQueue;
+                         if (!file) return;
+                         void (async () => {
+                           await handleConvertPdfCueFile(file);
+                           advancePdfConvertPrompt(rest);
+                         })();
+                       }}
+                       className="flex-1 rounded-lg bg-amber-500 px-4 py-2.5 text-sm font-semibold text-slate-950 hover:bg-amber-400 disabled:opacity-50"
+                     >
+                       {pdfConvertBusyId === pdfConvertPrompt.id
+                         ? 'Creating…'
+                         : 'Yes — add PowerPoint'}
+                     </button>
+                     <button
+                       type="button"
+                       disabled={!!pdfConvertBusyId}
+                       onClick={() => advancePdfConvertPrompt(pdfConvertQueue)}
+                       className="rounded-lg bg-slate-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-500 disabled:opacity-50"
+                     >
+                       Keep PDF only
+                     </button>
+                   </div>
+                 </div>
+               </div>
+             ) : null}
+
              <div className="flex gap-3 mt-6">
                <button
                  onClick={saveAssets}

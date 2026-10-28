@@ -7,6 +7,8 @@ import { AppHeaderCollapseProvider } from './contexts/AppHeaderCollapseContext';
 import { LiveSyncStatusProvider } from './contexts/LiveSyncStatusContext';
 import AuthGuard from './components/AuthGuard';
 import AppHeader from './components/AppHeader';
+import SessionEndedOverlay from './components/SessionEndedOverlay';
+import NewVersionBanner from './components/NewVersionBanner';
 import ReportIssueFab from './components/ReportIssueFab';
 import { hydrateLogoVariantFromServer } from './lib/appSettings';
 import EventListPage from './pages/EventListPage';
@@ -229,6 +231,8 @@ function AppContent() {
         <Route path="*" element={null} />
       </Routes>
       {!hideReportFab ? <ReportIssueFab /> : null}
+      <NewVersionBanner />
+      <SessionEndedOverlay />
     </div>
     </ActiveViewersProvider>
   );

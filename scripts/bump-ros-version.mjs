@@ -15,6 +15,7 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
 const filePath = path.join(root, 'src', 'ros-version.json');
+const publicPath = path.join(root, 'public', 'ros-version.json');
 
 function todayLocalYmd() {
   const d = new Date();
@@ -78,4 +79,6 @@ if (dryRun) {
 }
 
 fs.writeFileSync(filePath, `${JSON.stringify(next, null, 2)}\n`, 'utf8');
+fs.writeFileSync(publicPath, `${JSON.stringify(next, null, 2)}\n`, 'utf8');
 console.log(`Wrote ${path.relative(root, filePath)}`);
+console.log(`Wrote ${path.relative(root, publicPath)}`);

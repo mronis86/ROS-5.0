@@ -1,5 +1,5 @@
 import { formatScheduleClock } from './scheduleClockFormat';
-import { resolveTimedMarkerDisplayTime } from './timedMarker';
+import { parseClockToSeconds, resolveTimedMarkerDisplayTime } from './timedMarker';
 
 export interface ScheduleStartItem {
   id: number;
@@ -188,5 +188,153 @@ export function shouldApplyShowStartOvertime(opts: {
   }
   const startCueDay = schedule[startCueIndex]?.day || 1;
   return rowDay === startCueDay;
+}
+
+export type StartTimeOvertimeOpts = {
+  masterStartTime?: string;
+  dayStartTimes?: Record<number | string, string>;
+  indentedLookup?: IndentedCueLookup;
+  overtimeMinutes?: Record<number, number>;
+  startCueId?: number | null;
+  showStartOvertime?: number;
+  /** Live projection minutes applied to rows after the anchor. */
+  liveOffsetMinutes?: number | null;
+  liveAnchorIndex?: number | null;
+  liveAnchorDay?: number | null;
+};
+
+/**
+ * Planned Start plus saved overtime (and optional live-cue projection).
+ * Same cascade the ROS Start column uses for est / was / OT badges.
+ */
+export function calculateScheduleStartTimeWithOvertime(
+  schedule: ScheduleStartItem[],
+  index: number,
+  opts: StartTimeOvertimeOpts = {}
+): string {
+  const indentedLookup = opts.indentedLookup ?? {};
+  const overtimeMinutes = opts.overtimeMinutes ?? {};
+  const startCueId = opts.startCueId ?? null;
+  const showStartOvertime = opts.showStartOvertime ?? 0;
+
+  const calcAt = (idx: number): string => {
+    const current = schedule[idx];
+    if (!current) return '';
+
+    if (current.isTimedMarker) {
+      const parentIndex = findParentScheduleIndex(schedule, idx, indentedLookup);
+      const parentStart =
+        parentIndex >= 0 && current.markerTimeMode !== 'absolute'
+          ? calcAt(parentIndex)
+          : parentIndex >= 0
+            ? calculateScheduleStartTime(
+                schedule,
+                parentIndex,
+                opts.masterStartTime,
+                opts.dayStartTimes,
+                indentedLookup
+              )
+            : '';
+      return resolveTimedMarkerDisplayTime(current, parentStart);
+    }
+
+    if (isIndentedScheduleItem(current, indentedLookup)) {
+      const parentIndex = findParentScheduleIndex(schedule, idx, indentedLookup);
+      if (parentIndex < 0) return '';
+      return calcAt(parentIndex);
+    }
+
+    const baseStartTime = calculateScheduleStartTime(
+      schedule,
+      idx,
+      opts.masterStartTime,
+      opts.dayStartTimes,
+      indentedLookup
+    );
+    if (!baseStartTime) return '';
+
+    const liveOffset = opts.liveOffsetMinutes;
+    if (
+      liveOffset != null &&
+      opts.liveAnchorIndex != null &&
+      idx > opts.liveAnchorIndex &&
+      (current.day || 1) === (opts.liveAnchorDay || 1)
+    ) {
+      const baseSec = parseClockToSeconds(baseStartTime);
+      if (baseSec == null) return baseStartTime;
+      return formatScheduleClock(baseSec + liveOffset * 60);
+    }
+
+    let totalOvertimeMinutes = 0;
+    const startCueIndex = startCueId != null ? schedule.findIndex((s) => s.id === startCueId) : -1;
+    const startCountingFrom = startCueIndex !== -1 ? startCueIndex : 0;
+    for (let i = startCountingFrom; i < idx; i++) {
+      const item = schedule[i];
+      if ((item.day || 1) === (current.day || 1) && itemCountsTowardStartTime(item, indentedLookup)) {
+        totalOvertimeMinutes += overtimeMinutes[item.id] || 0;
+      }
+    }
+    if (
+      shouldApplyShowStartOvertime({
+        showStartOvertime,
+        startCueId,
+        startCueIndex,
+        rowIndex: idx,
+        schedule,
+        rowDay: current.day || 1,
+      })
+    ) {
+      totalOvertimeMinutes += showStartOvertime;
+    }
+    if (totalOvertimeMinutes === 0) return baseStartTime;
+    const baseSec = parseClockToSeconds(baseStartTime);
+    if (baseSec == null) return baseStartTime;
+    return formatScheduleClock(baseSec + totalOvertimeMinutes * 60);
+  };
+
+  return calcAt(index);
+}
+
+/** Saved + live overtime minutes that apply to a row (for the Start OT badge). */
+export function cumulativeOvertimeMinutesForIndex(
+  schedule: ScheduleStartItem[],
+  index: number,
+  opts: StartTimeOvertimeOpts = {}
+): number {
+  const current = schedule[index];
+  if (!current || isIndentedScheduleItem(current, opts.indentedLookup ?? {})) return 0;
+  if (
+    opts.liveOffsetMinutes != null &&
+    opts.liveAnchorIndex != null &&
+    index > opts.liveAnchorIndex &&
+    (current.day || 1) === (opts.liveAnchorDay || 1)
+  ) {
+    return opts.liveOffsetMinutes;
+  }
+  const indentedLookup = opts.indentedLookup ?? {};
+  const overtimeMinutes = opts.overtimeMinutes ?? {};
+  const startCueId = opts.startCueId ?? null;
+  const startCueIndex = startCueId != null ? schedule.findIndex((s) => s.id === startCueId) : -1;
+  const startCountingFrom = startCueIndex !== -1 ? startCueIndex : 0;
+  let total = 0;
+  for (let i = startCountingFrom; i < index; i++) {
+    const item = schedule[i];
+    if ((item.day || 1) === (current.day || 1) && itemCountsTowardStartTime(item, indentedLookup)) {
+      total += overtimeMinutes[item.id] || 0;
+    }
+  }
+  if (
+    shouldApplyShowStartOvertime({
+      showStartOvertime: opts.showStartOvertime || 0,
+      startCueId,
+      startCueIndex,
+      rowIndex: index,
+      schedule,
+      rowDay: current.day || 1,
+    })
+  ) {
+    total += opts.showStartOvertime || 0;
+  }
+  return total;
 }
 

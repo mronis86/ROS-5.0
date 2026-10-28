@@ -1,9 +1,11 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { authService, User, AccessStatus } from '../services/auth-service';
+import { API_TOKEN_KEY, ROS_SESSION_ENDED_EVENT } from '../lib/sessionAuth';
 
 interface AuthContextType {
   user: User | null;
   loading: boolean;
+  sessionExpired: boolean;
   accessStatus: import('../services/auth-service').AccessStatus;
   signIn: (email: string, password: string, fullName?: string) => Promise<{
     error: any;
@@ -53,6 +55,7 @@ interface AuthProviderProps {
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [sessionExpired, setSessionExpired] = useState(false);
   const [accessStatus, setAccessStatus] = useState<AccessStatus>('none');
 
   useEffect(() => {
@@ -64,6 +67,19 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     };
     sync();
     void authService.whenAuthReady().then(sync);
+
+    const markExpired = () => {
+      setSessionExpired(true);
+    };
+    window.addEventListener(ROS_SESSION_ENDED_EVENT, markExpired);
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === API_TOKEN_KEY && !event.newValue) markExpired();
+    };
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener(ROS_SESSION_ENDED_EVENT, markExpired);
+      window.removeEventListener('storage', onStorage);
+    };
   }, []);
 
   const requestAccess = async (email: string, fullName: string) => {
@@ -84,6 +100,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     if (!result.error) {
       setUser(authService.getCurrentUser());
       setAccessStatus(authService.getAccessStatus());
+      setSessionExpired(false);
     }
     return result;
   };
@@ -99,6 +116,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     await authService.signOut();
     setUser(null);
     setAccessStatus('none');
+    setSessionExpired(false);
   };
 
   const updateProfile = async (updates: { full_name?: string; role?: string }) => {
@@ -132,11 +150,13 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     authService.applySessionFromPortal(session);
     setUser(authService.getCurrentUser());
     setAccessStatus(authService.getAccessStatus());
+    setSessionExpired(false);
   };
 
   const value = {
     user,
     loading,
+    sessionExpired,
     accessStatus,
     signUp,
     requestAccess,

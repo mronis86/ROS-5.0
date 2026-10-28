@@ -26,6 +26,13 @@ import {
   type OvertimeSignId,
 } from './overtimeSign';
 
+export type RefreshNotice = {
+  version: string;
+  date: string;
+  seq: number;
+  at?: string | null;
+};
+
 export type AppSettingsResponse = {
   logoVariantId: LogoVariantId;
   greenRoomLayoutId: GreenRoomLayoutId;
@@ -34,9 +41,22 @@ export type AppSettingsResponse = {
   hideFullscreenTimerOption: boolean;
   autoShotTypeFromSpeakers: boolean;
   showLiveSyncStatusBadge: boolean;
+  refreshNotice: RefreshNotice | null;
   updatedAt: string | null;
   needsMigration?: boolean;
 };
+
+function parseRefreshNotice(raw: unknown): RefreshNotice | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const version = String((raw as { version?: unknown }).version || '').trim();
+  if (!version) return null;
+  return {
+    version,
+    date: String((raw as { date?: unknown }).date || ''),
+    seq: Number((raw as { seq?: unknown }).seq) || 0,
+    at: (raw as { at?: string | null }).at || null,
+  };
+}
 
 function parseSettings(data: Partial<AppSettingsResponse> & { error?: string }): AppSettingsResponse {
   const logoVariantId = data.logoVariantId === 'sinor' ? 'sinor' : 'default';
@@ -51,6 +71,7 @@ function parseSettings(data: Partial<AppSettingsResponse> & { error?: string }):
     hideFullscreenTimerOption: data.hideFullscreenTimerOption === true,
     autoShotTypeFromSpeakers: data.autoShotTypeFromSpeakers === true,
     showLiveSyncStatusBadge: data.showLiveSyncStatusBadge === true,
+    refreshNotice: parseRefreshNotice(data.refreshNotice),
     updatedAt: data.updatedAt ?? null,
     needsMigration: data.needsMigration === true,
   };
@@ -209,6 +230,23 @@ export async function saveAdminShowLiveSyncStatusBadge(
     throw new Error(data.error || `Failed to save live sync badge setting (${res.status})`);
   }
   return applySettings(parseSettings(data));
+}
+
+export async function saveAdminRefreshNotice(
+  refreshNotice: { version: string; date?: string; seq?: number } | null
+): Promise<AppSettingsResponse> {
+  const res = await adminFetch('/api/admin/app-settings', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ refreshNotice }),
+  });
+  const data = (await res.json().catch(() => ({}))) as Partial<AppSettingsResponse> & {
+    error?: string;
+  };
+  if (!res.ok) {
+    throw new Error(data.error || `Failed to save refresh notice (${res.status})`);
+  }
+  return parseSettings(data);
 }
 
 export async function syncAdminAppSettingsTable(): Promise<AppSettingsResponse> {

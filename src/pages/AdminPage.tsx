@@ -42,8 +42,11 @@ import {
   saveAdminHideFullscreenTimerOption,
   saveAdminAutoShotTypeFromSpeakers,
   saveAdminShowLiveSyncStatusBadge,
+  saveAdminRefreshNotice,
   syncAdminAppSettingsTable,
+  type RefreshNotice,
 } from '../lib/appSettings';
+import { fetchLiveRosVersion } from '../lib/rosVersionPoll';
 import AppLogo from '../components/AppLogo';
 import AppBrandTitle from '../components/AppBrandTitle';
 import AccessEventAccessModal, { type ApproveAccessResult } from '../components/AccessEventAccessModal';
@@ -543,6 +546,9 @@ export default function AdminPage() {
   const [logoSettingsNeedsMigration, setLogoSettingsNeedsMigration] = useState(false);
   const [logoSettingsSyncingTable, setLogoSettingsSyncingTable] = useState(false);
   const [logoSettingsUpdatedAt, setLogoSettingsUpdatedAt] = useState<string | null>(null);
+  const [refreshNotice, setRefreshNotice] = useState<RefreshNotice | null>(null);
+  const [refreshNoticeSaving, setRefreshNoticeSaving] = useState(false);
+  const [refreshNoticeMessage, setRefreshNoticeMessage] = useState<string | null>(null);
   const [platformReport, setPlatformReport] = useState<PlatformMaintenanceReport | null>(null);
   const [platformLoading, setPlatformLoading] = useState(false);
   const [platformError, setPlatformError] = useState<string | null>(null);
@@ -791,6 +797,7 @@ export default function AdminPage() {
     hideFullscreenTimerOption: boolean;
     autoShotTypeFromSpeakers: boolean;
     showLiveSyncStatusBadge: boolean;
+    refreshNotice?: RefreshNotice | null;
     updatedAt: string | null;
     needsMigration?: boolean;
   }) => {
@@ -809,6 +816,9 @@ export default function AdminPage() {
     setAutoShotTypeFromSpeakersState(settings.autoShotTypeFromSpeakers);
     setShowLiveSyncStatusBadgeState(settings.showLiveSyncStatusBadge);
     setLogoSettingsUpdatedAt(settings.updatedAt);
+    if (settings.refreshNotice !== undefined) {
+      setRefreshNotice(settings.refreshNotice);
+    }
     if (settings.needsMigration != null) {
       setLogoSettingsNeedsMigration(settings.needsMigration === true);
     }
@@ -946,6 +956,44 @@ export default function AdminPage() {
       setLogoSettingsError(err instanceof Error ? err.message : 'Failed to create app_settings table');
     } finally {
       setLogoSettingsSyncingTable(false);
+    }
+  };
+
+  const handleNotifyRefresh = async () => {
+    if (refreshNoticeSaving || logoSettingsNeedsMigration) return;
+    setRefreshNoticeSaving(true);
+    setRefreshNoticeMessage(null);
+    setLogoSettingsError(null);
+    try {
+      const live = await fetchLiveRosVersion();
+      const settings = await saveAdminRefreshNotice({
+        version: live.version,
+        date: live.date,
+        seq: live.seq,
+      });
+      applyAllLogoSettings({ ...settings, needsMigration: false });
+      setRefreshNoticeMessage(`Users will be asked to refresh to ${live.version}.`);
+    } catch (err) {
+      setLogoSettingsError(err instanceof Error ? err.message : 'Failed to send refresh notice');
+    } finally {
+      setRefreshNoticeSaving(false);
+    }
+  };
+
+  const handleClearRefreshNotice = async () => {
+    if (refreshNoticeSaving || logoSettingsNeedsMigration) return;
+    setRefreshNoticeSaving(true);
+    setRefreshNoticeMessage(null);
+    setLogoSettingsError(null);
+    try {
+      const settings = await saveAdminRefreshNotice(null);
+      applyAllLogoSettings({ ...settings, needsMigration: false });
+      setRefreshNotice(null);
+      setRefreshNoticeMessage('Refresh notice cleared. Banners will hide on the next poll.');
+    } catch (err) {
+      setLogoSettingsError(err instanceof Error ? err.message : 'Failed to clear refresh notice');
+    } finally {
+      setRefreshNoticeSaving(false);
     }
   };
 
@@ -2821,6 +2869,53 @@ export default function AdminPage() {
               >
                 {platformLoading ? 'Checking…' : 'Refresh dates'}
               </button>
+            </div>
+          </div>
+
+          <div className="mb-6 rounded-xl border border-amber-500/40 bg-amber-950/20 px-4 py-4">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="min-w-0">
+                <h3 className="font-semibold text-amber-100 text-sm flex items-center gap-2">
+                  <Bell className="w-4 h-4" />
+                  Refresh notice
+                </h3>
+                <p className="text-slate-300 text-sm mt-1 max-w-2xl">
+                  Deploys do not prompt users. When you are done with updates, notify everyone to
+                  refresh. Extra pushes that day stay quiet until you click again.
+                </p>
+                <p className="text-slate-400 text-xs mt-2 font-mono">
+                  {refreshNotice?.version
+                    ? `Active notice: ${refreshNotice.version}${
+                        refreshNotice.at
+                          ? ` · sent ${new Date(refreshNotice.at).toLocaleString()}`
+                          : ''
+                      }`
+                    : 'No notice is active. Users will not see a refresh banner.'}
+                </p>
+                {refreshNoticeMessage ? (
+                  <p className="text-emerald-300 text-xs mt-2">{refreshNoticeMessage}</p>
+                ) : null}
+              </div>
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => void handleNotifyRefresh()}
+                  disabled={refreshNoticeSaving || logoSettingsNeedsMigration}
+                  className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-slate-950 text-sm font-semibold rounded-lg transition-colors"
+                >
+                  {refreshNoticeSaving ? 'Sending…' : 'Notify users to refresh'}
+                </button>
+                {refreshNotice?.version ? (
+                  <button
+                    type="button"
+                    onClick={() => void handleClearRefreshNotice()}
+                    disabled={refreshNoticeSaving || logoSettingsNeedsMigration}
+                    className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white text-sm rounded-lg transition-colors"
+                  >
+                    Clear notice
+                  </button>
+                ) : null}
+              </div>
             </div>
           </div>
 

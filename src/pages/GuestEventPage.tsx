@@ -4,6 +4,7 @@ import {
   fetchGuestEvent,
   guestTimerElapsedSeconds,
   mergeGuestActiveTimer,
+  mergeGuestStartTiming,
   stripHtmlNotes,
   type GuestActiveTimer,
   type GuestEventPayload,
@@ -222,7 +223,26 @@ const GuestEventPage: React.FC = () => {
         setSocketConnected(connected);
         if (!connected) setLiveSynced(false);
       },
-      onTimerUpdated: applyTimer,
+      onTimerUpdated: (timer) => {
+        applyTimer(timer);
+        if (timer?.startedAt && timer.itemId != null) {
+          setPayload((prev) => {
+            if (!prev) return prev;
+            return {
+              ...prev,
+              timing: mergeGuestStartTiming(prev.timing, {
+                cueActualStarts: { [String(timer.itemId)]: String(timer.startedAt) },
+              }),
+            };
+          });
+        }
+      },
+      onTimingPatch: (patch) => {
+        setPayload((prev) => {
+          if (!prev) return prev;
+          return { ...prev, timing: mergeGuestStartTiming(prev.timing, patch) };
+        });
+      },
       onScheduleUpdated: (data) => {
         setPayload((prev) => {
           if (!prev?.event) return prev;
@@ -235,6 +255,12 @@ const GuestEventPage: React.FC = () => {
               dayStartTimes: data.dayStartTimes ?? prev.event.dayStartTimes,
               numberOfDays: data.numberOfDays ?? prev.event.numberOfDays,
             },
+            timing: mergeGuestStartTiming(prev.timing, {
+              showMode: data.showMode,
+              liveStartProjection: data.liveStartProjection,
+              timezone: data.timezone,
+              lockedStartTimes: data.lockedStartTimes,
+            }),
           };
         });
       },
@@ -260,6 +286,17 @@ const GuestEventPage: React.FC = () => {
       },
       onResetAllStates: () => {
         applyTimer(null);
+        setPayload((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            timing: mergeGuestStartTiming(prev.timing, {
+              overtimeReset: true,
+              cueActualStartsCleared: true,
+              showStartOvertime: 0,
+            }),
+          };
+        });
       },
     });
 
@@ -606,6 +643,8 @@ const GuestEventPage: React.FC = () => {
                 visibleColumns={visibleColumns}
                 stickyStartColumn={stickyStartColumn}
                 columnOrder={columnOrder}
+                startTiming={payload.timing}
+                activeTimer={activeTimer}
                 onOpenSpeakers={(itemId) => {
                   setSpeakersItemId(itemId);
                   setSpeakerPanel('photos');

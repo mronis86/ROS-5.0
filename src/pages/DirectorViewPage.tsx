@@ -266,6 +266,9 @@ type RosRow = {
   customFields?: Record<string, unknown>;
   isIndented?: boolean;
   isTimedMarker?: boolean;
+  markerTimeMode?: 'absolute' | 'offset';
+  markerOffsetSeconds?: number;
+  markerAbsoluteSeconds?: number;
   hasPPT?: boolean;
   hasQA?: boolean;
   needsRecording?: boolean;
@@ -302,6 +305,10 @@ function toGuestItem(item: RosRow): GuestScheduleItem {
     customFields: custom,
     cue: cueRaw,
     isIndented: Boolean(item.isIndented || item.isTimedMarker),
+    isTimedMarker: !!item.isTimedMarker,
+    markerTimeMode: item.markerTimeMode === 'absolute' ? 'absolute' : 'offset',
+    markerOffsetSeconds: Number(item.markerOffsetSeconds) || 0,
+    markerAbsoluteSeconds: Number(item.markerAbsoluteSeconds) || 0,
     hasPPT: !!item.hasPPT,
     hasQA: !!item.hasQA,
     needsRecording: !!item.needsRecording,

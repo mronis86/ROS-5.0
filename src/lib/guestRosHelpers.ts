@@ -228,6 +228,10 @@ export function toScheduleRowItem(item: {
   needsRecording?: boolean;
   assets?: string;
   isPublic?: boolean;
+  isTimedMarker?: boolean;
+  markerTimeMode?: 'absolute' | 'offset';
+  markerOffsetSeconds?: number;
+  markerAbsoluteSeconds?: number;
   customFields?: Record<string, unknown>;
 }): Record<string, unknown> {
   const custom =
@@ -254,6 +258,10 @@ export function toScheduleRowItem(item: {
     needsRecording: !!item.needsRecording,
     isPublic: !!item.isPublic,
     isIndented: !!item.isIndented,
+    isTimedMarker: !!item.isTimedMarker,
+    markerTimeMode: item.markerTimeMode === 'absolute' ? 'absolute' : 'offset',
+    markerOffsetSeconds: Number(item.markerOffsetSeconds) || 0,
+    markerAbsoluteSeconds: Number(item.markerAbsoluteSeconds) || 0,
     customFields: custom,
   };
 }

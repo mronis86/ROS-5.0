@@ -1119,6 +1119,22 @@ class ApiClient {
     );
   }
 
+  async convertPdfCueFileToPptx(fileId: string, eventId?: string, force = false) {
+    const result = await this.request<{
+      file: EventCueFile;
+      reused?: boolean;
+      pages?: number | null;
+      totalPages?: number | null;
+      truncated?: boolean;
+      maxPages?: number;
+    }>(`/api/event-cue-files/${encodeURIComponent(fileId)}/pdf-to-pptx`, {
+      method: 'POST',
+      body: JSON.stringify({ force }),
+    });
+    if (eventId) this.cache.delete(`eventCueFiles_${eventId}`);
+    return result;
+  }
+
   async preferEventCueFile(fileId: string, eventId?: string) {
     const result = await this.request<{ ok: boolean; file: EventCueFile; files: EventCueFile[] }>(
       `/api/event-cue-files/${encodeURIComponent(fileId)}/prefer`,
@@ -1229,6 +1245,7 @@ export interface EventCueFile {
   versionCount?: number;
   isCurrent?: boolean;
   versionedName?: string;
+  convertedFromId?: string | null;
 }
 
 export const apiClient = new ApiClient();

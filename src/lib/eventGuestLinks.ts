@@ -32,6 +32,77 @@ export interface GuestScheduleItem {
   hasQA: boolean;
   needsRecording: boolean;
   isPublic?: boolean;
+  isTimedMarker?: boolean;
+  markerTimeMode?: 'absolute' | 'offset';
+  markerOffsetSeconds?: number;
+  markerAbsoluteSeconds?: number;
+}
+
+export type GuestShowMode = 'rehearsal' | 'in-show';
+
+/** Start-column state mirrored from ROS (est / ran / was / OT). */
+export interface GuestStartTiming {
+  showMode: GuestShowMode;
+  liveStartProjection: boolean;
+  timezone: string;
+  overtimeMinutes: Record<string, number>;
+  lockedStartTimes: Record<string, string>;
+  cueActualStarts: Record<string, string>;
+  startCueId: number | null;
+  showStartOvertime: number;
+}
+
+export const EMPTY_GUEST_START_TIMING: GuestStartTiming = {
+  showMode: 'rehearsal',
+  liveStartProjection: false,
+  timezone: '',
+  overtimeMinutes: {},
+  lockedStartTimes: {},
+  cueActualStarts: {},
+  startCueId: null,
+  showStartOvertime: 0,
+};
+
+export type GuestTimingPatch = Partial<GuestStartTiming> & {
+  overtimeReset?: boolean;
+  cueActualStartsCleared?: boolean;
+  overtimeItemId?: number | string;
+  overtimeItemMinutes?: number;
+};
+
+export function mergeGuestStartTiming(
+  current: GuestStartTiming | undefined,
+  patch: GuestTimingPatch
+): GuestStartTiming {
+  const next: GuestStartTiming = { ...EMPTY_GUEST_START_TIMING, ...(current || {}) };
+  if (patch.showMode === 'in-show' || patch.showMode === 'rehearsal') next.showMode = patch.showMode;
+  if (typeof patch.liveStartProjection === 'boolean') next.liveStartProjection = patch.liveStartProjection;
+  if (typeof patch.timezone === 'string') next.timezone = patch.timezone;
+  if (patch.lockedStartTimes && typeof patch.lockedStartTimes === 'object') {
+    next.lockedStartTimes = { ...patch.lockedStartTimes };
+  }
+  if (patch.overtimeReset) {
+    next.overtimeMinutes = {};
+  } else if (patch.overtimeMinutes && typeof patch.overtimeMinutes === 'object') {
+    next.overtimeMinutes = { ...next.overtimeMinutes, ...patch.overtimeMinutes };
+  }
+  if (patch.overtimeItemId != null) {
+    next.overtimeMinutes = {
+      ...next.overtimeMinutes,
+      [String(patch.overtimeItemId)]: Number(patch.overtimeItemMinutes) || 0,
+    };
+  }
+  if (patch.cueActualStartsCleared) {
+    next.cueActualStarts = {};
+  } else if (patch.cueActualStarts && typeof patch.cueActualStarts === 'object') {
+    next.cueActualStarts = { ...next.cueActualStarts, ...patch.cueActualStarts };
+  }
+  if (patch.startCueId !== undefined) {
+    const id = patch.startCueId == null ? null : Number(patch.startCueId);
+    next.startCueId = id != null && Number.isFinite(id) ? id : null;
+  }
+  if (typeof patch.showStartOvertime === 'number') next.showStartOvertime = patch.showStartOvertime;
+  return next;
 }
 
 export interface GuestActiveTimer {
@@ -57,6 +128,7 @@ export interface GuestEventPayload {
   event?: GuestEventSummary;
   scheduleItems?: GuestScheduleItem[];
   activeTimer?: GuestActiveTimer | null;
+  timing?: GuestStartTiming;
   serverTime?: string;
   error?: string;
   needsMigration?: boolean;
