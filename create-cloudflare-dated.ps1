@@ -41,6 +41,16 @@ $UnusedDeployZips = @(
 Write-Host '========== Cloudflare Pages deploy folder =========='
 
 if (-not $SkipBuild) {
+    # Admin bakes src/ros-version.json at Vite build time. If git bump was skipped
+    # (common for Cursor agent pushes), first pack of a new calendar day still updates it.
+    Write-Host 'Checking ROS app version (bump if not today)...'
+    Push-Location $ProjectRoot
+    try { node scripts/bump-ros-version.mjs --if-new-day } finally { Pop-Location }
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "version bump failed (exit $LASTEXITCODE)."
+        exit $LASTEXITCODE
+    }
+
     # Always rebuild so Pages never ships a stale dist from an earlier build.
     Write-Host 'Running npm run build...'
     Push-Location $ProjectRoot

@@ -4628,9 +4628,10 @@ export default function AdminPage() {
                 Production label is calendar-based:{' '}
                 <code className="text-amber-200/90 text-xs">V{'{YY}'}.{'{M}'}.{'{D}'}.{'{Letter}'}{'{Cycle}'}</code>
                 {' '}(e.g. <span className="font-mono text-white">{ROS_APP_VERSION}</span>). A1 = first push that day,
-                Z1 = 26th, A2 = 27th. Before each production push run{' '}
-                <code className="text-amber-200/90 text-xs">npm run version:bump</code> and commit{' '}
-                <code className="text-amber-200/90 text-xs">src/ros-version.json</code>.
+                Z1 = 26th, A2 = 27th. Cursor agent bumps this on every master push and commits{' '}
+                <code className="text-amber-200/90 text-xs">src/ros-version.json</code>. Cloudflare pack also bumps
+                on the first deploy of a new calendar day if git was skipped. Manual fallback:{' '}
+                <code className="text-amber-200/90 text-xs">npm run version:bump</code>.
               </p>
             </div>
 

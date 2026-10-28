@@ -1,13 +1,14 @@
 ---
-description: Wait for the user to authorize every git push
+description: User authorizes master pushes in GitHub Desktop
 alwaysApply: true
 ---
 
-# Confirm before every git push
+# Authorize master pushes in GitHub Desktop
 
-The user wants to personally authorize every push (the usual Cursor / GitHub "authorize push to master" step).
+When the user asks to push or update GitHub master:
 
-- Never run `git push` (or any command that updates a remote) until the user has just confirmed in this conversation that they are ready to authorize that push.
-- "Commit and push" or "update cloudflare" is not enough. After the commit, stop and ask them to confirm the push so they can click authorize.
-- Do not use stored git credentials to push silently in the background.
-- After they confirm, then push and wait for their authorize prompt.
+- Bump the Admin version first. Run `npm run version:bump`, then add and commit `src/ros-version.json` if it changed (same commit as the work, or a follow-up commit if the work is already committed). Admin reads that file at Vite build time. Skipping it freezes the label (this is not IDE vs Agent — both must bump).
+- Commit first if needed, then start `git push` so they can authorize.
+- Force the GitHub Desktop / account picker. Use `GCM_INTERACTIVE=always` so cached credentials do not push silently.
+- The Cursor Auto-review card is not a substitute. They must see GitHub Desktop and pick their account.
+- Do not tell them to push themselves instead of starting the push.

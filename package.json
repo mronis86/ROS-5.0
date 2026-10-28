@@ -64,6 +64,7 @@
     "prerender:led-cues": "node scripts/run-bake-led-prerenders.js",
     "build": "vite build && node scripts/verify-dist-privacy.js",
     "version:bump": "node scripts/bump-ros-version.mjs",
+    "version:bump:if-new-day": "node scripts/bump-ros-version.mjs --if-new-day",
     "preview": "vite preview",
     "test": "react-scripts test",
     "eject": "react-scripts eject",

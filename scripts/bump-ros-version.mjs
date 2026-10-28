@@ -5,6 +5,8 @@
  *
  * Usage: npm run version:bump
  * Optional: node scripts/bump-ros-version.mjs --dry-run
+ * Optional: node scripts/bump-ros-version.mjs --if-new-day
+ *   (no-op when src/ros-version.json is already today's date — used by Cloudflare pack)
  */
 import fs from 'fs';
 import path from 'path';
@@ -37,6 +39,7 @@ function formatVersion(date, seq) {
 }
 
 const dryRun = process.argv.includes('--dry-run');
+const ifNewDay = process.argv.includes('--if-new-day');
 const { ymd, date } = todayLocalYmd();
 
 let prev = { version: '', date: '', seq: 0 };
@@ -46,6 +49,11 @@ if (fs.existsSync(filePath)) {
   } catch {
     /* start fresh */
   }
+}
+
+if (ifNewDay && prev.date === ymd && Number(prev.seq) >= 1) {
+  console.log(`ROS version already ${prev.version} (today); skip`);
+  process.exit(0);
 }
 
 let seq;

@@ -2,7 +2,9 @@
  * ROS app version: V{YY}.{M}.{D}.{Letter}{Cycle}
  * e.g. V26.9.23.A1 = first production push on 2026-09-23.
  * A–Z = push within a 26-push block; after Z1 comes A2.
- * Bump with: npm run version:bump (before each production push).
+ * Bumped automatically before each master push (Cursor agent rule) and on the
+ * first Cloudflare pack of a new calendar day (`--if-new-day`). Manual:
+ * npm run version:bump, then commit src/ros-version.json.
  */
 import rosVersionFile from '../ros-version.json';
 
