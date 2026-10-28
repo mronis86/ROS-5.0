@@ -20,12 +20,21 @@ import {
   GUEST_STICKY_NUM_WIDTH_PX,
   GUEST_STICKY_START_LEFT_PX,
   guestColumnFlexOrderMap,
+  loadGuestSegmentNameDisplayMode,
   normalizeGuestColumnOrderWithCustom,
+  persistGuestSegmentNameDisplayMode,
   type GuestScrollColumn,
   type GuestVisibleColumns,
 } from '../../lib/guestColumnPrefs';
+import {
+  cycleSegmentNameDisplayMode,
+  segmentNameDisplayModeLabel,
+  type SegmentNameDisplayMode,
+} from '../../lib/scheduleClockFormat';
 import { parseCustomColumnOrderKey } from '../../lib/rosColumnOrder';
 import StartTimeColumnCell from '../StartTimeColumnCell';
+import DuplicateCueFlag from '../DuplicateCueFlag';
+import { buildDuplicateCueMap, duplicateCueTooltip } from '../../lib/cueDisplay';
 import {
   calculateScheduleStartTime,
   calculateScheduleStartTimeWithOvertime,
@@ -107,6 +116,11 @@ export interface GuestRunOfShowGridProps {
   activeTimer?: GuestActiveTimer | null;
   onOpenSpeakers: (itemId: number) => void;
   onViewSegmentDetail?: (itemId: number) => void;
+  segmentSpellingMode?: 'off' | 'creative';
+  onSegmentSpellingPatch?: (
+    itemId: number,
+    patch: { segmentSpellingOk?: string[]; segmentSpellingAskRos?: boolean }
+  ) => void;
 }
 
 /**
@@ -132,8 +146,20 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
   activeTimer = null,
   onOpenSpeakers,
   onViewSegmentDetail,
+  segmentSpellingMode = 'off',
+  onSegmentSpellingPatch,
 }) => {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [segmentNameDisplayMode, setSegmentNameDisplayMode] = useState<SegmentNameDisplayMode>(
+    loadGuestSegmentNameDisplayMode
+  );
+  const toggleSegmentNameDisplayMode = useCallback(() => {
+    setSegmentNameDisplayMode((prev) => {
+      const next = cycleSegmentNameDisplayMode(prev);
+      persistGuestSegmentNameDisplayMode(next);
+      return next;
+    });
+  }, []);
   const columns = visibleColumns || GUEST_VISIBLE_COLUMNS;
   const startPinnedBesideCue = stickyStartColumn && columns.start;
   const scrollColumns = useMemo(
@@ -146,6 +172,7 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
     [columnOrder, customIds]
   );
   const columnFlexOrder = useMemo(() => guestColumnFlexOrderMap(orderedKeys), [orderedKeys]);
+  const duplicateCues = useMemo(() => buildDuplicateCueMap(filteredItems), [filteredItems]);
   const customById = useMemo(() => {
     const map = new Map<string, GuestCustomColumn>();
     for (const col of customColumns) map.set(col.id, col);
@@ -289,7 +316,8 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
       participants?: string,
       customFields?: unknown,
       customColumns?: unknown[],
-      voCueCount?: number
+      voCueCount?: number,
+      segmentName?: string
     ) =>
       estimateRowHeightRem(
         notes,
@@ -298,9 +326,12 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
         customFields,
         customColumns,
         voCueCount,
-        GUEST_COLUMN_WIDTHS.notes
+        GUEST_COLUMN_WIDTHS.notes,
+        segmentName,
+        segmentNameDisplayMode,
+        GUEST_COLUMN_WIDTHS.segmentName
       ),
-    []
+    [segmentNameDisplayMode]
   );
 
   const getSpeakersHeight = useCallback(
@@ -346,15 +377,23 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
             <div className="text-white font-bold">{GUEST_COLUMN_LABELS[builtin]}</div>
             <div className="text-xs text-slate-400">HH MM SS</div>
           </div>
+        ) : builtin === 'segmentName' ? (
+          <button
+            type="button"
+            onClick={toggleSegmentNameDisplayMode}
+            className="w-full h-full px-1 text-left cursor-pointer hover:bg-slate-600/80 transition-colors"
+            title={`Segment: ${segmentNameDisplayModeLabel(segmentNameDisplayMode)} (click for ${segmentNameDisplayModeLabel(cycleSegmentNameDisplayMode(segmentNameDisplayMode))})`}
+          >
+            <div className="text-white font-bold">Segment Name</div>
+            <div className="text-[10px] text-slate-400">{segmentNameDisplayModeLabel(segmentNameDisplayMode)}</div>
+          </button>
         ) : (
           <span className="text-white font-bold">
             {builtin === 'programType'
               ? 'Program Type'
-              : builtin === 'segmentName'
-                ? 'Segment Name'
-                : builtin === 'shotType'
-                  ? 'Shot Type'
-                  : GUEST_COLUMN_LABELS[builtin]}
+              : builtin === 'shotType'
+                ? 'Shot Type'
+                : GUEST_COLUMN_LABELS[builtin]}
           </span>
         )}
       </div>
@@ -432,9 +471,13 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
               item.customFields,
               customColumns,
               0,
-              GUEST_COLUMN_WIDTHS.notes
+              GUEST_COLUMN_WIDTHS.notes,
+              item.segmentName,
+              segmentNameDisplayMode,
+              GUEST_COLUMN_WIDTHS.segmentName
             );
             const isIndented = Boolean(indentedCues[item.id] || item.isIndented || item.isTimedMarker);
+            const dup = duplicateCues.get(item.id);
 
             return (
               <div
@@ -462,16 +505,23 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
                   }}
                 >
                   <div className="flex w-full max-w-[9rem]">
-                    <div className="flex items-center px-1 py-1 border border-slate-600 border-r-0 rounded-l text-white text-sm font-medium bg-slate-600">
+                    <div
+                      className={`flex items-center px-1 py-1 border border-r-0 rounded-l text-white text-sm font-medium ${
+                        dup ? 'bg-amber-600 border-amber-400' : 'bg-slate-600 border-slate-600'
+                      }`}
+                    >
                       CUE
                     </div>
                     <div
-                      className="flex-1 px-2 py-1 border border-slate-600 rounded-r text-white text-sm font-bold bg-slate-700 text-center truncate"
-                      title={cueVal || '—'}
+                      className={`flex-1 px-2 py-1 border rounded-r text-white text-sm font-bold bg-slate-700 text-center truncate ${
+                        dup ? 'border-amber-400' : 'border-slate-600'
+                      }`}
+                      title={dup ? duplicateCueTooltip(dup.otherRowNumbers) : cueVal || '—'}
                     >
                       {cueVal || '—'}
                     </div>
                   </div>
+                  {dup ? <DuplicateCueFlag otherRowNumbers={dup.otherRowNumbers} /> : null}
                 </div>
                 {startPinnedBesideCue && (
                   <div
@@ -542,6 +592,9 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
                   setViewingSpeakersItem={(id: number) => onOpenSpeakers(id)}
                   setShowViewSpeakersModal={noop}
                   onViewSegmentDetail={onViewSegmentDetail}
+                  segmentNameDisplayMode={segmentNameDisplayMode}
+                  segmentSpellingMode={segmentSpellingMode}
+                  onSegmentSpellingPatch={onSegmentSpellingPatch}
                   customColumns={customColumns}
                   visibleCustomColumns={visibleCustomColumns}
                   customColumnWidths={{}}

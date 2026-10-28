@@ -16,6 +16,8 @@ export interface GuestScheduleItem {
   id: number;
   day: number;
   segmentName: string;
+  segmentSpellingOk?: string[];
+  segmentSpellingAskRos?: boolean;
   programType: string;
   shotType: string;
   durationHours: number;

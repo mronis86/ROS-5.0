@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { canAccessCreative } from '../services/auth-service';
-import { fetchCreativeEvent } from '../lib/creativeEventApi';
+import { fetchCreativeEvent, patchCreativeSegmentSpelling } from '../lib/creativeEventApi';
 import { stripHtmlNotes, type GuestEventPayload } from '../lib/eventGuestLinks';
 import GuestRunOfShowGrid from '../components/guest/GuestRunOfShowGrid';
 import GuestSpeakersModal from '../components/guest/GuestSpeakersModal';
@@ -249,6 +249,28 @@ const CreativeEventPage: React.FC = () => {
   useEffect(() => {
     loadScheduleRef.current = loadSchedule;
   }, [loadSchedule]);
+
+  const patchSegmentSpelling = useCallback(
+    (
+      itemId: number,
+      patch: { segmentSpellingOk?: string[]; segmentSpellingAskRos?: boolean }
+    ) => {
+      setPayload((prev) => {
+        if (!prev?.scheduleItems) return prev;
+        return {
+          ...prev,
+          scheduleItems: prev.scheduleItems.map((item) =>
+            item.id === itemId ? { ...item, ...patch } : item
+          ),
+        };
+      });
+      if (!eventId) return;
+      void patchCreativeSegmentSpelling(eventId, itemId, patch).then((result) => {
+        if (!result.ok) void loadSchedule(true);
+      });
+    },
+    [eventId, loadSchedule]
+  );
 
   const openContentReview = useCallback(() => {
     const name = payload?.event?.name || eventNameParam || 'Event';
@@ -849,6 +871,8 @@ const CreativeEventPage: React.FC = () => {
                   setSpeakerPanel('photos');
                 }}
                 onViewSegmentDetail={(itemId) => setDetailItemId(itemId)}
+                segmentSpellingMode="creative"
+                onSegmentSpellingPatch={patchSegmentSpelling}
               />
             </div>
             <p className="shrink-0 text-center text-[11px] text-slate-500 pt-2 pb-1 print:hidden">

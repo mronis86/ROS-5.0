@@ -1,5 +1,6 @@
 import { stripHtmlNotes } from './eventGuestLinks';
 import { speakerLocationPrefix } from './speakerLocations';
+import type { SegmentNameDisplayMode } from './scheduleClockFormat';
 
 import {
   ENDSHOW_PROGRAM_TYPE,
@@ -142,10 +143,24 @@ export function estimateRowHeightRem(
   _customFields?: unknown,
   _customColumns?: unknown[],
   voCueCount = 0,
-  notesColumnWidthPx = GUEST_COLUMN_WIDTHS.notes
+  notesColumnWidthPx = GUEST_COLUMN_WIDTHS.notes,
+  segmentName?: string,
+  segmentNameDisplayMode: SegmentNameDisplayMode = 'single',
+  segmentNameColumnWidthPx = GUEST_COLUMN_WIDTHS.segmentName
 ): string {
   let maxHeight = 6.5;
   if (voCueCount > 0) maxHeight = Math.max(maxHeight, 7);
+  if (segmentNameDisplayMode === 'wrap' && segmentName && String(segmentName).trim()) {
+    const colW = Math.max(80, Number(segmentNameColumnWidthPx) || 320);
+    const availablePx = Math.max(60, colW - 36);
+    const charsPerLine = Math.max(12, Math.floor(availablePx / 7.8));
+    let lines = 0;
+    for (const part of String(segmentName).split(/\r\n|\r|\n/)) {
+      const len = part.length || 1;
+      lines += Math.max(1, Math.ceil(len / charsPerLine));
+    }
+    maxHeight = Math.max(maxHeight, Math.min(16, 1.75 + lines * 1.4));
+  }
 
   if (notes && notes.trim()) {
     if (typeof document !== 'undefined') {
@@ -213,6 +228,8 @@ export function toScheduleRowItem(item: {
   id: number;
   day?: number;
   segmentName?: string;
+  segmentSpellingOk?: string[];
+  segmentSpellingAskRos?: boolean;
   programType?: string;
   shotType?: string;
   durationHours?: number;
@@ -244,6 +261,8 @@ export function toScheduleRowItem(item: {
     id: item.id,
     day: item.day || 1,
     segmentName: item.segmentName || '',
+    segmentSpellingOk: Array.isArray(item.segmentSpellingOk) ? item.segmentSpellingOk : [],
+    segmentSpellingAskRos: item.segmentSpellingAskRos === true,
     programType: item.programType || '',
     shotType: item.shotType || '',
     durationHours: item.durationHours ?? 0,

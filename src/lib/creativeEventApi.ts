@@ -16,3 +16,25 @@ export async function fetchCreativeEvent(eventId: string): Promise<GuestEventPay
   }
   return { ok: true, ...data };
 }
+
+export async function patchCreativeSegmentSpelling(
+  eventId: string,
+  itemId: number,
+  patch: { segmentSpellingOk?: string[]; segmentSpellingAskRos?: boolean }
+): Promise<{ ok: boolean; error?: string }> {
+  const base = getApiBaseUrl();
+  const headers = apiJsonHeaders();
+  const res = await fetch(
+    `${base}/api/creative-event/${encodeURIComponent(eventId)}/segment-spelling`,
+    {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({ itemId, ...patch }),
+    }
+  );
+  const data = (await res.json().catch(() => ({}))) as { error?: string };
+  if (!res.ok) {
+    return { ok: false, error: data.error || `HTTP ${res.status}` };
+  }
+  return { ok: true };
+}

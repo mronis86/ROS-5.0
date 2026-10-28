@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig(({ mode }) => ({
   plugins: [react()],
+  assetsInclude: ['**/*.aff', '**/*.dic'],
   esbuild: {
     // Prevent jsxDEV from embedding absolute file paths (fileName) in production bundles.
     jsxDev: mode === 'development',

@@ -3944,6 +3944,73 @@ app.get('/api/creative-event/:eventId', async (req, res) => {
   }
 });
 
+/** Creative may Keep a spelling or push a row onto ROS for a check. */
+app.patch('/api/creative-event/:eventId/segment-spelling', async (req, res) => {
+  try {
+    const eventId = String(req.params.eventId || '').trim();
+    if (!eventId) {
+      return res.status(400).json({ error: 'eventId is required' });
+    }
+    if (!canAccessCreativeAuth(req.auth)) {
+      return res.status(403).json({ error: 'Creative access required.' });
+    }
+    if (!userCanAccessEvent(req.auth, eventId)) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    const body = req.body || {};
+    const itemId = Number(body.itemId ?? body.item_id ?? body.id);
+    if (!Number.isFinite(itemId)) {
+      return res.status(400).json({ error: 'itemId is required' });
+    }
+    const hasAsk = typeof body.segmentSpellingAskRos === 'boolean' || typeof body.askRos === 'boolean';
+    const hasOk = Array.isArray(body.segmentSpellingOk) || Array.isArray(body.spellingOk);
+    if (!hasAsk && !hasOk) {
+      return res.status(400).json({ error: 'No spelling fields provided' });
+    }
+
+    const existing = await pool.query('SELECT * FROM run_of_show_data WHERE event_id = $1', [eventId]);
+    if (existing.rows.length === 0) {
+      return res.status(404).json({ error: 'Event not found' });
+    }
+    const items = parseScheduleItemsJson(existing.rows[0].schedule_items);
+    let found = false;
+    const nextItems = items.map((item) => {
+      if (Number(item.id) !== itemId) return item;
+      found = true;
+      const next = { ...item };
+      if (hasAsk) {
+        next.segmentSpellingAskRos =
+          typeof body.segmentSpellingAskRos === 'boolean' ? body.segmentSpellingAskRos : !!body.askRos;
+      }
+      if (hasOk) {
+        const raw = Array.isArray(body.segmentSpellingOk) ? body.segmentSpellingOk : body.spellingOk;
+        const seen = new Set();
+        next.segmentSpellingOk = [];
+        for (const value of raw) {
+          const key = String(value || '').trim().toLowerCase();
+          if (!key || seen.has(key)) continue;
+          seen.add(key);
+          next.segmentSpellingOk.push(key);
+        }
+      }
+      return next;
+    });
+    if (!found) {
+      return res.status(404).json({ error: 'Cue not found' });
+    }
+
+    await persistScheduleItemsPatch(eventId, nextItems, {
+      userId: req.auth?.userId,
+      userName: req.auth?.fullName || req.auth?.email || 'Creative',
+      userRole: 'CREATIVE',
+    });
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('[creative-event spelling PATCH]', error);
+    res.status(500).json({ error: error.message || 'Failed to update spelling' });
+  }
+});
+
 /** Public — available Mon–Fri hourly training slots (excludes blocked days; booked hours stay listed). */
 app.get('/api/training/slots', async (req, res) => {
   try {

@@ -46,6 +46,8 @@ import {
   shouldFoldPreshowOvertimeIntoShowStart,
 } from '../lib/showDelay';
 import {
+  buildDuplicateCueMap,
+  duplicateCueTooltip,
   formatCueNumber,
   formatTimerCueStatus,
   isDelayProgramType,
@@ -83,6 +85,7 @@ import {
   reconcileVoCuesWithNotes,
 } from '../lib/audioCallouts';
 import { suggestNoteLabelActions, removePlainLineFromNotesHtml } from '../lib/notesLabelSuggest';
+import DuplicateCueFlag from '../components/DuplicateCueFlag';
 import NotesLabelSuggestBanner from '../components/NotesLabelSuggestBanner';
 import CueReorderNumberModal from '../components/CueReorderNumberModal';
 import { boostNotesContrastHtml } from '../lib/notesContrast';
@@ -317,6 +320,10 @@ interface ScheduleItem {
   /** When true, auto shot-from-speakers skips this cue until shot type is cleared. */
   shotTypeManualOverride?: boolean;
   segmentName: string;
+  /** Lowercase words in this segment name that were reviewed as OK. */
+  segmentSpellingOk?: string[];
+  /** Creative pushed this row so ROS should show the spelling chip. */
+  segmentSpellingAskRos?: boolean;
   durationHours: number;
   durationMinutes: number;
   durationSeconds: number;
@@ -391,6 +398,8 @@ function scheduleItemSignature(item: any): string {
     asText(item.shotType),
     item.shotTypeManualOverride ? '1' : '',
     asText(item.segmentName),
+    JSON.stringify(item.segmentSpellingOk || []),
+    item.segmentSpellingAskRos ? '1' : '',
     asText(item.durationHours),
     asText(item.durationMinutes),
     asText(item.durationSeconds),
@@ -14155,6 +14164,7 @@ const RunOfShowPage: React.FC = () => {
 
   // Memoized filtered schedule
   const filteredSchedule = useMemo(() => getFilteredSchedule(), [schedule, selectedDay]);
+  const duplicateCues = useMemo(() => buildDuplicateCueMap(filteredSchedule), [filteredSchedule]);
 
   // Pin-Notes popout: send schedule + current cue + selected columns (and available columns for selector)
   const sendPinNotesUpdate = useCallback(() => {
@@ -18524,7 +18534,9 @@ const RunOfShowPage: React.FC = () => {
                    No items
                  </div>
                ) : (
-                 getFilteredSchedule().map((item, index) => (
+                 getFilteredSchedule().map((item, index) => {
+                   const dup = duplicateCues.get(item.id);
+                   return (
                    <div 
                      key={`${item.id}-${item.notes?.length || 0}-${item.speakers?.length || 0}`}
                      className={`border-b-2 border-slate-600 flex flex-col items-center justify-center gap-1 ${getSideColumnRowClass(item.id, index)} ${
@@ -18601,8 +18613,12 @@ const RunOfShowPage: React.FC = () => {
                      </button>
                      
                     <div className="flex">
-                      <div className={`flex items-center px-1 py-1 border border-slate-600 border-r-0 rounded-l text-white text-lg font-medium min-w-[40px] ${
-                        lastLoadedCueId === item.id ? 'bg-purple-600' : 'bg-slate-600'
+                      <div className={`flex items-center px-1 py-1 border border-r-0 rounded-l text-white text-lg font-medium min-w-[40px] ${
+                        lastLoadedCueId === item.id
+                          ? 'bg-purple-600 border-slate-600'
+                          : dup
+                            ? 'bg-amber-600 border-amber-400'
+                            : 'bg-slate-600 border-slate-600'
                       }`}>
                         CUE
                       </div>
@@ -18657,18 +18673,23 @@ const RunOfShowPage: React.FC = () => {
                         );
                       }}
                       disabled={currentUserRole === 'VIEWER' || isRowLockedByOther(item.id)}
-                      className="w-14 px-1 py-1 border border-slate-600 rounded-r text-center text-lg transition-colors bg-slate-700 text-white focus:outline-none focus:border-blue-500"
+                      className={`w-14 px-1 py-1 border rounded-r text-center text-lg transition-colors bg-slate-700 text-white focus:outline-none focus:border-blue-500 ${
+                        dup ? 'border-amber-400' : 'border-slate-600'
+                      }`}
                       title={
                         isRowLockedByOther(item.id)
                           ? rowEditorLabel(item.id)
                           : currentUserRole === 'VIEWER'
                             ? 'Viewers cannot edit cue names'
-                            : 'Edit cue number'
+                            : dup
+                              ? duplicateCueTooltip(dup.otherRowNumbers)
+                              : 'Edit cue number'
                       }
                       maxLength={4}
                     />
                      </div>
                     </div>
+                    {dup ? <DuplicateCueFlag otherRowNumbers={dup.otherRowNumbers} /> : null}
                     <div className="flex gap-1">
                       <button
                         onClick={() => {
@@ -18768,7 +18789,8 @@ const RunOfShowPage: React.FC = () => {
                       </button>
                     </div>
                   </div>
-                ))
+                );
+                 })
               )}
             </div>
 
@@ -19199,6 +19221,7 @@ const RunOfShowPage: React.FC = () => {
                         programTypeColors={programTypeColors}
                         shotTypes={shotTypes}
                         currentUserRole={currentUserRole}
+                        segmentSpellingMode="ros"
                         setSchedule={setSchedule}
                         handleUserEditing={handleUserEditing}
                         handleModalEditing={handleModalEditing}

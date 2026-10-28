@@ -1,5 +1,6 @@
 import { GUEST_VISIBLE_COLUMNS } from './guestRosHelpers';
 import { customColumnOrderKey } from './rosColumnOrder';
+import type { SegmentNameDisplayMode } from './scheduleClockFormat';
 
 export type GuestVisibleColumns = typeof GUEST_VISIBLE_COLUMNS;
 
@@ -36,6 +37,25 @@ export const CREATIVE_STICKY_START_STORAGE_KEY = 'creative-sticky-start';
 export const GUEST_COLUMN_ORDER_STORAGE_KEY = 'guest-column-order';
 export const CREATIVE_COLUMN_ORDER_STORAGE_KEY = 'creative-column-order';
 export const GUEST_COLUMN_FILTER_STORAGE_KEY = 'guest-event-columns';
+export const GUEST_SEGMENT_NAME_DISPLAY_STORAGE_KEY = 'guest-segment-name-display';
+
+export function loadGuestSegmentNameDisplayMode(): SegmentNameDisplayMode {
+  try {
+    const saved = localStorage.getItem(GUEST_SEGMENT_NAME_DISPLAY_STORAGE_KEY);
+    if (saved === 'wrap' || saved === 'single') return saved;
+  } catch {
+    /* ignore */
+  }
+  return 'single';
+}
+
+export function persistGuestSegmentNameDisplayMode(mode: SegmentNameDisplayMode): void {
+  try {
+    localStorage.setItem(GUEST_SEGMENT_NAME_DISPLAY_STORAGE_KEY, mode);
+  } catch {
+    /* ignore */
+  }
+}
 
 export function normalizeGuestColumnOrder(saved: string[] | null | undefined): GuestScrollColumn[] {
   const allowed = new Set<string>(GUEST_SCROLL_COLUMNS);

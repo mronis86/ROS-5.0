@@ -13,6 +13,8 @@ import { programTypeSurfaceStyle } from '../lib/rosProgramTypeSplit';
 import { boostNotesContrastHtml } from '../lib/notesContrast';
 import StageDirectionModal from '../components/StageDirectionModal';
 import StartTimeColumnCell from '../components/StartTimeColumnCell';
+import { SegmentSpellingChip, useSegmentNameSpelling } from '../components/SegmentSpellingFlag';
+import { addSpellingOk, misspelledSegmentWords, replaceSegmentWord } from '../lib/segmentNameSpellcheck';
 
 export interface ScheduleRowProps {
   item: any;
@@ -107,6 +109,16 @@ export interface ScheduleRowProps {
   isCommsUser?: boolean;
   /** Segment Name: single-line truncate vs multi-line wrap (header click toggles). */
   segmentNameDisplayMode?: 'single' | 'wrap';
+  /**
+   * off = hide spelling (guest/director).
+   * creative = always show; Keep + Ask ROS.
+   * ros = show only when Creative pushed the row for a check.
+   */
+  segmentSpellingMode?: 'off' | 'creative' | 'ros';
+  onSegmentSpellingPatch?: (
+    itemId: number,
+    patch: { segmentSpellingOk?: string[]; segmentSpellingAskRos?: boolean }
+  ) => void;
 }
 
 const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
@@ -180,6 +192,8 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
   confirmRecordingMark = false,
   isCommsUser = false,
   segmentNameDisplayMode = 'single',
+  segmentSpellingMode = 'off',
+  onSegmentSpellingPatch,
 }) => {
   const segmentWrap = segmentNameDisplayMode === 'wrap';
   // One height measure per row render (shared by all custom-column cells)
@@ -201,6 +215,89 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
   const lockLabel = rowLock?.userName ? `${rowLock.userName} is editing` : 'Someone is editing';
   const [lockBadgePos, setLockBadgePos] = React.useState({ scrollLeft: 0, viewWidth: 0 });
   const [showStageDirectionModal, setShowStageDirectionModal] = useState(false);
+  const misspelledSegment = useSegmentNameSpelling(item.segmentName || '', item.segmentSpellingOk);
+  const showSegmentSpelling =
+    misspelledSegment.length > 0 &&
+    (segmentSpellingMode === 'creative' ||
+      (segmentSpellingMode === 'ros' && !!item.segmentSpellingAskRos));
+  const canFixSegmentSpelling =
+    segmentSpellingMode === 'ros' && currentUserRole === 'EDITOR' && !isLockedByOther;
+  const canAskRosSpelling = segmentSpellingMode === 'creative' && !isLockedByOther;
+
+  const applySpellingItemPatch = (patch: Record<string, unknown>, message: string) => {
+    if (onSegmentSpellingPatch) {
+      onSegmentSpellingPatch(item.id, patch);
+      return;
+    }
+    setSchedule((prev: any[]) =>
+      prev.map((scheduleItem) =>
+        scheduleItem.id === item.id ? { ...scheduleItem, ...patch } : scheduleItem
+      )
+    );
+    logChangeDebounced(`segmentSpelling_${item.id}`, 'FIELD_UPDATE', message, {
+      changeType: 'FIELD_CHANGE',
+      itemId: item.id,
+      itemName: item.segmentName,
+      fieldName: 'segmentSpelling',
+      details: patch,
+    });
+  };
+
+  const confirmSegmentSpelling = (word: string) => {
+    if (isLockedByOther) return;
+    const nextOk = addSpellingOk(item.segmentSpellingOk, word);
+    const stillBad = misspelledSegmentWords(item.segmentName || '', nextOk);
+    applySpellingItemPatch(
+      {
+        segmentSpellingOk: nextOk,
+        segmentSpellingAskRos: stillBad.length ? !!item.segmentSpellingAskRos : false,
+      },
+      `Reviewed spelling "${word}" in "${item.segmentName}"`
+    );
+  };
+
+  const fixSegmentSpelling = (from: string, to: string) => {
+    if (!canFixSegmentSpelling) return;
+    const nextName = replaceSegmentWord(item.segmentName || '', from, to);
+    if (nextName === item.segmentName) return;
+    const stillBad = misspelledSegmentWords(nextName, item.segmentSpellingOk);
+    const oldValue = item.segmentName;
+    setSchedule((prev: any[]) =>
+      prev.map((scheduleItem) =>
+        scheduleItem.id === item.id
+          ? {
+              ...scheduleItem,
+              segmentName: nextName,
+              segmentSpellingAskRos: stillBad.length ? !!item.segmentSpellingAskRos : false,
+            }
+          : scheduleItem
+      )
+    );
+    logChangeDebounced(
+      `segmentName_${item.id}`,
+      'FIELD_UPDATE',
+      `Updated segment name for "${oldValue}" to "${nextName}"`,
+      {
+        changeType: 'FIELD_CHANGE',
+        itemId: item.id,
+        itemName: nextName,
+        fieldName: 'segmentName',
+        oldValue,
+        newValue: nextName,
+        details: { fieldType: 'text', spellingFix: { from, to } },
+      }
+    );
+  };
+
+  const askRosSegmentSpelling = () => {
+    if (!canAskRosSpelling) return;
+    applySpellingItemPatch(
+      { segmentSpellingAskRos: !item.segmentSpellingAskRos },
+      item.segmentSpellingAskRos
+        ? `Cleared spelling ask for "${item.segmentName}"`
+        : `Asked ROS to check spelling on "${item.segmentName}"`
+    );
+  };
 
   // Keep the lock name badge centered in the visible horizontal viewport when columns are scrolled
   React.useEffect(() => {
@@ -783,6 +880,8 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
               <textarea
                 value={item.segmentName}
                 rows={Math.max(2, String(item.segmentName || '').split(/\r\n|\r|\n/).length)}
+                spellCheck
+                lang="en-US"
                 onFocus={() => beginCellEdit()}
                 onMouseDown={(e) => { if (alertIfLocked(e)) return; }}
                 onChange={(e) => {
@@ -835,6 +934,8 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
             <input
               type="text"
               value={item.segmentName}
+              spellCheck
+              lang="en-US"
               onFocus={() => beginCellEdit()}
               onMouseDown={(e) => { if (alertIfLocked(e)) return; }}
               onChange={(e) => {
@@ -886,6 +987,19 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
             )}
           </div>
           )}
+          {showSegmentSpelling ? (
+            <div className="mt-1">
+              <SegmentSpellingChip
+                words={misspelledSegment}
+                canFix={canFixSegmentSpelling}
+                canAskRos={canAskRosSpelling}
+                asked={!!item.segmentSpellingAskRos}
+                onConfirm={confirmSegmentSpelling}
+                onFix={fixSegmentSpelling}
+                onAskRos={askRosSegmentSpelling}
+              />
+            </div>
+          ) : null}
         </div>
       )}
       {/* Shot type column (after Segment Name) */}
@@ -1704,7 +1818,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
 
   // Shallow-compare key item fields used in the row
   const fieldsToCheck = [
-    'programType', 'shotType', 'segmentName',
+    'programType', 'shotType', 'segmentName', 'segmentSpellingOk', 'segmentSpellingAskRos',
     'durationHours', 'durationMinutes', 'durationSeconds',
     'notes', 'assets', 'speakers', 'speakersText',
     'hasPPT', 'hasQA', 'needsRecording', 'recordingSource', 'otherRoom', 'isPublic',
@@ -1730,6 +1844,8 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
   if (prevProps.confirmRecordingMark !== nextProps.confirmRecordingMark) return false;
   if (prevProps.isCommsUser !== nextProps.isCommsUser) return false;
   if (prevProps.segmentNameDisplayMode !== nextProps.segmentNameDisplayMode) return false;
+  if (prevProps.segmentSpellingMode !== nextProps.segmentSpellingMode) return false;
+  if (prevProps.onSegmentSpellingPatch !== nextProps.onSegmentSpellingPatch) return false;
 
   // Role changes can affect disabled states and styling
   if (prevProps.currentUserRole !== nextProps.currentUserRole) return false;

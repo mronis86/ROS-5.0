@@ -1,5 +1,55 @@
 /** Shared CUE / Delay labels for Run of Show and display views. */
 
+export type DuplicateCueInfo = {
+  otherRowNumbers: number[];
+};
+
+type DuplicateCueItem = {
+  id: number;
+  programType?: string | null;
+  customFields?: { cue?: unknown } | null;
+  cue?: unknown;
+};
+
+/** Strip "CUE" prefix and whitespace so "CUE 9" and "9" match. */
+export function cueDuplicateKey(cue: unknown): string {
+  return String(cue ?? '')
+    .trim()
+    .replace(/^(cue[\s._-]*)+/i, '')
+    .replace(/\s+/g, '')
+    .toUpperCase();
+}
+
+export function duplicateCueTooltip(otherRowNumbers: number[]): string {
+  if (otherRowNumbers.length === 1) return `Same CUE as row ${otherRowNumbers[0]}`;
+  return `Same CUE as rows ${otherRowNumbers.join(', ')}`;
+}
+
+/** Row numbers are 1-based indexes in the list passed in (same as the # column). */
+export function buildDuplicateCueMap(items: DuplicateCueItem[]): Map<number, DuplicateCueInfo> {
+  const groups = new Map<string, number[]>();
+  items.forEach((item, index) => {
+    if (isDelayProgramType(item.programType)) return;
+    const key = cueDuplicateKey(item.customFields?.cue ?? item.cue);
+    if (!key) return;
+    const list = groups.get(key);
+    if (list) list.push(index);
+    else groups.set(key, [index]);
+  });
+  const out = new Map<number, DuplicateCueInfo>();
+  for (const indexes of groups.values()) {
+    if (indexes.length < 2) continue;
+    for (const i of indexes) {
+      const item = items[i];
+      if (!item) continue;
+      out.set(item.id, {
+        otherRowNumbers: indexes.filter((j) => j !== i).map((j) => j + 1),
+      });
+    }
+  }
+  return out;
+}
+
 export function isDelayProgramType(programType?: string | null): boolean {
   return String(programType || '').trim().toLowerCase() === 'delay block';
 }
