@@ -177,7 +177,7 @@ const CommsEventPage: React.FC = () => {
     setSchedule((prev) =>
       prev.map((row) =>
         row.id === item.id
-          ? { ...row, needsRecording: next, recordingSource: next ? 'comms' : null }
+          ? { ...row, needsRecording: next, recordingSource: next ? 'comms' : null, recordingUpdatedAt: Date.now() }
           : row
       )
     );

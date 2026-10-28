@@ -60,7 +60,7 @@ import { sseClient } from '../services/sse-client';
 import { socketClient } from '../services/socket-client';
 import { canAccessAccessManager, canAccessAdmin, canAccessPreFlightChecklist, canSelectOperatorRole } from '../services/auth-service';
 import { eventHasExtendEventControls, parseExtendEventControls } from '../lib/extendEventControls';
-import { shouldConfirmCueRecordingMark, CUE_RECORDING_HOVER_TITLE, CUE_RECORDING_HOVER_BODY } from '../lib/cueRecording';
+import { shouldConfirmCueRecordingMark, CUE_RECORDING_HOVER_TITLE, CUE_RECORDING_HOVER_BODY, mergeNewerRecordingFlags } from '../lib/cueRecording';
 import {
   type AudioCalloutKind,
   type VoCue,
@@ -394,6 +394,7 @@ function scheduleItemSignature(item: any): string {
     item.hasPPT ? '1' : '',
     item.hasQA ? '1' : '',
     item.needsRecording ? '1' : '',
+    asText(item.recordingUpdatedAt),
     item.mittiWatch ? '1' : '',
     item.avWatch ? '1' : '',
     asText(item.recordingSource),
@@ -9232,6 +9233,19 @@ const RunOfShowPage: React.FC = () => {
       const rowPatch = !structureChange;
       const settingsSave = settingsSaveRequestedRef.current;
       settingsSaveRequestedRef.current = false;
+      const liveById = new Map(
+        (scheduleRef.current || []).map((item: any) => [Number(item.id), item])
+      );
+      const syncedRecById = new Map(
+        (lastSyncedScheduleRef.current || []).map((item: any) => [Number(item.id), item])
+      );
+      scheduleWithDurationSeconds = scheduleWithDurationSeconds.map((item) => {
+        const id = Number(item.id);
+        return mergeNewerRecordingFlags(
+          mergeNewerRecordingFlags(item, liveById.get(id)),
+          syncedRecById.get(id)
+        );
+      });
       if (rowPatch && editedItemIds.length === 0 && !settingsSave) {
         console.log('⏭️ Schedule save skipped — no finished row changes to publish');
         return;
@@ -9453,22 +9467,28 @@ const RunOfShowPage: React.FC = () => {
   const persistCueRecording = useCallback(
     async (itemId: number, needsRecording: boolean, source: 'comms' | 'ros' = 'ros') => {
       if (!event?.id) return;
+      const id = Number(itemId);
+      const at = Date.now();
+      const recordingSource = needsRecording ? source : null;
+      const stamp = (row: any) =>
+        row && Number(row.id) === id
+          ? { ...row, needsRecording, recordingSource, recordingUpdatedAt: at }
+          : row;
+      lastSyncedScheduleRef.current = (lastSyncedScheduleRef.current || []).map(stamp);
+      const base =
+        dirtyRowSnapshotsRef.current.get(id) ||
+        (scheduleRef.current || []).find((row: any) => Number(row.id) === id);
+      if (base) dirtyRowSnapshotsRef.current.set(id, stamp(base));
       try {
         const result = await apiClient.setCueRecording(event.id, itemId, needsRecording, source);
-        if (result?.version != null && !Number.isNaN(Number(result.version))) {
-          scheduleVersionRef.current = Number(result.version);
-        }
-        if (Array.isArray(result?.schedule_items)) {
-          lastSyncedScheduleRef.current = result.schedule_items;
-        }
+        rememberSyncedSchedule(result);
       } catch (err) {
         console.warn('Recording PATCH failed — falling back to full schedule save', err);
-        // Let React apply setSchedule + scheduleRef before flushing
-        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        await new Promise<void>((resolve) => setTimeout(resolve, 50));
         await flushSaveToAPIRef.current?.();
       }
     },
-    [event?.id]
+    [event?.id, rememberSyncedSchedule]
   );
 
   // API functions with debouncing

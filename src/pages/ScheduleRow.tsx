@@ -290,6 +290,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
             ...scheduleItem,
             needsRecording: next,
             recordingSource,
+            recordingUpdatedAt: Date.now(),
           }
         : scheduleItem
     ));

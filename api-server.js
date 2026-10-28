@@ -4996,6 +4996,32 @@ function canWriteCueRecording(auth) {
   return true;
 }
 
+function recordingUpdatedAtMs(item) {
+  const n = Number(item?.recordingUpdatedAt ?? item?.recording_updated_at ?? 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function mergeNewerRecordingFlags(incoming, existing) {
+  if (!existing) return incoming;
+  if (recordingUpdatedAtMs(existing) > recordingUpdatedAtMs(incoming)) {
+    return {
+      ...incoming,
+      needsRecording: existing.needsRecording === true,
+      recordingSource: existing.recordingSource ?? existing.recording_source ?? null,
+      recordingUpdatedAt: recordingUpdatedAtMs(existing),
+    };
+  }
+  return incoming;
+}
+
+function applyNewerRecordingFlags(incomingItems, existingItems) {
+  if (!Array.isArray(incomingItems) || !Array.isArray(existingItems) || existingItems.length === 0) {
+    return incomingItems;
+  }
+  const existingById = new Map(existingItems.map((item) => [Number(item.id), item]));
+  return incomingItems.map((item) => mergeNewerRecordingFlags(item, existingById.get(Number(item.id))));
+}
+
 function isCommsOnlyAuth(auth) {
   if (!auth) return false;
   if (auth.isAdmin || auth.isEventManager || auth.isBtsCrew) return false;
@@ -5074,6 +5100,7 @@ app.patch('/api/run-of-show-data/:eventId/recording', async (req, res) => {
       body.source === 'comms' || body.recording_source === 'comms' || req.auth?.isComms === true
         ? 'comms'
         : 'ros';
+    const stampedAt = Date.now();
     const nextItems = items.map((item) => {
       const id = Number(item.id);
       if (!byId.has(id)) return item;
@@ -5082,6 +5109,7 @@ app.patch('/api/run-of-show-data/:eventId/recording', async (req, res) => {
         ...item,
         needsRecording,
         recordingSource: needsRecording ? markSource : null,
+        recordingUpdatedAt: stampedAt,
       };
     });
 
@@ -5100,7 +5128,7 @@ app.patch('/api/run-of-show-data/:eventId/recording', async (req, res) => {
         JSON.stringify(nextItems),
         req.auth?.userId || null,
         req.auth?.fullName || req.auth?.email || 'Comms',
-        'COMMS',
+        markSource === 'comms' ? 'COMMS' : (req.auth?.role || 'EDITOR'),
         eventId,
       ]
     );
@@ -6099,6 +6127,7 @@ app.post('/api/run-of-show-data', async (req, res) => {
       }
 
       scheduleToSave = mergeLedLayoutsPreservingAnimation(scheduleToSave, existingItems);
+      scheduleToSave = applyNewerRecordingFlags(scheduleToSave, existingItems);
     }
 
     const resolvedEventDate = await resolveRunOfShowEventDate(pool, event_id, {

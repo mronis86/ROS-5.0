@@ -24,6 +24,25 @@ export function resolveRecordingSource(
   return 'ros';
 }
 
+export function recordingUpdatedAtMs(item: { recordingUpdatedAt?: unknown; recording_updated_at?: unknown } | null | undefined): number {
+  const n = Number(item?.recordingUpdatedAt ?? item?.recording_updated_at ?? 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
+/** Keep the newer REC stamp so a stale row save cannot undo a dedicated recording PATCH. */
+export function mergeNewerRecordingFlags<T extends Record<string, any>>(incoming: T, existing: T | null | undefined): T {
+  if (!existing) return incoming;
+  if (recordingUpdatedAtMs(existing) > recordingUpdatedAtMs(incoming)) {
+    return {
+      ...incoming,
+      needsRecording: existing.needsRecording === true,
+      recordingSource: existing.recordingSource ?? existing.recording_source ?? null,
+      recordingUpdatedAt: recordingUpdatedAtMs(existing),
+    };
+  }
+  return incoming;
+}
+
 /** Short header for custom REC hover tooltips. */
 export const CUE_RECORDING_HOVER_TITLE = 'For post / social export';
 

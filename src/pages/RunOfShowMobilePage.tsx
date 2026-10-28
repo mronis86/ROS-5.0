@@ -815,6 +815,10 @@ const RunOfShowMobilePage: React.FC = () => {
       hasPPT: hasPptDraft,
       hasQA: hasQaDraft,
       needsRecording: needsRecordingDraft,
+      recordingUpdatedAt:
+        needsRecordingDraft !== !!selectedItem.needsRecording
+          ? Date.now()
+          : selectedItem.recordingUpdatedAt,
       customFields: {
         ...(selectedItem.customFields || {}),
         ...extraCustomDraft,
