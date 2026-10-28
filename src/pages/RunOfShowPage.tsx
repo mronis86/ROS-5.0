@@ -72,6 +72,8 @@ import {
   withNotesTypingSpacer,
   prependSettleCueNote,
   voAlertsEnabledFromSettings,
+  voCueAppearsInNotes,
+  reconcileVoCuesWithNotes,
 } from '../lib/audioCallouts';
 import { suggestNoteLabelActions, removePlainLineFromNotesHtml } from '../lib/notesLabelSuggest';
 import NotesLabelSuggestBanner from '../components/NotesLabelSuggestBanner';
@@ -422,13 +424,15 @@ function resolveSessionRole(
 }
 
 /** Ensure voCues times are padded 24h HH:MM for toast matching across clients. */
-function withNormalizedVoCues<T extends { voCues?: VoCue[]; vo_cues?: unknown }>(item: T): T {
+function withNormalizedVoCues<T extends { voCues?: VoCue[]; vo_cues?: unknown; notes?: string }>(item: T): T {
   const raw = (item as any).voCues ?? (item as any).vo_cues;
-  const normalized = normalizeVoCues(raw)
-    .map((vo) => {
+  const normalized = reconcileVoCuesWithNotes(
+    (item as any).notes || '',
+    normalizeVoCues(raw).map((vo) => {
       const time = normalizeCalloutTimeToHHMM(vo.time);
       return time ? { ...vo, time } : vo;
-    });
+    })
+  );
   if (!normalized.length) {
     const { vo_cues: _drop, ...rest } = item as T & { vo_cues?: unknown };
     return { ...(rest as T), voCues: undefined };
@@ -1097,7 +1101,10 @@ const RunOfShowPage: React.FC = () => {
     const asBool = asString === 'true' || asString === '1';
     const asNum = Number(asString);
 
-    if (fieldName === 'notes') return { ...item, notes: asString };
+    if (fieldName === 'notes') {
+      const voCues = reconcileVoCuesWithNotes(asString, item.voCues);
+      return { ...item, notes: asString, voCues: voCues.length ? voCues : undefined };
+    }
     if (fieldName === 'speakers') {
       return { ...item, speakers: asString, speakersText: asString };
     }
@@ -1125,7 +1132,13 @@ const RunOfShowPage: React.FC = () => {
     if (fieldName === 'voCues') {
       try {
         const parsed = typeof rawValue === 'string' ? JSON.parse(rawValue) : rawValue;
-        return { ...item, voCues: Array.isArray(parsed) ? parsed : item.voCues };
+        const next = Array.isArray(parsed) ? normalizeVoCues(parsed) : [];
+        const previous = Array.isArray(item.voCues) ? item.voCues : [];
+        return {
+          ...item,
+          voCues: next.length ? next : undefined,
+          notes: syncCalloutsIntoNotes(item.notes || '', previous, next),
+        };
       } catch {
         return item;
       }
@@ -3625,6 +3638,7 @@ const RunOfShowPage: React.FC = () => {
         const vos = item.voCues;
         if (!vos?.length) continue;
         for (const vo of vos) {
+          if (!voCueAppearsInNotes(item.notes || '', vo)) continue;
           const tz = resolveShowTimezone(vo.timeZone, fallbackTz);
           if (!isCalloutDue(vo.time, synced, tz, 10)) continue;
           const key = `${item.id}:${vo.id}`;
@@ -6757,13 +6771,14 @@ const RunOfShowPage: React.FC = () => {
     const liveEmpty = !live.replace(/<br\s*\/?>/gi, '').replace(/&nbsp;/gi, '').trim();
     let content = liveEmpty && tempNotesHtml ? tempNotesHtml : live || tempNotesHtml;
     content = withNotesTypingSpacer(content);
+    const nextVoCues = reconcileVoCuesWithNotes(content, tempNotesVoCues);
 
     if (editingNotesItem === -1) {
       // Save to modal form
       setModalForm((prev) => ({
         ...prev,
         notes: content,
-        voCues: tempNotesVoCues.length ? tempNotesVoCues : undefined,
+        voCues: nextVoCues.length ? nextVoCues : undefined,
       }));
     } else {
       // Save to existing schedule item
@@ -6775,7 +6790,7 @@ const RunOfShowPage: React.FC = () => {
             ? {
                 ...scheduleItem,
                 notes: content,
-                voCues: tempNotesVoCues.length ? tempNotesVoCues : undefined,
+                voCues: nextVoCues.length ? nextVoCues : undefined,
               }
             : scheduleItem
         )
@@ -8791,7 +8806,7 @@ const RunOfShowPage: React.FC = () => {
       initialVos = Array.isArray(item?.voCues) ? item.voCues.map((vo) => ({ ...vo })) : [];
     }
     setTempNotesHtml(initial);
-    setTempNotesVoCues(initialVos);
+    setTempNotesVoCues(reconcileVoCuesWithNotes(initial, initialVos));
 
     // Wait for the contentEditable node to mount, then seed it once.
     const frame = window.requestAnimationFrame(() => {
@@ -20247,14 +20262,20 @@ const RunOfShowPage: React.FC = () => {
                  onKeyDown={(e) => {
                    const editor = e.currentTarget as HTMLDivElement;
                    if (handleNotesChipEnter(editor, e)) {
-                     setTempNotesHtml(editor.innerHTML);
+                     const html = editor.innerHTML;
+                     setTempNotesHtml(html);
+                     setTempNotesVoCues((prev) => reconcileVoCuesWithNotes(html, prev));
                    }
                  }}
                  onInput={(e) => {
-                   setTempNotesHtml((e.currentTarget as HTMLDivElement).innerHTML);
+                   const html = (e.currentTarget as HTMLDivElement).innerHTML;
+                   setTempNotesHtml(html);
+                   setTempNotesVoCues((prev) => reconcileVoCuesWithNotes(html, prev));
                  }}
                  onBlur={(e) => {
-                   setTempNotesHtml((e.currentTarget as HTMLDivElement).innerHTML);
+                   const html = (e.currentTarget as HTMLDivElement).innerHTML;
+                   setTempNotesHtml(html);
+                   setTempNotesVoCues((prev) => reconcileVoCuesWithNotes(html, prev));
                  }}
                />
              </div>

@@ -57,6 +57,7 @@ import {
   ensureNotesEditorTypingSpace,
   handleNotesChipEnter,
   withNotesTypingSpacer,
+  reconcileVoCuesWithNotes,
 } from '../lib/audioCallouts';
 import { suggestNoteLabelActions, removePlainLineFromNotesHtml } from '../lib/notesLabelSuggest';
 import NotesLabelSuggestBanner from '../components/NotesLabelSuggestBanner';
@@ -321,7 +322,7 @@ function normalizeScheduleItem(raw: any): ScheduleItem {
     notes: String(raw.notes ?? ''),
     assets: String(raw.assets ?? ''),
     speakersText: String(raw.speakersText ?? raw.speakers_text ?? ''),
-    voCues: normalizeVoCues(raw.voCues ?? raw.vo_cues),
+    voCues: reconcileVoCuesWithNotes(String(raw.notes ?? ''), normalizeVoCues(raw.voCues ?? raw.vo_cues)),
     hasPPT: !!(raw.hasPPT ?? raw.has_ppt),
     hasQA: !!(raw.hasQA ?? raw.has_qa),
     customFields: typeof cf === 'object' && cf !== null ? cf : {},
@@ -2818,7 +2819,12 @@ const ContentReviewPage: React.FC = () => {
 
       const notes = item?.notes ?? '';
       setNotesDraft(notes);
-      setNotesVoCues(Array.isArray(item?.voCues) ? item.voCues.map((vo) => ({ ...vo })) : []);
+      setNotesVoCues(
+        reconcileVoCuesWithNotes(
+          notes,
+          Array.isArray(item?.voCues) ? item.voCues.map((vo) => ({ ...vo })) : []
+        )
+      );
       setNotesDirty(false);
       setNotesSaveMessage(null);
       setSegmentDraft(item?.segmentName ?? '');
@@ -2885,7 +2891,12 @@ const ContentReviewPage: React.FC = () => {
 
     if (!notesDirtyRef.current) {
       setNotesDraft(displayItem.notes ?? '');
-      setNotesVoCues(Array.isArray(displayItem.voCues) ? displayItem.voCues.map((vo) => ({ ...vo })) : []);
+      setNotesVoCues(
+        reconcileVoCuesWithNotes(
+          displayItem.notes ?? '',
+          Array.isArray(displayItem.voCues) ? displayItem.voCues.map((vo) => ({ ...vo })) : []
+        )
+      );
       if (editModeEnabled && notesEditorRef.current) {
         notesEditorRef.current.innerHTML = notesForEditor(displayItem.notes ?? '');
         ensureNotesEditorTypingSpace(notesEditorRef.current);
@@ -2934,12 +2945,13 @@ const ContentReviewPage: React.FC = () => {
     if (!displayItem || !eventId || isSavingNotes) return;
     const live = notesEditorRef.current?.innerHTML ?? notesDraft;
     const nextNotes = withNotesTypingSpacer(live);
+    const nextVoCues = reconcileVoCuesWithNotes(nextNotes, notesVoCues);
     setIsSavingNotes(true);
     setNotesSaveMessage(null);
     const result = await saveCuePatch(displayItem.id, (it) => ({
       ...it,
       notes: nextNotes,
-      voCues: notesVoCues.length ? notesVoCues : undefined,
+      voCues: nextVoCues.length ? nextVoCues : undefined,
     }));
     if (result.ok) {
       setNotesDraft(nextNotes);
@@ -4995,6 +5007,7 @@ const ContentReviewPage: React.FC = () => {
                             if (handleNotesChipEnter(editor, e)) {
                               const html = editor.innerHTML;
                               setNotesDraft(html);
+                              setNotesVoCues((prev) => reconcileVoCuesWithNotes(html, prev));
                               setNotesDirty(html !== (displayItem.notes ?? ''));
                               setNotesSaveMessage(null);
                             }
@@ -5002,6 +5015,7 @@ const ContentReviewPage: React.FC = () => {
                           onInput={(e) => {
                             const html = (e.currentTarget as HTMLDivElement).innerHTML;
                             setNotesDraft(html);
+                            setNotesVoCues((prev) => reconcileVoCuesWithNotes(html, prev));
                             setNotesDirty(html !== (displayItem.notes ?? ''));
                             setNotesSaveMessage(null);
                           }}
@@ -5026,7 +5040,12 @@ const ContentReviewPage: React.FC = () => {
                           onClick={() => {
                             const notes = displayItem.notes ?? '';
                             setNotesDraft(notes);
-                            setNotesVoCues(Array.isArray(displayItem.voCues) ? displayItem.voCues.map((vo) => ({ ...vo })) : []);
+                            setNotesVoCues(
+                              reconcileVoCuesWithNotes(
+                                displayItem.notes ?? '',
+                                Array.isArray(displayItem.voCues) ? displayItem.voCues.map((vo) => ({ ...vo })) : []
+                              )
+                            );
                             setNotesDirty(false);
                             setNotesSaveMessage(null);
                             if (notesEditorRef.current) {
