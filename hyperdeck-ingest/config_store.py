@@ -15,6 +15,7 @@ DEFAULTS: dict[str, Any] = {
     "api_base_url": "https://ros-50-production.up.railway.app",
     "api_token": "",
     "event_id": "",
+    "selected_day": 1,
     "hyperdeck_host": "192.168.1.50",
     "hyperdeck_port": 9993,
     "ftp_port": 21,
@@ -79,6 +80,10 @@ def load_config() -> dict[str, Any]:
     data["auto_stop_minutes"] = _clamp_auto_stop_minutes(data.get("auto_stop_minutes"))
     data["auto_stop_never"] = data.get("auto_stop_never") is True
     data["record_during_rehearsal"] = data.get("record_during_rehearsal") is True
+    try:
+        data["selected_day"] = max(1, int(data.get("selected_day") or 1))
+    except (TypeError, ValueError):
+        data["selected_day"] = 1
     data["copy_method"] = "ftp"
     data["source_folder"] = ""
     if not str(data.get("ftp_user") or "").strip():
@@ -104,6 +109,10 @@ def save_config(data: dict[str, Any]) -> dict[str, Any]:
     merged["auto_stop_minutes"] = _clamp_auto_stop_minutes(merged.get("auto_stop_minutes"))
     merged["auto_stop_never"] = merged.get("auto_stop_never") is True
     merged["record_during_rehearsal"] = merged.get("record_during_rehearsal") is True
+    try:
+        merged["selected_day"] = max(1, int(merged.get("selected_day") or 1))
+    except (TypeError, ValueError):
+        merged["selected_day"] = 1
     merged["copy_method"] = "ftp"
     merged["source_folder"] = ""
     if not str(merged.get("ftp_user") or "").strip():

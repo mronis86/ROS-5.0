@@ -9,7 +9,7 @@ It connects to a Blackmagic HyperDeck on the LAN, records one clip per marked cu
 
 ## What it does
 
-1. Select the ROS event → **Confirm event** (locks it and loads Record marks).
+1. Select the ROS event → pick the **Show day** on multi-day events → **Confirm event** (locks it and loads Record marks).
 2. Connect to the HyperDeck (TCP **9993**).
 3. **Start follow** — when a **Record-marked** cue is **loaded** or **running**, the deck records.
 4. While following, the app re-reads Record marks from Railway about every **20 seconds** (or click **Refresh marks**). Active cue state still polls about every **1 second** (small `active-timers` request only).
@@ -18,7 +18,8 @@ It connects to a Blackmagic HyperDeck on the LAN, records one clip per marked cu
 
    `{date} {event} - {segment}` → `260512 Gala - Keynote`
 
-   `{date}` is the **event** date as YYMMDD.
+   `{date}` is the selected **show day** as YYMMDD (event start date on a 1-day show).
+   Multi-day events stay in **Upcoming** until their last day, and only that day's Record-marked cues are followed.
 
 The HyperDeck clip name is a shorter sanitized `CUE12 Keynote` (deck limit ~56 chars). The pretty name is applied when copying.
 

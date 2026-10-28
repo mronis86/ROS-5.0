@@ -5,16 +5,29 @@ cues on a HyperDeck, then copies the closed clip to an editor folder.
 """
 from __future__ import annotations
 
+import json
 import os
 import threading
 import time
 import tkinter as tk
-from datetime import date, datetime
+from datetime import datetime
 from tkinter import filedialog, messagebox, ttk
 
 from config_store import AUTO_STOP_MINUTES, _clamp_auto_stop_hours, _clamp_auto_stop_minutes, load_config, save_config
 from copy_util import CopyError, copy_from_ftp, unique_dest
 from hyperdeck_client import ClipInfo, HyperDeckClient, HyperDeckError
+from event_days import (
+    date_for_day,
+    default_show_day,
+    event_date_str,
+    event_number_of_days,
+    format_day_choice,
+    is_event_upcoming,
+    item_day_number,
+    last_calendar_day,
+    parse_day_choice,
+    parse_event_date,
+)
 from names import (
     DEFAULT_PATTERN,
     apply_pattern,
@@ -59,6 +72,8 @@ class HyperDeckIngestApp:
         self.event_list_rows: list[dict | None] = []
         self._event_list_updating = False
         self.schedule: list[dict] = []
+        self._ros_settings: dict = {}
+        self._day_syncing = False
         self.clips: list[ClipInfo] = []
         self.following = False
         self._follow_thread: threading.Thread | None = None
@@ -178,6 +193,8 @@ class HyperDeckIngestApp:
         self.status_copy = tk.StringVar(value="—")
         self.auto_stop_default_var = tk.StringVar(value="")
         self.event_locked_var = tk.BooleanVar(value=False)
+        self.selected_day_var = tk.IntVar(value=1)
+        self.day_choice_var = tk.StringVar(value="Day 1")
         self.event_rec_summary_var = tk.StringVar(value="Record-marked cues: —")
         self.cue_list_summary_var = tk.StringVar(value="No Record-marked cues yet")
 
@@ -429,8 +446,19 @@ class HyperDeckIngestApp:
         self.event_count_label.grid(row=4, column=0, sticky="w", pady=(6, 0))
         self.event_selected_label = ttk.Label(event_pick, text="", style="Card.TLabel", wraplength=360)
         self.event_selected_label.grid(row=5, column=0, sticky="w", pady=(2, 0))
+        self.day_row = tk.Frame(event_pick, bg=CARD)
+        self.day_row.grid(row=6, column=0, sticky="ew", pady=(6, 0))
+        ttk.Label(self.day_row, text="Show day", style="CardMuted.TLabel").pack(side="left")
+        self.day_combo = ttk.Combobox(
+            self.day_row,
+            textvariable=self.day_choice_var,
+            state="readonly",
+            width=22,
+        )
+        self.day_combo.pack(side="left", padx=(8, 0))
+        self.day_combo.bind("<<ComboboxSelected>>", self._on_show_day_selected)
         lock_row = tk.Frame(event_pick, bg=CARD)
-        lock_row.grid(row=6, column=0, sticky="w", pady=(6, 0))
+        lock_row.grid(row=7, column=0, sticky="w", pady=(6, 0))
         ttk.Checkbutton(
             lock_row,
             text="Lock selected event",
@@ -440,10 +468,10 @@ class HyperDeckIngestApp:
         ttk.Button(lock_row, text="Confirm event", command=self._confirm_event_selection).pack(side="left", padx=(8, 0))
         ttk.Button(lock_row, text="Refresh marks", command=self._refresh_marks_clicked).pack(side="left", padx=(8, 0))
         ttk.Label(event_pick, textvariable=self.event_rec_summary_var, style="CardMuted.TLabel").grid(
-            row=7, column=0, sticky="w", pady=(4, 0)
+            row=8, column=0, sticky="w", pady=(4, 0)
         )
         gate = tk.Frame(event_pick, bg=CARD)
-        gate.grid(row=8, column=0, sticky="ew", pady=(10, 0))
+        gate.grid(row=9, column=0, sticky="ew", pady=(10, 0))
         ttk.Label(
             gate,
             text="After this event is confirmed — auto-record when:",
@@ -574,27 +602,17 @@ class HyperDeckIngestApp:
 
     @staticmethod
     def _event_date_str(ev: dict) -> str:
-        date = str(ev.get("date") or "")
-        if "T" in date:
-            date = date.split("T", 1)[0]
-        return date.strip()
+        return event_date_str(ev)
 
     @classmethod
     def _parse_event_date(cls, ev: dict) -> date | None:
-        raw = cls._event_date_str(ev)
-        if not raw:
-            return None
-        try:
-            return datetime.strptime(raw, "%Y-%m-%d").date()
-        except ValueError:
-            return None
+        return parse_event_date(cls._event_date_str(ev))
 
     @classmethod
     def _event_sort_key(cls, ev: dict) -> str:
         return cls._event_date_str(ev) or "9999-99-99"
 
     def _split_events(self) -> tuple[list[dict], list[dict], list[dict]]:
-        today = date.today()
         upcoming: list[dict] = []
         past: list[dict] = []
         undated: list[dict] = []
@@ -602,7 +620,7 @@ class HyperDeckIngestApp:
             when = self._parse_event_date(ev)
             if when is None:
                 undated.append(ev)
-            elif when >= today:
+            elif is_event_upcoming(ev):
                 upcoming.append(ev)
             else:
                 past.append(ev)
@@ -662,7 +680,7 @@ class HyperDeckIngestApp:
             if self.event_range_var.get() == "past":
                 self.event_range_var.set("upcoming")
             return
-        if when >= date.today():
+        if is_event_upcoming(ev):
             if self.event_range_var.get() == "past":
                 self.event_range_var.set("upcoming")
         elif self.event_range_var.get() == "upcoming":
@@ -690,8 +708,21 @@ class HyperDeckIngestApp:
     @classmethod
     def _event_label(cls, ev: dict) -> str:
         name = str(ev.get("name") or "Untitled")
-        date = cls._event_date_str(ev)
-        return f"{date}  ·  {name}" if date else name
+        start = cls._event_date_str(ev)
+        days = event_number_of_days(ev)
+        if not start:
+            return name
+        if days <= 1:
+            return f"{start}  ·  {name}"
+        last = last_calendar_day(parse_event_date(start), days) if parse_event_date(start) else None
+        end = last.isoformat() if last else ""
+        if end and end != start:
+            if end[:7] == start[:7]:
+                end = end[8:]
+            elif end[:4] == start[:4]:
+                end = end[5:]
+            return f"{start}–{end}  ·  {name}  ·  {days} days"
+        return f"{start}  ·  {name}  ·  {days} days"
 
     @classmethod
     def _event_search_blob(cls, ev: dict) -> str:
@@ -713,8 +744,10 @@ class HyperDeckIngestApp:
         ev = next((e for e in self.events if str(e.get("id")) == eid), None)
         if ev:
             short = eid[:8] + "…" if len(eid) > 8 else eid
+            days = self._current_event_days()
+            day_bit = f"  ·  Day {self._selected_day()} of {days}" if days > 1 else ""
             self.event_selected_label.configure(
-                text=f"Selected: {ev.get('name') or 'Untitled'}  ·  {short}"
+                text=f"Selected: {ev.get('name') or 'Untitled'}{day_bit}  ·  {short}"
             )
         else:
             self.event_selected_label.configure(text=f"Selected ID: {eid}")
@@ -796,7 +829,11 @@ class HyperDeckIngestApp:
             try:
                 self._refresh_schedule()
                 ev = self._current_event()
-                marked = sum(1 for item in self.schedule if item_needs_recording(item))
+                marked = sum(1 for item in self._day_schedule() if item_needs_recording(item))
+                days = self._current_event_days()
+                day_line = ""
+                if days > 1:
+                    day_line = f"Show day: {self._selected_day()} of {days} ({self._selected_day_date_str()})\n"
                 gate = (
                     "Auto-record: Rehearsal or In Show (testing)"
                     if self._wants_rehearsal_record()
@@ -807,7 +844,8 @@ class HyperDeckIngestApp:
                     lambda: messagebox.showinfo(
                         "Event locked",
                         f"{ev.get('name') or 'Event'}\n\n"
-                        f"Record-marked cues: {marked}\n"
+                        f"{day_line}"
+                        f"Record-marked cues this day: {marked}\n"
                         f"{gate}\n\n"
                         "Adjust the auto-record option under the event if needed, then "
                         "Start follow. The app records when a Record-marked cue is loaded "
@@ -830,6 +868,10 @@ class HyperDeckIngestApp:
             self._refresh_event_selection_label()
             return
         self.event_id_var.set(eid)
+        self._ros_settings = {}
+        self.schedule = []
+        self.selected_day_var.set(default_show_day(ev))
+        self._sync_day_picker()
         self._bg(self._refresh_schedule)
 
     def _on_event_list_select(self, _evt=None) -> None:
@@ -1167,6 +1209,10 @@ class HyperDeckIngestApp:
         self.api_url_var.set(c.get("api_base_url") or "")
         self.api_token_var.set(c.get("api_token") or "")
         self.event_id_var.set(c.get("event_id") or "")
+        try:
+            self.selected_day_var.set(max(1, int(c.get("selected_day") or 1)))
+        except (TypeError, ValueError, tk.TclError):
+            self.selected_day_var.set(1)
         self.deck_host_var.set(c.get("hyperdeck_host") or "")
         self.deck_port_var.set(str(c.get("hyperdeck_port") or 9993))
         self.ftp_port_var.set(str(c.get("ftp_port") or 21))
@@ -1182,6 +1228,7 @@ class HyperDeckIngestApp:
         self.cue_list_summary_var.set("No Record-marked cues yet")
         self.status_mode.set("—")
         self._refresh_auto_stop_default_label()
+        self._sync_day_picker()
         self._refresh_event_selection_label()
 
     def _snapshot_config(self) -> dict:
@@ -1189,6 +1236,7 @@ class HyperDeckIngestApp:
             "api_base_url": self.api_url_var.get(),
             "api_token": self.api_token_var.get(),
             "event_id": self.event_id_var.get().strip(),
+            "selected_day": self._selected_day(),
             "hyperdeck_host": self.deck_host_var.get().strip(),
             "hyperdeck_port": int(self.deck_port_var.get() or 9993),
             "ftp_port": int(self.ftp_port_var.get() or 21),
@@ -1263,7 +1311,11 @@ class HyperDeckIngestApp:
             def apply():
                 if current:
                     self._auto_range_for_event(current)
+                    ev = next((e for e in self.events if str(e.get("id")) == current), None)
+                    if ev:
+                        self.selected_day_var.set(default_show_day(ev))
                 self._render_event_list(select_id=current or None)
+                self._sync_day_picker()
                 self.status_ros.set(f"Loaded {len(events)} event(s)")
                 self.log(f"Loaded {len(events)} events", "ok")
 
@@ -1277,6 +1329,72 @@ class HyperDeckIngestApp:
             if str(ev.get("id")) == eid:
                 return ev
         return {"id": eid, "name": "", "date": ""}
+
+    def _current_event_days(self) -> int:
+        return event_number_of_days(self._current_event(), self.schedule, self._ros_settings)
+
+    def _selected_day(self) -> int:
+        try:
+            day = int(self.selected_day_var.get())
+        except (TypeError, ValueError, tk.TclError):
+            day = 1
+        days = self._current_event_days()
+        return min(days, max(1, day))
+
+    def _selected_day_date_str(self) -> str:
+        ev = self._current_event()
+        start = parse_event_date(event_date_str(ev))
+        when = date_for_day(start, self._selected_day())
+        return when.isoformat() if when else event_date_str(ev)
+
+    def _day_schedule(self) -> list[dict]:
+        days = self._current_event_days()
+        if days <= 1:
+            return list(self.schedule)
+        day = self._selected_day()
+        return [item for item in self.schedule if item_day_number(item) == day]
+
+    def _item_on_selected_day(self, item: dict | None) -> bool:
+        if not item:
+            return False
+        if self._current_event_days() <= 1:
+            return True
+        return item_day_number(item) == self._selected_day()
+
+    def _sync_day_picker(self) -> None:
+        if not hasattr(self, "day_combo"):
+            return
+        ev = self._current_event()
+        days = self._current_event_days()
+        start = parse_event_date(event_date_str(ev))
+        values = [format_day_choice(d, start) for d in range(1, days + 1)]
+        day = self._selected_day()
+        self._day_syncing = True
+        try:
+            self.day_combo.configure(values=values)
+            if values:
+                self.day_choice_var.set(values[day - 1])
+            self.selected_day_var.set(day)
+            if days > 1:
+                self.day_combo.configure(state="readonly")
+            else:
+                self.day_combo.configure(state="disabled")
+        finally:
+            self._day_syncing = False
+        self._refresh_event_selection_label()
+
+    def _on_show_day_selected(self, _evt=None) -> None:
+        if self._day_syncing:
+            return
+        day = parse_day_choice(self.day_choice_var.get(), self._selected_day())
+        days = self._current_event_days()
+        day = min(days, max(1, day))
+        if day == self.selected_day_var.get():
+            return
+        self.selected_day_var.set(day)
+        self.log(f"Show day: {day} of {days} ({self._selected_day_date_str()})", "ok")
+        self._refresh_event_selection_label()
+        self._update_record_cue_summary()
 
     def _refresh_marks_clicked(self) -> None:
         eid = self.event_id_var.get().strip()
@@ -1300,15 +1418,18 @@ class HyperDeckIngestApp:
         self._bg(work)
 
     def _update_record_cue_summary(self) -> None:
-        total = len(self.schedule)
-        marked = sum(1 for item in self.schedule if item_needs_recording(item))
+        day_items = self._day_schedule()
+        total = len(day_items)
+        marked = sum(1 for item in day_items if item_needs_recording(item))
         done = sum(
             1
-            for item in self.schedule
+            for item in day_items
             if item_needs_recording(item) and str(item.get("id")) in self._completed_record_item_ids
         )
         self._last_marked_count = marked
-        self.event_rec_summary_var.set(f"Record-marked cues: {marked} / {total} · done {done}")
+        days = self._current_event_days()
+        day_bit = f"Day {self._selected_day()} · " if days > 1 else ""
+        self.event_rec_summary_var.set(f"{day_bit}Record-marked cues: {marked} / {total} · done {done}")
         self.root.after(0, self._render_cue_checklist)
 
     def _render_cue_checklist(self) -> None:
@@ -1316,7 +1437,7 @@ class HyperDeckIngestApp:
             return
         for row in self.cue_tree.get_children():
             self.cue_tree.delete(row)
-        marked_items = [item for item in self.schedule if item_needs_recording(item)]
+        marked_items = [item for item in self._day_schedule() if item_needs_recording(item)]
         done_n = 0
         for item in marked_items:
             item_id = str(item.get("id") or "")
@@ -1402,8 +1523,23 @@ class HyperDeckIngestApp:
             for item in self.schedule
             if item_needs_recording(item) and item.get("id") is not None
         }
-        self.schedule = api.schedule_items(eid)
+        data = api.get_run_of_show(eid)
+        items = data.get("schedule_items")
+        if isinstance(items, str):
+            try:
+                items = json.loads(items)
+            except Exception:
+                items = []
+        self.schedule = items if isinstance(items, list) else []
+        settings = data.get("settings")
+        if isinstance(settings, str):
+            try:
+                settings = json.loads(settings)
+            except Exception:
+                settings = {}
+        self._ros_settings = settings if isinstance(settings, dict) else {}
         self._last_schedule_refresh = time.time()
+        self.root.after(0, self._sync_day_picker)
         marked_ids = {
             str(item.get("id"))
             for item in self.schedule
@@ -1473,7 +1609,7 @@ class HyperDeckIngestApp:
         base = apply_pattern(
             pattern,
             event_name=str(ev.get("name") or "Event"),
-            event_date=str(ev.get("date") or ""),
+            event_date=self._selected_day_date_str() or str(ev.get("date") or ""),
             segment=str((item or {}).get("segmentName") or clip_name or "Segment"),
             cue=cue_label(item),
             clip=clip_name,
@@ -1593,13 +1729,15 @@ class HyperDeckIngestApp:
         self.following = True
         self._set_pill("following")
         self.root.after(0, self._update_record_cue_summary)
-        marked = sum(1 for item in self.schedule if item_needs_recording(item))
+        marked = sum(1 for item in self._day_schedule() if item_needs_recording(item))
+        days = self._current_event_days()
+        day_bit = f" · Day {self._selected_day()} of {days}" if days > 1 else ""
         gate = (
             "recording allowed in Rehearsal and In Show"
             if self._wants_rehearsal_record()
             else "recording only when event is In Show"
         )
-        self.log(f"Follow started with {marked} Record-marked cue(s) · {gate}", "ok")
+        self.log(f"Follow started with {marked} Record-marked cue(s){day_bit} · {gate}", "ok")
         self.log(f"Show mode now: {self._show_mode}", "ok")
         if self._auto_stop_never:
             self.log("Polling until session timer expires or you click Stop", "ok")
@@ -1730,6 +1868,16 @@ class HyperDeckIngestApp:
             except Exception as exc:
                 self.log(f"Schedule refresh failed: {exc}", "error")
         marked = item_needs_recording(item)
+        if marked and not self._item_on_selected_day(item):
+            cue_day = item_day_number(item)
+            now = time.time()
+            if now - self._last_mode_block_log > 20:
+                self._last_mode_block_log = now
+                self.log(
+                    f"Skipping auto-record — {cue_label(item) or item_id} is Day {cue_day}, "
+                    f"HyperDeck is on Day {self._selected_day()}",
+                )
+            marked = False
         cue = cue_label(item)
         segment = str((item or {}).get("segmentName") or "")
         rec = "REC" if marked else "—"
