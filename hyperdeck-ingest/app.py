@@ -513,6 +513,7 @@ class HyperDeckIngestApp:
         ttk.Button(man, text="Record", command=self._manual_record).pack(side="left")
         ttk.Button(man, text="Stop", command=self._manual_stop).pack(side="left", padx=(6, 0))
         ttk.Button(man, text="Copy last", command=self._copy_last).pack(side="left", padx=(6, 0))
+        ttk.Button(man, text="Copy selected", command=self._copy_selected).pack(side="left", padx=(6, 0))
         ttk.Button(man, text="Refresh clips", command=self._refresh_clips).pack(side="left", padx=(6, 0))
 
         dest = self._card(left, "Copy after stop")
@@ -583,6 +584,11 @@ class HyperDeckIngestApp:
         self.cue_tree.tag_configure("pending", foreground=FG)
 
         clips = self._card(right, "HyperDeck clips", fill="both")
+        ttk.Label(
+            clips,
+            text="Select a stored clip, then Copy selected. Double-click also copies.",
+            style="CardMuted.TLabel",
+        ).pack(anchor="w", pady=(0, 6))
         tree_wrap = tk.Frame(clips, bg=CARD)
         tree_wrap.pack(fill="both", expand=True)
         cols = ("idx", "name", "duration", "copied")
@@ -599,6 +605,10 @@ class HyperDeckIngestApp:
         self.clip_tree.configure(yscrollcommand=scroll.set)
         self.clip_tree.pack(side="left", fill="both", expand=True)
         scroll.pack(side="right", fill="y")
+        clip_bar = tk.Frame(clips, bg=CARD)
+        clip_bar.pack(fill="x", pady=(8, 0))
+        ttk.Button(clip_bar, text="Copy selected", command=self._copy_selected).pack(side="left")
+        self.clip_tree.bind("<Double-1>", lambda _e: self._copy_selected())
 
     @staticmethod
     def _event_date_str(ev: dict) -> str:
@@ -1644,7 +1654,59 @@ class HyperDeckIngestApp:
             if not self.clips:
                 raise CopyError("No clips on the HyperDeck")
             clip = self.clips[-1]
-            item = self._item_by_id(self._recording_item_id or self._last_item_id)
+            item = self._item_for_clip(clip) or self._item_by_id(self._recording_item_id or self._last_item_id)
+            self._copy_clip(clip, item)
+
+        self._bg(work)
+
+    def _selected_clip(self) -> ClipInfo | None:
+        sel = self.clip_tree.selection()
+        if not sel:
+            return None
+        values = self.clip_tree.item(sel[0], "values")
+        if not values:
+            return None
+        try:
+            idx = int(values[0])
+        except (TypeError, ValueError):
+            return None
+        name = str(values[1]) if len(values) > 1 else ""
+        for clip in self.clips:
+            if clip.index == idx and (not name or clip.name == name):
+                return clip
+        for clip in self.clips:
+            if clip.index == idx:
+                return clip
+        return None
+
+    def _item_for_clip(self, clip: ClipInfo) -> dict | None:
+        clip_name = (clip.name or "").strip()
+        if not clip_name:
+            return None
+        for item in self.schedule:
+            recorded = hyperdeck_record_name(
+                cue=cue_label(item),
+                segment=str(item.get("segmentName") or "clip"),
+            )
+            if recorded and recorded == clip_name:
+                return item
+        for item in self.schedule:
+            recorded = hyperdeck_record_name(
+                cue=cue_label(item),
+                segment=str(item.get("segmentName") or "clip"),
+            )
+            if recorded and (clip_name.startswith(recorded) or recorded in clip_name):
+                return item
+        return None
+
+    def _copy_selected(self) -> None:
+        clip = self._selected_clip()
+        if not clip:
+            self.log("Select a clip in the HyperDeck clips list first", "error")
+            return
+
+        def work():
+            item = self._item_for_clip(clip)
             self._copy_clip(clip, item)
 
         self._bg(work)
