@@ -60,7 +60,13 @@ import { sseClient } from '../services/sse-client';
 import { socketClient } from '../services/socket-client';
 import { canAccessAccessManager, canAccessAdmin, canAccessPreFlightChecklist, canSelectOperatorRole } from '../services/auth-service';
 import { eventHasExtendEventControls, parseExtendEventControls } from '../lib/extendEventControls';
-import { shouldConfirmCueRecordingMark, CUE_RECORDING_HOVER_TITLE, CUE_RECORDING_HOVER_BODY, mergeNewerRecordingFlags } from '../lib/cueRecording';
+import { shouldConfirmCueRecordingMark, CUE_RECORDING_HOVER_TITLE, CUE_RECORDING_HOVER_BODY } from '../lib/cueRecording';
+import {
+  applyNewerCheckboxFields,
+  mergeNewerCheckboxFields,
+  overlayExclusiveWatch,
+  stampScheduleCheckboxes,
+} from '../lib/scheduleCheckboxMerge';
 import {
   type AudioCalloutKind,
   type VoCue,
@@ -395,6 +401,7 @@ function scheduleItemSignature(item: any): string {
     item.hasQA ? '1' : '',
     item.needsRecording ? '1' : '',
     asText(item.recordingUpdatedAt),
+    JSON.stringify(item.checkboxStamps || {}),
     item.mittiWatch ? '1' : '',
     item.avWatch ? '1' : '',
     asText(item.recordingSource),
@@ -3299,7 +3306,7 @@ const RunOfShowPage: React.FC = () => {
       }
     }
     if (Array.isArray(items)) {
-      lastSyncedScheduleRef.current = items;
+      lastSyncedScheduleRef.current = applyNewerCheckboxFields(items, lastSyncedScheduleRef.current);
     }
     if (data.version != null && !Number.isNaN(Number(data.version))) {
       scheduleVersionRef.current = Number(data.version);
@@ -3311,7 +3318,8 @@ const RunOfShowPage: React.FC = () => {
     if (!dirty || dirty.size === 0 || !Array.isArray(items)) return items;
     return items.map((item) => {
       const snap = dirty.get(Number(item.id));
-      return snap ? { ...item, ...snap } : item;
+      if (!snap) return item;
+      return mergeNewerCheckboxFields({ ...item, ...snap }, item);
     });
   }, []);
 
@@ -4968,7 +4976,9 @@ const RunOfShowPage: React.FC = () => {
           // Unindenting → main cue; default public on
           setSchedule((prev) =>
             prev.map((row) =>
-              row.id === itemId && !row.isTimedMarker ? { ...row, isIndented: false, isPublic: true } : row
+              row.id === itemId && !row.isTimedMarker
+                ? stampScheduleCheckboxes({ ...row, isIndented: false, isPublic: true }, ['isPublic'])
+                : row
             )
           );
           console.log('✅ Successfully removed indented status');
@@ -5003,7 +5013,9 @@ const RunOfShowPage: React.FC = () => {
           // Indented cues are not public by default
           setSchedule((prev) =>
             prev.map((row) =>
-              row.id === itemId ? { ...row, isIndented: true, isPublic: false } : row
+              row.id === itemId
+                ? stampScheduleCheckboxes({ ...row, isIndented: true, isPublic: false }, ['isPublic'])
+                : row
             )
           );
           console.log('✅ Successfully added indented status');
@@ -9233,19 +9245,10 @@ const RunOfShowPage: React.FC = () => {
       const rowPatch = !structureChange;
       const settingsSave = settingsSaveRequestedRef.current;
       settingsSaveRequestedRef.current = false;
-      const liveById = new Map(
-        (scheduleRef.current || []).map((item: any) => [Number(item.id), item])
+      scheduleWithDurationSeconds = applyNewerCheckboxFields(
+        applyNewerCheckboxFields(scheduleWithDurationSeconds, scheduleRef.current),
+        lastSyncedScheduleRef.current
       );
-      const syncedRecById = new Map(
-        (lastSyncedScheduleRef.current || []).map((item: any) => [Number(item.id), item])
-      );
-      scheduleWithDurationSeconds = scheduleWithDurationSeconds.map((item) => {
-        const id = Number(item.id);
-        return mergeNewerRecordingFlags(
-          mergeNewerRecordingFlags(item, liveById.get(id)),
-          syncedRecById.get(id)
-        );
-      });
       if (rowPatch && editedItemIds.length === 0 && !settingsSave) {
         console.log('⏭️ Schedule save skipped — no finished row changes to publish');
         return;
@@ -9368,21 +9371,22 @@ const RunOfShowPage: React.FC = () => {
                   return scheduleItemSignature(prev) !== scheduleItemSignature(item);
                 })
                 .map((item: any) => Number(item.id));
-          lastSyncedScheduleRef.current = items;
+          lastSyncedScheduleRef.current = applyNewerCheckboxFields(items, lastSyncedScheduleRef.current);
           if (current.version != null) {
             scheduleVersionRef.current = Number(current.version);
           }
-          const serverById = new Map(items.map((item: any) => [Number(item.id), item]));
+          const serverItems = lastSyncedScheduleRef.current;
+          const serverById = new Map(serverItems.map((item: any) => [Number(item.id), item]));
           const localById = new Map(localItems.map((item: any) => [Number(item.id), item]));
           const merged = overlayDirtyRows(
             !structureNow
-              ? items.map((item: any) => {
+              ? serverItems.map((item: any) => {
                   const id = Number(item.id);
                   if (editedNow.includes(id) && localById.has(id)) return localById.get(id);
                   return serverById.get(id) || item;
                 })
               : mergeSchedulePreservingLocalEdits(
-                  normalizeScheduleVoCues(items, localItems, false),
+                  normalizeScheduleVoCues(serverItems, localItems, false),
                   localItems
                 )
           );
@@ -9415,53 +9419,52 @@ const RunOfShowPage: React.FC = () => {
 
   flushSaveToAPIRef.current = performSaveToAPI;
 
+  const rememberCheckboxRows = useCallback((rows: any[]) => {
+    const byId = new Map((rows || []).map((row: any) => [Number(row.id), row]));
+    lastSyncedScheduleRef.current = (lastSyncedScheduleRef.current || []).map((row: any) => {
+      const next = byId.get(Number(row.id));
+      return next ? mergeNewerCheckboxFields(next, row) : row;
+    });
+    for (const row of rows || []) {
+      const id = Number(row.id);
+      const prev = dirtyRowSnapshotsRef.current.get(id);
+      dirtyRowSnapshotsRef.current.set(id, prev ? mergeNewerCheckboxFields(row, prev) : row);
+    }
+  }, []);
+
   /** Persist a single cue's REC flag immediately (same path as Comms) so leaving the event does not lose it. */
   const persistAvWatch = useCallback(
     async (itemId: number, enabled: boolean) => {
       if (!event?.id) return;
-      setSchedule((prev) =>
-        prev.map((row) => ({
-          ...row,
-          avWatch: enabled ? row.id === itemId : row.id === itemId ? false : !!row.avWatch,
-        }))
-      );
+      const at = Date.now();
+      const nextRows = overlayExclusiveWatch(scheduleRef.current || [], itemId, 'avWatch', enabled, at);
+      rememberCheckboxRows(nextRows.filter((row, index) => row !== (scheduleRef.current || [])[index]));
+      setSchedule(nextRows);
       try {
         const result = await apiClient.setAvWatch(event.id, itemId, enabled);
-        if (result?.version != null && !Number.isNaN(Number(result.version))) {
-          scheduleVersionRef.current = Number(result.version);
-        }
-        if (Array.isArray(result?.schedule_items)) {
-          lastSyncedScheduleRef.current = result.schedule_items;
-        }
+        rememberSyncedSchedule(result);
       } catch (err) {
         console.warn('AV watch update failed', err);
       }
     },
-    [event?.id]
+    [event?.id, rememberCheckboxRows, rememberSyncedSchedule]
   );
 
   const persistMittiWatch = useCallback(
     async (itemId: number, enabled: boolean) => {
       if (!event?.id) return;
-      setSchedule((prev) =>
-        prev.map((row) => ({
-          ...row,
-          mittiWatch: enabled ? row.id === itemId : row.id === itemId ? false : !!row.mittiWatch,
-        }))
-      );
+      const at = Date.now();
+      const nextRows = overlayExclusiveWatch(scheduleRef.current || [], itemId, 'mittiWatch', enabled, at);
+      rememberCheckboxRows(nextRows.filter((row, index) => row !== (scheduleRef.current || [])[index]));
+      setSchedule(nextRows);
       try {
         const result = await apiClient.setMittiWatch(event.id, itemId, enabled);
-        if (result?.version != null && !Number.isNaN(Number(result.version))) {
-          scheduleVersionRef.current = Number(result.version);
-        }
-        if (Array.isArray(result?.schedule_items)) {
-          lastSyncedScheduleRef.current = result.schedule_items;
-        }
+        rememberSyncedSchedule(result);
       } catch (err) {
         console.warn('Mitti watch update failed', err);
       }
     },
-    [event?.id]
+    [event?.id, rememberCheckboxRows, rememberSyncedSchedule]
   );
 
   const persistCueRecording = useCallback(
@@ -9472,13 +9475,14 @@ const RunOfShowPage: React.FC = () => {
       const recordingSource = needsRecording ? source : null;
       const stamp = (row: any) =>
         row && Number(row.id) === id
-          ? { ...row, needsRecording, recordingSource, recordingUpdatedAt: at }
+          ? stampScheduleCheckboxes(
+              { ...row, needsRecording, recordingSource },
+              ['needsRecording', 'recordingSource'],
+              at
+            )
           : row;
-      lastSyncedScheduleRef.current = (lastSyncedScheduleRef.current || []).map(stamp);
-      const base =
-        dirtyRowSnapshotsRef.current.get(id) ||
-        (scheduleRef.current || []).find((row: any) => Number(row.id) === id);
-      if (base) dirtyRowSnapshotsRef.current.set(id, stamp(base));
+      const current = (scheduleRef.current || []).find((row: any) => Number(row.id) === id);
+      if (current) rememberCheckboxRows([stamp(current)]);
       try {
         const result = await apiClient.setCueRecording(event.id, itemId, needsRecording, source);
         rememberSyncedSchedule(result);
@@ -9488,7 +9492,7 @@ const RunOfShowPage: React.FC = () => {
         await flushSaveToAPIRef.current?.();
       }
     },
-    [event?.id, rememberSyncedSchedule]
+    [event?.id, rememberCheckboxRows, rememberSyncedSchedule]
   );
 
   // API functions with debouncing
@@ -9789,10 +9793,13 @@ const RunOfShowPage: React.FC = () => {
           applyingRemoteRunOfShowRef.current = false;
         }, 0);
         const newSchedule = overlayDirtyRows(
-          normalizeScheduleVoCues(
-            data.schedule_items,
-            scheduleRef.current,
-            false
+          applyNewerCheckboxFields(
+            normalizeScheduleVoCues(
+              data.schedule_items,
+              scheduleRef.current,
+              false
+            ),
+            lastSyncedScheduleRef.current
           )
         );
         setSchedule(newSchedule);
@@ -9933,10 +9940,16 @@ const RunOfShowPage: React.FC = () => {
           prev.map((row) => {
             const remote = byId.get(Number(row.id));
             if (!remote) return row;
-            const mittiWatch = remote.mittiWatch === true;
-            const avWatch = remote.avWatch === true;
-            if (!!row.mittiWatch === mittiWatch && !!row.avWatch === avWatch) return row;
-            return { ...row, mittiWatch, avWatch };
+            return mergeNewerCheckboxFields(
+              {
+                ...row,
+                mittiWatch: remote.mittiWatch === true,
+                avWatch: remote.avWatch === true,
+                checkboxStamps: remote.checkboxStamps,
+                recordingUpdatedAt: remote.recordingUpdatedAt,
+              },
+              row
+            );
           })
         );
       }
@@ -9982,7 +9995,10 @@ const RunOfShowPage: React.FC = () => {
           if (scheduleItems && Array.isArray(scheduleItems)) {
             const merged = overlayDirtyRows(
               mergeSchedulePreservingLocalEdits(
-                normalizeScheduleVoCues(scheduleItems, scheduleRef.current, false),
+                applyNewerCheckboxFields(
+                  normalizeScheduleVoCues(scheduleItems, scheduleRef.current, false),
+                  lastSyncedScheduleRef.current
+                ),
                 scheduleRef.current
               )
             );
@@ -21926,13 +21942,19 @@ const RunOfShowPage: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => {
+                    const publicAt = Date.now();
                     setSchedule((prev: ScheduleItem[]) => prev.map(scheduleItem => {
                       if ((scheduleItem.day || 1) !== selectedDay) return scheduleItem;
-                      return {
-                        ...scheduleItem,
-                        isPublic: publicBulkSelectedIds.includes(scheduleItem.id)
-                      };
+                      return stampScheduleCheckboxes(
+                        {
+                          ...scheduleItem,
+                          isPublic: publicBulkSelectedIds.includes(scheduleItem.id)
+                        },
+                        ['isPublic'],
+                        publicAt
+                      );
                     }));
+                    handleUserEditing();
                     if (logChange) {
                       logChange('FIELD_UPDATE', `Bulk set public: ${publicBulkSelectedIds.length} of ${allDayIds.length} cues`, {
                         changeType: 'BULK_PUBLIC',

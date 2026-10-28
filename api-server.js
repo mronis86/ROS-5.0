@@ -4996,30 +4996,65 @@ function canWriteCueRecording(auth) {
   return true;
 }
 
-function recordingUpdatedAtMs(item) {
-  const n = Number(item?.recordingUpdatedAt ?? item?.recording_updated_at ?? 0);
-  return Number.isFinite(n) ? n : 0;
-}
+const SCHEDULE_CHECKBOX_FIELDS = [
+  'hasPPT',
+  'hasQA',
+  'needsRecording',
+  'recordingSource',
+  'mittiWatch',
+  'avWatch',
+  'isPublic',
+];
 
-function mergeNewerRecordingFlags(incoming, existing) {
-  if (!existing) return incoming;
-  if (recordingUpdatedAtMs(existing) > recordingUpdatedAtMs(incoming)) {
-    return {
-      ...incoming,
-      needsRecording: existing.needsRecording === true,
-      recordingSource: existing.recordingSource ?? existing.recording_source ?? null,
-      recordingUpdatedAt: recordingUpdatedAtMs(existing),
-    };
+function checkboxStampMap(item) {
+  const raw = item?.checkboxStamps && typeof item.checkboxStamps === 'object' ? item.checkboxStamps : {};
+  const out = {};
+  for (const [key, value] of Object.entries(raw)) {
+    const n = Number(value);
+    if (Number.isFinite(n) && n > 0) out[key] = n;
   }
-  return incoming;
+  const recAt = Number(item?.recordingUpdatedAt ?? item?.recording_updated_at ?? 0);
+  if (Number.isFinite(recAt) && recAt > (out.needsRecording || 0)) {
+    out.needsRecording = recAt;
+    out.recordingSource = Math.max(out.recordingSource || 0, recAt);
+  }
+  return out;
 }
 
-function applyNewerRecordingFlags(incomingItems, existingItems) {
+function stampScheduleCheckboxes(item, fields, at) {
+  const checkboxStamps = { ...checkboxStampMap(item) };
+  for (const field of fields) checkboxStamps[field] = at;
+  const next = { ...item, checkboxStamps };
+  if (fields.includes('needsRecording')) next.recordingUpdatedAt = at;
+  return next;
+}
+
+function mergeNewerCheckboxFields(incoming, existing) {
+  if (!incoming) return existing;
+  if (!existing) return incoming;
+  const inStamps = checkboxStampMap(incoming);
+  const exStamps = checkboxStampMap(existing);
+  const next = { ...incoming };
+  const checkboxStamps = { ...exStamps, ...inStamps };
+  for (const field of SCHEDULE_CHECKBOX_FIELDS) {
+    const inAt = inStamps[field] || 0;
+    const exAt = exStamps[field] || 0;
+    if (exAt > inAt) {
+      next[field] = existing[field];
+      checkboxStamps[field] = exAt;
+    }
+  }
+  next.checkboxStamps = checkboxStamps;
+  if (checkboxStamps.needsRecording) next.recordingUpdatedAt = checkboxStamps.needsRecording;
+  return next;
+}
+
+function applyNewerCheckboxFields(incomingItems, existingItems) {
   if (!Array.isArray(incomingItems) || !Array.isArray(existingItems) || existingItems.length === 0) {
     return incomingItems;
   }
   const existingById = new Map(existingItems.map((item) => [Number(item.id), item]));
-  return incomingItems.map((item) => mergeNewerRecordingFlags(item, existingById.get(Number(item.id))));
+  return incomingItems.map((item) => mergeNewerCheckboxFields(item, existingById.get(Number(item.id))));
 }
 
 function isCommsOnlyAuth(auth) {
@@ -5105,12 +5140,15 @@ app.patch('/api/run-of-show-data/:eventId/recording', async (req, res) => {
       const id = Number(item.id);
       if (!byId.has(id)) return item;
       const needsRecording = byId.get(id);
-      return {
-        ...item,
-        needsRecording,
-        recordingSource: needsRecording ? markSource : null,
-        recordingUpdatedAt: stampedAt,
-      };
+      return stampScheduleCheckboxes(
+        {
+          ...item,
+          needsRecording,
+          recordingSource: needsRecording ? markSource : null,
+        },
+        ['needsRecording', 'recordingSource'],
+        stampedAt
+      );
     });
 
     const result = await pool.query(
@@ -5174,17 +5212,20 @@ app.patch('/api/run-of-show-data/:eventId/mitti-watch', async (req, res) => {
     if (!Array.isArray(items)) items = [];
 
     let found = clearAll;
+    const stampedAt = Date.now();
     const nextItems = items.map((item) => {
       const id = Number(item.id);
-      if (clearAll) return { ...item, mittiWatch: false };
+      if (clearAll) return stampScheduleCheckboxes({ ...item, mittiWatch: false }, ['mittiWatch'], stampedAt);
       if (enabled) {
         const on = id === itemId;
         if (on) found = true;
-        return { ...item, mittiWatch: on };
+        const nextValue = on;
+        if (!!item.mittiWatch === nextValue) return item;
+        return stampScheduleCheckboxes({ ...item, mittiWatch: nextValue }, ['mittiWatch'], stampedAt);
       }
       if (id === itemId) {
         found = true;
-        return { ...item, mittiWatch: false };
+        return stampScheduleCheckboxes({ ...item, mittiWatch: false }, ['mittiWatch'], stampedAt);
       }
       return item;
     });
@@ -5276,17 +5317,20 @@ app.patch('/api/run-of-show-data/:eventId/av-watch', async (req, res) => {
     if (!Array.isArray(items)) items = [];
 
     let found = clearAll;
+    const stampedAt = Date.now();
     const nextItems = items.map((item) => {
       const id = Number(item.id);
-      if (clearAll) return { ...item, avWatch: false };
+      if (clearAll) return stampScheduleCheckboxes({ ...item, avWatch: false }, ['avWatch'], stampedAt);
       if (enabled) {
         const on = id === itemId;
         if (on) found = true;
-        return { ...item, avWatch: on };
+        const nextValue = on;
+        if (!!item.avWatch === nextValue) return item;
+        return stampScheduleCheckboxes({ ...item, avWatch: nextValue }, ['avWatch'], stampedAt);
       }
       if (id === itemId) {
         found = true;
-        return { ...item, avWatch: false };
+        return stampScheduleCheckboxes({ ...item, avWatch: false }, ['avWatch'], stampedAt);
       }
       return item;
     });
@@ -6127,7 +6171,7 @@ app.post('/api/run-of-show-data', async (req, res) => {
       }
 
       scheduleToSave = mergeLedLayoutsPreservingAnimation(scheduleToSave, existingItems);
-      scheduleToSave = applyNewerRecordingFlags(scheduleToSave, existingItems);
+      scheduleToSave = applyNewerCheckboxFields(scheduleToSave, existingItems);
     }
 
     const resolvedEventDate = await resolveRunOfShowEventDate(pool, event_id, {

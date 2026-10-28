@@ -6,6 +6,7 @@ import { apiClient } from '../services/api-client';
 import { DatabaseService } from '../services/database';
 import { socketClient } from '../services/socket-client';
 import { itemNeedsRecording } from '../lib/cueRecording';
+import { stampScheduleCheckboxes } from '../lib/scheduleCheckboxMerge';
 import { programTypeSurfaceStyle } from '../lib/rosProgramTypeSplit';
 
 type ScheduleItem = {
@@ -177,7 +178,10 @@ const CommsEventPage: React.FC = () => {
     setSchedule((prev) =>
       prev.map((row) =>
         row.id === item.id
-          ? { ...row, needsRecording: next, recordingSource: next ? 'comms' : null, recordingUpdatedAt: Date.now() }
+          ? stampScheduleCheckboxes(
+              { ...row, needsRecording: next, recordingSource: next ? 'comms' : null },
+              ['needsRecording', 'recordingSource']
+            )
           : row
       )
     );

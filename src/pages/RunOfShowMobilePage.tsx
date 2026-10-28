@@ -6,6 +6,7 @@ import { Event } from '../types/Event';
 import { useAuth } from '../contexts/AuthContext';
 import { canSelectOperatorRole } from '../services/auth-service';
 import { CUE_RECORDING_MARK_WARNING, shouldConfirmCueRecordingMark } from '../lib/cueRecording';
+import { stampScheduleCheckboxes } from '../lib/scheduleCheckboxMerge';
 import {
   buildRosProgramTypes,
   HEAD_TABLE_PROGRAM_TYPE,
@@ -799,7 +800,13 @@ const RunOfShowMobilePage: React.FC = () => {
         nextShotType = autoShotPatch.shotType;
       }
     }
-    const updatedItem: ScheduleItem = {
+    const stampFields: string[] = [];
+    if (hasPptDraft !== !!selectedItem.hasPPT) stampFields.push('hasPPT');
+    if (hasQaDraft !== !!selectedItem.hasQA) stampFields.push('hasQA');
+    if (needsRecordingDraft !== !!selectedItem.needsRecording) {
+      stampFields.push('needsRecording', 'recordingSource');
+    }
+    const nextItem = {
       ...selectedItem,
       segmentName: segmentDraft.trim(),
       programType: programDraft.trim(),
@@ -815,16 +822,15 @@ const RunOfShowMobilePage: React.FC = () => {
       hasPPT: hasPptDraft,
       hasQA: hasQaDraft,
       needsRecording: needsRecordingDraft,
-      recordingUpdatedAt:
-        needsRecordingDraft !== !!selectedItem.needsRecording
-          ? Date.now()
-          : selectedItem.recordingUpdatedAt,
       customFields: {
         ...(selectedItem.customFields || {}),
         ...extraCustomDraft,
         cue: cueDraft.trim()
       }
     };
+    const updatedItem: ScheduleItem = stampFields.length
+      ? stampScheduleCheckboxes(nextItem, stampFields)
+      : nextItem;
     const updatedItems = items.map((item) => (item.id === selectedItem.id ? updatedItem : item));
     setItems(updatedItems);
     try {

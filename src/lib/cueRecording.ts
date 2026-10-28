@@ -1,5 +1,7 @@
 /** Cue-level REC flag is for planned post content — not “this show records.” */
 
+import { checkboxStampMap, mergeNewerCheckboxFields } from './scheduleCheckboxMerge';
+
 export type CueRecordingSource = 'comms' | 'ros';
 
 export function itemNeedsRecording(item: { needsRecording?: boolean } | null | undefined): boolean {
@@ -24,23 +26,13 @@ export function resolveRecordingSource(
   return 'ros';
 }
 
-export function recordingUpdatedAtMs(item: { recordingUpdatedAt?: unknown; recording_updated_at?: unknown } | null | undefined): number {
-  const n = Number(item?.recordingUpdatedAt ?? item?.recording_updated_at ?? 0);
-  return Number.isFinite(n) ? n : 0;
+export function recordingUpdatedAtMs(item: { recordingUpdatedAt?: unknown; recording_updated_at?: unknown; checkboxStamps?: Record<string, unknown> } | null | undefined): number {
+  return checkboxStampMap(item as Record<string, any>).needsRecording || 0;
 }
 
 /** Keep the newer REC stamp so a stale row save cannot undo a dedicated recording PATCH. */
 export function mergeNewerRecordingFlags<T extends Record<string, any>>(incoming: T, existing: T | null | undefined): T {
-  if (!existing) return incoming;
-  if (recordingUpdatedAtMs(existing) > recordingUpdatedAtMs(incoming)) {
-    return {
-      ...incoming,
-      needsRecording: existing.needsRecording === true,
-      recordingSource: existing.recordingSource ?? existing.recording_source ?? null,
-      recordingUpdatedAt: recordingUpdatedAtMs(existing),
-    };
-  }
-  return incoming;
+  return mergeNewerCheckboxFields(incoming, existing);
 }
 
 /** Short header for custom REC hover tooltips. */

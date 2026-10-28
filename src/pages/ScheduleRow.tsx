@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { CUE_RECORDING_MARK_WARNING, CUE_RECORDING_HOVER_TITLE, CUE_RECORDING_HOVER_BODY, itemMarkedByComms, resolveRecordingSource } from '../lib/cueRecording';
+import { stampScheduleCheckboxes } from '../lib/scheduleCheckboxMerge';
 import {
   formatSettleCueNoteText,
   prependSettleCueNote,
@@ -268,9 +269,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
     ) + 1;
 
   const setNeedsRecording = (next: boolean) => {
-    if (isLockedByOther) return;
-    claimRowLock();
-    handleUserEditing();
+    if (!beginCellEdit()) return;
     if (!canEditRecording) {
       alert('Viewers cannot mark cues for recording. Please change your role to EDITOR or OPERATOR.');
       return;
@@ -286,12 +285,14 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
     });
     setSchedule((prev: any[]) => prev.map(scheduleItem =>
       scheduleItem.id === item.id
-        ? {
-            ...scheduleItem,
-            needsRecording: next,
-            recordingSource,
-            recordingUpdatedAt: Date.now(),
-          }
+        ? stampScheduleCheckboxes(
+            {
+              ...scheduleItem,
+              needsRecording: next,
+              recordingSource,
+            },
+            ['needsRecording', 'recordingSource']
+          )
         : scheduleItem
     ));
     logChangeDebounced(
@@ -967,8 +968,8 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
                   }
                   const oldValue = !!item.hasPPT;
                   setSchedule((prev: any[]) => prev.map(scheduleItem => 
-                    scheduleItem.id === item.id 
-                      ? { ...scheduleItem, hasPPT: e.target.checked }
+                    scheduleItem.id === item.id
+                      ? stampScheduleCheckboxes({ ...scheduleItem, hasPPT: e.target.checked }, ['hasPPT'])
                       : scheduleItem
                   ));
                   logChangeDebounced(
@@ -1004,8 +1005,8 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
                   }
                   const oldValue = !!item.hasQA;
                   setSchedule((prev: any[]) => prev.map(scheduleItem => 
-                    scheduleItem.id === item.id 
-                      ? { ...scheduleItem, hasQA: e.target.checked }
+                    scheduleItem.id === item.id
+                      ? stampScheduleCheckboxes({ ...scheduleItem, hasQA: e.target.checked }, ['hasQA'])
                       : scheduleItem
                   ));
                   logChangeDebounced(
@@ -1466,7 +1467,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
               const oldValue = !!item.isPublic;
               setSchedule((prev: any[]) => prev.map(scheduleItem => 
                 scheduleItem.id === item.id 
-                  ? { ...scheduleItem, isPublic: e.target.checked }
+                  ? stampScheduleCheckboxes({ ...scheduleItem, isPublic: e.target.checked }, ['isPublic'])
                   : scheduleItem
               ));
               logChangeDebounced(
@@ -1684,6 +1685,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
     'durationHours', 'durationMinutes', 'durationSeconds',
     'notes', 'assets', 'speakers', 'speakersText',
     'hasPPT', 'hasQA', 'needsRecording', 'recordingSource', 'otherRoom', 'isPublic',
+    'checkboxStamps', 'mittiWatch', 'avWatch',
     'isTimedMarker', 'isIndented', 'markerTimeMode', 'markerOffsetSeconds', 'markerAbsoluteSeconds',
   ] as const;
   for (const field of fieldsToCheck) {
