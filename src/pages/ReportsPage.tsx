@@ -531,6 +531,7 @@ const ReportsPage: React.FC = () => {
       'Break F&B/B2B': '#DB2777',      // Magenta / rose
       'Breakout Session': '#0D9488',   // Teal (darker than seafoam)
       'Delay Block': '#B45309',        // Amber / hold (not purple, not break pink)
+      'Show Break': '#0E7490',
       'TBD': '#6B7280',                // Medium Gray
       'KILLED': '#DC2626',             // Bright Red
       'Podium': '#FFFFFF',             // White (no highlighting)
@@ -586,6 +587,7 @@ const ReportsPage: React.FC = () => {
     { label: 'Break F&B / B2B', key: 'Break F&B/B2B' },
     { label: 'Breakout Session', key: 'Breakout Session' },
     { label: 'Delay Block', key: 'Delay Block' },
+    { label: 'Show Break', key: 'Show Break' },
     { label: 'TBD', key: 'TBD' },
     { label: 'KILLED', key: 'KILLED' },
   ];
@@ -601,6 +603,7 @@ const ReportsPage: React.FC = () => {
 
   const isDelayOrBreakProgramType = (programType: string) =>
     programType === 'Delay Block' ||
+    programType === 'Show Break' ||
     programType === 'Break F&B/B2B' ||
     programType === 'Breakout Session';
 
@@ -637,7 +640,7 @@ const ReportsPage: React.FC = () => {
   };
 
   const getCondensedRowClass = (programType: string) => {
-    if (programType === 'Delay Block') return 'row-delay';
+    if (programType === 'Delay Block' || programType === 'Show Break') return 'row-delay';
     if (programType === 'Break F&B/B2B' || programType === 'Breakout Session') return 'row-break';
     if (!isCueBadgeOnlyProgramType(programType)) return 'row-full-tint';
     return '';

@@ -15,6 +15,7 @@ import StageDirectionModal from '../components/StageDirectionModal';
 import StartTimeColumnCell from '../components/StartTimeColumnCell';
 import { SegmentSpellingChip, useSegmentNameSpelling } from '../components/SegmentSpellingFlag';
 import { addSpellingOk, misspelledSegmentWords, replaceSegmentWord } from '../lib/segmentNameSpellcheck';
+import { isShowBreakProgramType } from '../lib/showBreak';
 
 export interface ScheduleRowProps {
   item: any;
@@ -119,6 +120,17 @@ export interface ScheduleRowProps {
     itemId: number,
     patch: { segmentSpellingOk?: string[]; segmentSpellingAskRos?: boolean }
   ) => void;
+  /** Show Break banner: next session cue, e.g. "CUE 16". */
+  resumeCueLabel?: string;
+  /** Show Break Start mirrors this next-session cue. */
+  resumeStartMirror?: {
+    itemId: number;
+    index: number;
+    lockedStartTime?: string | null;
+    actualStartLabel?: string | null;
+    cumulativeOvertime?: number;
+    clockLabel?: string;
+  } | null;
 }
 
 const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
@@ -194,6 +206,8 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
   segmentNameDisplayMode = 'single',
   segmentSpellingMode = 'off',
   onSegmentSpellingPatch,
+  resumeCueLabel = '',
+  resumeStartMirror = null,
 }) => {
   const segmentWrap = segmentNameDisplayMode === 'wrap';
   // One height measure per row render (shared by all custom-column cells)
@@ -376,6 +390,10 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
       visibleColumns.programType ? flexOrder('programType') : 0,
       visibleColumns.duration ? flexOrder('duration') : 0
     ) + 1;
+  /** Show Break text begins in the Duration column. */
+  const showBreakBannerOrder = visibleColumns.duration
+    ? flexOrder('duration')
+    : splitBannerOrder;
 
   const setNeedsRecording = (next: boolean) => {
     if (!beginCellEdit()) return;
@@ -484,31 +502,35 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
         </>
       )}
       {/* Start time — skipped when pinned beside CUE (stickyStartColumn) */}
-      {visibleColumns.start && (
+      {visibleColumns.start ? (
         <StartTimeColumnCell
-          itemId={item.id}
-          index={index}
+          itemId={resumeStartMirror?.itemId ?? item.id}
+          index={resumeStartMirror?.index ?? index}
           width={columnWidths.start}
-          isIndented={Boolean(indentedCues[item.id] || item.isIndented || item.isTimedMarker)}
+          isIndented={
+            !resumeStartMirror &&
+            !isShowBreakProgramType(item.programType) &&
+            Boolean(indentedCues[item.id] || item.isIndented || item.isTimedMarker)
+          }
           showMode={showMode}
           overtimeMinutes={overtimeMinutes}
           startCueId={startCueId}
           showStartOvertime={showStartOvertime}
-          cumulativeOvertime={cumulativeOvertime}
-          lockedStartTime={lockedStartTime}
-          actualStartLabel={actualStartLabel}
+          cumulativeOvertime={resumeStartMirror?.cumulativeOvertime ?? cumulativeOvertime}
+          lockedStartTime={resumeStartMirror?.lockedStartTime ?? lockedStartTime}
+          actualStartLabel={resumeStartMirror?.actualStartLabel ?? actualStartLabel}
           calculateStartTime={calculateStartTime}
           calculateStartTimeWithOvertime={calculateStartTimeWithOvertime}
-          isTimedMarker={item.isTimedMarker === true}
+          isTimedMarker={!resumeStartMirror && item.isTimedMarker === true}
           markerTimeMode={item.markerTimeMode === 'absolute' ? 'absolute' : 'offset'}
           onEditTimedMarker={
-            item.isTimedMarker && onEditTimedMarker
+            !resumeStartMirror && item.isTimedMarker && onEditTimedMarker
               ? () => onEditTimedMarker(item.id)
               : undefined
           }
           style={{ order: flexOrder('start') }}
         />
-      )}
+      ) : null}
       {/* Program type column (moved directly after Start) */}
       {visibleColumns.programType && (
         <div
@@ -550,7 +572,14 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
                   : {};
               setSchedule((prev: any[]) => prev.map(scheduleItem =>
                 scheduleItem.id === item.id
-                  ? { ...scheduleItem, programType, ...autoShot }
+                  ? {
+                      ...scheduleItem,
+                      programType,
+                      ...autoShot,
+                      ...(isShowBreakProgramType(programType)
+                        ? { durationHours: 0, durationMinutes: 0, durationSeconds: 0 }
+                        : {}),
+                    }
                   : scheduleItem
               ));
               logChangeDebounced(
@@ -624,7 +653,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
           <span className="text-[10px] uppercase tracking-wide text-sky-500">no dur</span>
         </div>
       ) : null}
-      {visibleColumns.duration && !item.isTimedMarker && (() => {
+      {visibleColumns.duration && !item.isTimedMarker && !isShowBreakProgramType(item.programType) && (() => {
         const durationChanged = showWasUnderDuration && originalDuration &&
           (item.durationHours !== originalDuration.durationHours ||
            item.durationMinutes !== originalDuration.durationMinutes ||
@@ -811,6 +840,20 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
               className="min-w-[22rem] flex-1 shrink-0 whitespace-nowrap rounded-lg border-2 border-violet-300/80 bg-violet-900/80 px-6 py-2 text-center text-base font-bold tracking-wider text-violet-50 shadow-md"
             >
               ⏱ SEGMENT DELAY • ALL FOLLOWING START TIMES SHIFTED ⏱
+            </span>
+          ))}
+        </div>
+      ) : isShowBreakProgramType(item.programType) ? (
+        <div
+          className="flex min-w-0 flex-1 items-center gap-5 overflow-hidden border-r border-cyan-400/60 px-3 py-2"
+          style={{ order: showBreakBannerOrder }}
+        >
+          {[0, 1, 2, 3, 4, 5].map((marker) => (
+            <span
+              key={marker}
+              className="min-w-[12rem] flex-1 whitespace-nowrap rounded-lg border-2 border-cyan-300/80 bg-cyan-950/80 px-4 py-2 text-center text-sm font-bold tracking-wide text-cyan-50 shadow-md"
+            >
+              Show Break Starts Here - {resumeCueLabel || 'Cue'}
             </span>
           ))}
         </div>
@@ -1824,6 +1867,11 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
     'hasPPT', 'hasQA', 'needsRecording', 'recordingSource', 'otherRoom', 'isPublic',
     'checkboxStamps', 'mittiWatch', 'avWatch',
     'isTimedMarker', 'isIndented', 'markerTimeMode', 'markerOffsetSeconds', 'markerAbsoluteSeconds',
+    'breakStartTime',
+    'sessionStartTime',
+    'sectionStarted',
+    'isSessionStartCue',
+    'sessionStartOvertime',
   ] as const;
   for (const field of fieldsToCheck) {
     if ((prevItem as any)?.[field] !== (nextItem as any)?.[field]) return false;
@@ -1846,6 +1894,13 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
   if (prevProps.segmentNameDisplayMode !== nextProps.segmentNameDisplayMode) return false;
   if (prevProps.segmentSpellingMode !== nextProps.segmentSpellingMode) return false;
   if (prevProps.onSegmentSpellingPatch !== nextProps.onSegmentSpellingPatch) return false;
+  if (prevProps.resumeCueLabel !== nextProps.resumeCueLabel) return false;
+  if ((prevProps.resumeStartMirror?.itemId ?? null) !== (nextProps.resumeStartMirror?.itemId ?? null)) return false;
+  if ((prevProps.resumeStartMirror?.index ?? -1) !== (nextProps.resumeStartMirror?.index ?? -1)) return false;
+  if ((prevProps.resumeStartMirror?.lockedStartTime ?? null) !== (nextProps.resumeStartMirror?.lockedStartTime ?? null)) return false;
+  if ((prevProps.resumeStartMirror?.actualStartLabel ?? null) !== (nextProps.resumeStartMirror?.actualStartLabel ?? null)) return false;
+  if ((prevProps.resumeStartMirror?.cumulativeOvertime ?? 0) !== (nextProps.resumeStartMirror?.cumulativeOvertime ?? 0)) return false;
+  if ((prevProps.resumeStartMirror?.clockLabel ?? '') !== (nextProps.resumeStartMirror?.clockLabel ?? '')) return false;
 
   // Role changes can affect disabled states and styling
   if (prevProps.currentUserRole !== nextProps.currentUserRole) return false;

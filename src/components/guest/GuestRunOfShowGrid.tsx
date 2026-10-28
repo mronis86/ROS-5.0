@@ -41,6 +41,12 @@ import {
   cumulativeOvertimeMinutesForIndex,
   itemCountsTowardStartTime,
 } from '../../lib/scheduleStartTime';
+import {
+  isIndexFrozenByShowSection,
+  isIndexInActiveShowSection,
+  nextSessionCueOf,
+} from '../../lib/showBreak';
+import { resolveScheduleCueLabel } from '../../lib/cueDisplay';
 import { computeLiveStartAnchor } from '../../lib/liveStartProjection';
 import { eventLocalSecondsOfDay, resolveShowTimezone } from '../../lib/eventLocalClock';
 import { formatScheduleClock } from '../../lib/scheduleClockFormat';
@@ -261,6 +267,14 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
     liveTick,
   ]);
 
+  const sessionCue = useMemo(
+    () => schedule.find((row) => row.isSessionStartCue) || null,
+    [schedule]
+  );
+  const sessionStartCueId = timing.sessionStartCueId ?? sessionCue?.id ?? null;
+  const sessionShowStartOvertime =
+    timing.sessionShowStartOvertime || Number(sessionCue?.sessionStartOvertime) || 0;
+
   const overtimeOpts = useMemo(
     () => ({
       masterStartTime,
@@ -284,9 +298,24 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
     ]
   );
 
+  const overtimeOptsForIndex = useCallback(
+    (index: number) => {
+      const inSession = isIndexInActiveShowSection(schedule, index);
+      const frozen = isIndexFrozenByShowSection(schedule, index);
+      return {
+        ...overtimeOpts,
+        startCueId: inSession ? sessionStartCueId : timing.startCueId,
+        showStartOvertime: inSession ? sessionShowStartOvertime : timing.showStartOvertime,
+        liveOffsetMinutes: frozen ? null : overtimeOpts.liveOffsetMinutes,
+      };
+    },
+    [overtimeOpts, schedule, sessionStartCueId, sessionShowStartOvertime, timing.startCueId, timing.showStartOvertime]
+  );
+
   const calculateStartTimeWithOvertime = useCallback(
-    (index: number): string => calculateScheduleStartTimeWithOvertime(schedule, index, overtimeOpts),
-    [schedule, overtimeOpts]
+    (index: number): string =>
+      calculateScheduleStartTimeWithOvertime(schedule, index, overtimeOptsForIndex(index)),
+    [schedule, overtimeOptsForIndex]
   );
 
   const actualStartLabels = useMemo(() => {
@@ -477,6 +506,28 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
               GUEST_COLUMN_WIDTHS.segmentName
             );
             const isIndented = Boolean(indentedCues[item.id] || item.isIndented || item.isTimedMarker);
+            const resume = nextSessionCueOf(schedule, rowIndex, (row) =>
+              itemCountsTowardStartTime(row, indentedCues)
+            );
+            const resumeCueLabel = resume
+              ? resolveScheduleCueLabel(resume.item, resume.item.id)
+              : '';
+            const resumeMirror = resume
+              ? {
+                  itemId: resume.item.id,
+                  index: resume.index,
+                  lockedStartTime: lockedStartTimes[resume.item.id] || null,
+                  actualStartLabel: actualStartLabels[resume.item.id] || null,
+                  cumulativeOvertime: cumulativeOvertimeMinutesForIndex(
+                    schedule,
+                    resume.index,
+                    overtimeOptsForIndex(resume.index)
+                  ),
+                  clockLabel: String(calculateStartTime(resume.index) || ''),
+                }
+              : null;
+            const inSection = isIndexInActiveShowSection(schedule, rowIndex);
+            const rowShowMode = isIndexFrozenByShowSection(schedule, rowIndex) ? 'rehearsal' : showMode;
             const dup = duplicateCues.get(item.id);
 
             return (
@@ -533,21 +584,24 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
                     }}
                   >
                     <StartTimeColumnCell
-                      itemId={item.id}
-                      index={rowIndex}
+                      itemId={resumeMirror?.itemId ?? item.id}
+                      index={resumeMirror?.index ?? rowIndex}
                       width={GUEST_COLUMN_WIDTHS.start}
-                      isIndented={isIndented}
-                      showMode={showMode}
+                      isIndented={!resumeMirror && isIndented}
+                      showMode={rowShowMode}
                       overtimeMinutes={overtimeMinutes}
-                      startCueId={timing.startCueId}
-                      showStartOvertime={timing.showStartOvertime}
-                      cumulativeOvertime={cumulativeOvertimeMinutesForIndex(
-                        schedule,
-                        rowIndex,
-                        overtimeOpts
-                      )}
-                      lockedStartTime={lockedStartTimes[item.id] || null}
-                      actualStartLabel={actualStartLabels[item.id] || null}
+                      startCueId={inSection ? sessionStartCueId : timing.startCueId}
+                      showStartOvertime={inSection ? sessionShowStartOvertime : timing.showStartOvertime}
+                      cumulativeOvertime={
+                        resumeMirror?.cumulativeOvertime ??
+                        cumulativeOvertimeMinutesForIndex(
+                          schedule,
+                          rowIndex,
+                          overtimeOptsForIndex(rowIndex)
+                        )
+                      }
+                      lockedStartTime={resumeMirror?.lockedStartTime ?? (lockedStartTimes[item.id] || null)}
+                      actualStartLabel={resumeMirror?.actualStartLabel ?? (actualStartLabels[item.id] || null)}
                       calculateStartTime={calculateStartTime}
                       calculateStartTimeWithOvertime={calculateStartTimeWithOvertime}
                       isTimedMarker={item.isTimedMarker === true}
@@ -565,13 +619,15 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
                   columnFlexOrder={columnFlexOrder}
                   indentedCues={indentedCues}
                   overtimeMinutes={overtimeMinutes}
-                  startCueId={timing.startCueId}
-                  showStartOvertime={timing.showStartOvertime}
+                  startCueId={inSection ? sessionStartCueId : timing.startCueId}
+                  showStartOvertime={inSection ? sessionShowStartOvertime : timing.showStartOvertime}
                   cumulativeOvertime={cumulativeOvertimeMinutesForIndex(
                     schedule,
                     rowIndex,
-                    overtimeOpts
+                    overtimeOptsForIndex(rowIndex)
                   )}
+                  resumeCueLabel={resumeCueLabel}
+                  resumeStartMirror={resumeMirror}
                   programTypes={ROS_PROGRAM_TYPES}
                   programTypeColors={ROS_PROGRAM_TYPE_COLORS}
                   shotTypes={ROS_SHOT_TYPES}
@@ -583,7 +639,7 @@ const GuestRunOfShowGrid: React.FC<GuestRunOfShowGridProps> = ({
                   logChangeDebounced={noop}
                   calculateStartTime={calculateStartTime}
                   calculateStartTimeWithOvertime={calculateStartTimeWithOvertime}
-                  showMode={showMode}
+                  showMode={rowShowMode}
                   lockedStartTime={lockedStartTimes[item.id] || null}
                   actualStartLabel={actualStartLabels[item.id] || null}
                   displaySpeakersText={displaySpeakersText}

@@ -11,6 +11,7 @@ import { getCountdownPrimaryHex, useCountdownColorMode, RAINBOW_COUNTDOWN_GRADIE
 import { overtimeSignPrefix, useOvertimeSign } from '../lib/overtimeSign';
 import { OvertimeClockText, pageClockSignClass } from '../lib/OvertimeClockText';
 import {
+  findSessionPreshowCue,
   findTopPreshowCue,
   isPreshowArmedForKey,
   isPreshowProgramType,
@@ -53,6 +54,21 @@ import {
   isDelayProgramType,
   resolveScheduleCueLabel,
 } from '../lib/cueDisplay';
+import {
+  SHOW_BREAK_PROGRAM_TYPE,
+  activeShowSectionBreakIndex,
+  firstSessionCueIndexAfter,
+  isIndexFrozenByShowSection,
+  isIndexInActiveShowSection,
+  isScheduleOnlyProgramType,
+  isShowBreakProgramType,
+  lastShowBreakIndexBefore,
+  nextSessionCueOf,
+  normalizeBreakStartTime,
+  parseBreakStartTimeToSeconds,
+  sameShowSession,
+  sessionStartTimeOf,
+} from '../lib/showBreak';
 
 import { useAuth } from '../contexts/AuthContext';
 import { useActiveViewers } from '../contexts/ActiveViewersContext';
@@ -364,6 +380,15 @@ interface ScheduleItem {
   timerDisplay?: 'countdown' | 'countUp' | 'timeOfDay' | 'todOnly';
   /** Optional VO / BGM chips in Notes (prototype) — metadata only, not timeline rows */
   voCues?: VoCue[];
+  /** Legacy HH:MM restart clock stored on a Show Break row. */
+  breakStartTime?: string | null;
+  /** Pinned HH:MM on the first cue after a Show Break. */
+  sessionStartTime?: string | null;
+  /** Start Section toggle is ON for this Show Break. */
+  sectionStarted?: boolean;
+  /** Cyan session ★ after a Show Break. */
+  isSessionStartCue?: boolean;
+  sessionStartOvertime?: number;
 }
 
 interface CustomColumn {
@@ -426,6 +451,11 @@ function scheduleItemSignature(item: any): string {
     asText(item.markerAbsoluteSeconds),
     asText(item.timerDisplay),
     item.isStartCue ? '1' : '',
+    asText(item.breakStartTime),
+    asText(item.sessionStartTime),
+    item.sectionStarted ? '1' : '',
+    item.isSessionStartCue ? '1' : '',
+    asText(item.sessionStartOvertime),
     JSON.stringify(item.voCues || []),
   ].join('\u001f');
 }
@@ -496,7 +526,7 @@ function ensureScheduleTimerIds(
 
   let changed = false;
   const next = items.map((item) => {
-    if (!item || item.programType === 'Delay Block') return item;
+    if (!item || isScheduleOnlyProgramType(item.programType)) return item;
     const existing = typeof item.timerId === 'string' ? item.timerId.trim() : '';
     if (existing) {
       return existing === item.timerId ? item : { ...item, timerId: existing };
@@ -1515,6 +1545,9 @@ const RunOfShowPage: React.FC = () => {
   const [showInsertRowModal, setShowInsertRowModal] = useState(false);
   const [insertRowPosition, setInsertRowPosition] = useState<number | null>(null);
   const [showDelayBlockModal, setShowDelayBlockModal] = useState(false);
+  const [showShowBreakModal, setShowShowBreakModal] = useState(false);
+  const [showBreakLabel, setShowBreakLabel] = useState('Evening');
+  const [showBreakStartTime, setShowBreakStartTime] = useState('17:00');
   const [timedMarkerModal, setTimedMarkerModal] = useState<{
     mode: 'add' | 'edit';
     parentId: number;
@@ -1644,6 +1677,57 @@ const RunOfShowPage: React.FC = () => {
   const [indentedCues, setIndentedCues] = useState<Record<number, { parentId: number; userId: string; userName: string }>>({});
   const [startCueId, setStartCueId] = useState<number | null>(null);
   const [showStartOvertime, setShowStartOvertime] = useState<number>(0); // Minutes late (+) or early (-)
+  const [sessionStartCueId, setSessionStartCueId] = useState<number | null>(null);
+  const [sessionShowStartOvertime, setSessionShowStartOvertime] = useState<number>(0);
+
+  const activeShowSectionBreakIndexValue = useMemo(
+    () => activeShowSectionBreakIndex(schedule),
+    [schedule]
+  );
+  const resolveSessionPreshowCue = (day?: number | null) => {
+    const workingDay = day != null ? Number(day) : selectedDay;
+    if (activeShowSectionBreakIndexValue >= 0) {
+      const session = findSessionPreshowCue(
+        schedule,
+        indentedCues,
+        workingDay,
+        activeShowSectionBreakIndexValue
+      );
+      if (session) return session;
+    }
+    return findTopPreshowCue(schedule, indentedCues, workingDay);
+  };
+
+  const rowShowStartOvertime = (index: number): number => {
+    const row = schedule[index];
+    if (!row) return 0;
+    if (isIndexInActiveShowSection(schedule, index)) {
+      if (!sessionShowStartOvertime || sessionStartCueId == null) return 0;
+      const startCueIndex = schedule.findIndex((s) => s.id === sessionStartCueId);
+      return shouldApplyShowStartOvertime({
+        showStartOvertime: sessionShowStartOvertime,
+        startCueId: sessionStartCueId,
+        startCueIndex,
+        rowIndex: index,
+        schedule,
+        rowDay: row.day || 1,
+      })
+        ? sessionShowStartOvertime
+        : 0;
+    }
+    if (!showStartOvertime || startCueId == null) return 0;
+    const startCueIndex = schedule.findIndex((s) => s.id === startCueId);
+    return shouldApplyShowStartOvertime({
+      showStartOvertime,
+      startCueId,
+      startCueIndex,
+      rowIndex: index,
+      schedule,
+      rowDay: row.day || 1,
+    })
+      ? showStartOvertime
+      : 0;
+  };
   
   const [showMode, setShowMode] = useState<'rehearsal' | 'in-show'>('rehearsal');
   const showModeRef = useRef<'rehearsal' | 'in-show'>(showMode);
@@ -1830,7 +1914,7 @@ const RunOfShowPage: React.FC = () => {
     timer: hybridTimerData?.activeTimer,
     programType: activeCueForPreshow?.programType,
     itemId: activeCueForPreshow?.id ?? hybridTimerData?.activeTimer?.item_id,
-    topPreshowItemId: findTopPreshowCue(schedule, indentedCues, selectedDay)?.id ?? null,
+    topPreshowItemId: resolveSessionPreshowCue(selectedDay)?.id ?? null,
   });
   const rosClockTimerMode = resolveRosTimerDisplayMode(activeCueForPreshow);
   const showTodOnClock = rosClockTimerMode === 'timeOfDay' || rosClockTimerMode === 'todOnly';
@@ -2598,6 +2682,8 @@ const RunOfShowPage: React.FC = () => {
     'bg-slate-950/90 ring-1 ring-inset ring-slate-600/40';
   const DELAY_BLOCK_ROW_CLASS =
     'bg-violet-950/90 ring-2 ring-inset ring-violet-400';
+  const SHOW_BREAK_ROW_CLASS =
+    'bg-cyan-950/90 ring-2 ring-inset ring-cyan-400';
 
   /** True only while the cue timer is actually running (not merely loaded). */
   const isCueRunningOnStage = (itemId: number) => {
@@ -2618,6 +2704,9 @@ const RunOfShowPage: React.FC = () => {
   };
   const isDelayBlock = (itemId: number) =>
     schedule.some(item => item.id === itemId && item.programType === 'Delay Block');
+  const isShowBreakRow = (itemId: number) =>
+    schedule.some((item) => item.id === itemId && isShowBreakProgramType(item.programType));
+  const isScheduleOnlyRow = (itemId: number) => isDelayBlock(itemId) || isShowBreakRow(itemId);
 
   const isHybridTimerRunning = (timer: any) =>
     Boolean(
@@ -2633,9 +2722,9 @@ const RunOfShowPage: React.FC = () => {
     const hybridRunning = isHybridTimerRunning(hybrid);
     const runningIds = Object.keys(activeTimers)
       .map((key) => Number(key))
-      .filter((id) => Number.isFinite(id) && activeTimers[id] && !isDelayBlock(id));
+      .filter((id) => Number.isFinite(id) && activeTimers[id] && !isScheduleOnlyRow(id));
 
-    if (hybridRunning && hybridId != null && !isDelayBlock(hybridId)) {
+    if (hybridRunning && hybridId != null && !isScheduleOnlyRow(hybridId)) {
       return hybridId;
     }
     if (runningIds.length > 0) {
@@ -2643,7 +2732,7 @@ const RunOfShowPage: React.FC = () => {
       return runningIds[runningIds.length - 1];
     }
     if (hybridRunning && hybridId != null) return hybridId;
-    if (activeItemId != null && !isDelayBlock(activeItemId)) return activeItemId;
+    if (activeItemId != null && !isScheduleOnlyRow(activeItemId)) return activeItemId;
     return null;
   }, [
     hybridTimerData?.activeTimer,
@@ -2701,18 +2790,27 @@ const RunOfShowPage: React.FC = () => {
           backgroundImage:
             'repeating-linear-gradient(135deg, rgba(167,139,250,0.14) 0, rgba(167,139,250,0.14) 10px, rgba(46,16,101,0.12) 10px, rgba(46,16,101,0.12) 20px)',
         }
-      : {}),
+      : isShowBreakProgramType(item.programType)
+        ? {
+            backgroundColor: '#083344',
+            backgroundImage:
+              'repeating-linear-gradient(135deg, rgba(34,211,238,0.14) 0, rgba(34,211,238,0.14) 10px, rgba(8,51,68,0.12) 10px, rgba(8,51,68,0.12) 20px)',
+          }
+        : {}),
     ...extra,
   });
 
   const getRowContainerClass = (itemId: number, index: number) =>
-    isDelayBlock(itemId) && !isItemDimmed(itemId)
+    isShowBreakRow(itemId) && !isItemDimmed(itemId)
+      ? SHOW_BREAK_ROW_CLASS
+      : isDelayBlock(itemId) && !isItemDimmed(itemId)
       ? DELAY_BLOCK_ROW_CLASS
       : rowClassNames.get(itemId) || (index % 2 === 0 ? 'bg-slate-800' : 'bg-slate-900');
 
   /** CUE + Timer columns: neutral unless completed/stopped, or timed marker linked to loaded parent. */
   const getSideColumnRowClass = (itemId: number, index: number) => {
     if (isItemDimmed(itemId)) return COMPLETED_ROW_CLASS;
+    if (isShowBreakRow(itemId)) return SHOW_BREAK_ROW_CLASS;
     if (isDelayBlock(itemId)) return DELAY_BLOCK_ROW_CLASS;
     const row = schedule.find((s) => s.id === itemId);
     if (row?.isTimedMarker) {
@@ -2735,7 +2833,7 @@ const RunOfShowPage: React.FC = () => {
     customFields?: Record<string, unknown>;
     voCues?: VoCue[];
   }): React.CSSProperties =>
-    isItemDimmed(item.id) || item.programType === 'Delay Block'
+    isItemDimmed(item.id) || isScheduleOnlyProgramType(item.programType)
       ? getRowContainerStyle(item)
       : {
           height: getRowHeight(
@@ -3706,7 +3804,7 @@ const RunOfShowPage: React.FC = () => {
         event.numberOfDays,
         selectedDay
       );
-      const cue = findTopPreshowCue(schedule, indentedCues, workingDay);
+      const cue = resolveSessionPreshowCue(workingDay);
       if (!cue) return null;
       const startHHMM = resolvePreshowStartHHMM({
         cue,
@@ -3881,7 +3979,7 @@ const RunOfShowPage: React.FC = () => {
         event.numberOfDays,
         selectedDay
       );
-      const topPreshow = findTopPreshowCue(schedule, indentedCues, workingDay);
+      const topPreshow = resolveSessionPreshowCue(workingDay);
       const synced = getSyncedNow(clockOffset);
       const tz = resolveShowTimezone(calendarTimezoneRef.current, eventTimezone);
       const nowMs = synced.getTime();
@@ -4188,6 +4286,7 @@ const RunOfShowPage: React.FC = () => {
       showBreakoutRoomModal ||
       showOtherRoomModal ||
       showDelayBlockModal ||
+      showShowBreakModal ||
       !!timedMarkerModal ||
       showCustomColumnModal ||
       showPublicBulkModal;
@@ -4207,7 +4306,7 @@ const RunOfShowPage: React.FC = () => {
         startCountdownTimer();
       }
     }
-  }, [isUserEditing, showSpeakersModal, showNotesModal, showVoModal, showAssetsModal, showParticipantsModal, showBackupModal, showExcelImportModal, showAgendaImportModal, showCSVImportModal, showGoogleSheetExportModal, showImportEventModal, showSpeakerManagerModal, showAddModal, showBreakoutRoomModal, showOtherRoomModal, showDelayBlockModal, timedMarkerModal, showCustomColumnModal, showPublicBulkModal, event?.id, startCountdownTimer, scheduleSyncState]);
+  }, [isUserEditing, showSpeakersModal, showNotesModal, showVoModal, showAssetsModal, showParticipantsModal, showBackupModal, showExcelImportModal, showAgendaImportModal, showCSVImportModal, showGoogleSheetExportModal, showImportEventModal, showSpeakerManagerModal, showAddModal, showBreakoutRoomModal, showOtherRoomModal, showDelayBlockModal, showShowBreakModal, timedMarkerModal, showCustomColumnModal, showPublicBulkModal, event?.id, startCountdownTimer, scheduleSyncState]);
   
   
   // Load user role from navigation state or localStorage
@@ -5951,6 +6050,7 @@ const RunOfShowPage: React.FC = () => {
       showBreakoutRoomModal ||
       showOtherRoomModal ||
       showDelayBlockModal ||
+      showShowBreakModal ||
       timedMarkerModal ||
       showCustomColumnModal ||
       showPublicBulkModal
@@ -7812,7 +7912,8 @@ const RunOfShowPage: React.FC = () => {
     }
 
     const item = schedule.find((s) => s.id === itemId);
-    const topPreshow = findTopPreshowCue(schedule, indentedCues, item?.day || selectedDay);
+    if (isScheduleOnlyProgramType(item?.programType)) return;
+    const topPreshow = resolveSessionPreshowCue(item?.day || selectedDay);
     if (!topPreshow || topPreshow.id !== itemId) {
       void clearPreshowCountdownMessage();
     }
@@ -8375,17 +8476,42 @@ const RunOfShowPage: React.FC = () => {
   /** Manually nudge show-start offset (minutes). Positive = late / push later. Requires START cue. */
   const adjustShowStartOffset = async (deltaMinutes: number) => {
     if (!event?.id) return;
-    if (!startCueId) {
-      alert('Mark a START cue (star) first. The offset shifts Start times from that row onward.');
+    const sectionOn = activeShowSectionBreakIndex(schedule) >= 0;
+    const targetCueId = sectionOn ? sessionStartCueId : startCueId;
+    if (!targetCueId) {
+      alert(
+        sectionOn
+          ? 'Mark the cyan session START star first. It only applies below the Show Break.'
+          : 'Mark a START cue (star) first. The offset shifts Start times from that row onward.'
+      );
       return;
     }
-    const next = showStartOvertime + deltaMinutes;
-    const startIndex = schedule.findIndex(s => s.id === startCueId);
+    const startIndexForFreeze = schedule.findIndex((s) => s.id === targetCueId);
+    if (!sectionOn && isIndexFrozenByShowSection(schedule, startIndexForFreeze)) {
+      alert('Morning offsets are frozen. Turn Section On and use the cyan star for the next session.');
+      return;
+    }
+    const next = (sectionOn ? sessionShowStartOvertime : showStartOvertime) + deltaMinutes;
+    const startIndex = startIndexForFreeze;
     const scheduledTime = startIndex >= 0 ? (calculateStartTime(startIndex) || '') : '';
+    if (sectionOn) {
+      setSessionShowStartOvertime(next);
+      const updatedSchedule = schedule.map((row) =>
+        row.id === targetCueId ? { ...row, sessionStartOvertime: next } : row
+      );
+      setSchedule(updatedSchedule);
+      void persistScheduleNow(updatedSchedule);
+      logChange(
+        'SESSION_START_OFFSET_ADJUST',
+        `Session start offset set to ${next > 0 ? '+' : ''}${next} min (Δ ${deltaMinutes > 0 ? '+' : ''}${deltaMinutes})`,
+        { fieldName: 'sessionShowStartOvertime', oldValue: sessionShowStartOvertime, newValue: next, deltaMinutes }
+      );
+      return;
+    }
     const actualTime = new Date().toISOString();
     setShowStartOvertime(next);
     try {
-      await DatabaseService.saveShowStartOvertime(event.id, startCueId, next, scheduledTime, actualTime);
+      await DatabaseService.saveShowStartOvertime(event.id, targetCueId, next, scheduledTime, actualTime);
       logChange(
         'SHOW_START_OFFSET_ADJUST',
         `Show start offset set to ${next > 0 ? '+' : ''}${next} min (Δ ${deltaMinutes > 0 ? '+' : ''}${deltaMinutes})`,
@@ -8442,6 +8568,11 @@ const RunOfShowPage: React.FC = () => {
       alert('Load or complete a cue first so we know which previous cue to adjust.');
       return;
     }
+    const targetIndex = schedule.findIndex((row) => row.id === target.id);
+    if (isIndexFrozenByShowSection(schedule, targetIndex)) {
+      alert('Morning offsets are frozen. Turn Section Off to change them, or keep working in the new section.');
+      return;
+    }
     const prevValue = overtimeMinutes[target.id] || 0;
     const next = prevValue + deltaMinutes;
     setOvertimeMinutes((prev) => ({ ...prev, [target.id]: next }));
@@ -8495,6 +8626,185 @@ const RunOfShowPage: React.FC = () => {
       console.error('❌ Failed to clear show offsets:', error);
       alert('Could not clear offsets. Please try again.');
     }
+  };
+
+  const persistScheduleNow = async (updatedSchedule: ScheduleItem[]) => {
+    if (!event?.id) return;
+    try {
+      await DatabaseService.saveRunOfShowData(
+        {
+          event_id: event.id,
+          event_name: eventName,
+          event_date: event?.date || new Date().toISOString(),
+          schedule_items: updatedSchedule,
+          custom_columns: customColumns,
+          settings: {
+            eventName: eventName,
+            masterStartTime: masterStartTime,
+            dayStartTimes: dayStartTimes,
+            numberOfDays: event?.numberOfDays,
+            show_mode: showMode,
+            track_was_durations: trackWasDurations,
+            ...(Object.keys(originalDurations).length > 0 && { original_durations: originalDurations }),
+            ...(Object.keys(lockedStartTimes).length > 0 && {
+              locked_start_times: Object.fromEntries(
+                Object.entries(lockedStartTimes).map(([k, v]) => [String(k), v])
+              ),
+            }),
+            ...autoRollSettingsPatch(autoRollArmedRef.current),
+            voAlertsEnabled: voAlertsEnabledRef.current !== false,
+          },
+        },
+        {
+          userId: user?.id || 'unknown',
+          userName: user?.full_name || user?.email || 'Unknown User',
+          userRole: user?.role || currentUserRole || 'VIEWER',
+        }
+      );
+    } catch (error) {
+      console.error('❌ Failed to persist schedule after section/star change:', error);
+    }
+  };
+
+  /** Start Section toggle: ON freezes offsets above and arms the next session. */
+  const toggleShowSection = async (breakItemId: number, turnOn: boolean) => {
+    if (currentUserRole !== 'OPERATOR') {
+      alert('Only OPERATORs can change the show section.');
+      return;
+    }
+    if (!event?.id || !user) return;
+    const breakIndex = schedule.findIndex((row) => row.id === breakItemId);
+    if (breakIndex < 0) return;
+    const breakItem = schedule[breakIndex];
+    const alreadyOn = !!breakItem.sectionStarted;
+    if (turnOn === alreadyOn) return;
+    const day = breakItem.day || 1;
+    const next = nextSessionCueOf(schedule, breakIndex, (row) =>
+      itemCountsTowardStartTime(row as ScheduleItem, indentedCues)
+    );
+    const nextLabel = next ? resolveScheduleCueLabel(next.item, next.item.id) : 'the next cues';
+
+    if (!turnOn) {
+      const ok = window.confirm(
+        'Turn this section Off?\n\nYou will be working with the cues above the Show Break again. Frozen offsets stay saved.'
+      );
+      if (!ok) return;
+      const updatedOff = schedule.map((row) =>
+        row.id === breakItemId ? { ...row, sectionStarted: false } : row
+      );
+      setSchedule(updatedOff);
+      void persistScheduleNow(updatedOff);
+      logChange('STOP_SHOW_SECTION', `Turned Show Section Off — working with cues above the break again`, {
+        fieldName: 'showSection',
+        itemId: breakItemId,
+        newValue: 'off',
+      });
+      return;
+    }
+
+    const ok = window.confirm(
+      `Turn this section On?\n\nOffsets above the Show Break will stay saved and freeze. Timers above will stop. You can go to Rehearsal without losing those offsets, then In-Show will track only ${nextLabel} and later.`
+    );
+    if (!ok) return;
+
+    const updatedOn = schedule.map((row) => ({
+      ...row,
+      sectionStarted: isShowBreakProgramType(row.programType)
+        ? row.id === breakItemId
+        : row.sectionStarted,
+      isSessionStartCue: next ? row.id === next.item.id : false,
+      sessionStartOvertime: next && row.id === next.item.id ? 0 : row.sessionStartOvertime,
+    }));
+    setSchedule(updatedOn);
+    void persistScheduleNow(updatedOn);
+    setSessionStartCueId(next?.item.id ?? null);
+    setSessionShowStartOvertime(0);
+    setInShowNudgeDismissed(false);
+    inShowNudgeRunKeyRef.current = null;
+    inShowNudgeFirstSeenMsRef.current = null;
+
+    await DatabaseService.saveShowModeWithBaseline(event.id, {
+      clearPreshowShowDay: true,
+      liveStartProjection: false,
+    });
+    setPreshowShowDayArmed(null);
+    disarmLiveStartProjection();
+
+    const timersToStop = new Set<number>();
+    Object.keys(activeTimers).forEach((id) => {
+      const itemId = Number(id);
+      const idx = schedule.findIndex((row) => row.id === itemId);
+      if (idx >= 0 && idx < breakIndex && (schedule[idx].day || 1) === day) {
+        timersToStop.add(itemId);
+      }
+    });
+    const hybridId = hybridTimerData?.activeTimer?.item_id;
+    if (hybridId != null) {
+      const hid = Number(hybridId);
+      const idx = schedule.findIndex((row) => row.id === hid);
+      if (idx >= 0 && idx < breakIndex) timersToStop.add(hid);
+    }
+    if (activeItemId != null) {
+      const idx = schedule.findIndex((row) => row.id === activeItemId);
+      if (idx >= 0 && idx < breakIndex) timersToStop.add(activeItemId);
+    }
+
+    for (const itemId of timersToStop) {
+      try {
+        await DatabaseService.stopTimer(
+          event.id,
+          itemId,
+          user.id,
+          user.full_name || user.email || 'Unknown User',
+          currentUserRole || 'VIEWER'
+        );
+      } catch (error) {
+        console.warn('Could not stop timer above Show Break:', itemId, error);
+      }
+    }
+    if (timersToStop.size) {
+      setActiveTimers((prev) => {
+        const nextTimers = { ...prev };
+        timersToStop.forEach((id) => {
+          delete nextTimers[id];
+        });
+        return nextTimers;
+      });
+      setTimerProgress((prev) => {
+        const nextProgress = { ...prev };
+        timersToStop.forEach((id) => {
+          delete nextProgress[id];
+        });
+        return nextProgress;
+      });
+    }
+    if (activeItemId != null && timersToStop.has(activeItemId)) {
+      setActiveItemId(null);
+    }
+    if (secondaryTimer) {
+      try {
+        await stopSecondaryTimer();
+      } catch (error) {
+        console.warn('Could not stop secondary timer:', error);
+      }
+    }
+
+    preshowAutoStartedKeyRef.current = null;
+    preshowAutoStartInFlightRef.current = false;
+    setDismissedPreshowWarnKeys(new Set());
+    setActivePreshowWarn(null);
+
+    logChange(
+      'START_SHOW_SECTION',
+      `Turned Show Section On — froze offsets above and armed ${nextLabel}`,
+      {
+        fieldName: 'showSection',
+        itemId: breakItemId,
+        nextCueId: next?.item.id ?? null,
+        nextCueLabel: nextLabel,
+        newValue: 'on',
+      }
+    );
   };
 
   /** Clear master + per-day start times (Neon settings + this browser’s local cache). Admin/Crew only. */
@@ -9754,6 +10064,14 @@ const RunOfShowPage: React.FC = () => {
           setStartCueId(null);
           console.log('⭐ No START cue marker found in schedule');
         }
+        const sessionCueItem = newSchedule.find((item) => item.isSessionStartCue === true);
+        if (sessionCueItem) {
+          setSessionStartCueId(sessionCueItem.id);
+          setSessionShowStartOvertime(Number(sessionCueItem.sessionStartOvertime) || 0);
+        } else {
+          setSessionStartCueId(null);
+          setSessionShowStartOvertime(0);
+        }
         
         // Load overtime minutes from dedicated table (like completed_cues)
         const overtimeData = await DatabaseService.getOvertimeMinutes(event.id);
@@ -10131,6 +10449,9 @@ const RunOfShowPage: React.FC = () => {
             // Star marker lives in startCueId state (not only item.isStartCue) — sync from schedule.
             const startCueItem = merged.find((item: any) => item.isStartCue === true);
             setStartCueId(startCueItem ? startCueItem.id : null);
+            const sessionCueItem = merged.find((item: any) => item.isSessionStartCue === true);
+            setSessionStartCueId(sessionCueItem ? sessionCueItem.id : null);
+            setSessionShowStartOvertime(sessionCueItem ? Number(sessionCueItem.sessionStartOvertime) || 0 : 0);
             console.log('✅ Real-time: Schedule items updated (merge-safe)');
           }
         
@@ -12049,7 +12370,7 @@ const RunOfShowPage: React.FC = () => {
     const item: ScheduleItem = {
       ...newItem,
       id: newItem.id && newItem.id > 0 ? newItem.id : modalDraftItemId && modalDraftItemId > 0 ? modalDraftItemId : Date.now(),
-      timerId: generateRandomTimerId(),
+      timerId: isScheduleOnlyProgramType(newItem.programType) ? '' : generateRandomTimerId(),
       isIndented: isIndentedItem,
       // Main cues default public; indented / timed markers stay private unless explicitly set
       isPublic: isIndentedItem ? false : newItem.isPublic !== false,
@@ -12169,6 +12490,59 @@ const RunOfShowPage: React.FC = () => {
       customFields: {},
     });
     setShowDelayBlockModal(false);
+  };
+
+  const addShowBreak = () => {
+    const label = String(showBreakLabel || '').trim() || 'Show Break';
+    const afterIndex = insertRowPosition != null ? insertRowPosition + 1 : -1;
+    const nextCue =
+      afterIndex >= 0
+        ? schedule.slice(afterIndex).find(
+            (row) =>
+              (row.day || 1) === delayBlockDay &&
+              !isShowBreakProgramType(row.programType) &&
+              itemCountsTowardStartTime(row, indentedCues)
+          )
+        : null;
+    const nextCueIndex = nextCue ? schedule.findIndex((row) => row.id === nextCue.id) : -1;
+    const pin =
+      nextCueIndex >= 0
+        ? normalizeBreakStartTime(
+            lockedStartTimes[nextCue.id] || calculateStartTime(nextCueIndex)
+          )
+        : '';
+    addScheduleItem({
+      cue: '',
+      day: delayBlockDay,
+      programType: SHOW_BREAK_PROGRAM_TYPE,
+      shotType: '',
+      segmentName: label,
+      durationHours: 0,
+      durationMinutes: 0,
+      durationSeconds: 0,
+      notes: '',
+      assets: '',
+      speakers: '',
+      speakersText: '',
+      hasPPT: false,
+      hasQA: false,
+      needsRecording: false,
+      timerId: '',
+      isPublic: false,
+      isIndented: false,
+      timerDisplay: 'countdown',
+      customFields: {},
+    });
+    if (nextCue && pin) {
+      setSchedule((prev) =>
+        prev.map((row) =>
+          row.id === nextCue.id && !sessionStartTimeOf(row)
+            ? { ...row, sessionStartTime: pin }
+            : row
+        )
+      );
+    }
+    setShowShowBreakModal(false);
   };
 
   // Add a breakout room (sub-indented cue) for a Breakout Session
@@ -12662,11 +13036,7 @@ const RunOfShowPage: React.FC = () => {
       console.log('✅ Timer stopped in API');
 
       const stoppedItem = schedule.find((s) => s.id === itemId);
-      const topPreshowOnStop = findTopPreshowCue(
-        schedule,
-        indentedCues,
-        stoppedItem?.day || selectedDay
-      );
+      const topPreshowOnStop = resolveSessionPreshowCue(stoppedItem?.day || selectedDay);
       if (topPreshowOnStop && topPreshowOnStop.id === itemId) {
         void clearPreshowCountdownMessage();
 
@@ -12916,11 +13286,7 @@ const RunOfShowPage: React.FC = () => {
           console.error('❌ Start timer error:', error);
         }
 
-        const topPreshowOnStart = findTopPreshowCue(
-          schedule,
-          indentedCues,
-          item.day || selectedDay
-        );
+        const topPreshowOnStart = resolveSessionPreshowCue(item.day || selectedDay);
         if (topPreshowOnStart && topPreshowOnStart.id === itemId) {
           void activatePreshowCountdownMessage();
         } else {
@@ -13761,8 +14127,41 @@ const RunOfShowPage: React.FC = () => {
       return calculateStartTime(parentIndex);
     }
 
-    // Get the appropriate start time for this day
     const itemDay = currentItem.day || 1;
+    if (isShowBreakProgramType(currentItem.programType)) {
+      const next = nextSessionCueOf(schedule, index, (row) =>
+        itemCountsTowardStartTime(row as ScheduleItem, indentedCues)
+      );
+      return next ? calculateStartTime(next.index) : '';
+    }
+
+    const breakIdx = lastShowBreakIndexBefore(schedule, index, itemDay);
+    const firstIdx =
+      breakIdx >= 0
+        ? firstSessionCueIndexAfter(schedule, breakIdx, itemDay, (row) =>
+            itemCountsTowardStartTime(row as ScheduleItem, indentedCues)
+          )
+        : -1;
+    const sessionSec =
+      firstIdx >= 0
+        ? parseBreakStartTimeToSeconds(
+            sessionStartTimeOf(schedule[firstIdx]) || lockedStartTimes[schedule[firstIdx].id]
+          )
+        : null;
+
+    // Show Break is a hard clock cut — morning durations/offsets never continue past it.
+    if (breakIdx >= 0) {
+      if (sessionSec == null || firstIdx < 0) return '';
+      let sessionSeconds = 0;
+      for (let i = firstIdx; i < index; i++) {
+        const item = schedule[i];
+        if ((item.day || 1) === itemDay && itemCountsTowardStartTime(item, indentedCues)) {
+          sessionSeconds += (item.durationHours || 0) * 3600 + (item.durationMinutes || 0) * 60 + (item.durationSeconds || 0);
+        }
+      }
+      return formatScheduleClock(sessionSec + sessionSeconds, startTimeDisplayMode);
+    }
+
     const startTime = dayStartTimes[itemDay] || masterStartTime;
     
     // If no start time is set for this day, return blank
@@ -13786,6 +14185,32 @@ const RunOfShowPage: React.FC = () => {
     const totalStartSeconds = startSeconds + totalSeconds;
     return formatScheduleClock(totalStartSeconds, startTimeDisplayMode);
   };
+
+  useEffect(() => {
+    if (!schedule.length) return;
+    const pins: { id: number; time: string }[] = [];
+    schedule.forEach((item, index) => {
+      if (!isShowBreakProgramType(item.programType)) return;
+      const day = item.day || 1;
+      const firstIdx = firstSessionCueIndexAfter(schedule, index, day, (row) =>
+        itemCountsTowardStartTime(row as ScheduleItem, indentedCues)
+      );
+      if (firstIdx < 0) return;
+      const first = schedule[firstIdx];
+      if (sessionStartTimeOf(first)) return;
+      const pin = normalizeBreakStartTime(
+        lockedStartTimes[first.id] || calculateStartTime(firstIdx)
+      );
+      if (pin) pins.push({ id: first.id, time: pin });
+    });
+    if (!pins.length) return;
+    setSchedule((prev) =>
+      prev.map((row) => {
+        const pin = pins.find((entry) => entry.id === row.id);
+        return pin && !sessionStartTimeOf(row) ? { ...row, sessionStartTime: pin.time } : row;
+      })
+    );
+  }, [schedule, indentedCues]);
 
   // Export current event schedule as CSV (used by menu and Google Sheet modal shortcut)
   const handleExportCSV = () => {
@@ -13996,7 +14421,13 @@ const RunOfShowPage: React.FC = () => {
   const liveAnchoredStartMinutes = (index: number): number | null => {
     if (!liveStartAnchor) return null;
     const row = schedule[index];
-    if (!row || index <= liveStartAnchor.anchorIndex || (row.day || 1) !== liveStartAnchor.day) return null;
+    if (
+      !row ||
+      index <= liveStartAnchor.anchorIndex ||
+      (row.day || 1) !== liveStartAnchor.day ||
+      !sameShowSession(schedule, liveStartAnchor.anchorIndex, index) ||
+      isIndexFrozenByShowSection(schedule, index)
+    ) return null;
     return liveStartAnchor.offsetMinutes;
   };
 
@@ -14031,6 +14462,13 @@ const RunOfShowPage: React.FC = () => {
       return startTimeWithOvertime(parentIndex, useLive);
     }
 
+    if (isShowBreakProgramType(currentItem.programType)) {
+      const next = nextSessionCueOf(schedule, index, (row) =>
+        itemCountsTowardStartTime(row as ScheduleItem, indentedCues)
+      );
+      return next ? startTimeWithOvertime(next.index, useLive) : '';
+    }
+
     // Get the base start time
     const baseStartTime = calculateStartTime(index);
     if (!baseStartTime) return '';
@@ -14045,9 +14483,18 @@ const RunOfShowPage: React.FC = () => {
     // Calculate total overtime from previous cues, but ignore rows ABOVE the STAR
     let totalOvertimeMinutes = 0;
     
-    // Find the START cue index to know where to start counting overtime
-    const startCueIndex = startCueId ? schedule.findIndex(s => s.id === startCueId) : -1;
-    const startCountingFrom = startCueIndex !== -1 ? startCueIndex : 0;
+    const inSession = isIndexInActiveShowSection(schedule, index);
+    const sessionStartIndex = sessionStartCueId
+      ? schedule.findIndex((s) => s.id === sessionStartCueId)
+      : -1;
+    const morningStartIndex = startCueId ? schedule.findIndex((s) => s.id === startCueId) : -1;
+    const startCountingFrom = inSession
+      ? sessionStartIndex >= 0
+        ? sessionStartIndex
+        : activeShowSectionBreakIndex(schedule) + 1
+      : morningStartIndex !== -1
+        ? morningStartIndex
+        : 0;
     
     // Only count overtime from START cue onwards (ignore rows above STAR)
     for (let i = startCountingFrom; i < index; i++) {
@@ -14055,25 +14502,17 @@ const RunOfShowPage: React.FC = () => {
       const itemDay = item.day || 1;
       const currentItemDay = currentItem.day || 1;
       
-      // Only count overtime from the same day and non-indented items
-      if (itemDay === currentItemDay && itemCountsTowardStartTime(item, indentedCues)) {
+      // Only count overtime from the same day, same session, and non-indented items
+      if (
+        itemDay === currentItemDay &&
+        itemCountsTowardStartTime(item, indentedCues) &&
+        sameShowSession(schedule, i, index)
+      ) {
         totalOvertimeMinutes += overtimeMinutes[item.id] || 0;
       }
     }
 
-    // Add ★ show-start overtime only for rows on the START cue's day
-    if (
-      shouldApplyShowStartOvertime({
-        showStartOvertime,
-        startCueId,
-        startCueIndex,
-        rowIndex: index,
-        schedule,
-        rowDay: currentItem.day || 1,
-      })
-    ) {
-      totalOvertimeMinutes += showStartOvertime;
-    }
+    totalOvertimeMinutes += rowShowStartOvertime(index);
 
     // If no overtime, return the base start time
     if (totalOvertimeMinutes === 0) {
@@ -14091,6 +14530,9 @@ const RunOfShowPage: React.FC = () => {
     
     // Find the START cue index to know where to start counting overtime
     const startCueIndex = startCueId ? schedule.findIndex(s => s.id === startCueId) : -1;
+    const sessionStartIndex = sessionStartCueId
+      ? schedule.findIndex((s) => s.id === sessionStartCueId)
+      : -1;
     
     schedule.forEach((item, index) => {
       let totalOvertime = 0;
@@ -14105,43 +14547,66 @@ const RunOfShowPage: React.FC = () => {
       if (
         liveStartAnchor &&
         index > liveStartAnchor.anchorIndex &&
-        currentItemDay === liveStartAnchor.day
+        currentItemDay === liveStartAnchor.day &&
+        sameShowSession(schedule, liveStartAnchor.anchorIndex, index) &&
+        !isIndexFrozenByShowSection(schedule, index)
       ) {
         overtimeMap.set(item.id, liveStartAnchor.offsetMinutes);
         return;
       }
-      const startCountingFrom = startCueIndex !== -1 ? startCueIndex : 0;
+      const startCountingFrom = isIndexInActiveShowSection(schedule, index)
+        ? sessionStartIndex >= 0
+          ? sessionStartIndex
+          : activeShowSectionBreakIndex(schedule) + 1
+        : startCueIndex !== -1
+          ? startCueIndex
+          : 0;
       
       // Only count overtime from START cue onwards (ignore rows above STAR)
       for (let i = startCountingFrom; i < index; i++) {
         const prevItem = schedule[i];
         const prevItemDay = prevItem.day || 1;
         
-        // Only count overtime from the same day and non-indented items
-        if (prevItemDay === currentItemDay && itemCountsTowardStartTime(prevItem, indentedCues)) {
+        // Only count overtime from the same day, same session, and non-indented items
+        if (
+          prevItemDay === currentItemDay &&
+          itemCountsTowardStartTime(prevItem, indentedCues) &&
+          sameShowSession(schedule, i, index)
+        ) {
           totalOvertime += overtimeMinutes[prevItem.id] || 0;
         }
       }
 
-      // Add ★ show-start overtime only for rows on the START cue's day
-      if (
-        shouldApplyShowStartOvertime({
-          showStartOvertime,
-          startCueId,
-          startCueIndex,
-          rowIndex: index,
-          schedule,
-          rowDay: currentItemDay,
-        })
-      ) {
-        totalOvertime += showStartOvertime;
-      }
+      totalOvertime += rowShowStartOvertime(index);
 
       overtimeMap.set(item.id, totalOvertime);
     });
 
     return overtimeMap;
-  }, [schedule, overtimeMinutes, indentedCues, startCueId, showStartOvertime, liveStartAnchor]);
+  }, [schedule, overtimeMinutes, indentedCues, startCueId, showStartOvertime, sessionStartCueId, sessionShowStartOvertime, liveStartAnchor]);
+
+  const resolveShowBreakResume = (item: ScheduleItem, fallbackIndex: number) => {
+    if (!isShowBreakProgramType(item.programType)) return null;
+    const breakIndex = schedule.findIndex((row) => row.id === item.id);
+    return nextSessionCueOf(
+      schedule,
+      breakIndex >= 0 ? breakIndex : fallbackIndex,
+      (row) => itemCountsTowardStartTime(row as ScheduleItem, indentedCues)
+    );
+  };
+
+  const showBreakResumeMirror = (item: ScheduleItem, fallbackIndex: number) => {
+    const next = resolveShowBreakResume(item, fallbackIndex);
+    if (!next) return null;
+    return {
+      itemId: next.item.id,
+      index: next.index,
+      lockedStartTime: lockedStartTimes[next.item.id] || null,
+      actualStartLabel: cueActualStartLabels[Number(next.item.id)] || null,
+      cumulativeOvertime: cumulativeOvertimeByItemId.get(next.item.id) || 0,
+      clockLabel: String(calculateStartTime(next.index) || ''),
+    };
+  };
 
   // Get available days based on event duration
   const getAvailableDays = () => {
@@ -14666,7 +15131,7 @@ const RunOfShowPage: React.FC = () => {
             event?.numberOfDays,
             selectedDay
           );
-          const cue = findTopPreshowCue(schedule, indentedCues, workingDay);
+          const cue = resolveSessionPreshowCue(workingDay);
           const startHHMM = cue
             ? resolvePreshowStartHHMM({
                 cue,
@@ -14879,6 +15344,11 @@ const RunOfShowPage: React.FC = () => {
             schedule.forEach((item, idx) => {
               if (item?.id == null) return;
               if (indentedCues[item.id] || item.isIndented) return;
+              if (isIndexFrozenByShowSection(schedule, idx) && lockedStartTimes[item.id]) {
+                nextLocked[item.id] = lockedStartTimes[item.id];
+                lockedForApi[String(item.id)] = lockedStartTimes[item.id];
+                return;
+              }
               const t = String(calculateStartTime(idx) || '').trim();
               if (!t) return;
               nextLocked[item.id] = t;
@@ -18132,8 +18602,13 @@ const RunOfShowPage: React.FC = () => {
                 const prevCue = resolvePreviousCueForOvertimeAdjust();
                 const prevOt = prevCue ? (overtimeMinutes[prevCue.id] || 0) : 0;
                 const isRoot = offsetAdjustTarget === 'root';
-                const displayValue = isRoot ? showStartOvertime : prevOt;
-                const canAdjust = isRoot ? !!startCueId : !!prevCue;
+                const sectionOn = activeShowSectionBreakIndex(schedule) >= 0;
+                const displayValue = isRoot
+                  ? (sectionOn ? sessionShowStartOvertime : showStartOvertime)
+                  : prevOt;
+                const canAdjust = isRoot
+                  ? (sectionOn ? !!sessionStartCueId : !!startCueId)
+                  : !!prevCue;
                 const adjust = (delta: number) => {
                   if (isRoot) void adjustShowStartOffset(delta);
                   else void adjustPreviousCueOvertime(delta);
@@ -18401,6 +18876,23 @@ const RunOfShowPage: React.FC = () => {
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
+                              if (!beginRowAction(item.id, 'modal')) return;
+                              setActiveJumpMenu(null);
+                              setInsertRowPosition(schedule.findIndex(scheduleItem => scheduleItem.id === item.id));
+                              setDelayBlockDay(item.day || selectedDay);
+                              setShowBreakLabel('Evening');
+                              setShowBreakStartTime('17:00');
+                              setShowShowBreakModal(true);
+                            }}
+                            className="w-full px-4 py-2 text-left text-cyan-100 hover:bg-slate-600 flex items-center gap-2"
+                            title="Insert a Show Break after this row — next session starts on a new clock"
+                          >
+                            <span>⏸</span>
+                            <span>Add Show Break</span>
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
                               if (!beginRowAction(item.id, 'idle')) return;
                               setActiveJumpMenu(null);
                               addTimedMarkerAfter(item.id);
@@ -18547,8 +19039,28 @@ const RunOfShowPage: React.FC = () => {
                    >
                    <div className="flex items-center gap-1">
                      {/* Star button for marking START cue */}
+                     {!isShowBreakProgramType(item.programType) && (
                      <button
                        onClick={async () => {
+                         const fullIndex = schedule.findIndex((row) => row.id === item.id);
+                         const inSection = isIndexInActiveShowSection(schedule, fullIndex);
+                         if (isIndexFrozenByShowSection(schedule, fullIndex)) {
+                           alert('Morning offsets are frozen. Turn Section On and use the cyan star for the next session.');
+                           return;
+                         }
+                         if (inSection) {
+                           const newId = sessionStartCueId === item.id ? null : item.id;
+                           setSessionStartCueId(newId);
+                           setSessionShowStartOvertime(0);
+                           const updatedSchedule = schedule.map((row) => ({
+                             ...row,
+                             isSessionStartCue: row.id === newId,
+                             sessionStartOvertime: row.id === newId ? 0 : row.sessionStartOvertime,
+                           }));
+                           setSchedule(updatedSchedule);
+                           void persistScheduleNow(updatedSchedule);
+                           return;
+                         }
                          // Toggle: if this cue is already the START cue, unset it; otherwise set it
                          const newStartCueId = startCueId === item.id ? null : item.id;
                          setStartCueId(newStartCueId);
@@ -18603,14 +19115,27 @@ const RunOfShowPage: React.FC = () => {
                          }
                        }}
                        className={`w-7 h-7 flex items-center justify-center text-xl rounded transition-colors bg-slate-700 hover:bg-slate-600 ${
-                         startCueId === item.id 
-                           ? 'text-yellow-400' // Gold star when selected
+                         (isIndexInActiveShowSection(schedule, schedule.findIndex((row) => row.id === item.id))
+                          ? sessionStartCueId === item.id || !!item.isSessionStartCue
+                          : startCueId === item.id)
+                           ? (isIndexInActiveShowSection(schedule, schedule.findIndex((row) => row.id === item.id))
+                             ? 'text-cyan-300'
+                             : 'text-yellow-400')
                            : 'text-slate-400 hover:text-yellow-400'
                        }`}
-                       title={startCueId === item.id ? "Unmark as SHOW START" : "Mark as SHOW START"}
+                       title={
+                         isIndexInActiveShowSection(schedule, schedule.findIndex((row) => row.id === item.id))
+                           ? (sessionStartCueId === item.id ? 'Unmark session START' : 'Mark as session START')
+                           : (startCueId === item.id ? 'Unmark as SHOW START' : 'Mark as SHOW START')
+                       }
                      >
-                       {startCueId === item.id ? '⭐' : '☆'}
+                       {(isIndexInActiveShowSection(schedule, schedule.findIndex((row) => row.id === item.id))
+                         ? sessionStartCueId === item.id || !!item.isSessionStartCue
+                         : startCueId === item.id)
+                         ? '⭐'
+                         : '☆'}
                      </button>
+                     )}
                      
                     <div className="flex">
                       <div className={`flex items-center px-1 py-1 border border-r-0 rounded-l text-white text-lg font-medium min-w-[40px] ${
@@ -18828,6 +19353,8 @@ const RunOfShowPage: React.FC = () => {
                 ) : (
                   getFilteredSchedule().map((item, index) => {
                     const originalIndex = schedule.findIndex((s) => s.id === item.id);
+                    const resume = showBreakResumeMirror(item, originalIndex >= 0 ? originalIndex : index);
+                    const inSection = isIndexInActiveShowSection(schedule, originalIndex);
                     return (
                       <div
                         key={`sticky-start-${item.id}`}
@@ -18838,19 +19365,22 @@ const RunOfShowPage: React.FC = () => {
                         }}
                       >
                         <StartTimeColumnCell
-                          itemId={item.id}
-                          index={originalIndex >= 0 ? originalIndex : index}
+                          itemId={resume?.itemId ?? item.id}
+                          index={resume?.index ?? (originalIndex >= 0 ? originalIndex : index)}
                           width={columnWidths.start}
-                          isIndented={Boolean(
-                            indentedCues[item.id] || item.isIndented || item.isTimedMarker
-                          )}
-                          showMode={showMode}
+                          isIndented={
+                            !resume &&
+                            Boolean(
+                              indentedCues[item.id] || item.isIndented || item.isTimedMarker
+                            )
+                          }
+                          showMode={isIndexFrozenByShowSection(schedule, originalIndex) ? 'rehearsal' : showMode}
                           overtimeMinutes={overtimeMinutes}
-                          startCueId={startCueId}
-                          showStartOvertime={showStartOvertime}
-                          cumulativeOvertime={cumulativeOvertimeByItemId.get(item.id) || 0}
-                          lockedStartTime={lockedStartTimes[item.id] || null}
-                        actualStartLabel={cueActualStartLabels[Number(item.id)] || null}
+                          startCueId={inSection ? sessionStartCueId : startCueId}
+                          showStartOvertime={inSection ? sessionShowStartOvertime : showStartOvertime}
+                          cumulativeOvertime={resume?.cumulativeOvertime ?? (cumulativeOvertimeByItemId.get(item.id) || 0)}
+                          lockedStartTime={resume?.lockedStartTime ?? (lockedStartTimes[item.id] || null)}
+                        actualStartLabel={resume?.actualStartLabel ?? (cueActualStartLabels[Number(item.id)] || null)}
                           calculateStartTime={calculateStartTime}
                           calculateStartTimeWithOvertime={calculateStartTimeWithOvertime}
                           isTimedMarker={item.isTimedMarker === true}
@@ -19214,9 +19744,18 @@ const RunOfShowPage: React.FC = () => {
                         columnFlexOrder={scrollColumnFlexOrder}
                         indentedCues={indentedCues}
                         overtimeMinutes={overtimeMinutes}
-                        startCueId={startCueId}
-                        showStartOvertime={showStartOvertime}
+                        startCueId={isIndexInActiveShowSection(schedule, originalIndex) ? sessionStartCueId : startCueId}
+                        showStartOvertime={isIndexInActiveShowSection(schedule, originalIndex) ? sessionShowStartOvertime : showStartOvertime}
                         cumulativeOvertime={cumulativeOvertimeByItemId.get(item.id) || 0}
+                        resumeCueLabel={
+                          resolveShowBreakResume(item, originalIndex)?.item
+                            ? resolveScheduleCueLabel(
+                                resolveShowBreakResume(item, originalIndex)!.item,
+                                resolveShowBreakResume(item, originalIndex)!.item.id
+                              )
+                            : ''
+                        }
+                        resumeStartMirror={showBreakResumeMirror(item, originalIndex)}
                         programTypes={programTypes}
                         programTypeColors={programTypeColors}
                         shotTypes={shotTypes}
@@ -19256,7 +19795,7 @@ const RunOfShowPage: React.FC = () => {
                         calculateStartTimeWithOvertime={calculateStartTimeWithOvertime}
                         calculateStartTime={calculateStartTime}
                         segmentNameDisplayMode={segmentNameDisplayMode}
-                        showMode={showMode}
+                        showMode={isIndexFrozenByShowSection(schedule, originalIndex) ? 'rehearsal' : showMode}
                         originalDuration={originalDurations[item.id]}
                         showWasUnderDuration={showMode === 'in-show' && trackWasDurations}
                         lockedStartTime={lockedStartTimes[item.id] || null}
@@ -19327,7 +19866,7 @@ const RunOfShowPage: React.FC = () => {
                    >
                     <div className="flex flex-col items-center justify-center h-full gap-1">
                       <div className="text-sm font-mono text-slate-300">
-                        {item.programType === 'Delay Block' ? 'SCHEDULE ONLY' : (item.timerId || 'TIMER')}
+                        {isScheduleOnlyProgramType(item.programType) ? 'SCHEDULE ONLY' : (item.timerId || 'TIMER')}
                       </div>
                       <div className="flex flex-col gap-1">
                         {isTimedMarkerItem(item) ? (
@@ -19350,11 +19889,40 @@ const RunOfShowPage: React.FC = () => {
                               —
                             </button>
                           </>
+                        ) : isShowBreakProgramType(item.programType) ? (
+                          <div className="flex flex-col items-center gap-0.5">
+                            <div className="text-[9px] font-bold uppercase tracking-wide text-cyan-300">Section</div>
+                            <div
+                              className="flex rounded overflow-hidden border border-slate-500"
+                              title="Off = still working above the break. On = freeze those offsets and work the next section."
+                            >
+                              <button
+                                type="button"
+                                onClick={() => void toggleShowSection(item.id, false)}
+                                disabled={currentUserRole !== 'OPERATOR'}
+                                className={`px-2 py-1 text-xs font-bold ${
+                                  !item.sectionStarted ? 'bg-slate-600 text-white' : 'bg-slate-800 text-slate-400'
+                                }`}
+                              >
+                                Off
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void toggleShowSection(item.id, true)}
+                                disabled={currentUserRole !== 'OPERATOR'}
+                                className={`px-2 py-1 text-xs font-bold ${
+                                  item.sectionStarted ? 'bg-cyan-600 text-white' : 'bg-slate-800 text-slate-400'
+                                }`}
+                              >
+                                On
+                              </button>
+                            </div>
+                          </div>
                         ) : !indentedCues[item.id] ? (
                           <>
                             <button
                               onClick={async () => {
-                                if (item.programType === 'Delay Block') return;
+                                if (isScheduleOnlyProgramType(item.programType)) return;
                                 console.log('🔥🔥🔥 LOAD BUTTON CLICKED!');
                                 console.log('🔥🔥🔥 currentUserRole:', currentUserRole);
                                 console.log('🔥🔥🔥 item.id:', item.id);
@@ -19379,17 +19947,17 @@ const RunOfShowPage: React.FC = () => {
                                   console.error('🔥🔥🔥 loadCue failed:', error);
                                 }
                               }}
-                              disabled={item.programType === 'Delay Block' || activeItemId === item.id || currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR'}
+                              disabled={isScheduleOnlyProgramType(item.programType) || activeItemId === item.id || currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR'}
                               className={`px-3 py-1 rounded text-sm font-bold transition-colors ${
-                                item.programType === 'Delay Block' || currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR'
+                                isScheduleOnlyProgramType(item.programType) || currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR'
                                   ? 'bg-gray-500 text-gray-300 cursor-not-allowed'
                                   : activeItemId === item.id
                                     ? 'bg-blue-600 text-white cursor-default'
                                     : 'bg-slate-600 hover:bg-slate-500 text-white'
                               }`}
-                              title={item.programType === 'Delay Block' ? 'Delay Blocks only adjust the schedule' : currentUserRole === 'VIEWER' ? 'Viewers cannot load cues' : currentUserRole === 'EDITOR' ? 'Editors cannot load cues' : 'Load this cue'}
+                              title={isScheduleOnlyProgramType(item.programType) ? 'This row only splits or holds the schedule' : currentUserRole === 'VIEWER' ? 'Viewers cannot load cues' : currentUserRole === 'EDITOR' ? 'Editors cannot load cues' : 'Load this cue'}
                             >
-                              {item.programType === 'Delay Block' ? 'DELAY' : activeItemId === item.id ? 'LOADED' : 'LOAD'}
+                              {isScheduleOnlyProgramType(item.programType) ? 'BREAK' : activeItemId === item.id ? 'LOADED' : 'LOAD'}
                             </button>
                             <button
                               onClick={async () => {
@@ -19533,6 +20101,50 @@ const RunOfShowPage: React.FC = () => {
                 className="rounded bg-violet-600 px-4 py-2 font-medium text-white hover:bg-violet-500"
               >
                 Add Delay
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {showShowBreakModal && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-md rounded-lg border border-slate-600 bg-slate-800 shadow-2xl">
+            <div className="border-b border-slate-600 px-5 py-4">
+              <h2 className="text-lg font-semibold text-white">Add Show Break</h2>
+              <p className="mt-1 text-sm text-slate-300">
+                Splits this day into a new session. The next cue keeps its Start time and everything after it follows that cue.
+              </p>
+            </div>
+            <div className="p-5">
+              <label className="text-sm text-slate-200">
+                Session name
+                <input
+                  type="text"
+                  value={showBreakLabel}
+                  onChange={(e) => setShowBreakLabel(e.target.value)}
+                  className="mt-1 w-full rounded border border-slate-500 bg-slate-700 px-3 py-2 text-white focus:border-cyan-400 focus:outline-none"
+                  placeholder="Evening"
+                />
+              </label>
+            </div>
+            <div className="flex justify-end gap-2 border-t border-slate-600 px-5 py-4">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowShowBreakModal(false);
+                  setInsertRowPosition(null);
+                  handleModalClosed();
+                }}
+                className="rounded bg-slate-600 px-4 py-2 text-white hover:bg-slate-500"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={addShowBreak}
+                className="rounded bg-cyan-700 px-4 py-2 font-medium text-white hover:bg-cyan-600"
+              >
+                Add Show Break
               </button>
             </div>
           </div>

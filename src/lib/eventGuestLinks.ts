@@ -38,6 +38,11 @@ export interface GuestScheduleItem {
   markerTimeMode?: 'absolute' | 'offset';
   markerOffsetSeconds?: number;
   markerAbsoluteSeconds?: number;
+  sessionStartTime?: string | null;
+  breakStartTime?: string | null;
+  sectionStarted?: boolean;
+  isSessionStartCue?: boolean;
+  sessionStartOvertime?: number;
 }
 
 export type GuestShowMode = 'rehearsal' | 'in-show';
@@ -52,6 +57,8 @@ export interface GuestStartTiming {
   cueActualStarts: Record<string, string>;
   startCueId: number | null;
   showStartOvertime: number;
+  sessionStartCueId: number | null;
+  sessionShowStartOvertime: number;
 }
 
 export const EMPTY_GUEST_START_TIMING: GuestStartTiming = {
@@ -63,6 +70,8 @@ export const EMPTY_GUEST_START_TIMING: GuestStartTiming = {
   cueActualStarts: {},
   startCueId: null,
   showStartOvertime: 0,
+  sessionStartCueId: null,
+  sessionShowStartOvertime: 0,
 };
 
 export type GuestTimingPatch = Partial<GuestStartTiming> & {
@@ -151,6 +160,13 @@ export function mergeGuestStartTiming(
     next.startCueId = id != null && Number.isFinite(id) ? id : null;
   }
   if (typeof patch.showStartOvertime === 'number') next.showStartOvertime = patch.showStartOvertime;
+  if (patch.sessionStartCueId !== undefined) {
+    const id = patch.sessionStartCueId == null ? null : Number(patch.sessionStartCueId);
+    next.sessionStartCueId = id != null && Number.isFinite(id) ? id : null;
+  }
+  if (typeof patch.sessionShowStartOvertime === 'number') {
+    next.sessionShowStartOvertime = patch.sessionShowStartOvertime;
+  }
   return next;
 }
 
@@ -351,6 +367,7 @@ export const GUEST_PROGRAM_TYPE_COLORS: Record<string, string> = {
   'Break F&B/B2B': '#EC4899',
   'Breakout Session': '#20B2AA',
   'Delay Block': '#7C3AED',
+  'Show Break': '#0E7490',
   TBD: '#6B7280',
   KILLED: '#DC2626',
   'Full-Stage/Ted-Talk': '#EA580C',

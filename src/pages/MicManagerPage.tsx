@@ -42,10 +42,12 @@ import {
   formatExternalSyncStatusLine,
 } from '../lib/externalSyncLabel';
 import {
+  calculateScheduleStartTime,
   findParentScheduleIndex,
   isIndentedScheduleItem,
   itemCountsTowardStartTime,
 } from '../lib/scheduleStartTime';
+import { sameShowSession } from '../lib/showBreak';
 import {
   computeLiveStartAnchor,
   parseLiveStartProjectionArmed,
@@ -122,6 +124,7 @@ const TYPE_COLOR: Record<string, string> = {
   'Break F&B/B2B': '#EC4899',
   'Breakout Session': '#20B2AA',
   'Delay Block': '#7C3AED',
+  'Show Break': '#0E7490',
   Podium: '#8B4513',
   Panel: '#404040',
   'PreShow': '#8B5CF6',
@@ -631,30 +634,8 @@ const MicManagerPage: React.FC = () => {
   }, [schedule, selectedDay, speakersOnly]);
 
   const baseStart = useCallback(
-    (full: ScheduleItem[], index: number): string => {
-      const item = full[index];
-      if (!item) return '';
-      if (isIndentedScheduleItem(item, indentedCues)) {
-        const parent = findParentScheduleIndex(full, index, indentedCues);
-        return parent < 0 ? '' : baseStart(full, parent);
-      }
-      const day = item.day || 1;
-      const start = dayStartTimes[String(day)] || masterStartTime;
-      if (!start) return '';
-      let secs = 0;
-      for (let i = 0; i < index; i++) {
-        const it = full[i];
-        if ((it.day || 1) === day && itemCountsTowardStartTime(it, indentedCues)) {
-          secs +=
-            (it.durationHours || 0) * 3600 +
-            (it.durationMinutes || 0) * 60 +
-            (it.durationSeconds || 0);
-        }
-      }
-      const [hh, mm] = start.split(':').map(Number);
-      const total = (hh || 0) * 3600 + (mm || 0) * 60 + secs;
-      return as12(Math.floor(total / 3600) % 24, Math.floor((total % 3600) / 60));
-    },
+    (full: ScheduleItem[], index: number): string =>
+      calculateScheduleStartTime(full, index, masterStartTime, dayStartTimes, indentedCues),
     [dayStartTimes, indentedCues, masterStartTime]
   );
 
@@ -747,7 +728,8 @@ const MicManagerPage: React.FC = () => {
       if (
         liveStartAnchor &&
         index > liveStartAnchor.anchorIndex &&
-        (item.day || 1) === liveStartAnchor.day
+        (item.day || 1) === liveStartAnchor.day &&
+        sameShowSession(full, liveStartAnchor.anchorIndex, index)
       ) {
         return shiftClock(base, liveStartAnchor.offsetMinutes);
       }
@@ -756,7 +738,11 @@ const MicManagerPage: React.FC = () => {
       let total = 0;
       for (let i = from; i < index; i++) {
         const it = full[i];
-        if ((it.day || 1) === (item.day || 1) && itemCountsTowardStartTime(it, indentedCues)) {
+        if (
+          (it.day || 1) === (item.day || 1) &&
+          itemCountsTowardStartTime(it, indentedCues) &&
+          sameShowSession(full, i, index)
+        ) {
           total += overtimeMinutes[it.id] || 0;
         }
       }

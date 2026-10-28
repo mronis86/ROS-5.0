@@ -1,4 +1,12 @@
 import { formatScheduleClock } from './scheduleClockFormat';
+import {
+  firstSessionCueIndexAfter,
+  isShowBreakProgramType,
+  lastShowBreakIndexBefore,
+  parseBreakStartTimeToSeconds,
+  sameShowSession,
+  sessionStartTimeOf,
+} from './showBreak';
 import { parseClockToSeconds, resolveTimedMarkerDisplayTime } from './timedMarker';
 
 export interface ScheduleStartItem {
@@ -14,6 +22,10 @@ export interface ScheduleStartItem {
   durationHours?: number;
   durationMinutes?: number;
   durationSeconds?: number;
+  /** HH:MM restart clock on a Show Break row (legacy). */
+  breakStartTime?: string | null;
+  /** Pinned HH:MM on the first cue after a Show Break. */
+  sessionStartTime?: string | null;
 }
 
 export type IndentedCueLookup =
@@ -43,6 +55,7 @@ export function itemCountsTowardStartTime(
 ): boolean {
   if (!item) return false;
   if (isKilledScheduleItem(item)) return false;
+  if (isShowBreakProgramType(item.programType)) return false;
   if (isIndentedScheduleItem(item, indentedLookup)) return false;
   return true;
 }
@@ -131,6 +144,39 @@ export function calculateScheduleStartTime(
     }
 
     const itemDay = current.day || 1;
+    if (isShowBreakProgramType(current.programType)) {
+      const nextIdx = firstSessionCueIndexAfter(schedule, idx, itemDay, (row) =>
+        itemCountsTowardStartTime(row as ScheduleStartItem, indentedLookup)
+      );
+      return nextIdx >= 0 ? calcAt(nextIdx) : '';
+    }
+
+    const breakIdx = lastShowBreakIndexBefore(schedule, idx, itemDay);
+    const firstIdx =
+      breakIdx >= 0
+        ? firstSessionCueIndexAfter(schedule, breakIdx, itemDay, (row) =>
+            itemCountsTowardStartTime(row as ScheduleStartItem, indentedLookup)
+          )
+        : -1;
+    const sessionSec =
+      firstIdx >= 0 ? parseBreakStartTimeToSeconds(sessionStartTimeOf(schedule[firstIdx])) : null;
+
+    // A Show Break is a hard clock cut — never add morning durations/offsets after it.
+    if (breakIdx >= 0) {
+      if (sessionSec == null || firstIdx < 0) return '';
+      let totalSeconds = 0;
+      for (let i = firstIdx; i < idx; i++) {
+        const item = schedule[i];
+        if ((item.day || 1) === itemDay && itemCountsTowardStartTime(item, indentedLookup)) {
+          totalSeconds +=
+            (Number(item.durationHours) || 0) * 3600 +
+            (Number(item.durationMinutes) || 0) * 60 +
+            (Number(item.durationSeconds) || 0);
+        }
+      }
+      return formatScheduleClock(sessionSec + totalSeconds, 'hm');
+    }
+
     const startTime = dayStartFor(itemDay, masterStartTime, dayStartTimes);
     if (!startTime) return '';
 
@@ -187,7 +233,8 @@ export function shouldApplyShowStartOvertime(opts: {
     return false;
   }
   const startCueDay = schedule[startCueIndex]?.day || 1;
-  return rowDay === startCueDay;
+  if (rowDay !== startCueDay) return false;
+  return sameShowSession(schedule, startCueIndex, rowIndex);
 }
 
 export type StartTimeOvertimeOpts = {
@@ -258,7 +305,8 @@ export function calculateScheduleStartTimeWithOvertime(
       liveOffset != null &&
       opts.liveAnchorIndex != null &&
       idx > opts.liveAnchorIndex &&
-      (current.day || 1) === (opts.liveAnchorDay || 1)
+      (current.day || 1) === (opts.liveAnchorDay || 1) &&
+      sameShowSession(schedule, opts.liveAnchorIndex, idx)
     ) {
       const baseSec = parseClockToSeconds(baseStartTime);
       if (baseSec == null) return baseStartTime;
@@ -270,7 +318,11 @@ export function calculateScheduleStartTimeWithOvertime(
     const startCountingFrom = startCueIndex !== -1 ? startCueIndex : 0;
     for (let i = startCountingFrom; i < idx; i++) {
       const item = schedule[i];
-      if ((item.day || 1) === (current.day || 1) && itemCountsTowardStartTime(item, indentedLookup)) {
+      if (
+        (item.day || 1) === (current.day || 1) &&
+        itemCountsTowardStartTime(item, indentedLookup) &&
+        sameShowSession(schedule, i, idx)
+      ) {
         totalOvertimeMinutes += overtimeMinutes[item.id] || 0;
       }
     }
@@ -307,7 +359,8 @@ export function cumulativeOvertimeMinutesForIndex(
     opts.liveOffsetMinutes != null &&
     opts.liveAnchorIndex != null &&
     index > opts.liveAnchorIndex &&
-    (current.day || 1) === (opts.liveAnchorDay || 1)
+    (current.day || 1) === (opts.liveAnchorDay || 1) &&
+    sameShowSession(schedule, opts.liveAnchorIndex, index)
   ) {
     return opts.liveOffsetMinutes;
   }
@@ -319,7 +372,11 @@ export function cumulativeOvertimeMinutesForIndex(
   let total = 0;
   for (let i = startCountingFrom; i < index; i++) {
     const item = schedule[i];
-    if ((item.day || 1) === (current.day || 1) && itemCountsTowardStartTime(item, indentedLookup)) {
+    if (
+      (item.day || 1) === (current.day || 1) &&
+      itemCountsTowardStartTime(item, indentedLookup) &&
+      sameShowSession(schedule, i, index)
+    ) {
       total += overtimeMinutes[item.id] || 0;
     }
   }

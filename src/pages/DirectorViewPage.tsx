@@ -277,6 +277,11 @@ type RosRow = {
   markerTimeMode?: 'absolute' | 'offset';
   markerOffsetSeconds?: number;
   markerAbsoluteSeconds?: number;
+  sessionStartTime?: string | null;
+  breakStartTime?: string | null;
+  sectionStarted?: boolean;
+  isSessionStartCue?: boolean;
+  sessionStartOvertime?: number;
   hasPPT?: boolean;
   hasQA?: boolean;
   needsRecording?: boolean;
@@ -317,6 +322,11 @@ function toGuestItem(item: RosRow): GuestScheduleItem {
     markerTimeMode: item.markerTimeMode === 'absolute' ? 'absolute' : 'offset',
     markerOffsetSeconds: Number(item.markerOffsetSeconds) || 0,
     markerAbsoluteSeconds: Number(item.markerAbsoluteSeconds) || 0,
+    sessionStartTime: item.sessionStartTime || '',
+    breakStartTime: item.breakStartTime || '',
+    sectionStarted: item.sectionStarted === true,
+    isSessionStartCue: item.isSessionStartCue === true,
+    sessionStartOvertime: Number(item.sessionStartOvertime) || 0,
     hasPPT: !!item.hasPPT,
     hasQA: !!item.hasQA,
     needsRecording: !!item.needsRecording,

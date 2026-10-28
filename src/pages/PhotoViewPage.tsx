@@ -8,12 +8,14 @@ import { EventSelectorDropdown } from '../components/EventSelectorDropdown';
 // import { driftDetector } from '../services/driftDetector'; // REMOVED: Using WebSocket-only approach
 import { socketClient } from '../services/socket-client';
 import {
+  calculateScheduleStartTime,
   findParentScheduleIndex,
   isIndentedScheduleItem,
   isKilledScheduleItem,
   itemCountsTowardStartTime,
   shouldApplyShowStartOvertime,
 } from '../lib/scheduleStartTime';
+import { sameShowSession } from '../lib/showBreak';
 import {
   DISPLAY_SESSION_MAX_HOURS,
   DISPLAY_SESSION_MAX_HINT,
@@ -229,67 +231,8 @@ const PhotoViewPage: React.FC = () => {
   };
 
   // Calculate base start time for an item
-  const calculateStartTime = (index: number) => {
-    const currentItem = schedule[index];
-    if (!currentItem) return '';
-    
-    if (isIndentedScheduleItem(currentItem, indentedCues)) {
-      const parentIndex = findParentScheduleIndex(schedule, index, indentedCues);
-      if (parentIndex < 0) return '';
-      return calculateStartTime(parentIndex);
-    }
-
-    // Get the appropriate start time for this day
-    const itemDay = currentItem.day || 1;
-    const startTime = dayStartTimes[itemDay] || masterStartTime;
-    
-    console.log('🔄 PhotoView: calculateStartTime for index', index, ':', {
-      itemDay,
-      dayStartTimes,
-      masterStartTime,
-      startTime
-    });
-    
-    // If no start time is set for this day, return blank
-    if (!startTime) {
-      console.log('❌ PhotoView: No start time found for day', itemDay);
-      return '';
-    }
-    
-    // Calculate total seconds from the beginning of this day up to this item
-    let totalSeconds = 0;
-    for (let i = 0; i < index; i++) {
-      const item = schedule[i];
-      // Only count items from the same day and non-indented items
-      if ((item.day || 1) === itemDay && itemCountsTowardStartTime(item, indentedCues)) {
-        totalSeconds += (item.durationHours || 0) * 3600 + (item.durationMinutes || 0) * 60 + (item.durationSeconds || 0);
-      }
-    }
-
-    const [hours, minutes] = startTime.split(':').map(Number);
-    const startSeconds = hours * 3600 + minutes * 60;
-    const totalStartSeconds = startSeconds + totalSeconds;
-
-    const finalHours = Math.floor(totalStartSeconds / 3600) % 24;
-    const finalMinutes = Math.floor((totalStartSeconds % 3600) / 60);
-
-    // Convert to 12-hour format
-    const date = new Date();
-    date.setHours(finalHours, finalMinutes, 0, 0);
-    const result = date.toLocaleTimeString('en-US', {
-      hour: 'numeric',
-      minute: '2-digit',
-      hour12: true
-    });
-
-    console.log('🔄 PhotoView: calculateStartTime result for index', index, ':', {
-      finalHours,
-      finalMinutes,
-      result
-    });
-    
-    return result;
-  };
+  const calculateStartTime = (index: number) =>
+    calculateScheduleStartTime(schedule, index, masterStartTime, dayStartTimes, indentedCues);
 
   // Calculate start time with overtime adjustments
   const calculateStartTimeWithOvertime = (index: number) => {
@@ -325,7 +268,11 @@ const PhotoViewPage: React.FC = () => {
       const currentItemDay = currentItem.day || 1;
       
       // Only count overtime from the same day and non-indented items
-      if (itemDay === currentItemDay && itemCountsTowardStartTime(item, indentedCues)) {
+      if (
+        itemDay === currentItemDay &&
+        itemCountsTowardStartTime(item, indentedCues) &&
+        sameShowSession(schedule, i, index)
+      ) {
         totalOvertimeMinutes += overtimeMinutes[item.id] || 0;
       }
     }
@@ -2366,7 +2313,8 @@ const PhotoViewPage: React.FC = () => {
   const isPhotoPreviewFollowRow = (item: ScheduleItem) => {
     if (isIndentedScheduleItem(item, indentedCues)) return false;
     if (isKilledScheduleItem(item)) return false;
-    return String(item.programType || '').trim() !== 'Delay Block';
+    return String(item.programType || '').trim() !== 'Delay Block' &&
+      String(item.programType || '').trim() !== 'Show Break';
   };
 
   // Current cue plus the next 2 main cues (skip sub-cues / delay so speaker photos stay visible)

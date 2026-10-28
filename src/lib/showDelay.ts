@@ -1,3 +1,5 @@
+import { sameShowSession } from './showBreak';
+
 /** Audience / display copy for show-start offset (★ Root late/early minutes). */
 export function formatShowDelayBanner(minutes: number): string | null {
   const n = Math.round(Number(minutes) || 0);
@@ -181,12 +183,13 @@ export function parseShowStartOvertimeMinutes(data: unknown): number {
  * cascade via per-cue overtime — fold into showStartOvertime instead.
  */
 export function shouldFoldPreshowOvertimeIntoShowStart(opts: {
-  schedule: Array<{ id: number }>;
+  schedule: Array<{ id: number; day?: number; programType?: string }>;
   preshowItemId: number;
   startCueId: number | null | undefined;
 }): boolean {
   if (opts.startCueId == null) return false;
   const preshowIdx = opts.schedule.findIndex((s) => Number(s.id) === Number(opts.preshowItemId));
   const startIdx = opts.schedule.findIndex((s) => Number(s.id) === Number(opts.startCueId));
-  return preshowIdx >= 0 && startIdx > preshowIdx;
+  if (preshowIdx < 0 || startIdx <= preshowIdx) return false;
+  return sameShowSession(opts.schedule, preshowIdx, startIdx);
 }

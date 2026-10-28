@@ -5,11 +5,13 @@ import { apiClient, getApiBaseUrl } from '../services/api-client';
 import { apiAuthFetch } from '../lib/sessionAuth';
 import { socketClient } from '../services/socket-client';
 import {
+  calculateScheduleStartTime,
   findParentScheduleIndex,
   isIndentedScheduleItem,
   isKilledScheduleItem,
   itemCountsTowardStartTime,
 } from '../lib/scheduleStartTime';
+import { sameShowSession } from '../lib/showBreak';
 import { Event } from '../types/Event';
 import { EventSelectorDropdown } from '../components/EventSelectorDropdown';
 import { useEventDisplaySyncGate } from '../hooks/useEventDisplaySyncGate';
@@ -495,27 +497,8 @@ const OperatorCueDisplayPage: React.FC = () => {
   }, []);
 
   const baseStart = useCallback(
-    (full: ScheduleItem[], index: number): string => {
-      const item = full[index];
-      if (!item) return '';
-      if (isIndentedScheduleItem(item, indented)) {
-        const p = findParentScheduleIndex(full, index, indented);
-        return p < 0 ? '' : baseStart(full, p);
-      }
-      const d = item.day || 1;
-      const start = dayStarts[String(d)] || masterStart;
-      if (!start) return '';
-      let secs = 0;
-      for (let i = 0; i < index; i++) {
-        const it = full[i];
-        if ((it.day || 1) === d && itemCountsTowardStartTime(it, indented)) {
-          secs += (it.durationHours || 0) * 3600 + (it.durationMinutes || 0) * 60 + (it.durationSeconds || 0);
-        }
-      }
-      const [hh, mm] = start.split(':').map(Number);
-      const total = hh * 3600 + mm * 60 + secs;
-      return as12(Math.floor(total / 3600) % 24, Math.floor((total % 3600) / 60));
-    },
+    (full: ScheduleItem[], index: number): string =>
+      calculateScheduleStartTime(full, index, masterStart, dayStarts, indented),
     [dayStarts, indented, masterStart]
   );
 
@@ -609,7 +592,8 @@ const OperatorCueDisplayPage: React.FC = () => {
       if (
         liveStartAnchor &&
         index > liveStartAnchor.anchorIndex &&
-        (item.day || 1) === liveStartAnchor.day
+        (item.day || 1) === liveStartAnchor.day &&
+        sameShowSession(full, liveStartAnchor.anchorIndex, index)
       ) {
         return liveStartAnchor.offsetMinutes;
       }
@@ -618,7 +602,11 @@ const OperatorCueDisplayPage: React.FC = () => {
       let total = 0;
       for (let i = from; i < index; i++) {
         const it = full[i];
-        if ((it.day || 1) === (item.day || 1) && itemCountsTowardStartTime(it, indented)) {
+        if (
+          (it.day || 1) === (item.day || 1) &&
+          itemCountsTowardStartTime(it, indented) &&
+          sameShowSession(full, i, index)
+        ) {
           total += otMap[it.id] || 0;
         }
       }
@@ -641,7 +629,8 @@ const OperatorCueDisplayPage: React.FC = () => {
       if (
         liveStartAnchor &&
         index > liveStartAnchor.anchorIndex &&
-        (item.day || 1) === liveStartAnchor.day
+        (item.day || 1) === liveStartAnchor.day &&
+        sameShowSession(full, liveStartAnchor.anchorIndex, index)
       ) {
         return shiftClock(base, liveStartAnchor.offsetMinutes);
       }

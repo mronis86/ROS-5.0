@@ -1,5 +1,7 @@
 /** Shared CUE / Delay labels for Run of Show and display views. */
 
+import { isShowBreakProgramType } from './showBreak';
+
 export type DuplicateCueInfo = {
   otherRowNumbers: number[];
 };
@@ -29,7 +31,7 @@ export function duplicateCueTooltip(otherRowNumbers: number[]): string {
 export function buildDuplicateCueMap(items: DuplicateCueItem[]): Map<number, DuplicateCueInfo> {
   const groups = new Map<string, number[]>();
   items.forEach((item, index) => {
-    if (isDelayProgramType(item.programType)) return;
+    if (isDelayProgramType(item.programType) || isShowBreakProgramType(item.programType)) return;
     const key = cueDuplicateKey(item.customFields?.cue ?? item.cue);
     if (!key) return;
     const list = groups.get(key);
@@ -81,6 +83,7 @@ export function resolveScheduleCueLabel(
   fallbackItemId?: number | string | null
 ): string {
   if (isDelayProgramType(item?.programType)) return 'DELAY';
+  if (isShowBreakProgramType(item?.programType)) return 'BREAK';
   const raw = item?.customFields?.cue ?? item?.cue;
   if (raw != null && String(raw).trim() !== '') {
     return formatCueNumber(raw as string | number);
@@ -106,6 +109,7 @@ export function resolveLiveCueLabel(options: {
   } | null;
 }): string {
   if (isDelayProgramType(options.item?.programType)) return 'DELAY';
+  if (isShowBreakProgramType(options.item?.programType)) return 'BREAK';
   const fromItem = options.item?.customFields?.cue ?? options.item?.cue;
   if (fromItem != null && String(fromItem).trim() !== '') {
     return formatCueNumber(fromItem as string | number);

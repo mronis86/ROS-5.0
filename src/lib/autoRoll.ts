@@ -99,7 +99,7 @@ export function isAutoRollPlayable(
   if (item.isTimedMarker) return false;
   if (isIndentedScheduleItem(item, indentedLookup || {})) return false;
   const programType = String(item.programType || '').trim();
-  if (programType === 'Delay Block' || programType === 'KILLED') return false;
+  if (programType === 'Delay Block' || programType === 'Show Break' || programType === 'KILLED') return false;
   return itemDurationSeconds(item) > 0;
 }
 
