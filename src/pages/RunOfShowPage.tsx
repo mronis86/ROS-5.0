@@ -22026,6 +22026,9 @@ const RunOfShowPage: React.FC = () => {
                     }
                     setShowPublicBulkModal(false);
                     handleModalClosed();
+                    window.setTimeout(() => {
+                      void flushSaveToAPIRef.current?.();
+                    }, 50);
                   }}
                   className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-lg"
                 >
