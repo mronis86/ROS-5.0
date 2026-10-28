@@ -35,6 +35,32 @@ export function calloutKindLabel(kind?: AudioCalloutKind): string {
   return kind === 'bgm' ? 'BGM' : 'VO';
 }
 
+/** True when this callout's chip text is still present in Notes HTML/plain text. */
+export function voCueAppearsInNotes(
+  notes: string,
+  vo: Pick<VoCue, 'time' | 'label' | 'kind' | 'cuePrefix'>
+): boolean {
+  const raw = String(notes || '');
+  if (!raw) return false;
+  const chip = formatCalloutChipText(vo);
+  if (!chip) return false;
+  if (raw.includes(chip)) return true;
+  const escaped = escapeNotesHtml(chip);
+  return escaped !== chip && raw.includes(escaped);
+}
+
+/**
+ * Notes are the source of truth. Drop voCues whose chip was deleted from Notes
+ * so popups cannot fire from leftover hidden metadata.
+ */
+export function reconcileVoCuesWithNotes(
+  notes: string,
+  voCues: VoCue[] | null | undefined
+): VoCue[] {
+  if (!Array.isArray(voCues) || voCues.length === 0) return [];
+  return voCues.filter((vo) => voCueAppearsInNotes(notes, vo));
+}
+
 /** e.g. "CUE 1.1 VO - 4:45PM" or "VO - 4:45PM - 10 minutes" */
 export function formatCalloutChipText(
   vo: Pick<VoCue, 'time' | 'label' | 'kind' | 'cuePrefix'>

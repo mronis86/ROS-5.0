@@ -10,6 +10,7 @@ import {
   isKilledScheduleItem,
   itemCountsTowardStartTime,
 } from '../lib/scheduleStartTime';
+import { sameShowSession } from '../lib/showBreak';
 import { Event } from '../types/Event';
 import { EventSelectorDropdown } from '../components/EventSelectorDropdown';
 import { useEventDisplaySyncGate } from '../hooks/useEventDisplaySyncGate';
@@ -609,7 +610,8 @@ const OperatorCueDisplayPage: React.FC = () => {
       if (
         liveStartAnchor &&
         index > liveStartAnchor.anchorIndex &&
-        (item.day || 1) === liveStartAnchor.day
+        (item.day || 1) === liveStartAnchor.day &&
+        sameShowSession(full, liveStartAnchor.anchorIndex, index)
       ) {
         return liveStartAnchor.offsetMinutes;
       }
@@ -618,11 +620,23 @@ const OperatorCueDisplayPage: React.FC = () => {
       let total = 0;
       for (let i = from; i < index; i++) {
         const it = full[i];
-        if ((it.day || 1) === (item.day || 1) && itemCountsTowardStartTime(it, indented)) {
+        if (
+          (it.day || 1) === (item.day || 1) &&
+          itemCountsTowardStartTime(it, indented) &&
+          sameShowSession(full, i, index)
+        ) {
           total += otMap[it.id] || 0;
         }
       }
-      if (showStartOt && startCueId != null && startIdx >= 0 && index >= startIdx) total += showStartOt;
+      if (
+        showStartOt &&
+        startCueId != null &&
+        startIdx >= 0 &&
+        index >= startIdx &&
+        sameShowSession(full, startIdx, index)
+      ) {
+        total += showStartOt;
+      }
       return total;
     },
     [indented, otMap, showStartOt, startCueId, liveStartAnchor]
@@ -641,7 +655,8 @@ const OperatorCueDisplayPage: React.FC = () => {
       if (
         liveStartAnchor &&
         index > liveStartAnchor.anchorIndex &&
-        (item.day || 1) === liveStartAnchor.day
+        (item.day || 1) === liveStartAnchor.day &&
+        sameShowSession(full, liveStartAnchor.anchorIndex, index)
       ) {
         return shiftClock(base, liveStartAnchor.offsetMinutes);
       }

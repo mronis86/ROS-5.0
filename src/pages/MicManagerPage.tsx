@@ -46,6 +46,7 @@ import {
   isIndentedScheduleItem,
   itemCountsTowardStartTime,
 } from '../lib/scheduleStartTime';
+import { sameShowSession } from '../lib/showBreak';
 import {
   computeLiveStartAnchor,
   parseLiveStartProjectionArmed,
@@ -748,7 +749,8 @@ const MicManagerPage: React.FC = () => {
       if (
         liveStartAnchor &&
         index > liveStartAnchor.anchorIndex &&
-        (item.day || 1) === liveStartAnchor.day
+        (item.day || 1) === liveStartAnchor.day &&
+        sameShowSession(full, liveStartAnchor.anchorIndex, index)
       ) {
         return shiftClock(base, liveStartAnchor.offsetMinutes);
       }
@@ -757,11 +759,21 @@ const MicManagerPage: React.FC = () => {
       let total = 0;
       for (let i = from; i < index; i++) {
         const it = full[i];
-        if ((it.day || 1) === (item.day || 1) && itemCountsTowardStartTime(it, indentedCues)) {
+        if (
+          (it.day || 1) === (item.day || 1) &&
+          itemCountsTowardStartTime(it, indentedCues) &&
+          sameShowSession(full, i, index)
+        ) {
           total += overtimeMinutes[it.id] || 0;
         }
       }
-      if (showStartOvertime && startCueId != null && startIdx >= 0 && index >= startIdx) {
+      if (
+        showStartOvertime &&
+        startCueId != null &&
+        startIdx >= 0 &&
+        index >= startIdx &&
+        sameShowSession(full, startIdx, index)
+      ) {
         total += showStartOvertime;
       }
       return total ? shiftClock(base, total) : base;

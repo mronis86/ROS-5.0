@@ -57,6 +57,7 @@ import {
   ensureNotesEditorTypingSpace,
   handleNotesChipEnter,
   withNotesTypingSpacer,
+  reconcileVoCuesWithNotes,
 } from '../lib/audioCallouts';
 import { suggestNoteLabelActions, removePlainLineFromNotesHtml } from '../lib/notesLabelSuggest';
 import NotesLabelSuggestBanner from '../components/NotesLabelSuggestBanner';
@@ -2934,12 +2935,13 @@ const ContentReviewPage: React.FC = () => {
     if (!displayItem || !eventId || isSavingNotes) return;
     const live = notesEditorRef.current?.innerHTML ?? notesDraft;
     const nextNotes = withNotesTypingSpacer(live);
+    const nextVoCues = reconcileVoCuesWithNotes(nextNotes, notesVoCues);
     setIsSavingNotes(true);
     setNotesSaveMessage(null);
     const result = await saveCuePatch(displayItem.id, (it) => ({
       ...it,
       notes: nextNotes,
-      voCues: notesVoCues.length ? notesVoCues : undefined,
+      voCues: nextVoCues.length ? nextVoCues : undefined,
     }));
     if (result.ok) {
       setNotesDraft(nextNotes);

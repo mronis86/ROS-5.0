@@ -14,6 +14,7 @@ import {
   itemCountsTowardStartTime,
   shouldApplyShowStartOvertime,
 } from '../lib/scheduleStartTime';
+import { sameShowSession } from '../lib/showBreak';
 import {
   DISPLAY_SESSION_MAX_HOURS,
   DISPLAY_SESSION_MAX_HINT,
@@ -325,7 +326,11 @@ const PhotoViewPage: React.FC = () => {
       const currentItemDay = currentItem.day || 1;
       
       // Only count overtime from the same day and non-indented items
-      if (itemDay === currentItemDay && itemCountsTowardStartTime(item, indentedCues)) {
+      if (
+        itemDay === currentItemDay &&
+        itemCountsTowardStartTime(item, indentedCues) &&
+        sameShowSession(schedule, i, index)
+      ) {
         totalOvertimeMinutes += overtimeMinutes[item.id] || 0;
       }
     }
@@ -574,7 +579,8 @@ const PhotoViewPage: React.FC = () => {
       item &&
       liveStartAnchor &&
       index > liveStartAnchor.anchorIndex &&
-      (item.day || 1) === liveStartAnchor.day
+      (item.day || 1) === liveStartAnchor.day &&
+      sameShowSession(schedule, liveStartAnchor.anchorIndex, index)
     ) {
       const base = calculateStartTime(index);
       const mins = wallClockLabelToMinutes(String(base || ''));

@@ -2,6 +2,7 @@ import { isIndentedScheduleItem, type IndentedCueLookup } from './scheduleStartT
 import { normalizeCalloutTimeToHHMM } from './eventLocalClock';
 import { getEventDayNumberForDate } from './preflightChecklist';
 import { isPreshowProgramType as isPreshowType } from './rosProgramTypeSplit';
+import { isShowBreakProgramType, sessionStartTimeOf } from './showBreak';
 
 export const PRESHOW_COUNTDOWN_MESSAGE = 'Pre Show Countdown';
 export const PRESHOW_MESSAGE_TYPE = 'preshow';
@@ -15,6 +16,8 @@ type CueLike = {
   day?: number;
   isIndented?: boolean;
   isTimedMarker?: boolean;
+  sessionStartTime?: string | null;
+  breakStartTime?: string | null;
 };
 
 /**
@@ -36,6 +39,30 @@ export function findTopPreshowCue<T extends CueLike>(
     if (item.isTimedMarker || isIndentedScheduleItem(item, indentedLookup || {})) continue;
     if (isPreshowType(item.programType)) return item;
     return null;
+  }
+  return null;
+}
+
+/**
+ * First PreShow in the session after a Show Break (same day), or null.
+ * Morning PreShow is ignored once a later section is active.
+ */
+export function findSessionPreshowCue<T extends CueLike>(
+  schedule: T[],
+  indentedLookup: IndentedCueLookup | null | undefined,
+  day: number | null | undefined,
+  afterIndex: number
+): T | null {
+  if (!Array.isArray(schedule) || schedule.length === 0) return null;
+  const wantDay =
+    day != null && Number.isFinite(Number(day)) ? Math.floor(Number(day)) : null;
+  for (let i = afterIndex + 1; i < schedule.length; i++) {
+    const item = schedule[i];
+    if (!item) continue;
+    if (wantDay != null && (item.day || 1) !== wantDay) continue;
+    if (isShowBreakProgramType(item.programType)) break;
+    if (item.isTimedMarker || isIndentedScheduleItem(item, indentedLookup || {})) continue;
+    if (isPreshowType(item.programType)) return item;
   }
   return null;
 }
@@ -67,6 +94,8 @@ export function resolvePreshowStartHHMM(opts: {
     const n = normalizeCalloutTimeToHHMM(locked);
     if (n) return n;
   }
+  const session = normalizeCalloutTimeToHHMM(sessionStartTimeOf(opts.cue));
+  if (session) return session;
   const day = opts.cue.day || 1;
   const raw = (opts.dayStartTimes?.[day] || opts.masterStartTime || '').trim();
   if (!raw) return null;

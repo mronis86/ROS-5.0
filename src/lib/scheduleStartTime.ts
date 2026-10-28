@@ -1,10 +1,11 @@
 import { formatScheduleClock } from './scheduleClockFormat';
 import {
-  breakStartTimeOf,
+  firstSessionCueIndexAfter,
   isShowBreakProgramType,
   lastShowBreakIndexBefore,
   parseBreakStartTimeToSeconds,
   sameShowSession,
+  sessionStartTimeOf,
 } from './showBreak';
 import { resolveTimedMarkerDisplayTime } from './timedMarker';
 
@@ -21,8 +22,10 @@ export interface ScheduleStartItem {
   durationHours?: number;
   durationMinutes?: number;
   durationSeconds?: number;
-  /** HH:MM restart clock on a Show Break row. */
+  /** HH:MM restart clock on a Show Break row (legacy). */
   breakStartTime?: string | null;
+  /** Pinned HH:MM on the first cue after a Show Break. */
+  sessionStartTime?: string | null;
 }
 
 export type IndentedCueLookup =
@@ -142,21 +145,43 @@ export function calculateScheduleStartTime(
 
     const itemDay = current.day || 1;
     if (isShowBreakProgramType(current.programType)) {
-      const breakSec = parseBreakStartTimeToSeconds(breakStartTimeOf(current));
-      if (breakSec == null) return '';
-      return formatScheduleClock(breakSec, 'hm');
+      const nextIdx = firstSessionCueIndexAfter(schedule, idx, itemDay, (row) =>
+        itemCountsTowardStartTime(row as ScheduleStartItem, indentedLookup)
+      );
+      return nextIdx >= 0 ? calcAt(nextIdx) : '';
     }
 
     const breakIdx = lastShowBreakIndexBefore(schedule, idx, itemDay);
-    const breakSec =
-      breakIdx >= 0 ? parseBreakStartTimeToSeconds(breakStartTimeOf(schedule[breakIdx])) : null;
-    if (breakIdx >= 0 && breakSec == null) return '';
-    const startTime = breakSec != null ? '' : dayStartFor(itemDay, masterStartTime, dayStartTimes);
-    if (breakSec == null && !startTime) return '';
+    const firstIdx =
+      breakIdx >= 0
+        ? firstSessionCueIndexAfter(schedule, breakIdx, itemDay, (row) =>
+            itemCountsTowardStartTime(row as ScheduleStartItem, indentedLookup)
+          )
+        : -1;
+    const sessionSec =
+      firstIdx >= 0 ? parseBreakStartTimeToSeconds(sessionStartTimeOf(schedule[firstIdx])) : null;
+
+    // A Show Break is a hard clock cut — never add morning durations/offsets after it.
+    if (breakIdx >= 0) {
+      if (sessionSec == null || firstIdx < 0) return '';
+      let totalSeconds = 0;
+      for (let i = firstIdx; i < idx; i++) {
+        const item = schedule[i];
+        if ((item.day || 1) === itemDay && itemCountsTowardStartTime(item, indentedLookup)) {
+          totalSeconds +=
+            (Number(item.durationHours) || 0) * 3600 +
+            (Number(item.durationMinutes) || 0) * 60 +
+            (Number(item.durationSeconds) || 0);
+        }
+      }
+      return formatScheduleClock(sessionSec + totalSeconds, 'hm');
+    }
+
+    const startTime = dayStartFor(itemDay, masterStartTime, dayStartTimes);
+    if (!startTime) return '';
 
     let totalSeconds = 0;
-    const sumFrom = breakIdx >= 0 ? breakIdx + 1 : 0;
-    for (let i = sumFrom; i < idx; i++) {
+    for (let i = 0; i < idx; i++) {
       const item = schedule[i];
       if ((item.day || 1) === itemDay && itemCountsTowardStartTime(item, indentedLookup)) {
         totalSeconds +=
@@ -164,10 +189,6 @@ export function calculateScheduleStartTime(
           (Number(item.durationMinutes) || 0) * 60 +
           (Number(item.durationSeconds) || 0);
       }
-    }
-
-    if (breakSec != null) {
-      return formatScheduleClock(breakSec + totalSeconds, 'hm');
     }
 
     const parts = startTime.split(':').map(Number);
