@@ -63,6 +63,7 @@ import { eventHasExtendEventControls, parseExtendEventControls } from '../lib/ex
 import { shouldConfirmCueRecordingMark, CUE_RECORDING_HOVER_TITLE, CUE_RECORDING_HOVER_BODY } from '../lib/cueRecording';
 import {
   applyNewerCheckboxFields,
+  idsWithCheckboxChanges,
   mergeNewerCheckboxFields,
   overlayExclusiveWatch,
   stampScheduleCheckboxes,
@@ -9209,10 +9210,17 @@ const RunOfShowPage: React.FC = () => {
       const originals = originalDurationsRef.current || {};
       const structureChange = allowEmpty || structureDirtyRef.current || lastSynced.length === 0;
       const dirty = dirtyRowSnapshotsRef.current;
-      const editedItemIds = structureChange ? [] : Array.from(dirty.keys());
+      const localNow = scheduleRef.current || [];
+      const checkboxEditedIds = structureChange
+        ? []
+        : idsWithCheckboxChanges(localNow, lastSynced);
+      const editedItemIds = structureChange
+        ? []
+        : Array.from(new Set([...Array.from(dirty.keys()), ...checkboxEditedIds]));
+      const localById = new Map(localNow.map((item: any) => [Number(item.id), item]));
       const dirtyById = new Map(
         editedItemIds.map((id) => {
-          const snap = dirty.get(id);
+          const snap = dirty.get(id) || localById.get(id);
           return [id, snap];
         })
       );
@@ -9424,13 +9432,11 @@ const RunOfShowPage: React.FC = () => {
   flushSaveToAPIRef.current = performSaveToAPI;
 
   const rememberCheckboxRows = useCallback((rows: any[]) => {
-    const byId = new Map((rows || []).map((row: any) => [Number(row.id), row]));
-    lastSyncedScheduleRef.current = (lastSyncedScheduleRef.current || []).map((row: any) => {
-      const next = byId.get(Number(row.id));
-      return next ? mergeNewerCheckboxFields(next, row) : row;
-    });
+    // Only mark the row dirty. lastSynced stays the last confirmed Neon snapshot
+    // so a checkbox click cannot look "already saved" and skip the pause-end flush.
     for (const row of rows || []) {
       const id = Number(row.id);
+      if (!Number.isFinite(id)) continue;
       const prev = dirtyRowSnapshotsRef.current.get(id);
       dirtyRowSnapshotsRef.current.set(id, prev ? mergeNewerCheckboxFields(row, prev) : row);
     }
@@ -9511,9 +9517,9 @@ const RunOfShowPage: React.FC = () => {
         rememberSyncedSchedule(result);
       } catch (err) {
         console.warn('Checkbox PATCH failed — falling back to row save', err);
-        await new Promise<void>((resolve) => setTimeout(resolve, 50));
-        await flushSaveToAPIRef.current?.();
       }
+      await new Promise<void>((resolve) => setTimeout(resolve, 50));
+      await flushSaveToAPIRef.current?.();
     },
     [event?.id, rememberCheckboxRows, rememberSyncedSchedule]
   );
@@ -9541,11 +9547,13 @@ const RunOfShowPage: React.FC = () => {
         console.warn('Recording PATCH failed — falling back to checkbox PATCH / row save', err);
         try {
           await persistScheduleCheckboxes(itemId, { needsRecording, source });
+          return;
         } catch {
-          await new Promise<void>((resolve) => setTimeout(resolve, 50));
-          await flushSaveToAPIRef.current?.();
+          /* persistScheduleCheckboxes already flushes */
         }
       }
+      await new Promise<void>((resolve) => setTimeout(resolve, 50));
+      await flushSaveToAPIRef.current?.();
     },
     [event?.id, persistScheduleCheckboxes, rememberCheckboxRows, rememberSyncedSchedule]
   );

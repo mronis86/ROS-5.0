@@ -74,6 +74,33 @@ export function applyNewerCheckboxFields(incomingItems: any[], existingItems: an
   return incomingItems.map((item) => mergeNewerCheckboxFields(item, byId.get(Number(item.id))));
 }
 
+function checkboxFlag(value: unknown): string {
+  return value === true || value === 'true' || value === 1 || value === '1' ? '1' : '';
+}
+
+export function checkboxFieldsSignature(item: Record<string, any> | null | undefined): string {
+  if (!item) return '';
+  const stamps = checkboxStampMap(item);
+  return SCHEDULE_CHECKBOX_FIELDS.map(
+    (field) => `${field}:${checkboxFlag(item[field])}:${stamps[field] || 0}`
+  ).join('|');
+}
+
+/** Rows whose PPT/Q&A/REC/Public flags differ from the last synced snapshot. */
+export function idsWithCheckboxChanges(localItems: any[], syncedItems: any[] | null | undefined): number[] {
+  const syncedById = new Map((syncedItems || []).map((item) => [Number(item.id), item]));
+  const ids: number[] = [];
+  for (const item of localItems || []) {
+    const id = Number(item.id);
+    if (!Number.isFinite(id)) continue;
+    const synced = syncedById.get(id);
+    if (!synced || checkboxFieldsSignature(item) !== checkboxFieldsSignature(synced)) {
+      ids.push(id);
+    }
+  }
+  return ids;
+}
+
 export function overlayExclusiveWatch(
   items: any[],
   itemId: number,

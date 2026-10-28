@@ -973,31 +973,32 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
                 type="checkbox"
                 checked={!!item.hasPPT}
                 onChange={(e) => {
-                  if (!beginCellEdit()) return;
                   if (currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') {
                     alert('Only EDITORs can edit PPT settings. Please change your role to EDITOR.');
                     return;
                   }
+                  if (!beginCellEdit()) return;
                   const oldValue = !!item.hasPPT;
+                  const checked = e.target.checked;
                   setSchedule((prev: any[]) => prev.map(scheduleItem => 
-                    scheduleItem.id === item.id
-                      ? stampScheduleCheckboxes({ ...scheduleItem, hasPPT: e.target.checked }, ['hasPPT'])
+                    Number(scheduleItem.id) === Number(item.id)
+                      ? stampScheduleCheckboxes({ ...scheduleItem, hasPPT: checked }, ['hasPPT'])
                       : scheduleItem
                   ));
                   void Promise.resolve(
-                    persistScheduleCheckboxes?.(item.id, { hasPPT: e.target.checked })
+                    persistScheduleCheckboxes?.(item.id, { hasPPT: checked })
                   ).catch((err) => console.warn('persistScheduleCheckboxes hasPPT failed:', err));
                   logChangeDebounced(
                     `hasPPT_${item.id}`,
                     'FIELD_UPDATE', 
-                    `Updated PPT status for "${item.segmentName}" from ${oldValue ? 'TRUE' : 'FALSE'} to ${e.target.checked ? 'TRUE' : 'FALSE'}`, 
+                    `Updated PPT status for "${item.segmentName}" from ${oldValue ? 'TRUE' : 'FALSE'} to ${checked ? 'TRUE' : 'FALSE'}`, 
                     {
                       changeType: 'FIELD_CHANGE',
                       itemId: item.id,
                       itemName: item.segmentName,
                       fieldName: 'hasPPT',
                       oldValue: oldValue ? 'TRUE' : 'FALSE',
-                      newValue: e.target.checked ? 'TRUE' : 'FALSE',
+                      newValue: checked ? 'TRUE' : 'FALSE',
                       details: { fieldType: 'checkbox', booleanChange: true }
                     }
                   );
@@ -1013,31 +1014,32 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
                 type="checkbox"
                 checked={!!item.hasQA}
                 onChange={(e) => {
-                  if (!beginCellEdit()) return;
                   if (currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') {
                     alert('Only EDITORs can edit Q&A settings. Please change your role to EDITOR.');
                     return;
                   }
+                  if (!beginCellEdit()) return;
                   const oldValue = !!item.hasQA;
+                  const checked = e.target.checked;
                   setSchedule((prev: any[]) => prev.map(scheduleItem => 
-                    scheduleItem.id === item.id
-                      ? stampScheduleCheckboxes({ ...scheduleItem, hasQA: e.target.checked }, ['hasQA'])
+                    Number(scheduleItem.id) === Number(item.id)
+                      ? stampScheduleCheckboxes({ ...scheduleItem, hasQA: checked }, ['hasQA'])
                       : scheduleItem
                   ));
                   void Promise.resolve(
-                    persistScheduleCheckboxes?.(item.id, { hasQA: e.target.checked })
+                    persistScheduleCheckboxes?.(item.id, { hasQA: checked })
                   ).catch((err) => console.warn('persistScheduleCheckboxes hasQA failed:', err));
                   logChangeDebounced(
                     `hasQA_${item.id}`,
                     'FIELD_UPDATE', 
-                    `Updated Q&A status for "${item.segmentName}" from ${oldValue ? 'TRUE' : 'FALSE'} to ${e.target.checked ? 'TRUE' : 'FALSE'}`, 
+                    `Updated Q&A status for "${item.segmentName}" from ${oldValue ? 'TRUE' : 'FALSE'} to ${checked ? 'TRUE' : 'FALSE'}`, 
                     {
                       changeType: 'FIELD_CHANGE',
                       itemId: item.id,
                       itemName: item.segmentName,
                       fieldName: 'hasQA',
                       oldValue: oldValue ? 'TRUE' : 'FALSE',
-                      newValue: e.target.checked ? 'TRUE' : 'FALSE',
+                      newValue: checked ? 'TRUE' : 'FALSE',
                       details: { fieldType: 'checkbox', booleanChange: true }
                     }
                   );
