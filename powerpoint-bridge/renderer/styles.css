@@ -184,6 +184,11 @@ button.secondary { background: #334155; }
   font-size: 0.82rem;
 }
 
+.cache-row.cache-open {
+  border-color: #38bdf8;
+  background: rgba(14, 165, 233, 0.12);
+}
+
 .cache-ok { color: var(--ok); }
 .cache-replaced { color: #fbbf24; }
 .cache-missing { color: var(--bad); }

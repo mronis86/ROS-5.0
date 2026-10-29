@@ -47,6 +47,8 @@ class PlaybackController {
     this.manualHold = false;
     this.closedByOperator = false;
     this.cueFollowAuto = true;
+    this.openMatch = '';
+    this.openStale = false;
     this.manifest = { files: {} };
     this.status = this.blankStatus('Stopped');
   }
@@ -90,6 +92,8 @@ class PlaybackController {
       loadedItemId: this.lastLoadedItemId,
       lastError: this.lastError,
       error: partial?.error != null ? partial.error : this.lastError,
+      openMatch: this.openMatch,
+      openStale: this.openStale,
     };
     this.onStatus(this.status);
   }
@@ -132,6 +136,75 @@ class PlaybackController {
     const recorded = this.manifest?.files?.[itemKey];
     const fileName = recorded?.localName || syncFileName(asset, cueLabel);
     return path.join(this.syncDir(), fileName);
+  }
+
+  normPath(value) {
+    return String(value || '')
+      .trim()
+      .replace(/\//g, '\\')
+      .replace(/\\+$/, '')
+      .toLowerCase();
+  }
+
+  matchLivePath(livePath) {
+    const live = this.normPath(livePath);
+    if (!live) return null;
+    this.readManifest();
+    const liveBase = path.basename(livePath).toLowerCase();
+    for (const asset of this.assets || []) {
+      if (!asset?.itemId) continue;
+      const dest = this.localPathFor(asset, `Cue ${asset.itemId}`);
+      const recorded = this.manifest.files[String(asset.itemId)] || {};
+      const alt = recorded.localName ? path.join(this.syncDir(), recorded.localName) : '';
+      const candidates = [dest, alt, this.currentPath].filter(Boolean);
+      const pathHit = candidates.some((row) => this.normPath(row) === live);
+      const nameHit =
+        !pathHit &&
+        [asset.originalName, recorded.localName, dest ? path.basename(dest) : '']
+          .filter(Boolean)
+          .some((name) => path.basename(String(name)).toLowerCase() === liveBase);
+      if (!pathHit && !nameHit) continue;
+      const preferredId = String(asset.fileId || '');
+      const localId = String(recorded.fileId || this.currentFileId || preferredId || '');
+      return {
+        itemId: Number(asset.itemId),
+        fileId: localId || preferredId || null,
+        path: dest && fs.existsSync(dest) ? dest : alt && fs.existsSync(alt) ? alt : this.currentPath,
+        stale: !!(preferredId && localId && preferredId !== localId) || (!pathHit && nameHit),
+        originalName: asset.originalName || path.basename(livePath),
+      };
+    }
+    return null;
+  }
+
+  applyIdentifiedOpen(livePath) {
+    const prevFile = String(this.currentFileId || '');
+    const prevItem = this.currentItemId;
+    if (!livePath) {
+      this.openMatch = '';
+      this.openStale = false;
+      return false;
+    }
+    const info = this.matchLivePath(livePath);
+    if (!info) {
+      this.openMatch = 'unknown';
+      this.openStale = false;
+      this.currentItemId = null;
+      this.currentFileId = null;
+      return prevFile !== '' || prevItem != null;
+    }
+    this.openMatch = info.stale ? 'stale' : 'sync';
+    this.openStale = !!info.stale;
+    this.currentItemId = info.itemId;
+    this.currentFileId = info.fileId;
+    if (info.path) this.currentPath = info.path;
+    const changed =
+      prevFile !== String(info.fileId || '') || Number(prevItem) !== Number(info.itemId);
+    if (changed && info.path) {
+      this.previewHoldPath = '';
+      void this.captureAndUploadPreviews(info.path, { force: true });
+    }
+    return changed;
   }
 
   previewDirFor(fileId) {
@@ -289,6 +362,8 @@ class PlaybackController {
       } catch {
         livePath = this.status.livePath || null;
       }
+      const identityChanged = this.applyIdentifiedOpen(livePath);
+      if (identityChanged) await this.reportAndRefresh(true);
 
       if (this.cueFollowAuto) {
         await this.followLoadedCue(loadedItemId, loadedCue, livePath, slideshowActive);
@@ -957,15 +1032,19 @@ class PlaybackController {
 
   applyLive(live) {
     if (!live || live.ok === false) return;
+    const livePath = live.fullName || live.full_name || this.status.livePath;
     this.emit({
       powerpoint: true,
       slideshowActive: !!live.slideshowActive,
       deckName: live.deckName || this.status.deckName,
       slideCount: live.slideCount || this.status.slideCount,
-      livePath: live.fullName || live.full_name || this.status.livePath,
+      livePath,
       currentIndex: Number.isFinite(Number(live.slideIndex)) && Number(live.slideIndex) > 0
         ? Number(live.slideIndex)
         : this.status.currentIndex,
+      openMatch: this.openMatch,
+      openStale: this.openStale,
+      currentItemId: this.currentItemId,
     });
   }
 
@@ -993,6 +1072,7 @@ class PlaybackController {
       const key = this.liveFingerprint();
       const changed = key !== this.lastLiveKey;
       if (forceReport || changed || Date.now() - this.lastReportAt > 2000) {
+        this.applyIdentifiedOpen(this.status.livePath);
         await this.reportAndRefresh(false);
         this.lastLiveKey = key;
       }
@@ -1073,6 +1153,9 @@ class PlaybackController {
       lastCommand: this.status.lastAction || '',
       lastCommandId: this.lastCommandId,
       lastError: this.lastError || '',
+      livePath: this.status.livePath || '',
+      openMatch: this.openMatch || '',
+      openStale: !!this.openStale,
     });
     this.lastReportAt = Date.now();
   }

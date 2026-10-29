@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { getApiBaseUrl, getAppDownloadUrl } from '../services/api-client';
 import { apiAuthFetch, apiJsonHeaders } from '../lib/sessionAuth';
@@ -40,6 +40,9 @@ type PlaybackSession = {
   liveCaptureSource?: 'screen' | 'camera' | '';
   clockAutoPush?: boolean;
   cueFollowAuto?: boolean;
+  livePath?: string;
+  openMatch?: string;
+  openStale?: boolean;
 };
 
 type PreviewSlide = {
@@ -109,6 +112,29 @@ function stubSlide(index: number | null): PreviewSlide | null {
   };
 }
 
+const CUE_FOLLOW_KEY = (eventId: string) => `ros-ppt-cue-follow:${eventId}`;
+
+function readCueFollow(eventId: string): boolean | null {
+  if (!eventId) return null;
+  try {
+    const raw = window.localStorage.getItem(CUE_FOLLOW_KEY(eventId));
+    if (raw === '1') return true;
+    if (raw === '0') return false;
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+function writeCueFollow(eventId: string, on: boolean) {
+  if (!eventId) return;
+  try {
+    window.localStorage.setItem(CUE_FOLLOW_KEY(eventId), on ? '1' : '0');
+  } catch {
+    /* ignore */
+  }
+}
+
 function formatLastSeen(raw: string | null): string {
   if (!raw) return 'never';
   const ms = Date.now() - new Date(raw).getTime();
@@ -124,11 +150,6 @@ function cueNumberFromLabel(label: string, itemId?: number | null): string {
   if (match) return match[1];
   if (itemId != null) return String(itemId);
   return '—';
-}
-
-function cueSortValue(label: string, itemId?: number | null): number {
-  const n = parseFloat(cueNumberFromLabel(label, itemId));
-  return Number.isFinite(n) ? n : itemId ?? 0;
 }
 
 function CueNumberMark({
@@ -254,12 +275,44 @@ const PowerPointPlaybackPage: React.FC = () => {
   const [pendingUpdates, setPendingUpdates] = useState<PptPendingDeckUpdate[]>([]);
   const [clearing, setClearing] = useState(false);
   const [, setSeenTick] = useState(0);
+  const cueFollowWriteRef = useRef<{ value: boolean; at: number } | null>(null);
 
   const applyPlayback = useCallback((data: any) => {
-    if (data?.session) setSession(data.session as PlaybackSession);
-    if (Array.isArray(data?.previews)) setPreviews(data.previews as PreviewSlide[]);
+    if (data?.session) {
+      setSession((prev) => {
+        const next = { ...(data.session as PlaybackSession) };
+        const pending = cueFollowWriteRef.current;
+        if (typeof next.cueFollowAuto !== 'boolean') {
+          const stored = readCueFollow(eventId);
+          next.cueFollowAuto =
+            pending?.value ??
+            (typeof prev?.cueFollowAuto === 'boolean' ? prev.cueFollowAuto : stored != null ? stored : true);
+        } else if (pending && Date.now() - pending.at < 60000 && next.cueFollowAuto !== pending.value) {
+          next.cueFollowAuto = pending.value;
+        } else {
+          writeCueFollow(eventId, next.cueFollowAuto);
+          if (pending && next.cueFollowAuto === pending.value) cueFollowWriteRef.current = null;
+        }
+        if (
+          prev?.currentFileId &&
+          next.currentFileId &&
+          prev.currentFileId !== next.currentFileId
+        ) {
+          revokePreviewCache();
+        }
+        return next;
+      });
+    }
+    if (Array.isArray(data?.previews)) {
+      const fileId = data?.session?.currentFileId ? String(data.session.currentFileId) : '';
+      setPreviews(
+        fileId
+          ? (data.previews as PreviewSlide[]).filter((row) => !row.fileId || row.fileId === fileId)
+          : []
+      );
+    }
     if (Array.isArray(data?.pendingUpdates)) setPendingUpdates(data.pendingUpdates as PptPendingDeckUpdate[]);
-  }, []);
+  }, [eventId]);
 
   const loadCues = useCallback(async () => {
     if (!eventId) return;
@@ -452,6 +505,17 @@ const PowerPointPlaybackPage: React.FC = () => {
   }, [cues, rosCue, session]);
 
   const deckOpen = !!(session?.connected && String(session.deckName || '').trim());
+  const openCue =
+    session?.currentItemId != null
+      ? cues.find((row) => row.id === session.currentItemId) || null
+      : null;
+  const openMismatch =
+    deckOpen &&
+    currentCue?.itemId != null &&
+    session?.currentItemId != null &&
+    session.currentItemId !== currentCue.itemId;
+  const openUnknown = deckOpen && session?.openMatch === 'unknown';
+  const openStale = deckOpen && (!!session?.openStale || session?.openMatch === 'stale');
   const liveIndex =
     deckOpen && session?.currentIndex != null && session.currentIndex > 0 ? session.currentIndex : null;
   const currentSlide = deckOpen
@@ -535,6 +599,8 @@ const PowerPointPlaybackPage: React.FC = () => {
   const setCueFollow = useCallback(
     async (on: boolean) => {
       if (!eventId) return;
+      writeCueFollow(eventId, on);
+      cueFollowWriteRef.current = { value: on, at: Date.now() };
       setSession((prev) => (prev ? { ...prev, cueFollowAuto: on } : prev));
       setError(null);
       try {
@@ -573,12 +639,14 @@ const PowerPointPlaybackPage: React.FC = () => {
       ? 'Helper in Show with Timers'
       : 'Bridge offline';
   const cueFollowAuto = session?.cueFollowAuto !== false;
+  const cueOrder = new Map(cues.map((row, index) => [row.id, index]));
   const preferred = [...assets.filter((a) => a.preferred)].sort((a, b) => {
-    const cueA = a.itemId != null ? cues.find((row) => row.id === a.itemId) : null;
-    const cueB = b.itemId != null ? cues.find((row) => row.id === b.itemId) : null;
-    return (
-      cueSortValue(cueA?.label || '', a.itemId) - cueSortValue(cueB?.label || '', b.itemId)
-    );
+    const ia =
+      a.itemId != null && cueOrder.has(a.itemId) ? cueOrder.get(a.itemId)! : Number.POSITIVE_INFINITY;
+    const ib =
+      b.itemId != null && cueOrder.has(b.itemId) ? cueOrder.get(b.itemId)! : Number.POSITIVE_INFINITY;
+    if (ia !== ib) return ia - ib;
+    return (a.itemId ?? 0) - (b.itemId ?? 0);
   });
 
   if (!eventId) {
@@ -767,6 +835,10 @@ const PowerPointPlaybackPage: React.FC = () => {
                   <span className="rounded-full bg-slate-700 px-2 py-0.5 font-semibold uppercase tracking-wide text-slate-100">
                     Deck open
                   </span>
+                ) : deckOpen ? (
+                  <span className="rounded-full bg-amber-800 px-2 py-0.5 font-semibold uppercase tracking-wide text-amber-50">
+                    Helper on a different deck
+                  </span>
                 ) : null}
               </div>
               <div className="mt-2 text-sm text-slate-400">
@@ -786,6 +858,43 @@ const PowerPointPlaybackPage: React.FC = () => {
         <div className="mt-1 text-lg font-semibold text-white">
           {deckOpen ? session?.deckName : 'No deck open'}
         </div>
+        {deckOpen ? (
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            {openUnknown ? (
+              <span className="rounded-full bg-rose-800 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-rose-50">
+                Not in sync folder
+              </span>
+            ) : openCue ? (
+              <span className="rounded-full bg-sky-700 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-sky-50">
+                Open · {openCue.label}
+              </span>
+            ) : null}
+            {openMismatch ? (
+              <span className="rounded-full bg-amber-700 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-amber-50">
+                Not the loaded cue
+              </span>
+            ) : null}
+            {openStale ? (
+              <span className="rounded-full bg-violet-700 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-violet-50">
+                Older copy
+              </span>
+            ) : null}
+          </div>
+        ) : null}
+        {openUnknown ? (
+          <div className="mt-2 text-sm text-rose-200">
+            PowerPoint has {session?.deckName || 'a file'} open that is not in this event’s sync folder.
+          </div>
+        ) : openMismatch && openCue ? (
+          <div className="mt-2 text-sm text-amber-100">
+            Helper is showing {openCue.label}
+            {openCue.segmentName ? ` · ${openCue.segmentName}` : ''}. Loaded ROS cue is {currentCue?.label}.
+          </div>
+        ) : openStale ? (
+          <div className="mt-2 text-sm text-violet-100">
+            This is an older copy of the synced deck. Push the new file from Synced decks.
+          </div>
+        ) : null}
         <div className="mt-2 text-3xl font-bold tabular-nums text-orange-200">
           {deckOpen && (session?.currentIndex != null || session?.slideCount)
             ? `Slide ${session?.currentIndex || '—'} of ${session?.slideCount || '—'}`

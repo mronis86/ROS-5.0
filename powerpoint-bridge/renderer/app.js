@@ -15,6 +15,7 @@ const els = {
   runPill: document.getElementById('run-pill'),
   stPpt: document.getElementById('st-ppt'),
   stDeck: document.getElementById('st-deck'),
+  stOpen: document.getElementById('st-open'),
   stCount: document.getElementById('st-count'),
   stShow: document.getElementById('st-show'),
   stLive: document.getElementById('st-live'),
@@ -114,7 +115,8 @@ function renderCache(rows) {
     .map((row) => {
       const flag = row.hasPPT ? 'PPT cue' : 'file only';
       const file = row.localName || row.name || 'deck';
-      return `<div class="cache-row"><strong>${file}</strong><span>cue ${row.itemId} · ${flag}</span><span class="cache-${row.state || 'ok'}">${row.detail || row.state || ''}</span></div>`;
+      const open = Number(row.itemId) === Number(window.__rosOpenItemId);
+      return `<div class="cache-row${open ? ' cache-open' : ''}"><strong>${file}</strong><span>CUE ${row.itemId} · ${flag}${open ? ' · OPEN' : ''}</span><span class="cache-${row.state || 'ok'}">${row.detail || row.state || ''}</span></div>`;
     })
     .join('');
 }
@@ -242,6 +244,17 @@ function applyStatus(status) {
   els.runPill.className = `pill ${status.running ? 'running' : 'stopped'}`;
   els.stPpt.textContent = status.powerpoint ? 'Found' : 'Not found';
   els.stDeck.textContent = status.deckName || '—';
+  if (els.stOpen) {
+    if (status.openMatch === 'unknown') {
+      els.stOpen.textContent = `${status.deckName || 'Open file'} · not in sync folder`;
+    } else if (status.openMatch === 'stale') {
+      els.stOpen.textContent = `Cue ${status.currentItemId} · older copy`;
+    } else if (status.currentItemId != null) {
+      els.stOpen.textContent = `Cue ${status.currentItemId}${status.deckName ? ` · ${status.deckName}` : ''}`;
+    } else {
+      els.stOpen.textContent = status.powerpoint ? (status.deckName || 'Open, unidentified') : '—';
+    }
+  }
   els.stCount.textContent = status.slideCount || '—';
   els.stShow.textContent = status.slideshowActive ? 'Live' : 'Off';
   els.stLive.textContent =
@@ -258,6 +271,7 @@ function applyStatus(status) {
   els.stAction.textContent = status.lastAction || '—';
   els.stError.textContent = status.error || '';
   if (status.mode === 'playback' || bridgeMode === 'playback') {
+    window.__rosOpenItemId = status.currentItemId;
     renderCache(status.cacheRows);
   }
 }
