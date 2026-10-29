@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { getApiBaseUrl } from '../services/api-client';
+import { apiJsonHeaders } from '../lib/sessionAuth';
 import { socketClient } from '../services/socket-client';
 import {
   pptClockFeedHasVisual,
@@ -9,21 +11,68 @@ import {
 
 type PublishInput = Omit<PptClockFeed, 'enabled' | 'auto'>;
 
+async function postClockSetting(
+  eventId: string,
+  path: 'clock-auto' | 'clock-clear',
+  body: Record<string, unknown>
+) {
+  try {
+    await fetch(
+      `${getApiBaseUrl()}/api/powerpoint/${encodeURIComponent(eventId)}/playback/${path}`,
+      {
+        method: 'POST',
+        headers: apiJsonHeaders(),
+        body: JSON.stringify(body),
+      }
+    );
+  } catch {
+    /* socket + local UI still apply */
+  }
+}
+
 export function usePptClockPublisher(
   eventId: string,
   feed: PublishInput,
-  canAuto: boolean
+  canAuto: boolean,
+  serverAuto?: boolean | null
 ) {
   const [clockFeedActive, setClockFeedActive] = useState(false);
-  const [autoPush, setAutoPush] = useState(false);
+  const [autoPush, setAutoPush] = useState(() =>
+    typeof serverAuto === 'boolean' ? serverAuto : readPptClockAuto(eventId)
+  );
   const clockFeedActiveRef = useRef(false);
   const autoPushRef = useRef(false);
   const suppressItemIdRef = useRef<number | null>(null);
   const lastKeyRef = useRef('');
 
   useEffect(() => {
-    setAutoPush(readPptClockAuto(eventId));
-  }, [eventId]);
+    if (typeof serverAuto === 'boolean') {
+      setAutoPush(serverAuto);
+      writePptClockAuto(eventId, serverAuto);
+      return;
+    }
+    if (!eventId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(
+          `${getApiBaseUrl()}/api/powerpoint/${encodeURIComponent(eventId)}/playback`,
+          { headers: apiJsonHeaders() }
+        );
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        if (typeof data?.session?.clockAutoPush === 'boolean') {
+          setAutoPush(data.session.clockAutoPush);
+          writePptClockAuto(eventId, data.session.clockAutoPush);
+        }
+      } catch {
+        if (!cancelled) setAutoPush(readPptClockAuto(eventId));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [eventId, serverAuto]);
 
   useEffect(() => {
     clockFeedActiveRef.current = clockFeedActive;
@@ -61,13 +110,15 @@ export function usePptClockPublisher(
 
   const clearClock = useCallback(() => {
     if (feed.itemId != null) suppressItemIdRef.current = feed.itemId;
+    if (eventId) void postClockSetting(eventId, 'clock-clear', { itemId: feed.itemId ?? null });
     emitOff();
-  }, [emitOff, feed.itemId]);
+  }, [emitOff, eventId, feed.itemId]);
 
   const setAutoPushPref = useCallback(
     (on: boolean) => {
       writePptClockAuto(eventId, on);
       setAutoPush(on);
+      if (eventId) void postClockSetting(eventId, 'clock-auto', { enabled: on });
       if (!on) return;
       suppressItemIdRef.current = null;
     },

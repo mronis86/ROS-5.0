@@ -40,10 +40,13 @@ class PlaybackController {
     this.lastLiveKey = '';
     this.lastReportAt = 0;
     this.previewPath = '';
+    this.previewFileId = '';
+    this.previewHoldPath = '';
     this.previewBusy = false;
     this.liveTimer = null;
     this.manualHold = false;
     this.closedByOperator = false;
+    this.cueFollowAuto = true;
     this.manifest = { files: {} };
     this.status = this.blankStatus('Stopped');
   }
@@ -131,6 +134,83 @@ class PlaybackController {
     return path.join(this.syncDir(), fileName);
   }
 
+  previewDirFor(fileId) {
+    return path.join(this.syncDir(), '.previews', String(fileId || 'unknown'));
+  }
+
+  readLocalPreviews(fileId) {
+    if (!fileId) return null;
+    try {
+      const dir = this.previewDirFor(fileId);
+      const meta = JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8'));
+      const slides = (Array.isArray(meta.slides) ? meta.slides : [])
+        .map((slide) => {
+          const jpg = path.join(dir, `${slide.pptSlideId}.jpg`);
+          let imageBase64 = '';
+          try {
+            imageBase64 = fs.readFileSync(jpg).toString('base64');
+          } catch {
+            imageBase64 = '';
+          }
+          return {
+            pptSlideId: String(slide.pptSlideId),
+            slideIndex: Number(slide.slideIndex),
+            title: slide.title || '',
+            imageBase64,
+            width: slide.width || 360,
+            height: slide.height || 202,
+          };
+        })
+        .filter((slide) => slide.imageBase64 && Number.isFinite(slide.slideIndex));
+      if (!slides.length) return null;
+      return { deckName: meta.deckName || '', slides };
+    } catch {
+      return null;
+    }
+  }
+
+  writeLocalPreviews(fileId, stills) {
+    if (!fileId || !stills?.slides?.length) return;
+    const dir = this.previewDirFor(fileId);
+    fs.mkdirSync(dir, { recursive: true });
+    const slides = [];
+    for (const slide of stills.slides) {
+      const pptSlideId = String(slide.pptSlideId || '').trim();
+      if (!pptSlideId || !slide.imageBase64) continue;
+      fs.writeFileSync(path.join(dir, `${pptSlideId}.jpg`), Buffer.from(slide.imageBase64, 'base64'));
+      slides.push({
+        pptSlideId,
+        slideIndex: Number(slide.slideIndex),
+        title: slide.title || '',
+        width: slide.width || 360,
+        height: slide.height || 202,
+      });
+    }
+    fs.writeFileSync(
+      path.join(dir, 'manifest.json'),
+      JSON.stringify(
+        {
+          fileId,
+          deckName: stills.deckName || '',
+          capturedAt: new Date().toISOString(),
+          slides,
+        },
+        null,
+        2
+      ),
+      'utf8'
+    );
+  }
+
+  clearLocalPreviews(fileId) {
+    try {
+      if (fileId) fs.rmSync(this.previewDirFor(fileId), { recursive: true, force: true });
+      else fs.rmSync(path.join(this.syncDir(), '.previews'), { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
+  }
+
   start(config) {
     this.stop();
     this.config = config || {};
@@ -191,6 +271,12 @@ class PlaybackController {
       const loadedItemId = playback?.session?.loadedItemId ?? playback?.session?.loadedCue?.itemId ?? null;
       const loadedCue = playback?.session?.loadedCue || null;
       const queued = playback?.session?.queuedCommand || null;
+      const cueFollowAuto = playback?.session?.cueFollowAuto !== false;
+      if (cueFollowAuto && !this.cueFollowAuto) {
+        this.manualHold = false;
+        this.closedByOperator = false;
+      }
+      this.cueFollowAuto = cueFollowAuto;
       let livePath = this.status.livePath || null;
       let slideshowActive = !!this.status.slideshowActive;
       try {
@@ -204,7 +290,20 @@ class PlaybackController {
         livePath = this.status.livePath || null;
       }
 
-      await this.followLoadedCue(loadedItemId, loadedCue, livePath, slideshowActive);
+      if (this.cueFollowAuto) {
+        await this.followLoadedCue(loadedItemId, loadedCue, livePath, slideshowActive);
+      } else {
+        const cueLabel = loadedCue?.cueLabel || (loadedItemId != null ? `Cue ${loadedItemId}` : '');
+        this.emit({
+          loadedCueLabel: cueLabel,
+          message: this.currentPath
+            ? `Manual open · ${this.status.deckName || 'deck ready'}`
+            : cueLabel
+              ? `${cueLabel} loaded · open a deck from the launcher`
+              : 'Manual open · waiting for Open & start',
+          lastAction: this.currentPath ? this.status.lastAction || 'Manual open' : 'Manual open',
+        });
+      }
 
       if (queued && queued.id && queued.id !== this.lastCommandId) {
         await this.runCommand(queued);
@@ -566,6 +665,8 @@ class PlaybackController {
       this.currentPath = null;
       this.currentFileId = null;
       this.previewPath = '';
+      this.previewFileId = '';
+      this.previewHoldPath = '';
       this.currentItemId = loadedItemId;
       this.lastLoadedItemId = loadedItemId;
       this.emit({
@@ -713,6 +814,17 @@ class PlaybackController {
       await this.reportAndRefresh(true);
       return;
     }
+    if (action === 'clear-previews') {
+      const fileId = command.fileId != null ? String(command.fileId) : this.currentFileId;
+      this.clearLocalPreviews(fileId || null);
+      this.previewPath = '';
+      this.previewFileId = '';
+      this.previewHoldPath = this.currentPath || '';
+      this.lastCommandId = command.id;
+      this.emit({ lastAction: 'Cleared slide images', error: '' });
+      await this.reportAndRefresh(true);
+      return;
+    }
     if (action === 'next') result = await ppt.nextSlide();
     else if (action === 'prev') result = await ppt.prevSlide();
     else if (action === 'goto') result = await ppt.gotoSlide(command.slideIndex);
@@ -727,6 +839,8 @@ class PlaybackController {
       this.currentFileId = null;
       this.currentItemId = null;
       this.previewPath = '';
+      this.previewFileId = '';
+      this.previewHoldPath = '';
       this.lastStartedItemId = null;
     } else return;
     if (!result || result.ok === false) {
@@ -809,6 +923,12 @@ class PlaybackController {
       this.emit({ error: this.lastError, lastAction: 'Manual open failed' });
       return;
     }
+    this.manualHold = true;
+    this.closedByOperator = false;
+    this.currentPath = dest;
+    this.currentFileId = asset.fileId || null;
+    this.currentItemId = Number.isFinite(Number(asset.itemId)) ? Number(asset.itemId) : null;
+    this.lastStartedItemId = this.currentItemId;
     await this.captureAndUploadPreviews(dest);
     if (!result.slideshowActive) {
       try {
@@ -821,12 +941,6 @@ class PlaybackController {
         this.lastError = err.message || result.showWarning || '';
       }
     }
-    this.manualHold = true;
-    this.closedByOperator = false;
-    this.currentPath = dest;
-    this.currentFileId = asset.fileId || null;
-    this.currentItemId = Number.isFinite(Number(asset.itemId)) ? Number(asset.itemId) : null;
-    this.lastStartedItemId = this.currentItemId;
     this.lastError = result.showWarning || '';
     this.applyLive(result);
     this.emit({
@@ -888,20 +1002,49 @@ class PlaybackController {
     this.scheduleLive(this.status.slideshowActive ? 220 : 500);
   }
 
-  async captureAndUploadPreviews(filePath) {
-    if (!filePath || this.previewBusy || this.previewPath === filePath) return;
+  async captureAndUploadPreviews(filePath, opts = {}) {
+    if (!filePath || this.previewBusy) return;
+    if (this.previewHoldPath && this.previewHoldPath === filePath && !opts.force) return;
+    const fileId = this.currentFileId;
+    const pathChanged = this.previewPath !== filePath || this.previewFileId !== String(fileId || '');
+
+    if (pathChanged && fileId) {
+      const local = this.readLocalPreviews(fileId);
+      if (local?.slides?.length) {
+        try {
+          await uploadPlaybackPreviews(this.config.apiBaseUrl, this.config.apiToken, this.config.eventId, {
+            fileId,
+            deckName: local.deckName || this.status.deckName,
+            slides: local.slides,
+          });
+          this.emit({
+            slideCount: local.slides.length,
+            lastAction: `Loaded ${local.slides.length} cached slide previews`,
+          });
+          await this.reportAndRefresh(true);
+        } catch {
+          /* recapture below */
+        }
+      }
+    }
+
+    if (!opts.force && this.previewPath === filePath && this.previewFileId === String(fileId || '')) return;
+
     this.previewBusy = true;
     try {
       const stills = await ppt.captureStills({ width: 360, height: 202 });
       if (!stills || stills.ok === false || !Array.isArray(stills.slides) || !stills.slides.length) {
         return;
       }
+      if (fileId) this.writeLocalPreviews(fileId, stills);
       await uploadPlaybackPreviews(this.config.apiBaseUrl, this.config.apiToken, this.config.eventId, {
-        fileId: this.currentFileId,
+        fileId,
         deckName: stills.deckName || this.status.deckName,
         slides: stills.slides,
       });
       this.previewPath = filePath;
+      this.previewFileId = String(fileId || '');
+      this.previewHoldPath = '';
       this.emit({
         slideCount: stills.slideCount || stills.slides.length,
         lastAction: `Captured ${stills.slides.length} slide previews`,

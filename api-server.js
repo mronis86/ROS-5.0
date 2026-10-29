@@ -9330,6 +9330,9 @@ function broadcastUpdate(eventId, updateType, data) {
   // Send via WebSocket (Socket.IO) - ONLY method now
   if (io) {
     io.to(`event:${eventId}`).emit('update', message);
+    if (updateType === 'pptClockSync') {
+      io.to(`event:${eventId}`).emit('pptClockSync', data);
+    }
     emitGuestSocketUpdate(io, eventId, updateType, data);
     console.log(`🔌 WebSocket broadcast sent for event ${eventId}: ${updateType}`);
   }

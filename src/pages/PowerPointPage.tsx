@@ -199,6 +199,7 @@ const PowerPointPage: React.FC = () => {
   const [cues, setCues] = useState<ScheduleCueOption[]>([]);
   const [retentionMonths, setRetentionMonths] = useState(1);
   const [view, setView] = useState<SlideView>(readSlideView);
+  const [clockAuto, setClockAuto] = useState<boolean | null>(null);
 
   const setSlideView = useCallback((next: SlideView) => {
     setView(next);
@@ -281,6 +282,11 @@ const PowerPointPage: React.FC = () => {
       {
         onPptDeckUpdated: (data) => {
           if (data?.session || Array.isArray(data?.slides)) applyPayload(data);
+        },
+        onPptPlaybackStatus: (data) => {
+          if (typeof data?.session?.clockAutoPush === 'boolean') {
+            setClockAuto(data.session.clockAutoPush);
+          }
         },
         onPptSlideLive: (data) => {
           if (!data) return;
@@ -406,7 +412,7 @@ const PowerPointPage: React.FC = () => {
     pushToClock,
     clearClock,
     canPush,
-  } = usePptClockPublisher(eventId, pptClockFeed, pptCueRunning);
+  } = usePptClockPublisher(eventId, pptClockFeed, pptCueRunning, clockAuto);
 
   if (!eventId) {
     return (

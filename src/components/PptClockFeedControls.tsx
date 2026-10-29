@@ -19,7 +19,10 @@ const PptClockFeedControls: React.FC<PptClockFeedControlsProps> = ({
 }) => {
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <label className="inline-flex items-center gap-1.5 rounded border border-slate-600 bg-slate-800 px-2 py-1.5 text-xs text-slate-200">
+      <label
+        className="inline-flex items-center gap-1.5 rounded border border-slate-600 bg-slate-800 px-2 py-1.5 text-xs text-slate-200"
+        title="Saved for this event. Every launcher and stills page follows the same setting, and Clock updates even if someone else checked it."
+      >
         <input
           type="checkbox"
           checked={autoPush}

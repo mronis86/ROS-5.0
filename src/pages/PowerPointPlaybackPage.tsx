@@ -38,6 +38,8 @@ type PlaybackSession = {
   liveCaptureUrl?: string;
   liveCaptureActive?: boolean;
   liveCaptureSource?: 'screen' | 'camera' | '';
+  clockAutoPush?: boolean;
+  cueFollowAuto?: boolean;
 };
 
 type PreviewSlide = {
@@ -46,6 +48,8 @@ type PreviewSlide = {
   title: string;
   hasImage: boolean;
   imageUrl: string;
+  updatedAt?: string | null;
+  fileId?: string | null;
 };
 
 type ManifestAsset = {
@@ -83,6 +87,17 @@ function rosCueFromTimer(data: any): RosCue | null {
 const HELPER_FRESH_MS = 20 * 1000;
 const previewObjectUrls = new Map<string, string>();
 
+function revokePreviewCache() {
+  for (const url of previewObjectUrls.values()) {
+    try {
+      URL.revokeObjectURL(url);
+    } catch {
+      /* ignore */
+    }
+  }
+  previewObjectUrls.clear();
+}
+
 function stubSlide(index: number | null): PreviewSlide | null {
   if (index == null || !Number.isFinite(index) || index < 1) return null;
   return {
@@ -103,6 +118,52 @@ function formatLastSeen(raw: string | null): string {
   return `${Math.round(ms / 60000)}m ago`;
 }
 
+function cueNumberFromLabel(label: string, itemId?: number | null): string {
+  const text = String(label || '').trim();
+  const match = text.match(/(\d+(?:\.\d+)?[A-Za-z]?)\s*$/) || text.match(/(\d+(?:\.\d+)?[A-Za-z]?)/);
+  if (match) return match[1];
+  if (itemId != null) return String(itemId);
+  return '—';
+}
+
+function cueSortValue(label: string, itemId?: number | null): number {
+  const n = parseFloat(cueNumberFromLabel(label, itemId));
+  return Number.isFinite(n) ? n : itemId ?? 0;
+}
+
+function CueNumberMark({
+  label,
+  itemId,
+  size = 'md',
+  active = false,
+}: {
+  label: string;
+  itemId?: number | null;
+  size?: 'md' | 'xl';
+  active?: boolean;
+}) {
+  const number = cueNumberFromLabel(label, itemId);
+  const xl = size === 'xl';
+  return (
+    <div
+      className={`flex shrink-0 flex-col items-center justify-center rounded-xl px-3 ${
+        xl ? 'min-w-[9rem] py-3' : 'min-w-[6.75rem] py-2'
+      } ${active ? 'bg-orange-600 text-white' : 'bg-slate-950 text-orange-100'}`}
+    >
+      <div
+        className={`font-bold uppercase tracking-[0.22em] ${
+          xl ? 'text-xs' : 'text-[10px]'
+        } ${active ? 'text-orange-100' : 'text-orange-400'}`}
+      >
+        CUE
+      </div>
+      <div className={`font-black tabular-nums leading-none ${xl ? 'text-6xl' : 'text-4xl'}`}>
+        {number}
+      </div>
+    </div>
+  );
+}
+
 function isFreshSeen(raw: string | null): boolean {
   if (!raw) return false;
   const ms = Date.now() - new Date(raw).getTime();
@@ -110,14 +171,15 @@ function isFreshSeen(raw: string | null): boolean {
 }
 
 function PreviewImage({ slide, className = '' }: { slide: PreviewSlide; className?: string }) {
-  const [src, setSrc] = useState(() => previewObjectUrls.get(slide.imageUrl) || '');
+  const cacheKey = `${slide.imageUrl}|${slide.updatedAt || ''}`;
+  const [src, setSrc] = useState(() => previewObjectUrls.get(cacheKey) || '');
 
   useEffect(() => {
     if (!slide.hasImage || !slide.imageUrl) {
       setSrc('');
       return;
     }
-    const cached = previewObjectUrls.get(slide.imageUrl);
+    const cached = previewObjectUrls.get(cacheKey);
     if (cached) {
       setSrc(cached);
       return;
@@ -128,13 +190,21 @@ function PreviewImage({ slide, className = '' }: { slide: PreviewSlide; classNam
       if (!res || !res.ok || cancelled) return;
       const blob = await res.blob();
       const objectUrl = URL.createObjectURL(blob);
-      previewObjectUrls.set(slide.imageUrl, objectUrl);
+      const previous = previewObjectUrls.get(cacheKey);
+      previewObjectUrls.set(cacheKey, objectUrl);
+      if (previous && previous !== objectUrl) {
+        try {
+          URL.revokeObjectURL(previous);
+        } catch {
+          /* ignore */
+        }
+      }
       if (!cancelled) setSrc(objectUrl);
     })();
     return () => {
       cancelled = true;
     };
-  }, [slide.hasImage, slide.imageUrl]);
+  }, [cacheKey, slide.hasImage, slide.imageUrl]);
 
   if (!src) {
     return (
@@ -182,6 +252,7 @@ const PowerPointPlaybackPage: React.FC = () => {
   const [previews, setPreviews] = useState<PreviewSlide[]>([]);
   const [rosCue, setRosCue] = useState<RosCue | null>(null);
   const [pendingUpdates, setPendingUpdates] = useState<PptPendingDeckUpdate[]>([]);
+  const [clearing, setClearing] = useState(false);
   const [, setSeenTick] = useState(0);
 
   const applyPlayback = useCallback((data: any) => {
@@ -422,7 +493,77 @@ const PowerPointPlaybackPage: React.FC = () => {
     pushToClock,
     clearClock,
     canPush,
-  } = usePptClockPublisher(eventId, pptClockFeed, pptCueRunning);
+  } = usePptClockPublisher(eventId, pptClockFeed, pptCueRunning, session?.clockAutoPush);
+
+  const clearImages = useCallback(async () => {
+    if (!eventId || clearing) return;
+    const ok = window.confirm(
+      'Remove captured slide images for this event?\n\nThe helper will keep decks in the sync folder. Opening a deck again recaptures thumbnails.'
+    );
+    if (!ok) return;
+    setClearing(true);
+    setError(null);
+    try {
+      const res = await fetch(
+        `${getApiBaseUrl()}/api/powerpoint/${encodeURIComponent(eventId)}/playback/previews`,
+        {
+          method: 'DELETE',
+          headers: apiJsonHeaders(),
+        }
+      );
+      if (!res.ok) throw new Error(`Clear failed (${res.status})`);
+      revokePreviewCache();
+      applyPlayback(await res.json());
+      await fetch(
+        `${getApiBaseUrl()}/api/powerpoint/${encodeURIComponent(eventId)}/playback/command`,
+        {
+          method: 'POST',
+          headers: apiJsonHeaders(),
+          body: JSON.stringify({
+            action: 'clear-previews',
+            fileId: session?.currentFileId || undefined,
+          }),
+        }
+      );
+    } catch (e: any) {
+      setError(e?.message || 'Failed to clear slide images');
+    } finally {
+      setClearing(false);
+    }
+  }, [applyPlayback, clearing, eventId, session?.currentFileId]);
+
+  const setCueFollow = useCallback(
+    async (on: boolean) => {
+      if (!eventId) return;
+      setSession((prev) => (prev ? { ...prev, cueFollowAuto: on } : prev));
+      setError(null);
+      try {
+        const res = await fetch(
+          `${getApiBaseUrl()}/api/powerpoint/${encodeURIComponent(eventId)}/playback/cue-follow`,
+          {
+            method: 'POST',
+            headers: apiJsonHeaders(),
+            body: JSON.stringify({ enabled: on }),
+          }
+        );
+        if (!res.ok) throw new Error(`Save failed (${res.status})`);
+        applyPlayback(await res.json());
+        if (on) {
+          await fetch(
+            `${getApiBaseUrl()}/api/powerpoint/${encodeURIComponent(eventId)}/playback/command`,
+            {
+              method: 'POST',
+              headers: apiJsonHeaders(),
+              body: JSON.stringify({ action: 'resume' }),
+            }
+          );
+        }
+      } catch (e: any) {
+        setError(e?.message || 'Failed to save open mode');
+      }
+    },
+    [applyPlayback, eventId]
+  );
 
   const helperSeen = isFreshSeen(session?.lastSeen || null);
   const wrongMode = !session?.connected && helperSeen && session?.helperMode === 'follow';
@@ -431,7 +572,14 @@ const PowerPointPlaybackPage: React.FC = () => {
     : wrongMode
       ? 'Helper in Show with Timers'
       : 'Bridge offline';
-  const preferred = assets.filter((a) => a.preferred);
+  const cueFollowAuto = session?.cueFollowAuto !== false;
+  const preferred = [...assets.filter((a) => a.preferred)].sort((a, b) => {
+    const cueA = a.itemId != null ? cues.find((row) => row.id === a.itemId) : null;
+    const cueB = b.itemId != null ? cues.find((row) => row.id === b.itemId) : null;
+    return (
+      cueSortValue(cueA?.label || '', a.itemId) - cueSortValue(cueB?.label || '', b.itemId)
+    );
+  });
 
   if (!eventId) {
     return (
@@ -493,6 +641,16 @@ const PowerPointPlaybackPage: React.FC = () => {
             onPush={pushToClock}
             onClear={clearClock}
           />
+          {previews.length > 0 || session?.currentFileId ? (
+            <button
+              type="button"
+              disabled={clearing}
+              onClick={() => void clearImages()}
+              className="rounded border border-rose-700 bg-rose-950 px-3 py-1.5 text-xs font-semibold text-rose-100 hover:bg-rose-900 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {clearing ? 'Clearing…' : 'Clear images'}
+            </button>
+          ) : null}
           <a
             href={getAppDownloadUrl('powerpoint-bridge.zip')}
             className="rounded bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-500"
@@ -540,47 +698,86 @@ const PowerPointPlaybackPage: React.FC = () => {
       ) : null}
 
       <section className="mx-4 mt-4 rounded-xl border border-orange-800/60 bg-slate-800/80 p-4">
-        <div className="text-[11px] font-bold uppercase tracking-wide text-orange-300">
-          Current ROS cue
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="text-[11px] font-bold uppercase tracking-wide text-orange-300">
+            Current ROS cue
+          </div>
+          <div className="flex rounded-lg border border-slate-600 bg-slate-950 p-0.5">
+            <button
+              type="button"
+              onClick={() => void setCueFollow(true)}
+              className={`rounded-md px-3 py-1.5 text-xs font-semibold ${
+                cueFollowAuto ? 'bg-orange-600 text-white' : 'text-slate-400 hover:text-white'
+              }`}
+              title="Helper opens the matching deck when a PPT cue is loaded"
+            >
+              Follow loaded cue
+            </button>
+            <button
+              type="button"
+              onClick={() => void setCueFollow(false)}
+              className={`rounded-md px-3 py-1.5 text-xs font-semibold ${
+                !cueFollowAuto ? 'bg-sky-600 text-white' : 'text-slate-400 hover:text-white'
+              }`}
+              title="Decks only open when you click Open & start in Synced decks"
+            >
+              Manual open
+            </button>
+          </div>
         </div>
         {currentCue ? (
-          <>
-            <div className="mt-1 text-2xl font-semibold text-white">{currentCue.label}</div>
-            {currentCue.segmentName ? (
-              <div className="mt-0.5 text-sm text-slate-300">{currentCue.segmentName}</div>
-            ) : null}
-            <div className="mt-2 flex flex-wrap gap-2 text-xs">
-              <span
-                className={`rounded-full px-2 py-0.5 font-semibold uppercase tracking-wide ${
-                  currentCue.timerState === 'running'
-                    ? 'bg-emerald-800 text-emerald-50'
-                    : currentCue.timerState === 'loaded'
-                      ? 'bg-sky-800 text-sky-50'
-                      : 'bg-slate-700 text-slate-200'
-                }`}
-              >
-                {currentCue.timerState === 'running'
-                  ? 'Running'
-                  : currentCue.timerState === 'loaded'
-                    ? 'Loaded'
-                    : 'On clock'}
-              </span>
-              <span
-                className={`rounded-full px-2 py-0.5 font-semibold uppercase tracking-wide ${
-                  currentCue.hasPPT ? 'bg-orange-800 text-orange-50' : 'bg-slate-700 text-slate-300'
-                }`}
-              >
-                {currentCue.hasPPT ? 'PPT cue' : 'No PPT'}
-              </span>
-              {session?.currentItemId != null && session.currentItemId === currentCue.itemId ? (
-                <span className="rounded-full bg-slate-700 px-2 py-0.5 font-semibold uppercase tracking-wide text-slate-100">
-                  Deck open
-                </span>
+          <div className="mt-3 flex flex-wrap items-center gap-4">
+            <CueNumberMark
+              label={currentCue.label}
+              itemId={currentCue.itemId}
+              size="xl"
+              active
+            />
+            <div className="min-w-0">
+              <div className="text-xl font-semibold text-white">
+                {currentCue.segmentName || currentCue.label}
+              </div>
+              {currentCue.segmentName ? (
+                <div className="mt-0.5 text-sm text-slate-300">{currentCue.label}</div>
               ) : null}
+              <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                <span
+                  className={`rounded-full px-2 py-0.5 font-semibold uppercase tracking-wide ${
+                    currentCue.timerState === 'running'
+                      ? 'bg-emerald-800 text-emerald-50'
+                      : currentCue.timerState === 'loaded'
+                        ? 'bg-sky-800 text-sky-50'
+                        : 'bg-slate-700 text-slate-200'
+                  }`}
+                >
+                  {currentCue.timerState === 'running'
+                    ? 'Running'
+                    : currentCue.timerState === 'loaded'
+                      ? 'Loaded'
+                      : 'On clock'}
+                </span>
+                <span
+                  className={`rounded-full px-2 py-0.5 font-semibold uppercase tracking-wide ${
+                    currentCue.hasPPT ? 'bg-orange-800 text-orange-50' : 'bg-slate-700 text-slate-300'
+                  }`}
+                >
+                  {currentCue.hasPPT ? 'PPT cue' : 'No PPT'}
+                </span>
+                {session?.currentItemId != null && session.currentItemId === currentCue.itemId ? (
+                  <span className="rounded-full bg-slate-700 px-2 py-0.5 font-semibold uppercase tracking-wide text-slate-100">
+                    Deck open
+                  </span>
+                ) : null}
+              </div>
+              <div className="mt-2 text-sm text-slate-400">
+                {cueFollowAuto
+                  ? 'Helper opens this deck when the cue loads.'
+                  : 'Open the matching deck from Synced decks when you are ready.'}
+              </div>
             </div>
-          </>
+          </div>
         ) : (
-          <div className="mt-1 text-lg text-slate-400">No cue loaded on Run of Show yet.</div>
+          <div className="mt-3 text-lg text-slate-400">No cue loaded on Run of Show yet.</div>
         )}
       </section>
 
@@ -595,7 +792,11 @@ const PowerPointPlaybackPage: React.FC = () => {
             : 'Waiting for deck'}
         </div>
         <div className="mt-1 text-sm text-slate-400">
-          {session?.lastCommand ? session.lastCommand : 'Waiting for the helper to follow the loaded cue'}
+          {session?.lastCommand
+            ? session.lastCommand
+            : cueFollowAuto
+              ? 'Waiting for the helper to follow the loaded cue'
+              : 'Manual open — click Open & start on a synced deck'}
         </div>
         {session?.lastError ? (
           <div className="mt-2 text-sm text-rose-300">{session.lastError}</div>
@@ -623,7 +824,7 @@ const PowerPointPlaybackPage: React.FC = () => {
           </div>
         ) : null}
 
-        {/paused|Manual/i.test(session?.lastCommand || '') ? (
+        {cueFollowAuto && /paused|Manual deck/i.test(session?.lastCommand || '') ? (
           <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded border border-amber-800/70 bg-amber-950/40 px-3 py-2 text-sm text-amber-100">
             <span>Cue auto-open is paused so this manual deck can stay up.</span>
             <button
@@ -762,13 +963,13 @@ const PowerPointPlaybackPage: React.FC = () => {
               </div>
             ) : deckOpen ? (
               <p className="mt-3 text-xs text-slate-500">
-                Capturing small slide thumbnails before the slideshow starts…
+                Loading slide thumbnails… the helper caches them in the sync folder so the next switch is instant.
               </p>
             ) : null}
           </div>
         ) : deckOpen ? (
           <p className="mt-4 text-sm text-slate-400">
-            Capturing small slide thumbnails before the slideshow starts…
+            Loading slide thumbnails… the helper caches them in the sync folder so the next switch is instant.
           </p>
         ) : null}
       </section>
@@ -798,12 +999,13 @@ const PowerPointPlaybackPage: React.FC = () => {
       </section>
 
       <section className="mx-4 mt-4 rounded-xl border border-slate-700 bg-slate-800/50 p-4">
-        <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">
-          Synced decks · open anytime
+        <div className="text-[11px] font-bold uppercase tracking-wide text-slate-300">
+          Synced decks · {cueFollowAuto ? 'follow loaded cue, or open anytime' : 'open from here'}
         </div>
-        <p className="mt-1 text-xs text-slate-500">
-          Cue follow still opens the matching deck when a cue starts. Use Open & start here to fire a
-          deck yourself without waiting on the clock.
+        <p className="mt-1 text-sm text-slate-300">
+          {cueFollowAuto
+            ? 'Loaded PPT cues open themselves. Use Open & start to jump to another deck.'
+            : 'Decks stay closed until you Open & start one. The loaded cue is highlighted so you can see where you are.'}
         </p>
         {preferred.length === 0 ? (
           <p className="mt-3 text-sm text-slate-400">No PowerPoint files on this event yet.</p>
@@ -811,40 +1013,48 @@ const PowerPointPlaybackPage: React.FC = () => {
           <div className="mt-3 grid gap-2">
             {preferred.map((asset) => {
               const cue = asset.itemId != null ? cues.find((row) => row.id === asset.itemId) : null;
+              const cueLabel = cue?.label || `CUE ${asset.itemId}`;
               const active = currentCue?.itemId != null && asset.itemId === currentCue.itemId;
+              const open = session?.currentItemId != null && asset.itemId === session.currentItemId;
               const pending = pendingUpdates.find((row) => row.itemId === asset.itemId) || null;
               return (
                 <div
                   key={asset.fileId}
-                  className={`flex flex-wrap items-center justify-between gap-2 rounded border px-3 py-2 text-sm ${
+                  className={`flex flex-wrap items-center gap-3 rounded-xl border px-3 py-2.5 ${
                     active
-                      ? 'border-orange-500 bg-orange-950/40'
-                      : 'border-slate-700 bg-slate-900/70'
+                      ? 'border-orange-400 bg-orange-950/50 ring-2 ring-orange-400/40'
+                      : open
+                        ? 'border-sky-600 bg-slate-900/80'
+                        : 'border-slate-600 bg-slate-900/80'
                   }`}
                 >
-                  <div>
-                    <div className="font-semibold text-white">{asset.originalName}</div>
-                    <div className="text-xs text-slate-400">
-                      {cue?.label || `Cue ${asset.itemId}`}
-                      {cue?.segmentName ? ` — ${cue.segmentName}` : ''}
-                      {asset.hasPPT ? ' · PPT checked' : ' · PPT unchecked'}
+                  <CueNumberMark label={cueLabel} itemId={asset.itemId} active={active} />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-lg font-bold leading-tight text-white">
+                      {cue?.segmentName || cueLabel}
+                    </div>
+                    <div className="mt-0.5 truncate text-sm text-slate-200">
+                      {asset.originalName}
+                    </div>
+                    <div className="mt-1 text-xs text-slate-400">
+                      {asset.hasPPT ? 'PPT checked' : 'PPT unchecked'}
                       {asset.sizeBytes != null ? ` · ${Math.round(asset.sizeBytes / 1024)} KB` : ''}
                     </div>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     {active ? (
-                      <span className="rounded-full bg-orange-700 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-orange-50">
-                        Current cue
+                      <span className="rounded-full bg-orange-600 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-white">
+                        Loaded cue
                       </span>
                     ) : null}
-                    {session?.currentItemId != null && asset.itemId === session.currentItemId ? (
-                      <span className="rounded-full bg-slate-600 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-slate-100">
-                        Open
+                    {open ? (
+                      <span className="rounded-full bg-sky-700 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-sky-50">
+                        Open now
                       </span>
                     ) : null}
                     {pending ? (
                       <>
-                        <span className="rounded-full bg-violet-700 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-violet-50">
+                        <span className="rounded-full bg-violet-700 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-violet-50">
                           New deck
                         </span>
                         <button
@@ -853,7 +1063,7 @@ const PowerPointPlaybackPage: React.FC = () => {
                           onClick={() =>
                             void sendCommand('sync', { itemId: pending.itemId, fileId: pending.fileId })
                           }
-                          className="rounded bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-violet-500 disabled:opacity-50"
+                          className="rounded bg-violet-600 px-3 py-2 text-sm font-semibold text-white hover:bg-violet-500 disabled:opacity-50"
                         >
                           {sending === `sync:${pending.fileId}` ? 'Pushing…' : 'Push to helper'}
                         </button>
@@ -865,7 +1075,7 @@ const PowerPointPlaybackPage: React.FC = () => {
                       onClick={() =>
                         void sendCommand('open', { itemId: asset.itemId, fileId: asset.fileId })
                       }
-                      className="rounded bg-orange-700 px-3 py-1.5 text-xs font-semibold text-orange-50 hover:bg-orange-600 disabled:opacity-50"
+                      className="rounded bg-orange-600 px-3 py-2 text-sm font-semibold text-white hover:bg-orange-500 disabled:opacity-50"
                     >
                       {sending === `open:${asset.fileId}` ? 'Opening…' : 'Open & start'}
                     </button>

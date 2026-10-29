@@ -1,6 +1,6 @@
 {
-  "version": "V26.10.28.N1",
-  "date": "2026-10-28",
-  "seq": 14,
+  "version": "V26.10.29.A1",
+  "date": "2026-10-29",
+  "seq": 1,
   "note": "YY.M.D + letter/cycle: A1=1st push that day, Z1=26th, A2=27th. Bump with: npm run version:bump"
 }
