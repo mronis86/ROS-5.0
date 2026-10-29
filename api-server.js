@@ -10924,6 +10924,34 @@ io.on('connection', (socket) => {
     });
   });
 
+  // PowerPoint → Clock / Fullscreen Timer overlay (manual or auto-push)
+  socket.on('pptClockUpdate', (data) => {
+    const {
+      eventId,
+      enabled,
+      imageUrl,
+      liveCaptureUrl,
+      liveCaptureActive,
+      slideIndex,
+      deckName,
+      itemId,
+      auto,
+    } = data || {};
+    if (!eventId) return;
+    io.to(`event:${eventId}`).emit('pptClockSync', {
+      eventId,
+      enabled: !!enabled,
+      imageUrl: enabled ? imageUrl || '' : '',
+      liveCaptureUrl: enabled ? liveCaptureUrl || '' : '',
+      liveCaptureActive: !!(enabled && liveCaptureActive),
+      slideIndex: enabled ? slideIndex ?? null : null,
+      deckName: enabled ? deckName || '' : '',
+      itemId: enabled ? itemId ?? null : null,
+      auto: !!(enabled && auto),
+      timestamp: Date.now(),
+    });
+  });
+
   // Teleprompter → Clock / Fullscreen Timer overlay (scroller push)
   socket.on('teleprompterClockUpdate', (data) => {
     const {

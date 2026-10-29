@@ -23,6 +23,8 @@ import {
 import TeleprompterClockOverlay, {
   type TeleprompterClockFeed,
 } from './TeleprompterClockOverlay';
+import PptClockOverlay from './PptClockOverlay';
+import { parsePptClockSync, type PptClockFeed } from '../lib/pptClockFeed';
 import type { CueCardComment, CueCardSlide } from '../lib/cueCards';
 import { resolveLiveCueLabel, shouldKeepExistingRunningTimer } from '../lib/cueDisplay';
 
@@ -80,6 +82,7 @@ const Clock: React.FC<ClockProps> = ({
   } | null>(null);
   const [teleprompterClockFeed, setTeleprompterClockFeed] =
     useState<TeleprompterClockFeed | null>(null);
+  const [pptClockFeed, setPptClockFeed] = useState<PptClockFeed | null>(null);
   const [secondaryTimerUpdate, setSecondaryTimerUpdate] = useState(0);
   const [secondaryTimerStartTime, setSecondaryTimerStartTime] = useState<Date | null>(null);
   const [lastActiveTimerId, setLastActiveTimerId] = useState<string | null>(null);
@@ -750,6 +753,11 @@ const Clock: React.FC<ClockProps> = ({
       });
     };
 
+    const onPptClockSync = (data: any) => {
+      if (!data || String(data.eventId) !== String(eventId)) return;
+      setPptClockFeed(parsePptClockSync(data));
+    };
+
     const onTeleprompterClockSync = (data: any) => {
       if (!data || String(data.eventId) !== String(eventId)) return;
       if (!data.enabled) {
@@ -799,6 +807,7 @@ const Clock: React.FC<ClockProps> = ({
     const sock = socketClient.getSocket();
     sock?.on('cueCardsClockSync', onCueCardsClockSync);
     sock?.on('teleprompterClockSync', onTeleprompterClockSync);
+    sock?.on('pptClockSync', onPptClockSync);
 
     // Re-register callbacks + refresh when the page becomes visible again.
     // Never disconnect here — display clocks must keep receiving messages while open
@@ -811,6 +820,7 @@ const Clock: React.FC<ClockProps> = ({
       void loadActiveTimer();
       socketClient.getSocket()?.on('cueCardsClockSync', onCueCardsClockSync);
       socketClient.getSocket()?.on('teleprompterClockSync', onTeleprompterClockSync);
+      socketClient.getSocket()?.on('pptClockSync', onPptClockSync);
     };
     document.addEventListener('visibilitychange', refreshClockOnReturn);
 
@@ -819,6 +829,7 @@ const Clock: React.FC<ClockProps> = ({
       document.removeEventListener('visibilitychange', refreshClockOnReturn);
       socketClient.getSocket()?.off('cueCardsClockSync', onCueCardsClockSync);
       socketClient.getSocket()?.off('teleprompterClockSync', onTeleprompterClockSync);
+      socketClient.getSocket()?.off('pptClockSync', onPptClockSync);
       socketClient.disconnect(eventId, 'clock');
     };
   }, [eventId]); // Removed supabaseOnly since it's always true in this component
@@ -1109,7 +1120,8 @@ const Clock: React.FC<ClockProps> = ({
   const teleprompterClockActive = !!(
     teleprompterClockFeed?.enabled && teleprompterClockFeed.scriptText
   );
-  const stageFeedActive = cueClockActive || teleprompterClockActive;
+  const pptClockActive = !!pptClockFeed?.enabled;
+  const stageFeedActive = cueClockActive || teleprompterClockActive || pptClockActive;
   /** Message / cue-card crowding (not Op+indented dual — that keeps Op large) */
   const layoutCrowded = !!activeStageMessage || stageFeedActive;
   /** Main (+ indented) go small: message crowding OR Op+indented dual */
@@ -1303,6 +1315,9 @@ const Clock: React.FC<ClockProps> = ({
                 feed={teleprompterClockFeed}
                 className="h-full w-full"
               />
+            ) : null}
+            {!cueClockActive && !teleprompterClockActive && pptClockActive && pptClockFeed ? (
+              <PptClockOverlay feed={pptClockFeed} className="h-full w-full" />
             ) : null}
           </div>
         </div>

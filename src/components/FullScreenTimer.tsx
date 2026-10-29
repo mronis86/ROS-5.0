@@ -21,6 +21,8 @@ import {
 import TeleprompterClockOverlay, {
   type TeleprompterClockFeed,
 } from './TeleprompterClockOverlay';
+import PptClockOverlay from './PptClockOverlay';
+import type { PptClockFeed } from '../lib/pptClockFeed';
 import type { CueCardComment, CueCardSlide } from '../lib/cueCards';
 import { resolveLiveCueLabel } from '../lib/cueDisplay';
 
@@ -53,6 +55,7 @@ interface FullScreenTimerProps {
     comments: CueCardComment[];
   } | null;
   teleprompterClockFeed?: TeleprompterClockFeed | null;
+  pptClockFeed?: PptClockFeed | null;
 }
 
 const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
@@ -71,6 +74,7 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
   clockOffset = 0,
   cueClockFeed = null,
   teleprompterClockFeed = null,
+  pptClockFeed = null,
 }) => {
   const [timerProgress, setTimerProgress] = useState<{ elapsed: number; total: number }>({
     elapsed: elapsedTime,
@@ -159,7 +163,8 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
     const teleActive = !!(
       teleprompterClockFeed?.enabled && teleprompterClockFeed.scriptText
     );
-    if (cueActive || teleActive) return true;
+    const pptActive = !!pptClockFeed?.enabled;
+    if (cueActive || teleActive || pptActive) return true;
     if (supabaseOnly) {
       return [hybridTimerData?.timerMessage, supabaseMessage].some(
         (m) => !!m?.enabled && !isPreshowTimerMessage(m)
@@ -173,7 +178,8 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
   const teleprompterClockActive = !!(
     teleprompterClockFeed?.enabled && teleprompterClockFeed.scriptText
   );
-  const stageFeedActive = cueClockActive || teleprompterClockActive;
+  const pptClockActive = !!pptClockFeed?.enabled;
+  const stageFeedActive = cueClockActive || teleprompterClockActive || pptClockActive;
   const activeFsMessage = [hybridTimerData?.timerMessage, supabaseMessage].find(
     (m: any) => m?.enabled && !isPreshowTimerMessage(m)
   ) || null;
@@ -856,6 +862,9 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
                 feed={teleprompterClockFeed}
                 className="h-full w-full"
               />
+            ) : null}
+            {!cueClockActive && !teleprompterClockActive && pptClockActive && pptClockFeed ? (
+              <PptClockOverlay feed={pptClockFeed} className="h-full w-full" />
             ) : null}
           </div>
         </div>

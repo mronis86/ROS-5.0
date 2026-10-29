@@ -6,6 +6,9 @@ import { socketClient } from '../services/socket-client';
 import { DatabaseService } from '../services/database';
 import { normalizeCueLabel } from '../lib/cueCards';
 import PptPendingDeckBanner, { type PptPendingDeckUpdate } from '../components/PptPendingDeckBanner';
+import PptClockFeedControls from '../components/PptClockFeedControls';
+import { usePptClockPublisher } from '../hooks/usePptClockPublisher';
+import { isPptVdoViewUrl } from '../lib/pptClockFeed';
 
 type LoadedCue = {
   itemId: number | null;
@@ -162,21 +165,6 @@ function cueFromItem(item: any): ScheduleCue | null {
     segmentName: String(item.segmentName || item.segment_name || ''),
     hasPPT: !!(item.hasPPT ?? item.has_ppt),
   };
-}
-
-function isVdoViewUrl(raw: string | undefined) {
-  const s = String(raw || '').trim();
-  if (!s) return false;
-  try {
-    const u = new URL(s);
-    return (
-      u.protocol === 'https:' &&
-      (u.hostname === 'vdo.ninja' || u.hostname === 'www.vdo.ninja') &&
-      !!(u.searchParams.get('view') || u.searchParams.get('scene'))
-    );
-  } catch {
-    return false;
-  }
 }
 
 const PowerPointPlaybackPage: React.FC = () => {
@@ -403,6 +391,39 @@ const PowerPointPlaybackPage: React.FC = () => {
       stubSlide(liveIndex != null && session?.slideCount && liveIndex < session.slideCount ? liveIndex + 1 : null)
     : null;
 
+  const pptClockFeed = useMemo(
+    () => ({
+      imageUrl: currentSlide?.hasImage ? currentSlide.imageUrl : '',
+      liveCaptureUrl: session?.liveCaptureUrl || '',
+      liveCaptureActive: !!session?.liveCaptureActive,
+      slideIndex: liveIndex,
+      deckName: session?.deckName || '',
+      itemId: currentCue?.itemId ?? null,
+    }),
+    [
+      currentCue?.itemId,
+      currentSlide?.hasImage,
+      currentSlide?.imageUrl,
+      liveIndex,
+      session?.deckName,
+      session?.liveCaptureActive,
+      session?.liveCaptureUrl,
+    ]
+  );
+  const pptCueRunning = !!(
+    session?.connected &&
+    currentCue?.hasPPT &&
+    (currentCue.timerState === 'loaded' || currentCue.timerState === 'running')
+  );
+  const {
+    clockFeedActive,
+    autoPush,
+    setAutoPushPref,
+    pushToClock,
+    clearClock,
+    canPush,
+  } = usePptClockPublisher(eventId, pptClockFeed, pptCueRunning);
+
   const helperSeen = isFreshSeen(session?.lastSeen || null);
   const wrongMode = !session?.connected && helperSeen && session?.helperMode === 'follow';
   const bridgeLabel = session?.connected
@@ -464,6 +485,14 @@ const PowerPointPlaybackPage: React.FC = () => {
           <span className="text-[11px] text-slate-500">
             Seen {formatLastSeen(session?.lastSeen || null)}
           </span>
+          <PptClockFeedControls
+            canPush={canPush}
+            clockFeedActive={clockFeedActive}
+            autoPush={autoPush}
+            onAutoPushChange={setAutoPushPref}
+            onPush={pushToClock}
+            onClear={clearClock}
+          />
           <a
             href={getAppDownloadUrl('powerpoint-bridge.zip')}
             className="rounded bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-500"
@@ -572,7 +601,7 @@ const PowerPointPlaybackPage: React.FC = () => {
           <div className="mt-2 text-sm text-rose-300">{session.lastError}</div>
         ) : null}
 
-        {session?.liveCaptureActive && isVdoViewUrl(session.liveCaptureUrl) ? (
+        {session?.liveCaptureActive && isPptVdoViewUrl(session.liveCaptureUrl) ? (
           <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-violet-500/40 bg-violet-950/40 px-3 py-1.5">
             <div className="text-xs font-semibold text-violet-100">
               Live capture is on

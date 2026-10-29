@@ -5,6 +5,8 @@ import { apiAuthFetch, apiJsonHeaders } from '../lib/sessionAuth';
 import { DatabaseService } from '../services/database';
 import { socketClient } from '../services/socket-client';
 import { normalizeCueLabel } from '../lib/cueCards';
+import PptClockFeedControls from '../components/PptClockFeedControls';
+import { usePptClockPublisher } from '../hooks/usePptClockPublisher';
 
 type PptAction = 'none' | 'load' | 'load_start' | 'start' | 'stop';
 type SlideView = 'grid' | 'list';
@@ -371,6 +373,40 @@ const PowerPointPage: React.FC = () => {
     () => slides.find((s) => s.pptSlideId === session?.currentSlideId) || null,
     [session?.currentSlideId, slides]
   );
+  const pptClockFeed = useMemo(
+    () => ({
+      imageUrl: liveSlide?.hasImage ? liveSlide.signedUrl || liveSlide.imageUrl : '',
+      liveCaptureUrl: '',
+      liveCaptureActive: false,
+      slideIndex: liveSlide?.slideIndex ?? session?.currentIndex ?? null,
+      deckName: session?.deckName || '',
+      itemId: liveSlide?.binding?.itemId ?? session?.lastItemId ?? null,
+    }),
+    [
+      liveSlide?.binding?.itemId,
+      liveSlide?.hasImage,
+      liveSlide?.imageUrl,
+      liveSlide?.signedUrl,
+      liveSlide?.slideIndex,
+      session?.currentIndex,
+      session?.deckName,
+      session?.lastItemId,
+    ]
+  );
+  const pptCueRunning = !!(
+    session?.connected &&
+    session?.slideshowActive &&
+    liveSlide &&
+    (liveSlide.binding?.itemId != null || session.lastItemId != null)
+  );
+  const {
+    clockFeedActive,
+    autoPush,
+    setAutoPushPref,
+    pushToClock,
+    clearClock,
+    canPush,
+  } = usePptClockPublisher(eventId, pptClockFeed, pptCueRunning);
 
   if (!eventId) {
     return (
@@ -422,6 +458,14 @@ const PowerPointPage: React.FC = () => {
           <span className="text-[11px] text-slate-500">
             Seen {formatLastSeen(session?.lastSeen || null)}
           </span>
+          <PptClockFeedControls
+            canPush={canPush}
+            clockFeedActive={clockFeedActive}
+            autoPush={autoPush}
+            onAutoPushChange={setAutoPushPref}
+            onPush={pushToClock}
+            onClear={clearClock}
+          />
           {slides.length > 0 ? (
             <div className="inline-flex overflow-hidden rounded border border-slate-600">
               <button

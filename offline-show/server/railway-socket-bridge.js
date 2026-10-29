@@ -49,6 +49,7 @@ const CLIENT_TO_RAILWAY = [
   'cueCardsCommentUpdate',
   'cueCardsClockUpdate',
   'teleprompterClockUpdate',
+  'pptClockUpdate',
   'overtimeUpdate',
   'showStartOvertimeUpdate',
   'startCueSelectionUpdate',
@@ -69,6 +70,7 @@ const RAILWAY_DIRECT_TO_LAN = [
   'cueCardsCommentSync',
   'cueCardsClockSync',
   'teleprompterClockSync',
+  'pptClockSync',
   'forceDisconnect',
 ];
 

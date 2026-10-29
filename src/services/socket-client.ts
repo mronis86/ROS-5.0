@@ -753,6 +753,36 @@ class SocketClient {
     }
   }
 
+  /**
+   * PowerPoint → Clock / Fullscreen Timer overlay.
+   * Playback / stills pages push the live VDO preview or current still.
+   */
+  emitPptClock(payload: {
+    enabled: boolean;
+    imageUrl?: string;
+    liveCaptureUrl?: string;
+    liveCaptureActive?: boolean;
+    slideIndex?: number | null;
+    deckName?: string;
+    itemId?: number | null;
+    auto?: boolean;
+  }) {
+    if (this.socket && this.eventId) {
+      this.socket.emit('pptClockUpdate', {
+        eventId: this.eventId,
+        enabled: !!payload.enabled,
+        imageUrl: payload.enabled ? payload.imageUrl || '' : '',
+        liveCaptureUrl: payload.enabled ? payload.liveCaptureUrl || '' : '',
+        liveCaptureActive: !!(payload.enabled && payload.liveCaptureActive),
+        slideIndex: payload.enabled ? payload.slideIndex ?? null : null,
+        deckName: payload.enabled ? payload.deckName || '' : '',
+        itemId: payload.enabled ? payload.itemId ?? null : null,
+        auto: !!(payload.enabled && payload.auto),
+        timestamp: Date.now(),
+      });
+    }
+  }
+
   // Get the raw socket instance for custom event listeners
   getSocket() {
     return this.socket;

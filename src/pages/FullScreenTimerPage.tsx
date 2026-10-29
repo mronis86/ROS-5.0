@@ -11,6 +11,7 @@ import {
 } from '../lib/displaySession';
 import type { CueCardComment, CueCardSlide } from '../lib/cueCards';
 import type { TeleprompterClockFeed } from '../components/TeleprompterClockOverlay';
+import { parsePptClockSync, type PptClockFeed } from '../lib/pptClockFeed';
 import {
   isOperatorAltTimer,
   mapOperatorCountdownRow,
@@ -38,6 +39,7 @@ const FullScreenTimerPage: React.FC = () => {
   } | null>(null);
   const [teleprompterClockFeed, setTeleprompterClockFeed] =
     useState<TeleprompterClockFeed | null>(null);
+  const [pptClockFeed, setPptClockFeed] = useState<PptClockFeed | null>(null);
   const [itemId, setItemId] = useState(timerData.itemId || null);
   const [eventId, setEventId] = useState(eventIdFromUrl || timerData.eventId || null);
   const [mainTimer, setMainTimer] = useState(timerData.mainTimer || null);
@@ -302,6 +304,11 @@ const FullScreenTimerPage: React.FC = () => {
       });
     };
 
+    const onPptClockSync = (data: any) => {
+      if (!data || String(data.eventId) !== String(eventId)) return;
+      setPptClockFeed(parsePptClockSync(data));
+    };
+
     const onTeleprompterClockSync = (data: any) => {
       if (!data || String(data.eventId) !== String(eventId)) return;
       if (!data.enabled) {
@@ -346,6 +353,7 @@ const FullScreenTimerPage: React.FC = () => {
 
     socketClient.getSocket()?.on('cueCardsClockSync', onCueCardsClockSync);
     socketClient.getSocket()?.on('teleprompterClockSync', onTeleprompterClockSync);
+    socketClient.getSocket()?.on('pptClockSync', onPptClockSync);
 
     if (!hasShownModalOnce && connectionEnabledRef.current) {
       setShowDisconnectModal(true);
@@ -358,12 +366,14 @@ const FullScreenTimerPage: React.FC = () => {
         console.log('👁️ FullScreenTimer: Tab hidden - disconnecting WebSocket to save costs');
         socketClient.getSocket()?.off('cueCardsClockSync', onCueCardsClockSync);
         socketClient.getSocket()?.off('teleprompterClockSync', onTeleprompterClockSync);
+        socketClient.getSocket()?.off('pptClockSync', onPptClockSync);
         socketClient.disconnect(eventId, 'fullScreen');
       } else if (!socketClient.isConnected()) {
         console.log('👁️ FullScreenTimer: Tab visible - silently reconnecting WebSocket (no modal)');
         socketClient.connect(eventId, callbacks, 'fullScreen');
         socketClient.getSocket()?.on('cueCardsClockSync', onCueCardsClockSync);
         socketClient.getSocket()?.on('teleprompterClockSync', onTeleprompterClockSync);
+        socketClient.getSocket()?.on('pptClockSync', onPptClockSync);
         loadMessage();
       }
     };
@@ -374,6 +384,7 @@ const FullScreenTimerPage: React.FC = () => {
       console.log('📨 Cleaning up FullScreenTimer WebSocket connection');
       socketClient.getSocket()?.off('cueCardsClockSync', onCueCardsClockSync);
       socketClient.getSocket()?.off('teleprompterClockSync', onTeleprompterClockSync);
+      socketClient.getSocket()?.off('pptClockSync', onPptClockSync);
       socketClient.disconnect(eventId, 'fullScreen');
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       if (disconnectTimer) clearTimeout(disconnectTimer);
@@ -519,6 +530,7 @@ const FullScreenTimerPage: React.FC = () => {
         clockOffset={clockOffset}
         cueClockFeed={cueClockFeed}
         teleprompterClockFeed={teleprompterClockFeed}
+        pptClockFeed={pptClockFeed}
       />
       
       {/* Disconnect Timer Modal */}
