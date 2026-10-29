@@ -13,8 +13,8 @@ const prefix = 'powerpoint-bridge';
 
 function findUnpacked() {
   const candidates = [
-    path.join(bridgeRoot, 'dist-ready', 'win-unpacked'),
     path.join(bridgeRoot, 'dist', 'win-unpacked'),
+    path.join(bridgeRoot, 'dist-ready', 'win-unpacked'),
   ];
   return candidates.find((p) => fs.existsSync(p)) || null;
 }
@@ -74,7 +74,7 @@ No Node.js / npm install required.
 4. Paste the Railway API URL and an integration token (ros_itok_...) with read,control,write.
 5. Load events, pick the show.
 6. PowerPoint Show with Timers: Capture stills, then Start follow.
-7. ROS PPT Launcher: Sync cache, then Follow loaded cue.
+7. ROS PPT Launcher: Sync decks, then Follow loaded cue or Manual open.
 
 Keep the .exe next to resources\\app.asar.
 `;
