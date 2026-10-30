@@ -74,7 +74,7 @@ No Node.js / npm install required.
 4. Paste the Railway API URL and an integration token (ros_itok_...) with read,control,write.
 5. Load events, pick the show.
 6. PowerPoint Show with Timers: Capture stills, then Start follow.
-7. ROS PPT Launcher: Sync decks, then Follow loaded cue or Manual open.
+7. ROS PPT Launcher: Sync decks (downloads decks + slide images), then Follow loaded cue or Manual open. Do not expect live PowerPoint export.
 
 Keep the .exe next to resources\\app.asar.
 `;

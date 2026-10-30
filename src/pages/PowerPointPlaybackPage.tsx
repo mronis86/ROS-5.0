@@ -16,6 +16,7 @@ type LoadedCue = {
   segmentName: string;
   timerState: 'loaded' | 'running' | null;
   hasPPT: boolean;
+  day?: number;
 };
 
 type PlaybackSession = {
@@ -43,6 +44,10 @@ type PlaybackSession = {
   livePath?: string;
   openMatch?: string;
   openStale?: boolean;
+  selectedDay?: number;
+  numberOfDays?: number;
+  eventDate?: string;
+  calendarDay?: number | null;
 };
 
 type PreviewSlide = {
@@ -62,6 +67,7 @@ type ManifestAsset = {
   sizeBytes: number | null;
   hasPPT: boolean;
   preferred: boolean;
+  day?: number;
 };
 
 type ScheduleCue = {
@@ -69,6 +75,7 @@ type ScheduleCue = {
   label: string;
   segmentName: string;
   hasPPT: boolean;
+  day: number;
 };
 
 type RosCue = {
@@ -255,7 +262,31 @@ function cueFromItem(item: any): ScheduleCue | null {
     label,
     segmentName: String(item.segmentName || item.segment_name || ''),
     hasPPT: !!(item.hasPPT ?? item.has_ppt),
+    day: Number.isFinite(Number(item?.day)) && Number(item.day) >= 1 ? Math.floor(Number(item.day)) : 1,
   };
+}
+
+function readPptDay(eventId: string): number | null {
+  try {
+    const n = Number(window.localStorage.getItem(`ros-ppt-day:${eventId}`));
+    return Number.isFinite(n) && n >= 1 ? Math.floor(n) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writePptDay(eventId: string, day: number) {
+  try {
+    window.localStorage.setItem(`ros-ppt-day:${eventId}`, String(day));
+  } catch {
+    /* ignore */
+  }
+}
+
+function assetDayNumber(asset: ManifestAsset, cues: ScheduleCue[]): number {
+  if (asset.day != null && Number(asset.day) >= 1) return Math.floor(Number(asset.day));
+  const cue = asset.itemId != null ? cues.find((row) => row.id === asset.itemId) : null;
+  return cue?.day || 1;
 }
 
 const PowerPointPlaybackPage: React.FC = () => {
@@ -269,6 +300,7 @@ const PowerPointPlaybackPage: React.FC = () => {
   const [assets, setAssets] = useState<ManifestAsset[]>([]);
   const [cues, setCues] = useState<ScheduleCue[]>([]);
   const [gotoValue, setGotoValue] = useState('');
+  const [selectedDay, setSelectedDay] = useState(() => readPptDay(eventId) || 1);
   const [sending, setSending] = useState<string | null>(null);
   const [previews, setPreviews] = useState<PreviewSlide[]>([]);
   const [rosCue, setRosCue] = useState<RosCue | null>(null);
@@ -374,6 +406,11 @@ const PowerPointPlaybackPage: React.FC = () => {
     void loadCues();
     void loadRosCue();
   }, [loadCues, loadRosCue, loadStatus]);
+
+  useEffect(() => {
+    if (readPptDay(eventId)) return;
+    if (session?.calendarDay) setSelectedDay(session.calendarDay);
+  }, [eventId, session?.calendarDay]);
 
   useEffect(() => {
     if (!eventId) return;
@@ -562,7 +599,7 @@ const PowerPointPlaybackPage: React.FC = () => {
   const clearImages = useCallback(async () => {
     if (!eventId || clearing) return;
     const ok = window.confirm(
-      'Remove captured slide images for this event?\n\nThe helper will keep decks in the sync folder. Opening a deck again recaptures thumbnails.'
+      'Remove slide images for this event?\n\nThe helper will keep decks in the sync folder. Sync decks again to re-download thumbnails — PowerPoint will not export them live.'
     );
     if (!ok) return;
     setClearing(true);
@@ -640,7 +677,7 @@ const PowerPointPlaybackPage: React.FC = () => {
       : 'Bridge offline';
   const cueFollowAuto = session?.cueFollowAuto !== false;
   const cueOrder = new Map(cues.map((row, index) => [row.id, index]));
-  const preferred = [...assets.filter((a) => a.preferred)].sort((a, b) => {
+  const preferredAll = [...assets.filter((a) => a.preferred)].sort((a, b) => {
     const ia =
       a.itemId != null && cueOrder.has(a.itemId) ? cueOrder.get(a.itemId)! : Number.POSITIVE_INFINITY;
     const ib =
@@ -648,6 +685,20 @@ const PowerPointPlaybackPage: React.FC = () => {
     if (ia !== ib) return ia - ib;
     return (a.itemId ?? 0) - (b.itemId ?? 0);
   });
+  const numberOfDays = Math.max(
+    1,
+    Number(session?.numberOfDays) || 1,
+    ...cues.map((row) => row.day || 1),
+    ...preferredAll.map((row) => assetDayNumber(row, cues))
+  );
+  const preferred =
+    numberOfDays > 1
+      ? preferredAll.filter((asset) => assetDayNumber(asset, cues) === selectedDay)
+      : preferredAll;
+  const loadedCueDay = currentCue
+    ? cues.find((row) => row.id === currentCue.itemId)?.day || session?.loadedCue?.day || 1
+    : null;
+  const helperDay = Math.max(1, Math.floor(Number(session?.selectedDay) || selectedDay));
 
   if (!eventId) {
     return (
@@ -691,6 +742,15 @@ const PowerPointPlaybackPage: React.FC = () => {
           >
             {bridgeLabel}
           </span>
+          {numberOfDays > 1 ? (
+            <span className="rounded-full bg-slate-800 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-slate-200">
+              Day {selectedDay}
+              {session?.calendarDay && session.calendarDay !== selectedDay
+                ? ` · today ${session.calendarDay}`
+                : ''}
+              {session?.connected && helperDay !== selectedDay ? ` · PC ${helperDay}` : ''}
+            </span>
+          ) : null}
           <span
             className={`rounded-full px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide ${
               session?.slideshowActive ? 'bg-amber-700 text-amber-50' : 'bg-slate-800 text-slate-400'
@@ -1072,13 +1132,13 @@ const PowerPointPlaybackPage: React.FC = () => {
               </div>
             ) : deckOpen ? (
               <p className="mt-3 text-xs text-slate-500">
-                Loading slide thumbnails… the helper caches them in the sync folder so the next switch is instant.
+                No slide images in the sync folder yet. Click Sync decks on the helper — it downloads stills with the deck and does not export from live PowerPoint.
               </p>
             ) : null}
           </div>
         ) : deckOpen ? (
           <p className="mt-4 text-sm text-slate-400">
-            Loading slide thumbnails… the helper caches them in the sync folder so the next switch is instant.
+            No slide images in the sync folder yet. Click Sync decks on the helper — it downloads stills with the deck and does not export from live PowerPoint.
           </p>
         ) : null}
       </section>
@@ -1111,13 +1171,45 @@ const PowerPointPlaybackPage: React.FC = () => {
         <div className="text-[11px] font-bold uppercase tracking-wide text-slate-300">
           Synced decks · {cueFollowAuto ? 'follow loaded cue, or open anytime' : 'open from here'}
         </div>
+        {numberOfDays > 1 ? (
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            {Array.from({ length: numberOfDays }, (_, i) => i + 1).map((day) => (
+              <button
+                key={day}
+                type="button"
+                onClick={() => {
+                  setSelectedDay(day);
+                  writePptDay(eventId, day);
+                }}
+                className={`rounded-full px-3 py-1 text-xs font-bold uppercase tracking-wide ${
+                  selectedDay === day
+                    ? 'bg-orange-600 text-white'
+                    : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                }`}
+              >
+                Day {day}
+                {session?.calendarDay === day ? ' · today' : ''}
+              </button>
+            ))}
+          </div>
+        ) : null}
         <p className="mt-1 text-sm text-slate-300">
           {cueFollowAuto
             ? 'Loaded PPT cues open themselves. Use Open & start to jump to another deck.'
             : 'Decks stay closed until you Open & start one. The loaded cue is highlighted so you can see where you are.'}
         </p>
+        {numberOfDays > 1 && loadedCueDay != null && loadedCueDay !== selectedDay ? (
+          <p className="mt-2 text-sm text-amber-200">
+            ROS loaded cue is Day {loadedCueDay}. This page is Day {selectedDay}
+            {session?.connected ? ` · helper is Day ${helperDay}` : ''}.
+          </p>
+        ) : null}
         {preferred.length === 0 ? (
-          <p className="mt-3 text-sm text-slate-400">No PowerPoint files on this event yet.</p>
+          <p className="mt-3 text-sm text-slate-400">
+            {preferredAll.length
+              ? `No PowerPoint files on Day ${selectedDay}.`
+              : 'No PowerPoint files on this event yet.'}
+          </p>
         ) : (
           <div className="mt-3 grid gap-2">
             {preferred.map((asset) => {

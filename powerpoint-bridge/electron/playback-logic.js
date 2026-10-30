@@ -95,6 +95,44 @@ function pathsEqual(a, b) {
   return String(a).replace(/\//g, '\\').toLowerCase() === String(b).replace(/\//g, '\\').toLowerCase();
 }
 
+function itemDayNumber(item) {
+  const n = Number(item?.day ?? item?.dayNumber ?? item?.day_number);
+  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 1;
+}
+
+function cueMatchesSelectedDay(cueDay, selectedDay, numberOfDays) {
+  const days = Math.max(1, Math.floor(Number(numberOfDays) || 1));
+  if (days <= 1) return true;
+  const want = Math.max(1, Math.floor(Number(selectedDay) || 1));
+  const got = Math.max(1, Math.floor(Number(cueDay) || 1));
+  return got === want;
+}
+
+function calendarShowDay(eventDate, numberOfDays, now = new Date()) {
+  const raw = String(eventDate || '').trim();
+  const parts = raw.split('-').map(Number);
+  if (parts.length < 3 || parts.some((n) => !Number.isFinite(n))) return null;
+  const start = new Date(parts[0], parts[1] - 1, parts[2]).getTime();
+  const days = Math.max(1, Math.floor(Number(numberOfDays) || 1));
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const dayIndex = Math.round((today - start) / 86400000);
+  if (dayIndex < 0 || dayIndex >= days) return null;
+  return dayIndex + 1;
+}
+
+const PREVIEW_DIR_NAME = '.previews';
+
+function rawPreviewSlideId(fileId, pptSlideId) {
+  const id = String(pptSlideId || '').trim();
+  const fid = String(fileId || '').trim();
+  if (!id) return '';
+  if (fid) {
+    const prefix = `${fid}::`;
+    if (id.startsWith(prefix)) return id.slice(prefix.length);
+  }
+  return id;
+}
+
 module.exports = {
   isPptAssetName,
   safeFilePart,
@@ -104,4 +142,9 @@ module.exports = {
   preferredAssetForItem,
   decidePlaybackAction,
   pathsEqual,
+  PREVIEW_DIR_NAME,
+  rawPreviewSlideId,
+  itemDayNumber,
+  cueMatchesSelectedDay,
+  calendarShowDay,
 };

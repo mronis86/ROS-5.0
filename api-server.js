@@ -33,7 +33,7 @@ const server = createServer(app);
 // In development, allow any origin (so LAN access e.g. http://192.168.1.233:3003 works)
 const isProduction = process.env.NODE_ENV === 'production';
 const { loadAdminAuthConfig, createRequireAdminAuth, createRequireAdminAccess, createAdminAuthStatus } = require('./lib/admin-auth');
-const { loadApiAuthConfig, createApiAuthMiddleware, registerAuthRoutes, userCanAccessEvent, userCanAccessDashboard, userCanAccessPreflightChecklist, userCanManageSpeakers, userCanManageAccess, filterCalendarEventsForAuth, grantCreatedEventToRestrictedUser } = require('./lib/api-auth');
+const { loadApiAuthConfig, createApiAuthMiddleware, registerAuthRoutes, userCanAccessEvent, userCanAccessDashboard, userCanAccessPreflightChecklist, userCanManageSpeakers, userCanManageAccess, filterCalendarEventsForAuth, grantCreatedEventToRestrictedUser, revokeUserApiSessions } = require('./lib/api-auth');
 const { applyAuthRateLimits } = require('./lib/auth-rate-limit');
 const { isNeonAuthConfigured, getNeonAuthBaseUrl } = require('./lib/neon-auth-server');
 const {
@@ -1369,7 +1369,8 @@ const ADMIN_PUZZLE_COLORS = ADMIN_PUZZLE_COLORS_RAW
   : [];
 
 app.get('/api/admin/puzzle-config', (req, res) => {
-  if (!requireAdminAccess(req, res)) return;
+  // Gate 2 is ADMIN_KEY only — Neon is_admin must not skip the password.
+  if (!requireAdminAuth(req, res)) return;
   if (ADMIN_PUZZLE_COLORS.length === 0) {
     return res.json({ enabled: false });
   }
@@ -1377,7 +1378,7 @@ app.get('/api/admin/puzzle-config', (req, res) => {
 });
 
 app.post('/api/admin/puzzle-verify', express.json(), (req, res) => {
-  if (!requireAdminAccess(req, res)) return;
+  if (!requireAdminAuth(req, res)) return;
   // Require ADMIN_PUZZLE_COLORS to be set; otherwise reject so wrong colors never get in
   if (ADMIN_PUZZLE_COLORS.length === 0) {
     return res.status(401).json({
@@ -1485,6 +1486,50 @@ app.post('/api/admin/disconnect-user', (req, res) => {
     res.json({ ok: true, disconnected: toDisconnect.length });
   } catch (err) {
     console.error('[admin disconnect-user] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin: revoke login sessions and kick every live socket for that account.
+app.post('/api/admin/logout-user', async (req, res) => {
+  if (!requireAdminAccess(req, res)) return;
+  const userId = req.body?.userId != null ? String(req.body.userId).trim() : '';
+  const userEmail = typeof req.body?.userEmail === 'string' ? req.body.userEmail.trim() : '';
+  if (!userId && !userEmail) {
+    return res.status(400).json({ error: 'userId or userEmail required' });
+  }
+  try {
+    const sessions = await revokeUserApiSessions(pool, { neonUserId: userId, email: userEmail });
+    const emailLc = userEmail.toLowerCase();
+    let disconnected = 0;
+    for (const [eventId, m] of presenceByEvent.entries()) {
+      const toDisconnect = [];
+      for (const [sid, v] of m.entries()) {
+        const matchId = userId && String(v.userId) === userId;
+        const matchEmail = emailLc && String(v.userEmail || '').trim().toLowerCase() === emailLc;
+        if (matchId || matchEmail) toDisconnect.push(sid);
+      }
+      for (const sid of toDisconnect) {
+        const sock = io.sockets.sockets.get(sid);
+        if (sock) {
+          sock.emit('forceDisconnect', { reason: 'logout' });
+          sock.disconnect(true);
+        }
+        m.delete(sid);
+        socketToEvent.delete(sid);
+        disconnected += 1;
+      }
+      if (toDisconnect.length > 0) {
+        broadcastPresence(String(eventId));
+      }
+      if (m.size === 0) presenceByEvent.delete(eventId);
+    }
+    console.log(
+      `[admin logout-user] userId=${userId || '-'} email=${userEmail || '-'} sessions=${sessions.total} sockets=${disconnected}`
+    );
+    res.json({ ok: true, sessionsRevoked: sessions.total, disconnected });
+  } catch (err) {
+    console.error('[admin logout-user] error:', err);
     res.status(500).json({ error: err.message });
   }
 });

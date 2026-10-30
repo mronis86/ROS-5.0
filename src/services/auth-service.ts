@@ -811,24 +811,23 @@ class AuthService {
   }
 
   async signOut(): Promise<void> {
+    const token = getApiAccessToken();
+    if (token) {
+      try {
+        const base = getApiBaseUrl();
+        await fetch(`${base}/api/auth/logout`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+      } catch {
+        /* ignore */
+      }
+    }
     if (isNeonAuthEnabled) {
       const neonAuthClient = getNeonAuthClient();
       if (neonAuthClient) {
         try {
           await neonAuthClient.signOut();
-        } catch {
-          /* ignore */
-        }
-      }
-    } else {
-      const token = getApiAccessToken();
-      if (token) {
-        try {
-          const base = getApiBaseUrl();
-          await fetch(`${base}/api/auth/logout`, {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${token}` },
-          });
         } catch {
           /* ignore */
         }

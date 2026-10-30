@@ -11,6 +11,8 @@ const DEFAULTS = {
   syncFolder: '',
   liveCaptureSource: 'screen',
   liveCaptureRooms: {},
+  selectedDay: 1,
+  selectedDaysByEvent: {},
 };
 
 function configPath() {
@@ -40,6 +42,14 @@ function saveConfig(partial) {
   }
   if (next.liveCaptureRooms != null && typeof next.liveCaptureRooms !== 'object') {
     next.liveCaptureRooms = {};
+  }
+  const day = Math.floor(Number(next.selectedDay) || 1);
+  next.selectedDay = day >= 1 ? day : 1;
+  if (next.selectedDaysByEvent == null || typeof next.selectedDaysByEvent !== 'object') {
+    next.selectedDaysByEvent = {};
+  }
+  if (next.eventId) {
+    next.selectedDaysByEvent[next.eventId] = next.selectedDay;
   }
   fs.mkdirSync(path.dirname(configPath()), { recursive: true });
   fs.writeFileSync(configPath(), JSON.stringify(next, null, 2), 'utf8');

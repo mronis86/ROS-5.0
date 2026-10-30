@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { Database, Server, Zap, Users, Timer, Square, FolderOpen, Mail, Copy, Check, Image, Key, X, Calendar, Cloud, Wrench, Bell, Package, BookOpen, Bug, RotateCcw, Trash2 } from 'lucide-react';
+import { Database, Server, Zap, Users, Timer, Square, FolderOpen, Mail, Copy, Check, Image, Key, X, Calendar, Cloud, Wrench, Bell, Package, BookOpen, Bug, RotateCcw, Trash2, LogOut } from 'lucide-react';
 import { getApiBaseUrl } from '../services/api-client';
 import { fetchNetlifyStatus, fetchResendStatus } from '../lib/ultritouchHealthMonitor';
 import { isSentryWebConfigured } from '../lib/sentry';
@@ -74,6 +74,7 @@ import {
   clearStoredAdminCredentials,
   describeAdminAuthFailure,
   fetchAdminAuthStatus,
+  getStoredAdminKey,
   isAdminSessionUnlocked,
   setStoredAdminCredentials,
   ADMIN_UNLOCK_KEY,
@@ -447,6 +448,7 @@ export default function AdminPage() {
   const [killDisplayBusy, setKillDisplayBusy] = useState(false);
   const [killDisplayMessage, setKillDisplayMessage] = useState<string | null>(null);
   const [disconnectingUserId, setDisconnectingUserId] = useState<string | null>(null);
+  const [signingOutKey, setSigningOutKey] = useState<string | null>(null);
   const [backupConfig, setBackupConfig] = useState<{ enabled: boolean; folderId: string; lastRunAt: string | null; lastStatus: string | null; needsMigration?: boolean; hasServiceAccount?: boolean }>({ enabled: false, folderId: '', lastRunAt: null, lastStatus: null });
   const [backupConfigLoading, setBackupConfigLoading] = useState(false);
   const [backupConfigSaving, setBackupConfigSaving] = useState(false);
@@ -997,11 +999,44 @@ export default function AdminPage() {
     }
   };
 
-  useEffect(() => {
-    if (isAdminSessionUnlocked()) {
-      setUnlocked(true);
-    }
+  const lockAdminSession = useCallback((message?: string) => {
+    clearStoredAdminCredentials();
+    setUnlocked(false);
+    setPassword('');
+    setPendingAdminKey('');
+    setShowPuzzle(false);
+    setPuzzleSelected([]);
+    setError(message || null);
+    setPuzzleError(null);
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function restoreUnlockedSession() {
+      if (!isAdminSessionUnlocked()) return;
+      const stored = getStoredAdminKey();
+      if (!stored) return;
+      try {
+        const status = await fetchAdminAuthStatus(stored);
+        if (cancelled) return;
+        if (status.keyMatches === true) {
+          setUnlocked(true);
+          return;
+        }
+        if (status.adminKeyConfigured === true && status.keyMatches === false) {
+          lockAdminSession('Invalid admin key. Enter the correct key to continue.');
+          return;
+        }
+      } catch {
+        // Auth status unreachable — fall through and keep the existing session.
+      }
+      if (!cancelled) setUnlocked(true);
+    }
+    void restoreUnlockedSession();
+    return () => {
+      cancelled = true;
+    };
+  }, [lockAdminSession]);
 
   const neonAdminMaySignIn =
     !isNeonAuthEnabled || canUseNeonAdminSession() || user?.is_admin === true;
@@ -1085,6 +1120,7 @@ export default function AdminPage() {
     try {
       const res = await adminFetch('/api/admin/presence');
       if (res.status === 401) {
+        lockAdminSession('Invalid admin key. Enter the correct key to continue.');
         setPresenceError('Unauthorized');
         setPresence([]);
         return;
@@ -1111,7 +1147,7 @@ export default function AdminPage() {
     } finally {
       setPresenceLoading(false);
     }
-  }, []);
+  }, [lockAdminSession]);
 
   useEffect(() => {
     if (!unlocked) return;
@@ -1896,6 +1932,18 @@ export default function AdminPage() {
             {copiedPortalUserId === r.id ? 'Copied!' : 'Copy link'}
           </button>
         )}
+        {r.status === 'approved' && (
+          <button
+            type="button"
+            onClick={() => logoutUser({ userId: r.neon_user_id || undefined, userEmail: r.email, userName: r.full_name })}
+            disabled={signingOutKey === `${r.neon_user_id || ''}:${r.email}`}
+            className={`${accessActionBtn} gap-0.5 bg-red-900/80 hover:bg-red-800 text-red-100 disabled:opacity-50`}
+            title="Revoke login sessions and sign this account out on every device"
+          >
+            <LogOut className="w-2 h-2 shrink-0" />
+            {signingOutKey === `${r.neon_user_id || ''}:${r.email}` ? 'Signing out…' : 'Sign out'}
+          </button>
+        )}
         <button
           type="button"
           onClick={() => deleteAccessUser(r.id, r.email)}
@@ -2170,7 +2218,7 @@ export default function AdminPage() {
   ]);
 
   const disconnectUser = useCallback(async (eventId: string, userId: string) => {
-    if (!confirm('Disconnect this user from the event? They will see a message and must return to the events list.')) return;
+    if (!confirm('Disconnect this user from the event? They will see a message and must return to the events list. They stay signed in and can rejoin.')) return;
     setDisconnectingUserId(userId);
     try {
       const res = await adminFetch('/api/admin/disconnect-user', {
@@ -2191,12 +2239,55 @@ export default function AdminPage() {
     }
   }, [fetchPresence]);
 
+  const logoutUser = useCallback(
+    async (viewer: { userId?: string; userEmail?: string; userName?: string }) => {
+      const label = viewer.userEmail || viewer.userName || viewer.userId || 'this user';
+      const isSelf =
+        !!user?.email &&
+        !!viewer.userEmail &&
+        user.email.toLowerCase() === viewer.userEmail.toLowerCase();
+      if (
+        !confirm(
+          `Sign out ${label} on every device?\n\nThis revokes their login sessions. Open event tabs are kicked immediately; other pages sign out on the next request. They must sign in again.${
+            isSelf ? '\n\nThis is your account — this Admin tab will be signed out too.' : ''
+          }`
+        )
+      ) {
+        return;
+      }
+      const key = `${viewer.userId || ''}:${viewer.userEmail || ''}`;
+      setSigningOutKey(key);
+      try {
+        const res = await adminFetch('/api/admin/logout-user', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId: viewer.userId || undefined,
+            userEmail: viewer.userEmail || undefined,
+          }),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          alert((err as { error?: string }).error || `Failed to sign out (${res.status})`);
+          return;
+        }
+        await fetchPresence();
+      } catch (e) {
+        alert(e instanceof Error ? e.message : 'Request failed');
+      } finally {
+        setSigningOutKey(null);
+      }
+    },
+    [fetchPresence, user?.email]
+  );
+
   const fetchRunningTimers = useCallback(async () => {
     setRunningTimersLoading(true);
     setRunningTimersError(null);
     try {
       const res = await adminFetch('/api/admin/running-timers');
       if (res.status === 401) {
+        lockAdminSession('Invalid admin key. Enter the correct key to continue.');
         setRunningTimersError('Unauthorized');
         setRunningTimers([]);
         return;
@@ -2215,7 +2306,7 @@ export default function AdminPage() {
     } finally {
       setRunningTimersLoading(false);
     }
-  }, []);
+  }, [lockAdminSession]);
 
   useEffect(() => {
     if (!unlocked) return;
@@ -2284,11 +2375,16 @@ export default function AdminPage() {
     }
     setIsLoggingIn(true);
     try {
+      const status = await fetchAdminAuthStatus(key);
+      if (status.adminKeyConfigured === true && status.keyMatches !== true) {
+        setError(describeAdminAuthFailure(status));
+        return;
+      }
       const res = await adminFetchWithCredentials(key, '/api/admin/puzzle-config');
       if (res.status === 401) {
         const body = (await res.json().catch(() => ({}))) as { reason?: string };
-        const status = await fetchAdminAuthStatus(key);
-        setError(describeAdminAuthFailure(status, body.reason));
+        const retryStatus = await fetchAdminAuthStatus(key);
+        setError(describeAdminAuthFailure(retryStatus, body.reason));
         return;
       }
       if (res.status === 503) {
@@ -2334,6 +2430,10 @@ export default function AdminPage() {
         }
       );
       const data = await res.json().catch(() => ({}));
+      if (res.status === 401 && data.reason === 'key_mismatch') {
+        lockAdminSession('Invalid admin key. Enter the correct key to continue.');
+        return;
+      }
       if (res.ok && data.ok) {
         setStoredAdminCredentials(pendingAdminKey);
         sessionStorage.setItem(ADMIN_UNLOCK_KEY, '1');
@@ -2360,14 +2460,7 @@ export default function AdminPage() {
   };
 
   const handleLock = () => {
-    clearStoredAdminCredentials();
-    setUnlocked(false);
-    setPassword('');
-    setPendingAdminKey('');
-    setShowPuzzle(false);
-    setPuzzleSelected([]);
-    setError(null);
-    setPuzzleError(null);
+    lockAdminSession();
   };
 
   if (!unlocked) {
@@ -3425,6 +3518,7 @@ export default function AdminPage() {
           </div>
           <p className="text-slate-500 text-sm mb-4">
             Active events and viewers (refreshes every 15s). Connected time is how long that browser tab has been on the event since the current socket joined.
+            Disconnect kicks them from this event only. Sign out revokes their login on every device.
           </p>
           {presenceError && (
             <div className="mb-4 px-4 py-2 rounded-lg bg-amber-900/30 border border-amber-700/50 text-amber-200 text-sm">
@@ -3475,15 +3569,26 @@ export default function AdminPage() {
                               Connected {connectedLabel}
                             </span>
                           )}
-                          <button
-                            type="button"
-                            onClick={() => disconnectUser(ev.eventId, v.userId)}
-                            disabled={disconnectingUserId === v.userId}
-                            className="ml-auto px-2 py-1 text-xs font-medium rounded bg-amber-700/80 text-amber-200 hover:bg-amber-600 disabled:opacity-50"
-                            title="Disconnect this user from the event"
-                          >
-                            {disconnectingUserId === v.userId ? 'Disconnecting…' : 'Disconnect'}
-                          </button>
+                          <div className="ml-auto flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => disconnectUser(ev.eventId, v.userId)}
+                              disabled={disconnectingUserId === v.userId}
+                              className="px-2 py-1 text-xs font-medium rounded bg-amber-700/80 text-amber-200 hover:bg-amber-600 disabled:opacity-50"
+                              title="Kick this tab from the event. They stay signed in and can rejoin."
+                            >
+                              {disconnectingUserId === v.userId ? 'Disconnecting…' : 'Disconnect'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => logoutUser(v)}
+                              disabled={signingOutKey === `${v.userId}:${v.userEmail || ''}`}
+                              className="px-2 py-1 text-xs font-medium rounded bg-red-800/80 text-red-100 hover:bg-red-700 disabled:opacity-50"
+                              title="Revoke login sessions and sign this account out on every device"
+                            >
+                              {signingOutKey === `${v.userId}:${v.userEmail || ''}` ? 'Signing out…' : 'Sign out'}
+                            </button>
+                          </div>
                         </li>
                         );
                       })}
@@ -3512,7 +3617,8 @@ export default function AdminPage() {
           </div>
           <p className="text-slate-500 text-sm mb-4">
             View all access requests, change status, and remove users. Copy a user&apos;s portal link to send it manually
-            (Teams, Slack, etc.) when email is not available. Deleting removes the app access record and API sessions.
+            (Teams, Slack, etc.) when email is not available. Sign out revokes login sessions without deleting the account.
+            Deleting removes the app access record and API sessions.
           </p>
 
           <div className="flex flex-wrap gap-2 mb-4">

@@ -178,6 +178,34 @@ async function uploadPlaybackPreviews(apiBaseUrl, apiToken, eventId, payload) {
   );
 }
 
+async function fetchPlaybackPreviews(apiBaseUrl, apiToken, eventId, fileId) {
+  const qs = fileId ? `?fileId=${encodeURIComponent(String(fileId))}` : '';
+  return railwayFetch(
+    apiBaseUrl,
+    apiToken,
+    `/api/powerpoint/${encodeURIComponent(eventId)}/playback/previews${qs}`
+  );
+}
+
+async function fetchPlaybackPreviewImage(apiBaseUrl, apiToken, eventId, slideId) {
+  const base = normalizeBaseUrl(apiBaseUrl);
+  if (!base) throw new Error('API base URL is required');
+  const url = `${base}/api/powerpoint/${encodeURIComponent(eventId)}/playback/previews/${encodeURIComponent(String(slideId))}/image`;
+  const headers = { Accept: 'image/jpeg,image/*,*/*' };
+  const token = normalizeApiToken(apiToken);
+  if (token) headers.Authorization = `Bearer ${token}`;
+  let res;
+  try {
+    res = await httpFetch(url, { headers });
+  } catch (err) {
+    throw new Error(`Cannot reach API: ${err.message || err}`);
+  }
+  if (!res.ok) {
+    throw new Error(authErrorMessage(res.status, null));
+  }
+  return Buffer.from(await res.arrayBuffer());
+}
+
 module.exports = {
   railwayFetch,
   httpFetch,
@@ -191,4 +219,6 @@ module.exports = {
   reportPlaybackLive,
   reportLiveCapture,
   uploadPlaybackPreviews,
+  fetchPlaybackPreviews,
+  fetchPlaybackPreviewImage,
 };

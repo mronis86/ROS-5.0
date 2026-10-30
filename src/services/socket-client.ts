@@ -1,6 +1,7 @@
 // src/services/socket-client.ts
 import { io, Socket } from 'socket.io-client';
 import { getApiBaseUrl } from './api-client';
+import { clearApiAccessTokenOnAuthFailure } from '../lib/sessionAuth';
 
 interface SocketCallbacks {
   onRunOfShowDataUpdated?: (data: any) => void;
@@ -50,7 +51,7 @@ interface SocketCallbacks {
   onMittiWatchColumnUpdate?: (data: { event_id: string; enabled: boolean }) => void;
   onAvWatchColumnUpdate?: (data: { event_id: string; enabled: boolean }) => void;
   onPresenceUpdated?: (viewers: { userId: string; userName: string; userEmail: string; userRole: string }[]) => void;
-  onForceDisconnect?: () => void; // Admin forced disconnect – show message and do not reconnect
+  onForceDisconnect?: (data?: { reason?: string }) => void; // Admin forced disconnect – show message and do not reconnect
   onRowLocked?: (data: { eventId: string; rowId: number; userId: string; userName: string }) => void;
   onRowUnlocked?: (data: { eventId: string; rowId: number }) => void;
   onRowLocksSnapshot?: (data: { eventId: string; locks: { rowId: number; userId: string; userName: string }[] }) => void;
@@ -390,7 +391,10 @@ class SocketClient {
     this.socket.on('forceDisconnect', (data: { reason?: string }) => {
       console.log('🔌 Socket: Force disconnect by admin', data);
       this.disconnectedByAdmin = true;
-      this.callbacks.onForceDisconnect?.();
+      if (data?.reason === 'logout') {
+        clearApiAccessTokenOnAuthFailure('admin-force-logout');
+      }
+      this.callbacks.onForceDisconnect?.(data);
       this.socket?.disconnect();
     });
 

@@ -11,6 +11,9 @@ const els = {
   apiToken: document.getElementById('apiToken'),
   eventSelect: document.getElementById('eventSelect'),
   eventSearch: document.getElementById('eventSearch'),
+  dayField: document.getElementById('day-field'),
+  daySelect: document.getElementById('daySelect'),
+  dayHint: document.getElementById('day-hint'),
   apiMsg: document.getElementById('api-msg'),
   runPill: document.getElementById('run-pill'),
   stPpt: document.getElementById('st-ppt'),
@@ -47,8 +50,17 @@ let eventFilter = 'upcoming';
 let bridgeMode = 'follow';
 /** @type {'screen' | 'camera'} */
 let liveCaptureSource = 'screen';
+let selectedDay = 1;
+/** @type {Record<string, number>} */
+let selectedDaysByEvent = {};
+
+function selectedEvent() {
+  const id = els.eventSelect.value.trim();
+  return loadedEvents.find((ev) => String(ev.id) === id) || null;
+}
 
 function formConfig() {
+  const ev = selectedEvent();
   return {
     apiBaseUrl: els.apiBaseUrl.value.trim(),
     apiToken: els.apiToken.value.trim(),
@@ -56,6 +68,9 @@ function formConfig() {
     bridgeMode,
     syncFolder: els.syncFolder ? els.syncFolder.value.trim() : '',
     liveCaptureSource,
+    selectedDay,
+    numberOfDays: ev ? eventNumberOfDays(ev) : 1,
+    selectedDaysByEvent,
   };
 }
 
@@ -72,12 +87,12 @@ function applyModeUi() {
   if (els.cacheCard) els.cacheCard.hidden = !playback;
   if (els.modeHint) {
     els.modeHint.textContent = playback
-      ? 'ROS PPT Launcher: pick a sync folder, download the event decks, then follow ROS. When a PPT cue starts, only that deck opens and runs. Do not run both modes on this PC for the same event.'
+      ? 'ROS PPT Launcher: pick a sync folder, then Sync decks. That downloads each deck and its slide images into the folder. Follow ROS opens the matching file — it does not export slides from live PowerPoint. Do not run both modes on this PC for the same event.'
       : 'PowerPoint Show with Timers: capture stills and fire cues when a slide is live. Do not run both modes on this PC for the same event.';
   }
   if (els.pptHint) {
     els.pptHint.textContent = playback
-      ? 'If another deck is already open, Follow ROS cues closes it and opens the matching synced file. Start the cue on Run of Show to run slideshow.'
+      ? 'If another deck is already open, Follow ROS cues closes it and opens the matching synced file. Slide images come from the sync folder, not a live PowerPoint export.'
       : 'Open the deck in PowerPoint on this PC, then capture stills. Start follow before Slideshow so live slides fire the mapped cues.';
   }
 }
@@ -106,9 +121,16 @@ function applyLiveCapture(status) {
 
 function renderCache(rows) {
   if (!els.cacheList) return;
-  const list = Array.isArray(rows) ? rows : [];
-  if (!list.length) {
+  const all = Array.isArray(rows) ? rows : [];
+  const ev = selectedEvent();
+  const days = ev ? eventNumberOfDays(ev) : 1;
+  const list = days > 1 ? all.filter((row) => Number(row.day || 1) === selectedDay) : all;
+  if (!all.length) {
     els.cacheList.innerHTML = '<p class="hint">No .ppt / .pptx assets on this event yet.</p>';
+    return;
+  }
+  if (!list.length) {
+    els.cacheList.innerHTML = `<p class="hint">No decks on Day ${selectedDay}. ${all.length} file(s) synced for other days.</p>`;
     return;
   }
   els.cacheList.innerHTML = list
@@ -116,7 +138,8 @@ function renderCache(rows) {
       const flag = row.hasPPT ? 'PPT cue' : 'file only';
       const file = row.localName || row.name || 'deck';
       const open = Number(row.itemId) === Number(window.__rosOpenItemId);
-      return `<div class="cache-row${open ? ' cache-open' : ''}"><strong>${file}</strong><span>CUE ${row.itemId} · ${flag}${open ? ' · OPEN' : ''}</span><span class="cache-${row.state || 'ok'}">${row.detail || row.state || ''}</span></div>`;
+      const dayBit = days > 1 ? ` · Day ${row.day || 1}` : '';
+      return `<div class="cache-row${open ? ' cache-open' : ''}"><strong>${file}</strong><span>CUE ${row.itemId}${dayBit} · ${flag}${open ? ' · OPEN' : ''}</span><span class="cache-${row.state || 'ok'}">${row.detail || row.state || ''}</span></div>`;
     })
     .join('');
 }
@@ -208,6 +231,60 @@ function filterAndSortEvents(events, filter, query) {
   return filtered;
 }
 
+function eventCalendarDay(ev) {
+  const start = eventDateMs(ev);
+  if (start == null) return null;
+  const days = eventNumberOfDays(ev);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const dayIndex = Math.round((today.getTime() - start) / 86400000);
+  if (dayIndex < 0 || dayIndex >= days) return null;
+  return dayIndex + 1;
+}
+
+function formatDayOption(ev, day) {
+  const start = eventDateMs(ev);
+  if (start == null) return `Day ${day}`;
+  const d = new Date(start);
+  d.setDate(d.getDate() + (day - 1));
+  const label = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  return `Day ${day} — ${label}`;
+}
+
+function fillDaySelect() {
+  const ev = selectedEvent();
+  const days = ev ? eventNumberOfDays(ev) : 1;
+  if (!els.dayField || !els.daySelect) return;
+  els.dayField.hidden = days <= 1;
+  if (days <= 1) {
+    selectedDay = 1;
+    els.daySelect.innerHTML = '<option value="1">Day 1</option>';
+    if (els.dayHint) els.dayHint.textContent = '';
+    return;
+  }
+  const eventId = ev?.id != null ? String(ev.id) : '';
+  const stored = eventId ? Number(selectedDaysByEvent[eventId]) : NaN;
+  const todayDay = eventCalendarDay(ev);
+  if (Number.isFinite(stored) && stored >= 1 && stored <= days) selectedDay = stored;
+  else if (todayDay) selectedDay = todayDay;
+  else if (selectedDay < 1 || selectedDay > days) selectedDay = 1;
+  els.daySelect.innerHTML = '';
+  for (let day = 1; day <= days; day += 1) {
+    const opt = document.createElement('option');
+    opt.value = String(day);
+    opt.textContent = formatDayOption(ev, day);
+    if (day === selectedDay) opt.selected = true;
+    els.daySelect.appendChild(opt);
+  }
+  if (eventId) selectedDaysByEvent[eventId] = selectedDay;
+  if (els.dayHint) {
+    els.dayHint.textContent =
+      todayDay && todayDay !== selectedDay
+        ? `Today is Day ${todayDay}. Follow only opens Day ${selectedDay} cues.`
+        : `Follow only opens Day ${selectedDay} cues.`;
+  }
+}
+
 function fillEvents(events, selectedId) {
   if (events) loadedEvents = Array.isArray(events) ? events : [];
   const keepId = selectedId || els.eventSelect.value || '';
@@ -226,6 +303,7 @@ function fillEvents(events, selectedId) {
     if (keepId && String(ev.id) === String(keepId)) opt.selected = true;
     els.eventSelect.appendChild(opt);
   }
+  fillDaySelect();
 }
 
 function setEventFilter(next) {
@@ -272,7 +350,8 @@ function applyStatus(status) {
   els.stError.textContent = status.error || '';
   if (status.mode === 'playback' || bridgeMode === 'playback') {
     window.__rosOpenItemId = status.currentItemId;
-    renderCache(status.cacheRows);
+    if (Array.isArray(status.cacheRows)) window.__rosCacheRows = status.cacheRows;
+    renderCache(status.cacheRows || window.__rosCacheRows);
   }
 }
 
@@ -282,6 +361,9 @@ async function load() {
   els.apiToken.value = cfg.apiToken || '';
   bridgeMode = cfg.bridgeMode === 'playback' ? 'playback' : 'follow';
   if (els.syncFolder) els.syncFolder.value = cfg.syncFolder || '';
+  selectedDaysByEvent =
+    cfg.selectedDaysByEvent && typeof cfg.selectedDaysByEvent === 'object' ? cfg.selectedDaysByEvent : {};
+  selectedDay = Math.max(1, Math.floor(Number(cfg.selectedDay) || 1));
   applyModeUi();
   liveCaptureSource = cfg.liveCaptureSource === 'camera' ? 'camera' : 'screen';
   applyCaptureSourceUi();
@@ -327,6 +409,27 @@ if (els.eventSearch) {
   els.eventSearch.addEventListener('input', () => fillEvents(null, formConfig().eventId));
 }
 
+if (els.eventSelect) {
+  els.eventSelect.addEventListener('change', async () => {
+    const id = els.eventSelect.value.trim();
+    const stored = id ? Number(selectedDaysByEvent[id]) : NaN;
+    if (Number.isFinite(stored) && stored >= 1) selectedDay = stored;
+    fillDaySelect();
+    await api.saveConfig(formConfig());
+  });
+}
+
+if (els.daySelect) {
+  els.daySelect.addEventListener('change', async () => {
+    selectedDay = Math.max(1, Math.floor(Number(els.daySelect.value) || 1));
+    const id = els.eventSelect.value.trim();
+    if (id) selectedDaysByEvent[id] = selectedDay;
+    fillDaySelect();
+    await api.saveConfig(formConfig());
+    if (bridgeMode === 'playback') renderCache(window.__rosCacheRows || []);
+  });
+}
+
 document.querySelectorAll('[data-bridge-mode]').forEach((btn) => {
   btn.onclick = async () => {
     bridgeMode = btn.getAttribute('data-bridge-mode') === 'playback' ? 'playback' : 'follow';
@@ -342,6 +445,7 @@ if (els.btnSync) {
       await api.saveConfig(formConfig());
       els.stError.textContent = 'Syncing decks…';
       const rows = await api.syncPlayback(formConfig());
+      window.__rosCacheRows = rows;
       renderCache(rows);
       toast('Decks synced');
       els.stError.textContent = '';

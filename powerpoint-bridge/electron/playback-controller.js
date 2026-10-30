@@ -6,7 +6,8 @@ const {
   fetchPlaybackStatus,
   fetchPlaybackAsset,
   reportPlaybackLive,
-  uploadPlaybackPreviews,
+  fetchPlaybackPreviews,
+  fetchPlaybackPreviewImage,
   httpFetch,
 } = require('./railway-client');
 const {
@@ -14,6 +15,10 @@ const {
   decidePlaybackAction,
   syncFileName,
   shouldReplaceLocalFile,
+  PREVIEW_DIR_NAME,
+  rawPreviewSlideId,
+  itemDayNumber,
+  cueMatchesSelectedDay,
 } = require('./playback-logic');
 
 const MANIFEST_NAME = 'ros-ppt-sync.json';
@@ -43,6 +48,7 @@ class PlaybackController {
     this.previewFileId = '';
     this.previewHoldPath = '';
     this.previewBusy = false;
+    this.previewReady = false;
     this.liveTimer = null;
     this.manualHold = false;
     this.closedByOperator = false;
@@ -75,6 +81,7 @@ class PlaybackController {
       cacheTotal: this.cacheRows.length,
       cacheRows: this.cacheRows,
       syncFolder: this.config?.syncFolder || '',
+      selectedDay: this.selectedDay(),
     };
   }
 
@@ -94,8 +101,23 @@ class PlaybackController {
       error: partial?.error != null ? partial.error : this.lastError,
       openMatch: this.openMatch,
       openStale: this.openStale,
+      selectedDay: this.selectedDay(),
     };
     this.onStatus(this.status);
+  }
+
+  selectedDay() {
+    return Math.max(1, Math.floor(Number(this.config?.selectedDay) || 1));
+  }
+
+  numberOfDays() {
+    return Math.max(1, Math.floor(Number(this.config?.numberOfDays) || 1));
+  }
+
+  dayForItem(itemId) {
+    const asset = (this.assets || []).find((row) => Number(row.itemId) === Number(itemId));
+    if (!asset || asset.day == null) return null;
+    return itemDayNumber(asset);
   }
 
   syncDir() {
@@ -200,15 +222,16 @@ class PlaybackController {
     if (info.path) this.currentPath = info.path;
     const changed =
       prevFile !== String(info.fileId || '') || Number(prevItem) !== Number(info.itemId);
-    if (changed && info.path) {
+    if (changed && info.fileId) {
       this.previewHoldPath = '';
-      void this.captureAndUploadPreviews(info.path, { force: true });
+      this.previewReady = false;
+      void this.ensureFolderPreviews(info.fileId);
     }
     return changed;
   }
 
   previewDirFor(fileId) {
-    return path.join(this.syncDir(), '.previews', String(fileId || 'unknown'));
+    return path.join(this.syncDir(), PREVIEW_DIR_NAME, String(fileId || 'unknown'));
   }
 
   readLocalPreviews(fileId) {
@@ -242,43 +265,10 @@ class PlaybackController {
     }
   }
 
-  writeLocalPreviews(fileId, stills) {
-    if (!fileId || !stills?.slides?.length) return;
-    const dir = this.previewDirFor(fileId);
-    fs.mkdirSync(dir, { recursive: true });
-    const slides = [];
-    for (const slide of stills.slides) {
-      const pptSlideId = String(slide.pptSlideId || '').trim();
-      if (!pptSlideId || !slide.imageBase64) continue;
-      fs.writeFileSync(path.join(dir, `${pptSlideId}.jpg`), Buffer.from(slide.imageBase64, 'base64'));
-      slides.push({
-        pptSlideId,
-        slideIndex: Number(slide.slideIndex),
-        title: slide.title || '',
-        width: slide.width || 360,
-        height: slide.height || 202,
-      });
-    }
-    fs.writeFileSync(
-      path.join(dir, 'manifest.json'),
-      JSON.stringify(
-        {
-          fileId,
-          deckName: stills.deckName || '',
-          capturedAt: new Date().toISOString(),
-          slides,
-        },
-        null,
-        2
-      ),
-      'utf8'
-    );
-  }
-
   clearLocalPreviews(fileId) {
     try {
       if (fileId) fs.rmSync(this.previewDirFor(fileId), { recursive: true, force: true });
-      else fs.rmSync(path.join(this.syncDir(), '.previews'), { recursive: true, force: true });
+      else fs.rmSync(path.join(this.syncDir(), PREVIEW_DIR_NAME), { recursive: true, force: true });
     } catch {
       /* ignore */
     }
@@ -416,6 +406,7 @@ class PlaybackController {
         existing.fileId = fileId;
         existing.originalName = row.originalName || existing.originalName;
         existing.sizeBytes = row.sizeBytes != null ? Number(row.sizeBytes) : existing.sizeBytes;
+        existing.day = itemDayNumber(row.day != null ? row : existing);
       } else {
         this.assets.push({
           itemId,
@@ -425,6 +416,7 @@ class PlaybackController {
           preferred: true,
           hasPPT: true,
           downloadUrl: null,
+          day: itemDayNumber(row),
         });
       }
     }
@@ -543,6 +535,7 @@ class PlaybackController {
         localName: nextFiles[itemKey].localName,
         hasPPT: !!asset.hasPPT,
         preferred: !!asset.preferred,
+        day: itemDayNumber(asset),
         state,
         detail,
         path: dest,
@@ -551,6 +544,8 @@ class PlaybackController {
 
     this.manifest.files = nextFiles;
     this.writeManifest();
+    this.previewHoldPath = '';
+    await this.downloadPreviewCatalog(nextFiles);
     this.pruneOrphans(dir, keep);
     this.cacheRows = rows;
     this.lastSyncAt = Date.now();
@@ -569,6 +564,7 @@ class PlaybackController {
         const full = path.join(dir, name);
         const stat = fs.statSync(full);
         if (stat.isDirectory()) {
+          if (name === PREVIEW_DIR_NAME) continue;
           walk(full);
           if (!fs.readdirSync(full).length) {
             try {
@@ -647,6 +643,12 @@ class PlaybackController {
       originalName: asset.originalName,
     };
     this.writeManifest();
+    this.previewHoldPath = '';
+    try {
+      await this.downloadPreviewsForFile(String(asset.fileId));
+    } catch {
+      /* deck is on disk even if stills are missing */
+    }
     this.lastSyncAt = Date.now();
     this.emit({
       lastAction: `Pushed ${asset.originalName || cueLabel}`,
@@ -679,6 +681,16 @@ class PlaybackController {
     }
     if (loadedItemId == null) {
       this.emit({ loadedCueLabel: '', message: 'No cue loaded' });
+      return;
+    }
+    const rawDay = loadedCue?.day != null ? Number(loadedCue.day) : this.dayForItem(loadedItemId);
+    const cueDay = Number.isFinite(rawDay) && rawDay >= 1 ? Math.floor(rawDay) : null;
+    if (cueDay != null && !cueMatchesSelectedDay(cueDay, this.selectedDay(), this.numberOfDays())) {
+      this.emit({
+        loadedCueLabel: cueLabel,
+        message: `${cueLabel} is Day ${cueDay} · this PC is Day ${this.selectedDay()}`,
+        lastAction: 'Other day',
+      });
       return;
     }
     let asset = preferredAssetForItem(this.assets, loadedItemId);
@@ -742,6 +754,7 @@ class PlaybackController {
       this.previewPath = '';
       this.previewFileId = '';
       this.previewHoldPath = '';
+      this.previewReady = false;
       this.currentItemId = loadedItemId;
       this.lastLoadedItemId = loadedItemId;
       this.emit({
@@ -755,7 +768,7 @@ class PlaybackController {
       this.lastLoadedItemId = loadedItemId;
       this.currentItemId = loadedItemId;
       this.currentPath = decision.path || this.currentPath;
-      void this.captureAndUploadPreviews(this.currentPath);
+      void this.ensureFolderPreviews(this.currentFileId);
       this.emit({
         loadedCueLabel: cueLabel,
         message: `${cueLabel} · matching deck ready`,
@@ -768,7 +781,7 @@ class PlaybackController {
       this.currentItemId = loadedItemId;
       this.currentPath = decision.path || this.currentPath;
       if (this.lastStartedItemId === loadedItemId && this.status.slideshowActive) {
-        void this.captureAndUploadPreviews(this.currentPath);
+        void this.ensureFolderPreviews(this.currentFileId);
         this.emit({
           loadedCueLabel: cueLabel,
           message: `${cueLabel} · slideshow live`,
@@ -776,7 +789,7 @@ class PlaybackController {
         });
         return;
       }
-      await this.captureAndUploadPreviews(this.currentPath);
+      void this.ensureFolderPreviews(this.currentFileId);
       try {
         const started = await ppt.startShow(this.currentPath);
         if (started && started.ok !== false) this.applyLive(started);
@@ -829,7 +842,8 @@ class PlaybackController {
       this.lastLoadedItemId = loadedItemId;
       this.lastError = result.showWarning || '';
       const slideIndex = Number(result.slideIndex);
-      await this.captureAndUploadPreviews(decision.path);
+      this.previewReady = false;
+      void this.ensureFolderPreviews(this.currentFileId);
       if (!result.slideshowActive) {
         try {
           const started = await ppt.startShow(this.currentPath);
@@ -895,6 +909,7 @@ class PlaybackController {
       this.previewPath = '';
       this.previewFileId = '';
       this.previewHoldPath = this.currentPath || '';
+      this.previewReady = false;
       this.lastCommandId = command.id;
       this.emit({ lastAction: 'Cleared slide images', error: '' });
       await this.reportAndRefresh(true);
@@ -916,6 +931,7 @@ class PlaybackController {
       this.previewPath = '';
       this.previewFileId = '';
       this.previewHoldPath = '';
+      this.previewReady = false;
       this.lastStartedItemId = null;
     } else return;
     if (!result || result.ok === false) {
@@ -1004,7 +1020,8 @@ class PlaybackController {
     this.currentFileId = asset.fileId || null;
     this.currentItemId = Number.isFinite(Number(asset.itemId)) ? Number(asset.itemId) : null;
     this.lastStartedItemId = this.currentItemId;
-    await this.captureAndUploadPreviews(dest);
+    this.previewReady = false;
+    void this.ensureFolderPreviews(this.currentFileId);
     if (!result.slideshowActive) {
       try {
         const started = await ppt.startShow(dest);
@@ -1082,57 +1099,130 @@ class PlaybackController {
     this.scheduleLive(this.status.slideshowActive ? 220 : 500);
   }
 
-  async captureAndUploadPreviews(filePath, opts = {}) {
-    if (!filePath || this.previewBusy) return;
-    if (this.previewHoldPath && this.previewHoldPath === filePath && !opts.force) return;
-    const fileId = this.currentFileId;
-    const pathChanged = this.previewPath !== filePath || this.previewFileId !== String(fileId || '');
-
-    if (pathChanged && fileId) {
-      const local = this.readLocalPreviews(fileId);
-      if (local?.slides?.length) {
-        try {
-          await uploadPlaybackPreviews(this.config.apiBaseUrl, this.config.apiToken, this.config.eventId, {
-            fileId,
-            deckName: local.deckName || this.status.deckName,
-            slides: local.slides,
-          });
-          this.emit({
-            slideCount: local.slides.length,
-            lastAction: `Loaded ${local.slides.length} cached slide previews`,
-          });
-          await this.reportAndRefresh(true);
-        } catch {
-          /* recapture below */
-        }
+  async downloadPreviewCatalog(nextFiles) {
+    let files = {};
+    try {
+      const pack = await fetchPlaybackPreviews(
+        this.config.apiBaseUrl,
+        this.config.apiToken,
+        this.config.eventId
+      );
+      files = pack?.files && typeof pack.files === 'object' ? pack.files : {};
+    } catch {
+      return;
+    }
+    const seen = new Set();
+    for (const row of Object.values(nextFiles || {})) {
+      const fileId = String(row?.fileId || '').trim();
+      if (!fileId || seen.has(fileId)) continue;
+      seen.add(fileId);
+      try {
+        await this.writePreviewsFromRemote(fileId, files[fileId] || []);
+      } catch {
+        /* keep the deck even if stills fail */
       }
     }
+  }
 
-    if (!opts.force && this.previewPath === filePath && this.previewFileId === String(fileId || '')) return;
+  async downloadPreviewsForFile(fileId) {
+    const wanted = String(fileId || '').trim();
+    if (!wanted) return null;
+    const pack = await fetchPlaybackPreviews(
+      this.config.apiBaseUrl,
+      this.config.apiToken,
+      this.config.eventId,
+      wanted
+    );
+    return this.writePreviewsFromRemote(wanted, pack?.slides || []);
+  }
 
+  async writePreviewsFromRemote(fileId, slides) {
+    const wanted = String(fileId || '').trim();
+    const incoming = Array.isArray(slides) ? slides : [];
+    if (!wanted || !incoming.length) return null;
+    const dir = this.previewDirFor(wanted);
+    fs.mkdirSync(dir, { recursive: true });
+    const metaSlides = [];
+    for (const slide of incoming) {
+      if (!slide?.hasImage && !slide?.imageUrl) continue;
+      const rawId = rawPreviewSlideId(wanted, slide.pptSlideId);
+      if (!rawId) continue;
+      const jpg = path.join(dir, `${rawId}.jpg`);
+      const remoteMs = slide.updatedAt ? new Date(slide.updatedAt).getTime() : 0;
+      let skip = false;
+      try {
+        if (fs.existsSync(jpg)) {
+          const localMs = fs.statSync(jpg).mtimeMs;
+          if (!remoteMs || localMs >= remoteMs) skip = true;
+        }
+      } catch {
+        skip = false;
+      }
+      if (!skip) {
+        try {
+          const buf = await fetchPlaybackPreviewImage(
+            this.config.apiBaseUrl,
+            this.config.apiToken,
+            this.config.eventId,
+            slide.pptSlideId
+          );
+          if (buf?.length) fs.writeFileSync(jpg, buf);
+        } catch {
+          /* keep any older local jpeg */
+        }
+      }
+      if (!fs.existsSync(jpg)) continue;
+      metaSlides.push({
+        pptSlideId: rawId,
+        slideIndex: Number(slide.slideIndex),
+        title: slide.title || '',
+        width: slide.width || 360,
+        height: slide.height || 202,
+      });
+    }
+    if (!metaSlides.length) return null;
+    fs.writeFileSync(
+      path.join(dir, 'manifest.json'),
+      JSON.stringify(
+        {
+          fileId: wanted,
+          deckName: '',
+          capturedAt: new Date().toISOString(),
+          source: 'api',
+          slides: metaSlides,
+        },
+        null,
+        2
+      ),
+      'utf8'
+    );
+    return this.readLocalPreviews(wanted);
+  }
+
+  async ensureFolderPreviews(fileId, opts = {}) {
+    const wanted = String(fileId || this.currentFileId || '').trim();
+    if (!wanted || this.previewBusy) return;
+    if (this.previewHoldPath && !opts.force) return;
+    if (!opts.force && this.previewReady && this.previewFileId === wanted) return;
     this.previewBusy = true;
     try {
-      const stills = await ppt.captureStills({ width: 360, height: 202 });
-      if (!stills || stills.ok === false || !Array.isArray(stills.slides) || !stills.slides.length) {
-        return;
+      let local = this.readLocalPreviews(wanted);
+      if (!local?.slides?.length) {
+        try {
+          local = await this.downloadPreviewsForFile(wanted);
+        } catch {
+          local = null;
+        }
       }
-      if (fileId) this.writeLocalPreviews(fileId, stills);
-      await uploadPlaybackPreviews(this.config.apiBaseUrl, this.config.apiToken, this.config.eventId, {
-        fileId,
-        deckName: stills.deckName || this.status.deckName,
-        slides: stills.slides,
-      });
-      this.previewPath = filePath;
-      this.previewFileId = String(fileId || '');
-      this.previewHoldPath = '';
-      this.emit({
-        slideCount: stills.slideCount || stills.slides.length,
-        lastAction: `Captured ${stills.slides.length} slide previews`,
-      });
-      await this.reportAndRefresh(true);
-    } catch (err) {
-      this.lastError = err.message || 'Could not capture slide previews';
-      this.emit({ error: this.lastError });
+      this.previewFileId = wanted;
+      this.previewPath = this.currentPath || '';
+      this.previewReady = !!(local?.slides?.length);
+      if (local?.slides?.length) {
+        this.emit({
+          slideCount: local.slides.length,
+          lastAction: `Loaded ${local.slides.length} synced slide images`,
+        });
+      }
     } finally {
       this.previewBusy = false;
     }
@@ -1156,6 +1246,7 @@ class PlaybackController {
       livePath: this.status.livePath || '',
       openMatch: this.openMatch || '',
       openStale: !!this.openStale,
+      selectedDay: this.selectedDay(),
     });
     this.lastReportAt = Date.now();
   }

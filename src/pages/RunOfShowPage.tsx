@@ -11058,7 +11058,8 @@ const RunOfShowPage: React.FC = () => {
         }
         setRowLocks(next);
       },
-      onForceDisconnect: () => {
+      onForceDisconnect: (data) => {
+        if (data?.reason === 'logout') return;
         setShowDisconnectedByAdminModal(true);
       },
       onTimerMessageUpdated: (data: any) => {

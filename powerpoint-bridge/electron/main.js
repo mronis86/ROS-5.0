@@ -83,7 +83,12 @@ app.on('before-quit', () => {
 });
 
 ipcMain.handle('config:load', () => loadConfig());
-ipcMain.handle('config:save', (_e, partial) => saveConfig(partial || {}));
+ipcMain.handle('config:save', (_e, partial) => {
+  const next = saveConfig(partial || {});
+  if (playback.running) playback.config = { ...playback.config, ...next };
+  if (follow.running) follow.config = { ...follow.config, ...next };
+  return next;
+});
 ipcMain.handle('api:validate', (_e, partial) => {
   const cfg = { ...loadConfig(), ...(partial || {}) };
   return validateApi(cfg.apiBaseUrl, cfg.apiToken);

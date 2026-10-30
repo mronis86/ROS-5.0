@@ -6,6 +6,11 @@ const {
   shouldReplaceLocalFile,
   preferredAssetForItem,
   decidePlaybackAction,
+  rawPreviewSlideId,
+  PREVIEW_DIR_NAME,
+  itemDayNumber,
+  cueMatchesSelectedDay,
+  calendarShowDay,
 } = require('./playback-logic');
 
 assert.strictEqual(isPptAssetName('deck.pptx'), true);
@@ -101,5 +106,18 @@ assert.strictEqual(
   shouldReplaceLocalFile({ fileId: 'a', sizeBytes: 10 }, { fileId: 'a', sizeBytes: 10 }),
   false
 );
+
+assert.strictEqual(PREVIEW_DIR_NAME, '.previews');
+assert.strictEqual(rawPreviewSlideId('abc', 'abc::12'), '12');
+assert.strictEqual(rawPreviewSlideId('abc', '12'), '12');
+assert.strictEqual(rawPreviewSlideId('', '12'), '12');
+assert.strictEqual(rawPreviewSlideId('abc', ''), '');
+assert.strictEqual(itemDayNumber({ day: 2 }), 2);
+assert.strictEqual(itemDayNumber({}), 1);
+assert.strictEqual(cueMatchesSelectedDay(1, 2, 1), true);
+assert.strictEqual(cueMatchesSelectedDay(1, 2, 3), false);
+assert.strictEqual(cueMatchesSelectedDay(2, 2, 3), true);
+assert.strictEqual(calendarShowDay('2026-10-28', 3, new Date(2026, 9, 29)), 2);
+assert.strictEqual(calendarShowDay('2026-10-28', 3, new Date(2026, 9, 27)), null);
 
 console.log('playback-logic ok');
