@@ -54,6 +54,12 @@ const { registerUserReportRoutes } = require('./lib/user-report');
 const { registerAppSettingsRoutes } = require('./lib/app-settings');
 const { registerElevenLabsVogRoutes } = require('./lib/elevenlabs-vog');
 const {
+  ensureEventVogScriptsSchema,
+  mergeVogScriptsIntoScheduleItems,
+  syncAndStripVogFromScheduleSave,
+  registerEventVogScriptRoutes,
+} = require('./lib/event-vog-scripts');
+const {
   registerEventCueFileRoutes,
   startEventCueFileCleanup,
   ensureEventCueFilesSchema,
@@ -1040,6 +1046,7 @@ registerAuthRoutes(app, pool, { requireAdminAuth });
 registerUserReportRoutes(app, pool);
 registerAppSettingsRoutes(app, pool, { requireAdminAccess });
 registerElevenLabsVogRoutes(app, { requireAdminAccess });
+registerEventVogScriptRoutes(app, { pool, userCanAccessEvent, broadcastUpdate });
 registerEventCueFileRoutes(app, pool);
 registerAppDownloadRoutes(app);
 registerPowerpointRoutes(app, {
@@ -5117,6 +5124,16 @@ app.get('/api/run-of-show-data/:eventId', async (req, res) => {
       console.warn('Could not merge indented_cues into schedule_items:', indentErr.message);
     }
 
+    try {
+      const mergedVog = await mergeVogScriptsIntoScheduleItems(pool, eventId, row.schedule_items);
+      row.schedule_items =
+        typeof result.rows[0].schedule_items === 'string'
+          ? JSON.stringify(mergedVog)
+          : mergedVog;
+    } catch (vogErr) {
+      console.warn('Could not merge event_vog_scripts into schedule_items:', vogErr.message);
+    }
+
     res.json(row);
   } catch (error) {
     console.error('Error fetching run of show data:', error);
@@ -6434,6 +6451,12 @@ app.post('/api/run-of-show-data', async (req, res) => {
       columnsToSave = currentRow.custom_columns;
     }
 
+    // Keep VOG in event_vog_scripts; do not bloat schedule_items JSON.
+    scheduleToSave = await syncAndStripVogFromScheduleSave(pool, event_id, scheduleToSave, {
+      updatedBy: last_modified_by || null,
+      updatedByName: last_modified_by_name || null,
+    });
+
     let result;
     if (!currentRow) {
       result = await pool.query(
@@ -6501,6 +6524,13 @@ app.post('/api/run-of-show-data', async (req, res) => {
     }
     
     const savedData = result.rows[0];
+    try {
+      const withVog = await mergeVogScriptsIntoScheduleItems(pool, event_id, savedData.schedule_items);
+      savedData.schedule_items =
+        typeof savedData.schedule_items === 'string' ? JSON.stringify(withVog) : withVog;
+    } catch (vogMergeErr) {
+      console.warn('Could not re-merge VOG scripts into save response:', vogMergeErr.message);
+    }
     
     // Update Upstash cache immediately when schedule changes
     console.log('🔄 Schedule updated - regenerating Upstash cache for all formats...');
@@ -12267,6 +12297,12 @@ server.listen(PORT, '0.0.0.0', async () => {
       console.log('✅ catering_notes table synced');
     } catch (err) {
       console.warn('⚠️ catering_notes sync skipped:', err.message || err);
+    }
+    try {
+      await ensureEventVogScriptsSchema(pool);
+      console.log('✅ event_vog_scripts table synced');
+    } catch (err) {
+      console.warn('⚠️ event_vog_scripts sync skipped:', err.message || err);
     }
     try {
       await runCateringRoleColumnSync(pool);

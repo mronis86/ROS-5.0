@@ -20594,6 +20594,7 @@ const RunOfShowPage: React.FC = () => {
        {showVogModal && editingVogItemId !== null && (
          <VogModal
            open={showVogModal}
+           eventId={event?.id ? String(event.id) : null}
            activeItemId={editingVogItemId}
            selectedDay={selectedDay}
            segmentName={schedule.find((s) => s.id === editingVogItemId)?.segmentName || ''}
@@ -20622,8 +20623,11 @@ const RunOfShowPage: React.FC = () => {
            onSelectCue={(itemId) => {
              setEditingVogItemId(itemId);
            }}
-           onApplyVoiceToCues={(itemIds, vogVoiceId, vogVoiceName) => {
-             if (currentUserRole === 'VIEWER' || !itemIds.length) return;
+           onApplyVoiceToCues={async (itemIds, vogVoiceId, vogVoiceName) => {
+             if (currentUserRole === 'VIEWER' || !itemIds.length) {
+               throw new Error('Cannot update VOG voices.');
+             }
+             if (!event?.id) throw new Error('Missing event id — cannot save VOG voice.');
              const idSet = new Set(itemIds);
              setSchedule((prev) =>
                prev.map((row) =>
@@ -20636,6 +20640,11 @@ const RunOfShowPage: React.FC = () => {
                    : row
                )
              );
+             await apiClient.applyVogVoiceBulk(String(event.id), {
+               itemIds,
+               vogVoiceId,
+               vogVoiceName,
+             });
              handleUserEditing();
              logChangeDebounced?.(
                `vog_voice_bulk_${itemIds.join('_')}`,
@@ -20649,8 +20658,9 @@ const RunOfShowPage: React.FC = () => {
                }
              );
            }}
-           onSave={({ vogText, vogVoiceId, vogVoiceName }) => {
+           onSave={async ({ vogText, vogVoiceId, vogVoiceName }) => {
              if (editingVogItemId == null || currentUserRole === 'VIEWER') return;
+             if (!event?.id) throw new Error('Missing event id — cannot save VOG script.');
              const itemId = editingVogItemId;
              setSchedule((prev) =>
                prev.map((row) =>
@@ -20664,6 +20674,11 @@ const RunOfShowPage: React.FC = () => {
                    : row
                )
              );
+             await apiClient.upsertVogScript(String(event.id), itemId, {
+               vogText,
+               vogVoiceId,
+               vogVoiceName,
+             });
              handleUserEditing();
              logChangeDebounced?.(
                `vog_${itemId}`,

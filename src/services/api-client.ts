@@ -1213,6 +1213,52 @@ class ApiClient {
     return this.vogAudioRequest('/api/vog/download', payload);
   }
 
+  async listVogScripts(eventId: string) {
+    return this.request<{
+      eventId: string;
+      scripts: Array<{
+        scheduleItemId: number;
+        vogText: string;
+        vogVoiceId: string;
+        vogVoiceName: string;
+        updatedAt?: string;
+      }>;
+    }>(`/api/vog-scripts/${encodeURIComponent(eventId)}`);
+  }
+
+  async upsertVogScript(
+    eventId: string,
+    itemId: number,
+    payload: { vogText?: string; vogVoiceId?: string; vogVoiceName?: string }
+  ) {
+    return this.request<{
+      ok: boolean;
+      script: {
+        scheduleItemId: number;
+        vogText: string;
+        vogVoiceId: string;
+        vogVoiceName: string;
+        updatedAt?: string;
+      } | null;
+    }>(`/api/vog-scripts/${encodeURIComponent(eventId)}/${encodeURIComponent(String(itemId))}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async applyVogVoiceBulk(
+    eventId: string,
+    payload: { itemIds: number[]; vogVoiceId: string; vogVoiceName?: string }
+  ) {
+    return this.request<{ ok: boolean; updated: number }>(
+      `/api/vog-scripts/${encodeURIComponent(eventId)}/bulk-voice`,
+      {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      }
+    );
+  }
+
   async convertPdfCueFileToPptx(fileId: string, eventId?: string, force = false) {
     const result = await this.request<{
       file: EventCueFile;
