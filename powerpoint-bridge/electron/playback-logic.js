@@ -68,9 +68,10 @@ function decidePlaybackAction({
   livePath,
   timerState,
   slideshowActive,
+  swapInFlight = false,
 }) {
-  // Only trust PowerPoint's live path for "already open" — never fall back to
-  // currentPath (follow used to poison that with the loaded cue cache path).
+  // Match "already open" from PowerPoint's live path only — never from currentPath
+  // (that was poisoned to the loaded cue and caused Open/Loaded thrash).
   const openPath = livePath || null;
   const closePath = livePath || currentPath || null;
   if (!hasPPT) {
@@ -80,8 +81,17 @@ function decidePlaybackAction({
     return { action: 'warn', path: null, closePath: null, warning: 'PPT checked but no synced deck for this cue' };
   }
   if (!openPath) {
-    // COM briefly blank mid-swap — do not treat as a match or force a swap.
-    return { action: 'keep', path: cachedPath, closePath: null, uncertain: true };
+    // Mid-swap COM often blanks FullName for a moment — wait, don't open twice.
+    if (swapInFlight) {
+      return { action: 'keep', path: cachedPath, closePath: null, uncertain: true };
+    }
+    // Nothing open yet (normal load) → open the cue's synced deck.
+    return {
+      action: 'swap',
+      path: cachedPath,
+      closePath: currentPath || null,
+      startShow: true,
+    };
   }
   if (deckPathsEqual(cachedPath, openPath)) {
     if (!slideshowActive) {

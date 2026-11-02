@@ -63,13 +63,22 @@ assert.strictEqual(
   }).action,
   'run'
 );
-// No live path → uncertain keep (do not false-match via currentPath).
+// No live path + not mid-swap → open/swap the cue deck (normal Load behavior).
 assert.strictEqual(
   decidePlaybackAction({
     hasPPT: true,
     cachedPath: 'C:\\cache\\a.pptx',
-    currentPath: 'C:\\cache\\a.pptx',
-    slideshowActive: true,
+    currentPath: null,
+    slideshowActive: false,
+  }).action,
+  'swap'
+);
+// Mid-swap blank path → wait, do not open twice.
+assert.strictEqual(
+  decidePlaybackAction({
+    hasPPT: true,
+    cachedPath: 'C:\\cache\\a.pptx',
+    swapInFlight: true,
   }).uncertain,
   true
 );

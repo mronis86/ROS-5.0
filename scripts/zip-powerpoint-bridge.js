@@ -14,6 +14,7 @@ const prefix = 'powerpoint-bridge-v2';
 
 function findUnpacked() {
   const candidates = [
+    path.join(bridgeRoot, 'dist-openfix4', 'win-unpacked'),
     path.join(bridgeRoot, 'dist-openfix3', 'win-unpacked'),
     path.join(bridgeRoot, 'dist-openfix2', 'win-unpacked'),
     path.join(bridgeRoot, 'dist-openfix', 'win-unpacked'),
@@ -71,7 +72,7 @@ if not exist "%~dp0resources\\app.asar" (
 start "" "%~dp0${exeName}"
 endlocal
 `;
-  const readme = `ROS PowerPoint Bridge V2 (0.2.0)
+  const readme = `ROS PowerPoint Bridge V2 (0.2.1)
 
 Open/Loaded thrash fix build. Use this V2 zip only — quit any older bridge first.
 Only one Mode 2 helper should run per event.

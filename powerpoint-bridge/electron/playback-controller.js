@@ -929,6 +929,7 @@ class PlaybackController {
       livePath,
       timerState,
       slideshowActive,
+      swapInFlight: this.swapInFlight || Date.now() < this.swapCooldownUntil,
     });
 
     if (decision.action === 'idle') {
