@@ -1742,21 +1742,10 @@ const RunOfShowPage: React.FC = () => {
   useEffect(() => {
     liveStartProjectionArmedRef.current = liveStartProjectionArmed;
   }, [liveStartProjectionArmed]);
-  const [showCompletedHighlight, setShowCompletedHighlight] = useState(() => {
-    try {
-      const raw = localStorage.getItem('rosShowCompletedHighlight');
-      if (raw === null) return true;
-      return raw === 'true';
-    } catch {
-      return true;
-    }
-  });
+  const [showCompletedHighlight, setShowCompletedHighlight] = useState(true);
+  const showCompletedHighlightRef = useRef(showCompletedHighlight);
   useEffect(() => {
-    try {
-      localStorage.setItem('rosShowCompletedHighlight', showCompletedHighlight ? 'true' : 'false');
-    } catch {
-      /* ignore */
-    }
+    showCompletedHighlightRef.current = showCompletedHighlight;
   }, [showCompletedHighlight]);
   const [originalDurations, setOriginalDurations] = useState<Record<number, { durationHours: number; durationMinutes: number; durationSeconds: number }>>({});
   /** Start times frozen when entering In-Show — WAS under Start stays on these. */
@@ -1846,6 +1835,7 @@ const RunOfShowPage: React.FC = () => {
     DatabaseService.getShowSettings(event.id).then(s => {
       setShowMode(s.showMode);
       setTrackWasDurations(s.trackWasDurations);
+      setShowCompletedHighlight(s.showCompletedHighlight !== false);
       setLiveStartProjectionArmed(parseLiveStartProjectionArmed(s.liveStartProjection));
       setRehearsalBaseline(parseRehearsalBaseline(s.rehearsalBaseline));
       setPreshowShowDayArmed(parsePreshowShowDay(s.preshowShowDay));
@@ -5985,6 +5975,7 @@ const RunOfShowPage: React.FC = () => {
           numberOfDays: event?.numberOfDays,
           show_mode: showMode,
           track_was_durations: trackWasDurations,
+          show_completed_highlight: showCompletedHighlight,
           ...(Object.keys(originalDurations).length > 0 && { original_durations: originalDurations }),
           ...autoRollSettingsPatch(autoRollArmedRef.current),
           voAlertsEnabled: voAlertsEnabledRef.current !== false,
@@ -6080,6 +6071,7 @@ const RunOfShowPage: React.FC = () => {
           numberOfDays: event?.numberOfDays,
           show_mode: showMode,
           track_was_durations: trackWasDurations,
+          show_completed_highlight: showCompletedHighlight,
           ...(Object.keys(originalDurations).length > 0 && { original_durations: originalDurations }),
           ...autoRollSettingsPatch(autoRollArmedRef.current),
           voAlertsEnabled: voAlertsEnabledRef.current !== false,
@@ -8462,7 +8454,7 @@ const RunOfShowPage: React.FC = () => {
           event_date: event.date,
           schedule_items: scheduleWithDurationSeconds,
           custom_columns: customColumns,
-          settings: { eventName, masterStartTime, dayStartTimes, completedDays, numberOfDays: event?.numberOfDays, timezone: eventTimezone, lastSaved: new Date().toISOString(), show_mode: showMode, track_was_durations: trackWasDurations, ...(Object.keys(originalDurations).length > 0 && { original_durations: originalDurations }), ...(Object.keys(lockedStartTimes).length > 0 && { locked_start_times: Object.fromEntries(Object.entries(lockedStartTimes).map(([k, v]) => [String(k), v])) }), ...autoRollSettingsPatch(autoRollArmedRef.current), voAlertsEnabled: voAlertsEnabledRef.current !== false }
+          settings: { eventName, masterStartTime, dayStartTimes, completedDays, numberOfDays: event?.numberOfDays, timezone: eventTimezone, lastSaved: new Date().toISOString(), show_mode: showMode, track_was_durations: trackWasDurations, show_completed_highlight: showCompletedHighlight, ...(Object.keys(originalDurations).length > 0 && { original_durations: originalDurations }), ...(Object.keys(lockedStartTimes).length > 0 && { locked_start_times: Object.fromEntries(Object.entries(lockedStartTimes).map(([k, v]) => [String(k), v])) }), ...autoRollSettingsPatch(autoRollArmedRef.current), voAlertsEnabled: voAlertsEnabledRef.current !== false }
         }, { userId: user.id, userName: user.full_name || user.email || 'Unknown', userRole: currentUserRole || 'VIEWER' }).catch(err => console.error('Reset restore save failed:', err));
       }
     }
@@ -8645,6 +8637,7 @@ const RunOfShowPage: React.FC = () => {
             numberOfDays: event?.numberOfDays,
             show_mode: showMode,
             track_was_durations: trackWasDurations,
+            show_completed_highlight: showCompletedHighlight,
             ...(Object.keys(originalDurations).length > 0 && { original_durations: originalDurations }),
             ...(Object.keys(lockedStartTimes).length > 0 && {
               locked_start_times: Object.fromEntries(
@@ -9653,6 +9646,7 @@ const RunOfShowPage: React.FC = () => {
           lastSaved: new Date().toISOString(),
           show_mode: showModeRef.current,
           track_was_durations: trackWasDurationsRef.current,
+          show_completed_highlight: showCompletedHighlightRef.current,
           ...(Object.keys(originals).length > 0 && { original_durations: originals }),
           ...(Object.keys(lockedStartTimesRef.current || {}).length > 0 && {
             locked_start_times: Object.fromEntries(
@@ -11125,6 +11119,7 @@ const RunOfShowPage: React.FC = () => {
             const s = await DatabaseService.getShowSettings(event.id);
             setShowMode(s.showMode);
             setTrackWasDurations(s.trackWasDurations);
+            setShowCompletedHighlight(s.showCompletedHighlight !== false);
             setRehearsalBaseline(parseRehearsalBaseline(s.rehearsalBaseline));
             setPreshowShowDayArmed(parsePreshowShowDay(s.preshowShowDay));
             setAutoRollArmed(resolveAutoRoll(s.autoRoll, event.id));
@@ -11196,6 +11191,7 @@ const RunOfShowPage: React.FC = () => {
         event_id: string;
         showMode?: 'rehearsal' | 'in-show';
         trackWasDurations?: boolean;
+        showCompletedHighlight?: boolean;
         rehearsalBaseline?: any;
         lockedStartTimes?: Record<string, string> | null;
         preshowShowDay?: unknown;
@@ -11205,6 +11201,9 @@ const RunOfShowPage: React.FC = () => {
         if (data.event_id === event?.id) {
           if (data.showMode === 'rehearsal' || data.showMode === 'in-show') setShowMode(data.showMode);
           if (typeof data.trackWasDurations === 'boolean') setTrackWasDurations(data.trackWasDurations);
+          if (typeof data.showCompletedHighlight === 'boolean') {
+            setShowCompletedHighlight(data.showCompletedHighlight);
+          }
           if (typeof data.liveStartProjection === 'boolean') {
             setLiveStartProjectionArmed(parseLiveStartProjectionArmed(data.liveStartProjection));
           }
@@ -11660,6 +11659,7 @@ const RunOfShowPage: React.FC = () => {
           ...((restoredData as any).settings || {}),
           show_mode: showMode,
           track_was_durations: trackWasDurations,
+          show_completed_highlight: showCompletedHighlight,
           ...autoRollSettingsPatch(autoRollArmedRef.current),
           voAlertsEnabled: voAlertsEnabledRef.current !== false,
         },
@@ -11751,7 +11751,7 @@ const RunOfShowPage: React.FC = () => {
     DatabaseService.saveRunOfShowData({
       event_id: event.id,
       event_name: event?.name || 'Event',
-      settings: { show_mode: showMode, track_was_durations: trackWasDurations, numberOfDays: event?.numberOfDays, ...autoRollSettingsPatch(autoRollArmedRef.current), voAlertsEnabled: voAlertsEnabledRef.current !== false },
+      settings: { show_mode: showMode, track_was_durations: trackWasDurations, show_completed_highlight: showCompletedHighlight, numberOfDays: event?.numberOfDays, ...autoRollSettingsPatch(autoRollArmedRef.current), voAlertsEnabled: voAlertsEnabledRef.current !== false },
       schedule_items: scheduleToSave,
       custom_columns: customColsToSave,
       event_date: event?.date ?? undefined
@@ -11770,7 +11770,7 @@ const RunOfShowPage: React.FC = () => {
     alert(
       `✅ Import complete!\n\nSchedule: ${importedSchedule.length} items\nCustom columns: ${importedCustomCols.length}${notesLine}`
     );
-  }, [event?.id, event?.name, event?.date, event?.numberOfDays, showMode, trackWasDurations, user, currentUserRole, schedule, customColumns]);
+  }, [event?.id, event?.name, event?.date, event?.numberOfDays, showMode, trackWasDurations, showCompletedHighlight, user, currentUserRole, schedule, customColumns]);
 
   // Check for changes periodically (every 10 seconds) - only when page is visible
   useEffect(() => {
@@ -18500,7 +18500,13 @@ const RunOfShowPage: React.FC = () => {
                       <input
                         type="checkbox"
                         checked={showCompletedHighlight}
-                        onChange={(e) => setShowCompletedHighlight(e.target.checked)}
+                        onChange={(e) => {
+                          const next = e.target.checked;
+                          setShowCompletedHighlight(next);
+                          if (event?.id) {
+                            DatabaseService.saveShowCompletedHighlight(event.id, next);
+                          }
+                        }}
                         className="rounded border-slate-500 w-5 h-5"
                       />
                       <span className="text-white text-sm">Show completed</span>
@@ -19097,6 +19103,7 @@ const RunOfShowPage: React.FC = () => {
                                  numberOfDays: event?.numberOfDays,
                                  show_mode: showMode,
                                  track_was_durations: trackWasDurations,
+                                 show_completed_highlight: showCompletedHighlight,
                                  ...(Object.keys(originalDurations).length > 0 && { original_durations: originalDurations }),
                                  ...autoRollSettingsPatch(autoRollArmedRef.current),
           voAlertsEnabled: voAlertsEnabledRef.current !== false,

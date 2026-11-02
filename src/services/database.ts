@@ -519,6 +519,7 @@ export class DatabaseService {
   static async getShowSettings(eventId: string): Promise<{
     showMode: 'rehearsal' | 'in-show';
     trackWasDurations: boolean;
+    showCompletedHighlight: boolean;
     rehearsalBaseline: any | null;
     lockedStartTimes: Record<string, string> | null;
     preshowShowDay: any | null;
@@ -531,6 +532,7 @@ export class DatabaseService {
       return {
         showMode: result?.showMode === 'in-show' ? 'in-show' : 'rehearsal',
         trackWasDurations: result?.trackWasDurations === true,
+        showCompletedHighlight: result?.showCompletedHighlight !== false,
         rehearsalBaseline: result?.rehearsalBaseline ?? null,
         lockedStartTimes: result?.lockedStartTimes ?? null,
         preshowShowDay: result?.preshowShowDay ?? null,
@@ -543,6 +545,7 @@ export class DatabaseService {
       return {
         showMode: 'rehearsal',
         trackWasDurations: false,
+        showCompletedHighlight: true,
         rehearsalBaseline: null,
         lockedStartTimes: null,
         preshowShowDay: null,
@@ -678,6 +681,19 @@ export class DatabaseService {
       return true;
     } catch (error) {
       console.error('❌ Exception saving track was durations:', error);
+      return false;
+    }
+  }
+
+  static async saveShowCompletedHighlight(
+    eventId: string,
+    showCompletedHighlight: boolean
+  ): Promise<boolean> {
+    try {
+      await apiClient.saveShowCompletedHighlight(eventId, showCompletedHighlight);
+      return true;
+    } catch (error) {
+      console.error('❌ Exception saving show completed highlight:', error);
       return false;
     }
   }

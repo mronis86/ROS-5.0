@@ -4778,6 +4778,7 @@ app.get('/api/show-mode/:eventId', async (req, res) => {
       return res.json({
         showMode: 'rehearsal',
         trackWasDurations: false,
+        showCompletedHighlight: true,
         rehearsalBaseline: null,
         lockedStartTimes: null,
         preshowShowDay: null,
@@ -4791,6 +4792,7 @@ app.get('/api/show-mode/:eventId', async (req, res) => {
       ? settings.show_mode
       : 'rehearsal';
     const trackWasDurations = settings.track_was_durations === true;
+    const showCompletedHighlight = settings.show_completed_highlight !== false;
     const rehearsalBaseline =
       settings.rehearsal_baseline && typeof settings.rehearsal_baseline === 'object'
         ? settings.rehearsal_baseline
@@ -4810,6 +4812,7 @@ app.get('/api/show-mode/:eventId', async (req, res) => {
     res.json({
       showMode,
       trackWasDurations,
+      showCompletedHighlight,
       rehearsalBaseline,
       lockedStartTimes,
       preshowShowDay,
@@ -4829,6 +4832,7 @@ app.patch('/api/show-mode/:eventId', async (req, res) => {
     const {
       showMode,
       trackWasDurations,
+      showCompletedHighlight,
       rehearsalBaseline,
       clearRehearsalBaseline,
       lockedStartTimes,
@@ -4845,6 +4849,9 @@ app.patch('/api/show-mode/:eventId', async (req, res) => {
     }
     if (typeof trackWasDurations === 'boolean') {
       updates.track_was_durations = trackWasDurations;
+    }
+    if (typeof showCompletedHighlight === 'boolean') {
+      updates.show_completed_highlight = showCompletedHighlight;
     }
     if (typeof liveStartProjection === 'boolean') {
       updates.live_start_projection = liveStartProjection;
@@ -4919,7 +4926,7 @@ app.patch('/api/show-mode/:eventId', async (req, res) => {
     if (Object.keys(updates).length === 0) {
       return res.status(400).json({
         error:
-          'Provide showMode, trackWasDurations, rehearsalBaseline, lockedStartTimes, preshowShowDay, autoRoll, and/or liveStartProjection',
+          'Provide showMode, trackWasDurations, showCompletedHighlight, rehearsalBaseline, lockedStartTimes, preshowShowDay, autoRoll, and/or liveStartProjection',
       });
     }
     const result = await pool.query(
@@ -4937,6 +4944,7 @@ app.patch('/api/show-mode/:eventId', async (req, res) => {
       ? settings.show_mode
       : 'rehearsal';
     const currentTrackWasDurations = settings.track_was_durations === true;
+    const currentShowCompletedHighlight = settings.show_completed_highlight !== false;
     const currentBaseline =
       settings.rehearsal_baseline && typeof settings.rehearsal_baseline === 'object'
         ? settings.rehearsal_baseline
@@ -4956,6 +4964,9 @@ app.patch('/api/show-mode/:eventId', async (req, res) => {
     // When only trackWasDurations was sent, omit showMode so clients don't overwrite in-show with stale/default.
     const payload = { event_id: eventId, trackWasDurations: currentTrackWasDurations };
     if (showMode === 'rehearsal' || showMode === 'in-show') payload.showMode = currentShowMode;
+    if (typeof showCompletedHighlight === 'boolean') {
+      payload.showCompletedHighlight = currentShowCompletedHighlight;
+    }
     if (rehearsalBaseline || clearRehearsalBaseline === true) {
       payload.rehearsalBaseline = currentBaseline;
     }
@@ -4975,6 +4986,7 @@ app.patch('/api/show-mode/:eventId', async (req, res) => {
     res.json({
       showMode: currentShowMode,
       trackWasDurations: currentTrackWasDurations,
+      showCompletedHighlight: currentShowCompletedHighlight,
       rehearsalBaseline: currentBaseline,
       lockedStartTimes: currentLockedStartTimes,
       preshowShowDay: currentPreshowShowDay,

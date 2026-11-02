@@ -139,7 +139,10 @@ function renderCache(rows) {
       const file = row.localName || row.name || 'deck';
       const open = Number(row.itemId) === Number(window.__rosOpenItemId);
       const dayBit = days > 1 ? ` · Day ${row.day || 1}` : '';
-      return `<div class="cache-row${open ? ' cache-open' : ''}"><strong>${file}</strong><span>CUE ${row.itemId}${dayBit} · ${flag}${open ? ' · OPEN' : ''}</span><span class="cache-${row.state || 'ok'}">${row.detail || row.state || ''}</span></div>`;
+      const cue =
+        String(row.cueLabel || '').trim() ||
+        (Number.isFinite(Number(row.itemId)) ? `CUE ${row.itemId}` : 'CUE');
+      return `<div class="cache-row${open ? ' cache-open' : ''}"><strong>${file}</strong><span>${cue}${dayBit} · ${flag}${open ? ' · OPEN' : ''}</span><span class="cache-${row.state || 'ok'}">${row.detail || row.state || ''}</span></div>`;
     })
     .join('');
 }

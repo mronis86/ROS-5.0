@@ -120,6 +120,24 @@ class PlaybackController {
     return itemDayNumber(asset);
   }
 
+  cueLabelFor(assetOrItemId, fallbackCue) {
+    if (fallbackCue && String(fallbackCue).trim()) return String(fallbackCue).trim();
+    if (assetOrItemId && typeof assetOrItemId === 'object') {
+      const labeled = String(assetOrItemId.cueLabel || '').trim();
+      if (labeled) return labeled;
+      const id = Number(assetOrItemId.itemId);
+      if (Number.isFinite(id)) return `CUE ${id}`;
+      return 'CUE';
+    }
+    const id = Number(assetOrItemId);
+    const asset = Number.isFinite(id)
+      ? (this.assets || []).find((row) => Number(row.itemId) === id)
+      : null;
+    const labeled = String(asset?.cueLabel || '').trim();
+    if (labeled) return labeled;
+    return Number.isFinite(id) ? `CUE ${id}` : 'CUE';
+  }
+
   syncDir() {
     const root = String(this.config?.syncFolder || '').trim();
     if (!root) {
@@ -175,7 +193,7 @@ class PlaybackController {
     const liveBase = path.basename(livePath).toLowerCase();
     for (const asset of this.assets || []) {
       if (!asset?.itemId) continue;
-      const dest = this.localPathFor(asset, `Cue ${asset.itemId}`);
+      const dest = this.localPathFor(asset, this.cueLabelFor(asset));
       const recorded = this.manifest.files[String(asset.itemId)] || {};
       const alt = recorded.localName ? path.join(this.syncDir(), recorded.localName) : '';
       const candidates = [dest, alt, this.currentPath].filter(Boolean);
@@ -407,6 +425,7 @@ class PlaybackController {
         existing.originalName = row.originalName || existing.originalName;
         existing.sizeBytes = row.sizeBytes != null ? Number(row.sizeBytes) : existing.sizeBytes;
         existing.day = itemDayNumber(row.day != null ? row : existing);
+        if (row.cueLabel) existing.cueLabel = String(row.cueLabel);
       } else {
         this.assets.push({
           itemId,
@@ -417,6 +436,7 @@ class PlaybackController {
           hasPPT: true,
           downloadUrl: null,
           day: itemDayNumber(row),
+          cueLabel: row.cueLabel ? String(row.cueLabel) : `CUE ${itemId}`,
         });
       }
     }
@@ -453,7 +473,8 @@ class PlaybackController {
     for (const asset of this.assets) {
       if (!asset.itemId || !asset.fileId) continue;
       const itemKey = String(asset.itemId);
-      const localName = syncFileName(asset, `Cue ${asset.itemId}`);
+      const cueLabel = this.cueLabelFor(asset);
+      const localName = syncFileName(asset, cueLabel);
       const dest = path.join(dir, localName);
       const previous = this.manifest.files[itemKey] || {};
       const previousPath = previous.localName ? path.join(dir, previous.localName) : dest;
@@ -531,6 +552,7 @@ class PlaybackController {
       rows.push({
         fileId: nextFiles[itemKey].fileId,
         itemId: asset.itemId,
+        cueLabel,
         name: asset.originalName,
         localName: nextFiles[itemKey].localName,
         hasPPT: !!asset.hasPPT,
@@ -625,7 +647,7 @@ class PlaybackController {
       return { rows };
     }
     this.mergePreferredFiles([asset]);
-    const cueLabel = `Cue ${asset.itemId || itemId}`;
+    const cueLabel = this.cueLabelFor(asset, asset.cueLabel) || this.cueLabelFor(asset.itemId || itemId);
     const dest = this.localPathFor(asset, cueLabel);
     this.readManifest();
     const itemKey = String(asset.itemId || itemId);
@@ -986,7 +1008,7 @@ class PlaybackController {
         }
       }
     }
-    const cueLabel = `Cue ${asset.itemId}`;
+    const cueLabel = this.cueLabelFor(asset);
     let dest = this.localPathFor(asset, cueLabel);
     if (!dest || !fs.existsSync(dest)) {
       try {

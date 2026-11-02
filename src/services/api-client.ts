@@ -329,6 +329,7 @@ class ApiClient {
   async getShowMode(eventId: string): Promise<{
     showMode: 'rehearsal' | 'in-show';
     trackWasDurations: boolean;
+    showCompletedHighlight: boolean;
     rehearsalBaseline: any | null;
     lockedStartTimes: Record<string, string> | null;
     preshowShowDay: any | null;
@@ -340,6 +341,7 @@ class ApiClient {
     return {
       showMode: result?.showMode === 'in-show' ? 'in-show' : 'rehearsal',
       trackWasDurations: result?.trackWasDurations === true,
+      showCompletedHighlight: result?.showCompletedHighlight !== false,
       rehearsalBaseline: result?.rehearsalBaseline && typeof result.rehearsalBaseline === 'object'
         ? result.rehearsalBaseline
         : null,
@@ -504,6 +506,15 @@ class ApiClient {
     const result = await this.request(`/api/show-mode/${eventId}`, {
       method: 'PATCH',
       body: JSON.stringify({ trackWasDurations }),
+    });
+    this.cache.delete(`showMode_${eventId}`);
+    return result;
+  }
+
+  async saveShowCompletedHighlight(eventId: string, showCompletedHighlight: boolean) {
+    const result = await this.request(`/api/show-mode/${eventId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ showCompletedHighlight }),
     });
     this.cache.delete(`showMode_${eventId}`);
     return result;

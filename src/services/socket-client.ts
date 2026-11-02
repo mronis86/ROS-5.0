@@ -42,6 +42,7 @@ interface SocketCallbacks {
     event_id: string;
     showMode?: 'rehearsal' | 'in-show';
     trackWasDurations?: boolean;
+    showCompletedHighlight?: boolean;
     rehearsalBaseline?: any;
     lockedStartTimes?: Record<string, string> | null;
     liveStartProjection?: boolean;
