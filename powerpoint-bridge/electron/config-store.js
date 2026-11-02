@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { app } = require('electron');
 const { normalizeBaseUrl, normalizeApiToken } = require('./auth-session');
 
@@ -13,6 +14,7 @@ const DEFAULTS = {
   liveCaptureRooms: {},
   selectedDay: 1,
   selectedDaysByEvent: {},
+  helperInstanceId: '',
 };
 
 function configPath() {
@@ -20,16 +22,30 @@ function configPath() {
 }
 
 function loadConfig() {
+  let cfg;
   try {
     const raw = fs.readFileSync(configPath(), 'utf8');
-    return { ...DEFAULTS, ...JSON.parse(raw) };
+    cfg = { ...DEFAULTS, ...JSON.parse(raw) };
   } catch {
-    return { ...DEFAULTS };
+    cfg = { ...DEFAULTS };
   }
+  if (!String(cfg.helperInstanceId || '').trim()) {
+    cfg.helperInstanceId = crypto.randomUUID();
+    try {
+      fs.mkdirSync(path.dirname(configPath()), { recursive: true });
+      fs.writeFileSync(configPath(), JSON.stringify(cfg, null, 2), 'utf8');
+    } catch {
+      /* keep in-memory id for this process */
+    }
+  }
+  return cfg;
 }
 
 function saveConfig(partial) {
   const next = { ...loadConfig(), ...partial };
+  if (!String(next.helperInstanceId || '').trim()) {
+    next.helperInstanceId = crypto.randomUUID();
+  }
   if (next.apiBaseUrl) next.apiBaseUrl = normalizeBaseUrl(next.apiBaseUrl);
   if (next.apiToken != null) next.apiToken = normalizeApiToken(next.apiToken);
   if (next.eventId != null) next.eventId = String(next.eventId || '').trim();

@@ -41,7 +41,7 @@ assert.strictEqual(
   decidePlaybackAction({
     hasPPT: true,
     cachedPath: 'C:\\cache\\b.pptx',
-    currentPath: 'C:\\cache\\a.pptx',
+    livePath: 'C:\\cache\\a.pptx',
   }).action,
   'swap'
 );
@@ -49,7 +49,7 @@ assert.strictEqual(
   decidePlaybackAction({
     hasPPT: true,
     cachedPath: 'C:\\cache\\a.pptx',
-    currentPath: 'c:\\cache\\a.pptx',
+    livePath: 'c:\\cache\\a.pptx',
     slideshowActive: true,
   }).action,
   'keep'
@@ -58,11 +58,22 @@ assert.strictEqual(
   decidePlaybackAction({
     hasPPT: true,
     cachedPath: 'C:\\cache\\a.pptx',
-    currentPath: 'c:\\cache\\a.pptx',
+    livePath: 'c:\\cache\\a.pptx',
     slideshowActive: false,
   }).action,
   'run'
 );
+// No live path → uncertain keep (do not false-match via currentPath).
+assert.strictEqual(
+  decidePlaybackAction({
+    hasPPT: true,
+    cachedPath: 'C:\\cache\\a.pptx',
+    currentPath: 'C:\\cache\\a.pptx',
+    slideshowActive: true,
+  }).uncertain,
+  true
+);
+assert.ok(!deckPathsEqual('C:\\a\\Deck.pptx', 'C:\\a\\CUE 7 - Deck.pptx'));
 assert.strictEqual(
   decidePlaybackAction({
     hasPPT: true,

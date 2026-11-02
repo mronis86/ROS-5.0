@@ -69,14 +69,21 @@ function decidePlaybackAction({
   timerState,
   slideshowActive,
 }) {
-  const openPath = livePath || currentPath || null;
+  // Only trust PowerPoint's live path for "already open" — never fall back to
+  // currentPath (follow used to poison that with the loaded cue cache path).
+  const openPath = livePath || null;
+  const closePath = livePath || currentPath || null;
   if (!hasPPT) {
-    return { action: openPath ? 'close' : 'idle', path: null, closePath: openPath };
+    return { action: closePath ? 'close' : 'idle', path: null, closePath };
   }
   if (!cachedPath) {
     return { action: 'warn', path: null, closePath: null, warning: 'PPT checked but no synced deck for this cue' };
   }
-  if (openPath && deckPathsEqual(cachedPath, openPath)) {
+  if (!openPath) {
+    // COM briefly blank mid-swap — do not treat as a match or force a swap.
+    return { action: 'keep', path: cachedPath, closePath: null, uncertain: true };
+  }
+  if (deckPathsEqual(cachedPath, openPath)) {
     if (!slideshowActive) {
       return { action: 'run', path: cachedPath, closePath: null };
     }
@@ -123,9 +130,9 @@ function deckCueNumber(filePath) {
 }
 
 /**
- * Same deck file, including cue-label renames for the SAME cue number.
- * Different cue numbers that share a basename (CUE 3 - Deck vs CUE 7 - Deck) are NOT equal —
- * that collision was thrashing Open vs Loaded on the playback page.
+ * Same deck file, including cue-label renames for the SAME cue number
+ * ("Cue 4 - Deck" ↔ "CUE 4 - Deck"). Shared titles with different/missing cue
+ * numbers are NOT equal — that false keep was thrashing Open vs Loaded.
  */
 function deckPathsEqual(a, b) {
   if (pathsEqual(a, b)) return true;
@@ -138,9 +145,8 @@ function deckPathsEqual(a, b) {
   if (!ta || !tb || ta !== tb) return false;
   const ca = deckCueNumber(a);
   const cb = deckCueNumber(b);
-  // Both labeled with different cue numbers → different decks that happen to share a title.
-  if (ca != null && cb != null && ca !== cb) return false;
-  return true;
+  // Title-only equality only when both names carry the same cue number.
+  return ca != null && cb != null && ca === cb;
 }
 
 /**

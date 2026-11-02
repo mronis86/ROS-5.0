@@ -972,43 +972,50 @@ class PlaybackController {
       return;
     }
     if (decision.action === 'keep') {
-      const itemChanged = Number(this.currentItemId) !== Number(loadedItemId);
+      // Open identity stays with applyIdentifiedOpen / pollLive — do NOT overwrite
+      // currentItemId to the loaded cue (that fought live matching every ~220ms).
       this.lastLoadedItemId = loadedItemId;
-      this.currentItemId = loadedItemId;
-      if (asset?.fileId) this.currentFileId = asset.fileId;
-      this.currentPath = decision.path || this.currentPath;
+      if (decision.uncertain) {
+        this.emit({
+          loadedCueLabel: cueLabel,
+          message: `${cueLabel} · waiting for PowerPoint path`,
+          lastAction: 'Path unsettled',
+        });
+        return;
+      }
       this.markStickyOpen(4000);
-      void this.ensureFolderPreviews(this.currentFileId);
+      void this.ensureFolderPreviews(this.currentFileId || asset?.fileId);
       this.emit({
         loadedCueLabel: cueLabel,
         message: `${cueLabel} · matching deck ready`,
         lastAction: 'Matching deck',
       });
-      // Report when Open identity changes so the page does not flap on pollLive alone.
-      if (itemChanged) await this.reportAndRefresh(true);
       return;
     }
     if (decision.action === 'run') {
-      const itemChanged = Number(this.currentItemId) !== Number(loadedItemId);
       this.lastLoadedItemId = loadedItemId;
-      this.currentItemId = loadedItemId;
-      if (asset?.fileId) this.currentFileId = asset.fileId;
-      this.currentPath = decision.path || this.currentPath;
       this.markStickyOpen(4000);
+      const runPath = decision.path || this.currentPath;
       if (this.lastStartedItemId === loadedItemId && this.status.slideshowActive) {
-        void this.ensureFolderPreviews(this.currentFileId);
+        void this.ensureFolderPreviews(this.currentFileId || asset?.fileId);
         this.emit({
           loadedCueLabel: cueLabel,
           message: `${cueLabel} · slideshow live`,
           lastAction: 'Slideshow live',
         });
-        if (itemChanged) await this.reportAndRefresh(true);
         return;
       }
+      if (runPath) this.currentPath = runPath;
+      if (asset?.fileId) this.currentFileId = asset.fileId;
+      // Sticky open for the transition; live matcher confirms after startShow.
+      this.currentItemId = loadedItemId;
       void this.ensureFolderPreviews(this.currentFileId);
       try {
         const started = await ppt.startShow(this.currentPath);
-        if (started && started.ok !== false) this.applyLive(started);
+        if (started && started.ok !== false) {
+          this.applyLive(started);
+          this.applyIdentifiedOpen(started.fullName || started.full_name || this.currentPath);
+        }
         this.lastStartedItemId = loadedItemId;
         this.lastError = '';
         this.emit({
@@ -1017,6 +1024,7 @@ class PlaybackController {
           lastAction: 'Started slideshow',
           error: '',
         });
+        await this.reportAndRefresh(true);
       } catch (err) {
         this.lastError = err.message || 'Could not start slideshow';
         this.emit({
@@ -1317,14 +1325,24 @@ class PlaybackController {
   async pollLive(forceReport) {
     if (!this.running) return;
     try {
+      // Don't fight tick/follow mid-swap — that was publishing Open thrash.
+      if (this.busy || this.swapInFlight) {
+        this.scheduleLive(400);
+        return;
+      }
       const live = await ppt.getLive();
       if (live && live.ok !== false) this.applyLive(live);
+      const beforeItem = this.currentItemId;
+      const beforeFile = this.currentFileId;
+      this.applyIdentifiedOpen(this.status.livePath);
       const key = this.liveFingerprint();
+      const identityChanged =
+        Number(beforeItem) !== Number(this.currentItemId) ||
+        String(beforeFile || '') !== String(this.currentFileId || '');
       const changed = key !== this.lastLiveKey;
-      if (forceReport || changed || Date.now() - this.lastReportAt > 2000) {
-        this.applyIdentifiedOpen(this.status.livePath);
+      if (forceReport || identityChanged || changed || Date.now() - this.lastReportAt > 2000) {
         await this.reportAndRefresh(false);
-        this.lastLiveKey = key;
+        this.lastLiveKey = this.liveFingerprint();
       }
     } catch {
       /* next poll */
@@ -1670,6 +1688,7 @@ class PlaybackController {
       this.lastLoadedItemId != null;
     await reportPlaybackLive(this.config.apiBaseUrl, this.config.apiToken, this.config.eventId, {
       helperMode: 'playback',
+      helperInstanceId: String(this.config.helperInstanceId || '').trim(),
       deckName: this.status.deckName || '',
       slideCount: this.status.slideCount || 0,
       slideshowActive: !!this.status.slideshowActive,
