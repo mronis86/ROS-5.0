@@ -7,6 +7,8 @@ const {
   preferredAssetForItem,
   decidePlaybackAction,
   deckPathsEqual,
+  deckCueNumber,
+  scoreLivePathMatch,
   rawPreviewSlideId,
   PREVIEW_DIR_NAME,
   itemDayNumber,
@@ -101,13 +103,27 @@ assert.strictEqual(
 assert.strictEqual(
   decidePlaybackAction({
     hasPPT: true,
-    cachedPath: 'C:\\sync\\CUE 3 - Uphill Battle.pptx',
+    cachedPath: 'C:\\sync\\CUE 4 - Uphill Battle.pptx',
     livePath: 'C:\\sync\\Cue 4 - Uphill Battle.pptx',
     slideshowActive: true,
   }).action,
   'keep'
 );
-assert.ok(deckPathsEqual('C:\\a\\CUE 3 - Deck.pptx', 'C:\\a\\Cue 4 - Deck.pptx'));
+// Same title but different cue numbers → different decks (must swap, not keep).
+assert.strictEqual(
+  decidePlaybackAction({
+    hasPPT: true,
+    cachedPath: 'C:\\sync\\CUE 3 - Deck.pptx',
+    livePath: 'C:\\sync\\CUE 7 - Deck.pptx',
+    slideshowActive: true,
+  }).action,
+  'swap'
+);
+assert.ok(deckPathsEqual('C:\\a\\CUE 4 - Deck.pptx', 'C:\\a\\Cue 4 - Deck.pptx'));
+assert.ok(!deckPathsEqual('C:\\a\\CUE 3 - Deck.pptx', 'C:\\a\\CUE 7 - Deck.pptx'));
+assert.strictEqual(deckCueNumber('C:\\sync\\CUE 7 - Map.pptx'), 7);
+assert.ok(scoreLivePathMatch('C:\\sync\\CUE 7 - Deck.pptx', 'C:\\sync\\CUE 7 - Deck.pptx') >= 90);
+assert.ok(scoreLivePathMatch('C:\\sync\\CUE 7 - Deck.pptx', 'C:\\sync\\CUE 3 - Deck.pptx') === 0);
 assert.ok(syncFileName({ itemId: 7, originalName: 'Map.pptx' }, 'CUE 7').startsWith('CUE 7 - Map'));
 assert.strictEqual(
   shouldReplaceLocalFile({ fileId: 'old', sizeBytes: 10 }, { fileId: 'new', sizeBytes: 10 }),

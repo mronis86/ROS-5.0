@@ -18,6 +18,7 @@ const {
   shouldReplaceLocalFile,
   deckPathsEqual,
   deckTitleKey,
+  scoreLivePathMatch,
   PREVIEW_DIR_NAME,
   rawPreviewSlideId,
   itemDayNumber,
@@ -220,6 +221,11 @@ class PlaybackController {
     this.readManifest();
     const liveBase = path.basename(livePath).toLowerCase();
     const liveTitle = deckTitleKey(livePath);
+    const preferIds = [this.currentItemId, this.lastLoadedItemId]
+      .map((id) => Number(id))
+      .filter((id) => Number.isFinite(id));
+
+    const hits = [];
     for (const asset of this.assets || []) {
       if (!asset?.itemId) continue;
       const cueLabel = this.cueLabelFor(asset);
@@ -229,38 +235,85 @@ class PlaybackController {
       const legacyPaths = this.legacySyncNames(asset, cueLabel).map((name) =>
         path.join(this.syncDir(), name)
       );
-      const candidates = [dest, alt, this.currentPath, ...legacyPaths].filter(Boolean);
-      const pathHit = candidates.some((row) => this.normPath(row) === live || deckPathsEqual(row, livePath));
-      const nameHit =
-        !pathHit &&
-        [
+      // Never include this.currentPath here — once a deck is open it equals livePath for
+      // EVERY asset and the first row "wins", thrashing Open between cues.
+      const candidates = [dest, alt, ...legacyPaths].filter(Boolean);
+      let bestScore = 0;
+      let bestCandidate = '';
+      for (const row of candidates) {
+        const score = scoreLivePathMatch(livePath, row);
+        if (score > bestScore) {
+          bestScore = score;
+          bestCandidate = row;
+        }
+      }
+      let nameScore = 0;
+      if (bestScore < 90) {
+        for (const name of [
           asset.originalName,
           recorded.localName,
           dest ? path.basename(dest) : '',
           ...this.legacySyncNames(asset, cueLabel),
-        ]
-          .filter(Boolean)
-          .some((name) => {
-            const base = path.basename(String(name)).toLowerCase();
-            return base === liveBase || (!!liveTitle && deckTitleKey(name) === liveTitle);
-          });
-      if (!pathHit && !nameHit) continue;
+        ].filter(Boolean)) {
+          const base = path.basename(String(name)).toLowerCase();
+          if (base === liveBase) nameScore = Math.max(nameScore, 85);
+          else if (liveTitle && deckTitleKey(name) === liveTitle) {
+            const liveCue = Number(asset.itemId);
+            // Weak title-only hit; prefer assets whose item id matches the live cue prefix.
+            const prefixCue = (() => {
+              const m = liveBase.match(/^(?:cue|item)\s+(\d+)\s*-/i);
+              return m ? Number(m[1]) : null;
+            })();
+            if (prefixCue != null && prefixCue === liveCue) nameScore = Math.max(nameScore, 75);
+            else nameScore = Math.max(nameScore, 35);
+          }
+        }
+      }
+      const score = Math.max(bestScore, nameScore);
+      if (score <= 0) continue;
       const preferredId = String(asset.fileId || '');
-      const localId = String(recorded.fileId || this.currentFileId || preferredId || '');
+      const localId = String(recorded.fileId || preferredId || '');
       const resolved =
+        (bestCandidate && fs.existsSync(bestCandidate) && bestCandidate) ||
         (dest && fs.existsSync(dest) && dest) ||
         (alt && fs.existsSync(alt) && alt) ||
         legacyPaths.find((row) => fs.existsSync(row)) ||
-        this.currentPath;
-      return {
+        null;
+      hits.push({
+        score,
         itemId: Number(asset.itemId),
         fileId: localId || preferredId || null,
-        path: resolved || null,
-        stale: !!(preferredId && localId && preferredId !== localId) || (!pathHit && nameHit),
+        path: resolved,
+        stale: !!(preferredId && localId && preferredId !== localId) || score < 90,
         originalName: asset.originalName || path.basename(livePath),
-      };
+        preferredId,
+      });
     }
-    return null;
+
+    if (!hits.length) return null;
+    hits.sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      const aPref = preferIds.includes(a.itemId) ? 1 : 0;
+      const bPref = preferIds.includes(b.itemId) ? 1 : 0;
+      if (bPref !== aPref) return bPref - aPref;
+      return a.itemId - b.itemId;
+    });
+    const top = hits[0];
+    // Ambiguous weak title-only matches (shared original basename across cues) → do not guess.
+    if (
+      top.score < 70 &&
+      hits.filter((h) => h.score === top.score).length > 1 &&
+      !preferIds.includes(top.itemId)
+    ) {
+      return null;
+    }
+    return {
+      itemId: top.itemId,
+      fileId: top.fileId,
+      path: top.path || this.currentPath || null,
+      stale: !!top.stale,
+      originalName: top.originalName,
+    };
   }
 
   applyIdentifiedOpen(livePath) {
@@ -281,9 +334,20 @@ class PlaybackController {
       if (this.currentItemId != null && this.currentPath && deckPathsEqual(this.currentPath, livePath)) {
         return false;
       }
+      // Ambiguous live identity — keep last known open rather than thrashing to null.
+      if (this.currentItemId != null || this.lastLoadedItemId != null) return false;
       this.currentItemId = null;
       this.currentFileId = null;
       return prevFile !== '' || prevItem != null;
+    }
+    // Prefer sticky followed cue when matcher only got a weak title hit on another cue.
+    if (
+      this.lastLoadedItemId != null &&
+      Number(info.itemId) !== Number(this.lastLoadedItemId) &&
+      info.stale &&
+      Date.now() < this.stickyOpenUntil
+    ) {
+      return false;
     }
     this.openMatch = info.stale ? 'stale' : 'sync';
     this.openStale = !!info.stale;
@@ -908,6 +972,7 @@ class PlaybackController {
       return;
     }
     if (decision.action === 'keep') {
+      const itemChanged = Number(this.currentItemId) !== Number(loadedItemId);
       this.lastLoadedItemId = loadedItemId;
       this.currentItemId = loadedItemId;
       if (asset?.fileId) this.currentFileId = asset.fileId;
@@ -919,9 +984,12 @@ class PlaybackController {
         message: `${cueLabel} · matching deck ready`,
         lastAction: 'Matching deck',
       });
+      // Report when Open identity changes so the page does not flap on pollLive alone.
+      if (itemChanged) await this.reportAndRefresh(true);
       return;
     }
     if (decision.action === 'run') {
+      const itemChanged = Number(this.currentItemId) !== Number(loadedItemId);
       this.lastLoadedItemId = loadedItemId;
       this.currentItemId = loadedItemId;
       if (asset?.fileId) this.currentFileId = asset.fileId;
@@ -934,6 +1002,7 @@ class PlaybackController {
           message: `${cueLabel} · slideshow live`,
           lastAction: 'Slideshow live',
         });
+        if (itemChanged) await this.reportAndRefresh(true);
         return;
       }
       void this.ensureFolderPreviews(this.currentFileId);

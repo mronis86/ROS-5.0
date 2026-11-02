@@ -95,7 +95,7 @@ function pathsEqual(a, b) {
   return String(a).replace(/\//g, '\\').toLowerCase() === String(b).replace(/\//g, '\\').toLowerCase();
 }
 
-/** Same deck even if cue-label rename changed the sync filename (Cue 4 → CUE 3). */
+/** Strip cue/item prefixes so renames like "Cue 4 - Deck" ↔ "CUE 4 - Deck" still match. */
 function deckTitleKey(filePath) {
   const base = String(filePath || '')
     .replace(/\//g, '\\')
@@ -109,6 +109,24 @@ function deckTitleKey(filePath) {
     .trim();
 }
 
+/** Cue number from sync names like "CUE 7 - Map.pptx"; null if none. */
+function deckCueNumber(filePath) {
+  const base = String(filePath || '')
+    .replace(/\//g, '\\')
+    .split('\\')
+    .pop()
+    .replace(/\.pptx?$/i, '');
+  const m = base.match(/^(?:cue|item)\s+(\d+)\s*-/i);
+  if (!m) return null;
+  const n = Number(m[1]);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Same deck file, including cue-label renames for the SAME cue number.
+ * Different cue numbers that share a basename (CUE 3 - Deck vs CUE 7 - Deck) are NOT equal —
+ * that collision was thrashing Open vs Loaded on the playback page.
+ */
 function deckPathsEqual(a, b) {
   if (pathsEqual(a, b)) return true;
   if (!a || !b) return false;
@@ -117,7 +135,30 @@ function deckPathsEqual(a, b) {
   if (ba && ba === bb) return true;
   const ta = deckTitleKey(a);
   const tb = deckTitleKey(b);
-  return !!(ta && tb && ta === tb);
+  if (!ta || !tb || ta !== tb) return false;
+  const ca = deckCueNumber(a);
+  const cb = deckCueNumber(b);
+  // Both labeled with different cue numbers → different decks that happen to share a title.
+  if (ca != null && cb != null && ca !== cb) return false;
+  return true;
+}
+
+/**
+ * Rank how well a candidate sync path matches the live PowerPoint path.
+ * Higher is better. 0 = no match.
+ */
+function scoreLivePathMatch(livePath, candidatePath) {
+  if (!livePath || !candidatePath) return 0;
+  if (pathsEqual(livePath, candidatePath)) return 100;
+  const liveBase = String(livePath).replace(/\//g, '\\').split('\\').pop().toLowerCase();
+  const candBase = String(candidatePath).replace(/\//g, '\\').split('\\').pop().toLowerCase();
+  if (liveBase && liveBase === candBase) return 90;
+  if (!deckPathsEqual(livePath, candidatePath)) return 0;
+  const liveCue = deckCueNumber(livePath);
+  const candCue = deckCueNumber(candidatePath);
+  if (liveCue != null && candCue != null && liveCue === candCue) return 70;
+  // Title-only (no conflicting cue numbers) — weak; ambiguous across cues.
+  return 40;
 }
 
 function itemDayNumber(item) {
@@ -169,6 +210,8 @@ module.exports = {
   pathsEqual,
   deckPathsEqual,
   deckTitleKey,
+  deckCueNumber,
+  scoreLivePathMatch,
   PREVIEW_DIR_NAME,
   rawPreviewSlideId,
   itemDayNumber,
