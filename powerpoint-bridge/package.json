@@ -1,7 +1,7 @@
 {
   "name": "ros-powerpoint-bridge",
-  "version": "0.1.0",
-  "description": "Windows helper: Mode 1 stills fire ROS cues; Mode 2 ROS load opens cached PowerPoint",
+  "version": "0.2.0",
+  "description": "Windows helper V2: Mode 1 stills fire ROS cues; Mode 2 ROS load opens cached PowerPoint",
   "private": true,
   "main": "electron/main.js",
   "devDependencies": {
@@ -15,7 +15,7 @@
   },
   "build": {
     "appId": "com.sinor.ros.powerpoint-bridge",
-    "productName": "ROS PowerPoint Bridge",
+    "productName": "ROS PowerPoint Bridge V2",
     "directories": {
       "output": "dist",
       "buildResources": "build"

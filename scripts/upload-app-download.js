@@ -3,6 +3,7 @@
  * and wire DOWNLOADS_BUCKET_* vars onto the ROS-5.0 service.
  *
  * Usage:
+ *   node scripts/upload-app-download.js public/powerpoint-bridge-v2.zip
  *   node scripts/upload-app-download.js public/powerpoint-bridge.zip
  *   node scripts/upload-app-download.js public/ros-vmix-datasource-bridge.zip
  *   node scripts/upload-app-download.js public/ros-hyperdeck-ingest.zip
@@ -32,7 +33,7 @@ function setVar(key, value) {
   });
 }
 
-const localPath = path.resolve(process.argv[2] || path.join(projectRoot, 'public', 'powerpoint-bridge.zip'));
+const localPath = path.resolve(process.argv[2] || path.join(projectRoot, 'public', 'powerpoint-bridge-v2.zip'));
 const fileName = path.basename(localPath);
 if (!fs.existsSync(localPath)) {
   console.error(`Missing file: ${localPath}`);
@@ -40,8 +41,12 @@ if (!fs.existsSync(localPath)) {
 }
 
 const HOSTED = {
+  'powerpoint-bridge-v2.zip': {
+    key: 'downloads/powerpoint-bridge-v2.zip',
+    contentType: 'application/zip',
+  },
   'powerpoint-bridge.zip': {
-    key: 'downloads/powerpoint-bridge.zip',
+    key: 'downloads/powerpoint-bridge-v2.zip',
     contentType: 'application/zip',
   },
   'ros-vmix-datasource-bridge.zip': {

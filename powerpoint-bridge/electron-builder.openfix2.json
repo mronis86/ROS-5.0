@@ -1,6 +1,6 @@
 {
   "appId": "com.sinor.ros.powerpoint-bridge",
-  "productName": "ROS PowerPoint Bridge",
+  "productName": "ROS PowerPoint Bridge V2",
   "directories": {
     "output": "dist-openfix2",
     "buildResources": "build"

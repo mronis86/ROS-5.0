@@ -509,10 +509,10 @@ const PowerPointPage: React.FC = () => {
             </button>
           ) : null}
           <a
-            href={getAppDownloadUrl('powerpoint-bridge.zip')}
+            href={getAppDownloadUrl('powerpoint-bridge-v2.zip')}
             className="rounded bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-500"
           >
-            Download Windows bridge
+            Download Bridge V2
           </a>
           <Link
             to={`/run-of-show?eventId=${encodeURIComponent(eventId)}`}
@@ -579,10 +579,10 @@ const PowerPointPage: React.FC = () => {
             Recapture to keep a current set.
           </p>
           <a
-            href={getAppDownloadUrl('powerpoint-bridge.zip')}
+            href={getAppDownloadUrl('powerpoint-bridge-v2.zip')}
             className="mt-4 inline-flex rounded bg-orange-600 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-500"
           >
-            Download PowerPoint Bridge
+            Download PowerPoint Bridge V2
           </a>
         </div>
       ) : view === 'list' ? (

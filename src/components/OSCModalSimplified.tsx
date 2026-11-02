@@ -131,13 +131,13 @@ const OSCModalSimplified: React.FC<OSCModalSimplifiedProps> = ({
               {/* Offline Show — LAN show laptop */}
               <div className="text-center mb-4">
                 <a
-                  href={getAppDownloadUrl('powerpoint-bridge.zip')}
+                  href={getAppDownloadUrl('powerpoint-bridge-v2.zip')}
                   className="block bg-orange-600 hover:bg-orange-500 text-white text-sm py-3 px-6 rounded text-center transition-colors font-semibold"
                 >
-                  PowerPoint Bridge (Windows)
+                  PowerPoint Bridge V2 (Windows)
                 </a>
                 <div className="text-xs text-orange-200 mt-2">
-                  Use PowerPoint with Run of Show — Show with Timers or ROS PPT Launcher
+                  V2 thrash fix · Show with Timers or ROS PPT Launcher
                 </div>
               </div>
 
