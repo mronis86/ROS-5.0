@@ -187,6 +187,7 @@ import {
   parseCustomColumnOrderKey,
   saveRosVisibleColumns,
   saveRosVisibleCustomByName,
+  scrollColumnBoxStyle,
   visibleCustomColumnsFromNames,
   type RosVisibleColumns,
 } from '../lib/rosColumnOrder';
@@ -2297,6 +2298,10 @@ const RunOfShowPage: React.FC = () => {
     (key: string) => scrollColumnFlexOrder[key] ?? 999,
     [scrollColumnFlexOrder]
   );
+  const colBox = useCallback(
+    (width: number, key: string) => scrollColumnBoxStyle(width, colFlex(key)),
+    [colFlex]
+  );
 
   const moveScrollColumn = useCallback((fromIndex: number, toIndex: number) => {
     setColumnOrder((prev) => moveColumnInOrder(prev, fromIndex, toIndex));
@@ -2677,7 +2682,7 @@ const RunOfShowPage: React.FC = () => {
     );
 
   const COMPLETED_ROW_CLASS =
-    'bg-slate-950/90 ring-1 ring-inset ring-slate-600/40';
+    'bg-slate-950 text-slate-400 ring-1 ring-inset ring-slate-700/50';
   const DELAY_BLOCK_ROW_CLASS =
     'bg-violet-950/90 ring-2 ring-inset ring-violet-400';
   const SHOW_BREAK_ROW_CLASS =
@@ -2751,13 +2756,12 @@ const RunOfShowPage: React.FC = () => {
     );
   };
 
-  const getRowDimStyle = (item: { id: number; programType?: string }): React.CSSProperties => {
-    if (item.programType === 'KILLED') return { opacity: 0.7 };
-    if (isItemDimmed(item.id)) {
-      return { opacity: 0.68, filter: 'brightness(0.59) saturate(0.33)' };
-    }
-    return { opacity: 1 };
-  };
+  /**
+   * Completed/killed look is class + cell colors only.
+   * Never use opacity/filter here — those promote per-row compositor layers and
+   * cause horizontal scroll “jello” (some rows lag behind others under scale/zoom).
+   */
+  const getRowDimStyle = (_item: { id: number; programType?: string }): React.CSSProperties => ({});
 
   const getRowContainerStyle = (
     item: {
@@ -18065,7 +18069,7 @@ const RunOfShowPage: React.FC = () => {
           </div>
           {/* Duplicate Grid Headers - Fixed at Top */}
           <div className={`px-8 transition-all duration-500 ease-in-out overflow-hidden ${showGridHeaders ? 'max-h-80 opacity-100 -mb-6' : 'max-h-0 opacity-0 mb-0'}`}>
-            <div className="bg-slate-800 rounded-xl p-4 shadow-2xl" style={{ transform: 'scale(0.75)', transformOrigin: 'top center', width: '127.67%', marginLeft: '-13.83%' }}>
+            <div className="bg-slate-800 rounded-xl p-4 shadow-2xl" style={{ zoom: 0.75 }}>
               <div className="flex border-2 border-slate-600 rounded-lg overflow-hidden bg-slate-900">
                 {/* Row Number Column Header - click to cycle: normal → small → hidden */}
                 <div className="w-12 flex-shrink-0 bg-slate-900 border-r-2 border-slate-600">
@@ -18128,7 +18132,7 @@ const RunOfShowPage: React.FC = () => {
                       {visibleColumns.start && !startPinnedBesideCue && (
                         <div 
                           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative cursor-pointer hover:bg-slate-600/80 transition-colors"
-                          style={{ width: columnWidths.start, order: colFlex('start') }}
+                          style={colBox(columnWidths.start, 'start')}
                           onClick={toggleStartTimeDisplayMode}
                           title={`Start time: ${startTimeDisplayModeLabel(startTimeDisplayMode)} (click for ${startTimeDisplayModeLabel(cycleStartTimeDisplayMode(startTimeDisplayMode))})`}
                         >
@@ -18148,7 +18152,7 @@ const RunOfShowPage: React.FC = () => {
                       {visibleColumns.programType && (
                         <div 
                           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                          style={{ width: columnWidths.programType, order: colFlex('programType') }}
+                          style={colBox(columnWidths.programType, 'programType')}
                         >
                           <span className="text-white font-bold flex items-center gap-1">
                             Program Type
@@ -18165,7 +18169,7 @@ const RunOfShowPage: React.FC = () => {
                       {visibleColumns.duration && (
                         <div 
                           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                          style={{ width: columnWidths.duration, order: colFlex('duration') }}
+                          style={colBox(columnWidths.duration, 'duration')}
                         >
                           <div className="text-center">
                             <div className="text-white font-bold flex items-center justify-center gap-1">
@@ -18185,7 +18189,7 @@ const RunOfShowPage: React.FC = () => {
                       {visibleColumns.segmentName && (
                         <div 
                           className="px-3 py-2 border-r border-slate-600 flex items-center justify-start flex-shrink-0 relative cursor-pointer hover:bg-slate-600/80 transition-colors min-w-0"
-                          style={{ width: columnWidths.segmentName, order: colFlex('segmentName') }}
+                          style={colBox(columnWidths.segmentName, 'segmentName')}
                           onClick={toggleSegmentNameDisplayMode}
                           title={`Segment: ${segmentNameDisplayModeLabel(segmentNameDisplayMode)} (click for ${segmentNameDisplayModeLabel(cycleSegmentNameDisplayMode(segmentNameDisplayMode))})`}
                         >
@@ -18210,7 +18214,7 @@ const RunOfShowPage: React.FC = () => {
                       {visibleColumns.shotType && (
                         <div 
                           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                          style={{ width: columnWidths.shotType, order: colFlex('shotType') }}
+                          style={colBox(columnWidths.shotType, 'shotType')}
                         >
                           <span className="text-white font-bold flex items-center gap-1">
                             Shot Type
@@ -18227,7 +18231,7 @@ const RunOfShowPage: React.FC = () => {
                       {visibleColumns.pptQA && (
                         <div 
                           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                          style={{ width: columnWidths.pptQA, order: colFlex('pptQA') }}
+                          style={colBox(columnWidths.pptQA, 'pptQA')}
                         >
                           <span className="text-white font-bold flex items-center gap-1">
                             PPT/Q&A
@@ -18244,7 +18248,7 @@ const RunOfShowPage: React.FC = () => {
                       {visibleColumns.recording && (
                         <div 
                           className="group/rec-hdr px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative overflow-visible"
-                          style={{ width: columnWidths.recording, order: colFlex('recording') }}
+                          style={colBox(columnWidths.recording, 'recording')}
                         >
                           <span className="text-white font-bold flex items-center gap-1">
                             Rec
@@ -18268,7 +18272,7 @@ const RunOfShowPage: React.FC = () => {
                       {showMittiWatchColumn && (
                         <div
                           className="px-2 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
-                          style={{ width: 88, order: (scrollColumnFlexOrder.recording ?? 6) + 0.5 }}
+                          style={colBox(88, 'mittiWatch')}
                           title="Checked row is the next Mitti play. Only one row at a time."
                         >
                           <span className="text-white font-bold text-sm">Mitti</span>
@@ -18277,7 +18281,7 @@ const RunOfShowPage: React.FC = () => {
                       {showAvWatchColumn && (
                         <div
                           className="px-2 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
-                          style={{ width: 72, order: (scrollColumnFlexOrder.recording ?? 6) + 0.6 }}
+                          style={colBox(72, 'avWatch')}
                           title="Checked row is the next AV-Playout play. Only one row at a time."
                         >
                           <span className="text-white font-bold text-sm">AV</span>
@@ -18286,7 +18290,7 @@ const RunOfShowPage: React.FC = () => {
                       {visibleColumns.notes && (
                         <div 
                           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                          style={{ width: columnWidths.notes, order: colFlex('notes') }}
+                          style={colBox(columnWidths.notes, 'notes')}
                         >
                           <span className="text-white font-bold flex items-center gap-1">
                             Notes
@@ -18303,7 +18307,7 @@ const RunOfShowPage: React.FC = () => {
                       {visibleColumns.vog !== false && (
                         <div
                           className="px-2 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                          style={{ width: columnWidths.vog || 100, order: colFlex('vog') }}
+                          style={colBox(columnWidths.vog || 100, 'vog')}
                           title="ElevenLabs Voice of God — preview and download WAV"
                         >
                           <span className="text-white font-bold text-sm">VOG</span>
@@ -18316,7 +18320,7 @@ const RunOfShowPage: React.FC = () => {
                       {visibleColumns.assets && (
                         <div 
                           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                          style={{ width: columnWidths.assets, order: colFlex('assets') }}
+                          style={colBox(columnWidths.assets, 'assets')}
                         >
                           <span className="text-white font-bold flex items-center gap-1">
                             Assets
@@ -18333,7 +18337,7 @@ const RunOfShowPage: React.FC = () => {
                       {visibleColumns.participants && (
                         <div 
                           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                          style={{ width: columnWidths.participants, order: colFlex('participants') }}
+                          style={colBox(columnWidths.participants, 'participants')}
                         >
                           <span className="text-white font-bold flex items-center gap-1">
                             Participants
@@ -18350,7 +18354,7 @@ const RunOfShowPage: React.FC = () => {
                       {visibleColumns.speakers && (
                         <div 
                           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                          style={{ width: columnWidths.speakers, order: colFlex('speakers') }}
+                          style={colBox(columnWidths.speakers, 'speakers')}
                         >
                           <span className="text-white font-bold flex items-center gap-1">
                             Speakers
@@ -18367,7 +18371,7 @@ const RunOfShowPage: React.FC = () => {
                       {visibleColumns.public && (
                         <div 
                           className="px-4 py-2 border-r border-slate-600 flex-shrink-0 relative"
-                          style={{ width: columnWidths.public, order: colFlex('public') }}
+                          style={colBox(columnWidths.public, 'public')}
                         >
                           <button
                             type="button"
@@ -18396,7 +18400,7 @@ const RunOfShowPage: React.FC = () => {
                       {visibleColumns.timer && (
                         <div 
                           className="px-4 py-2 border-r border-slate-600 flex-shrink-0 relative flex items-center justify-center"
-                          style={{ width: columnWidths.timer, order: colFlex('timer') }}
+                          style={colBox(columnWidths.timer, 'timer')}
                         >
                           <span className="font-bold text-white text-center flex items-center gap-1" title="Clock page: Countdown, Time of Day, or TOD Only">
                             Counter
@@ -18415,7 +18419,7 @@ const RunOfShowPage: React.FC = () => {
                           <div 
                             key={column.id} 
                             className="px-4 py-2 border-r border-slate-600 flex items-center justify-center relative flex-shrink-0"
-                            style={{ width: customColumnWidths[column.id] || 256, order: colFlex(customColumnOrderKey(column.id)) }}
+                            style={colBox(customColumnWidths[column.id] || 256, customColumnOrderKey(column.id))}
                           >
                             <span className="text-white font-bold">{column.name}</span>
                             <div 
@@ -18452,7 +18456,7 @@ const RunOfShowPage: React.FC = () => {
         {currentUserRole === 'OPERATOR' && event?.id ? (
           <OperatorPptPendingDecks eventId={String(event.id)} />
         ) : null}
-        <div className="bg-slate-800 rounded-xl p-4 shadow-2xl" style={{ transform: 'scale(0.75)', transformOrigin: 'top center', width: '133.33%', marginLeft: '-16.67%' }}>
+        <div className="bg-slate-800 rounded-xl p-4 shadow-2xl" style={{ zoom: 0.75 }}>
           <div className="flex justify-between items-center mb-6">
             <div>
               <div className="flex items-center gap-4 flex-wrap">
@@ -19440,11 +19444,11 @@ const RunOfShowPage: React.FC = () => {
             <div id="main-scroll-container" className="flex-1 overflow-x-auto overflow-y-hidden" style={{ scrollbarWidth: 'thin' }}>
               <div className="min-w-max">
                 {/* Header Row */}
-                <div className="h-24 bg-slate-700 border-b-3 border-slate-600 flex overflow-hidden">
+                <div className="h-24 bg-slate-700 border-b-3 border-slate-600 flex">
                   {visibleColumns.start && !startPinnedBesideCue && (
                     <div 
                       className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative cursor-pointer hover:bg-slate-600/80 transition-colors"
-                      style={{ width: columnWidths.start, order: colFlex('start') }}
+                      style={colBox(columnWidths.start, 'start')}
                       onClick={toggleStartTimeDisplayMode}
                       title={`Start time: ${startTimeDisplayModeLabel(startTimeDisplayMode)} (click for ${startTimeDisplayModeLabel(cycleStartTimeDisplayMode(startTimeDisplayMode))})`}
                     >
@@ -19464,7 +19468,7 @@ const RunOfShowPage: React.FC = () => {
                   {visibleColumns.programType && (
                     <div 
                       className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                      style={{ width: columnWidths.programType, order: colFlex('programType') }}
+                      style={colBox(columnWidths.programType, 'programType')}
                     >
                       <span className="text-white font-bold flex items-center gap-1">
                         Program Type
@@ -19481,7 +19485,7 @@ const RunOfShowPage: React.FC = () => {
                   {visibleColumns.duration && (
                     <div 
                       className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                      style={{ width: columnWidths.duration, order: colFlex('duration') }}
+                      style={colBox(columnWidths.duration, 'duration')}
                     >
                       <div className="text-center">
                         <div className="text-white font-bold flex items-center justify-center gap-1">
@@ -19501,7 +19505,7 @@ const RunOfShowPage: React.FC = () => {
                   {visibleColumns.segmentName && (
                     <div 
                       className="px-3 py-2 border-r border-slate-600 flex items-center justify-start flex-shrink-0 relative cursor-pointer hover:bg-slate-600/80 transition-colors min-w-0"
-                      style={{ width: columnWidths.segmentName, order: colFlex('segmentName') }}
+                      style={colBox(columnWidths.segmentName, 'segmentName')}
                       onClick={toggleSegmentNameDisplayMode}
                       title={`Segment: ${segmentNameDisplayModeLabel(segmentNameDisplayMode)} (click for ${segmentNameDisplayModeLabel(cycleSegmentNameDisplayMode(segmentNameDisplayMode))})`}
                     >
@@ -19526,7 +19530,7 @@ const RunOfShowPage: React.FC = () => {
                   {visibleColumns.shotType && (
                     <div 
                       className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                      style={{ width: columnWidths.shotType, order: colFlex('shotType') }}
+                      style={colBox(columnWidths.shotType, 'shotType')}
                     >
                       <span className="text-white font-bold flex items-center gap-1">
                         Shot Type
@@ -19543,7 +19547,7 @@ const RunOfShowPage: React.FC = () => {
                   {visibleColumns.pptQA && (
                     <div 
                       className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                      style={{ width: columnWidths.pptQA, order: colFlex('pptQA') }}
+                      style={colBox(columnWidths.pptQA, 'pptQA')}
                     >
                       <span className="text-white font-bold flex items-center gap-1">
                         PPT/Q&A
@@ -19560,7 +19564,7 @@ const RunOfShowPage: React.FC = () => {
                   {visibleColumns.recording && (
                     <div 
                       className="group/rec-hdr px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative overflow-visible"
-                      style={{ width: columnWidths.recording, order: colFlex('recording') }}
+                      style={colBox(columnWidths.recording, 'recording')}
                     >
                       <span className="text-white font-bold flex items-center gap-1">
                         Rec
@@ -19584,7 +19588,7 @@ const RunOfShowPage: React.FC = () => {
                   {showMittiWatchColumn && (
                     <div
                       className="px-2 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
-                      style={{ width: 88, order: (scrollColumnFlexOrder.recording ?? 6) + 0.5 }}
+                      style={colBox(88, 'mittiWatch')}
                       title="Checked row is the next Mitti play. Only one row at a time."
                     >
                       <span className="text-white font-bold text-sm">Mitti</span>
@@ -19593,7 +19597,7 @@ const RunOfShowPage: React.FC = () => {
                   {showAvWatchColumn && (
                     <div
                       className="px-2 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
-                      style={{ width: 72, order: (scrollColumnFlexOrder.recording ?? 6) + 0.6 }}
+                      style={colBox(72, 'avWatch')}
                       title="Checked row is the next AV-Playout play. Only one row at a time."
                     >
                       <span className="text-white font-bold text-sm">AV</span>
@@ -19602,7 +19606,7 @@ const RunOfShowPage: React.FC = () => {
                   {visibleColumns.notes && (
                     <div 
                       className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                      style={{ width: columnWidths.notes, order: colFlex('notes') }}
+                      style={colBox(columnWidths.notes, 'notes')}
                     >
                       <span className="text-white font-bold flex items-center gap-1">
                         Notes
@@ -19619,7 +19623,7 @@ const RunOfShowPage: React.FC = () => {
                   {visibleColumns.vog !== false && (
                     <div
                       className="px-2 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                      style={{ width: columnWidths.vog || 100, order: colFlex('vog') }}
+                      style={colBox(columnWidths.vog || 100, 'vog')}
                       title="ElevenLabs Voice of God — preview and download WAV"
                     >
                       <span className="text-white font-bold text-sm">VOG</span>
@@ -19632,7 +19636,7 @@ const RunOfShowPage: React.FC = () => {
                   {visibleColumns.assets && (
                     <div 
                       className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                      style={{ width: columnWidths.assets, order: colFlex('assets') }}
+                      style={colBox(columnWidths.assets, 'assets')}
                     >
                       <span className="text-white font-bold flex items-center gap-1">
                         Assets
@@ -19649,7 +19653,7 @@ const RunOfShowPage: React.FC = () => {
                   {visibleColumns.participants && (
                     <div 
                       className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                      style={{ width: columnWidths.participants, order: colFlex('participants') }}
+                      style={colBox(columnWidths.participants, 'participants')}
                     >
                       <span className="text-white font-bold flex items-center gap-1">
                         Participants
@@ -19666,7 +19670,7 @@ const RunOfShowPage: React.FC = () => {
                   {visibleColumns.speakers && (
                     <div 
                       className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                      style={{ width: columnWidths.speakers, order: colFlex('speakers') }}
+                      style={colBox(columnWidths.speakers, 'speakers')}
                     >
                       <span className="text-white font-bold flex items-center gap-1">
                         Speakers
@@ -19683,7 +19687,7 @@ const RunOfShowPage: React.FC = () => {
                   {visibleColumns.public && (
                     <div 
                       className="px-4 py-2 border-r border-slate-600 flex-shrink-0 relative"
-                      style={{ width: columnWidths.public, order: colFlex('public') }}
+                      style={colBox(columnWidths.public, 'public')}
                     >
                       <button
                         type="button"
@@ -19712,7 +19716,7 @@ const RunOfShowPage: React.FC = () => {
                   {visibleColumns.timer && (
                     <div 
                       className="px-4 py-2 border-r border-slate-600 flex-shrink-0 relative flex items-center justify-center"
-                      style={{ width: columnWidths.timer, order: colFlex('timer') }}
+                      style={colBox(columnWidths.timer, 'timer')}
                     >
                       <span className="font-bold text-white text-center flex items-center gap-1" title="Clock page: Countdown, Time of Day, or TOD Only">
                         Counter
@@ -19731,7 +19735,7 @@ const RunOfShowPage: React.FC = () => {
                       <div 
                         key={column.id} 
                         className="px-4 py-2 border-r border-slate-600 flex items-center justify-center relative flex-shrink-0"
-                        style={{ width: customColumnWidths[column.id] || 256, order: colFlex(customColumnOrderKey(column.id)) }}
+                        style={colBox(customColumnWidths[column.id] || 256, customColumnOrderKey(column.id))}
                       >
                         <span className="text-white font-bold">{column.name}</span>
                         <button
@@ -20590,20 +20594,60 @@ const RunOfShowPage: React.FC = () => {
        {showVogModal && editingVogItemId !== null && (
          <VogModal
            open={showVogModal}
+           activeItemId={editingVogItemId}
+           selectedDay={selectedDay}
            segmentName={schedule.find((s) => s.id === editingVogItemId)?.segmentName || ''}
-           cueLabel={String(
-             schedule.find((s) => s.id === editingVogItemId)?.customFields?.cue ||
-               schedule.find((s) => s.id === editingVogItemId)?.customFields?.Cue ||
-               ''
+           cueLabel={resolveScheduleCueLabel(
+             schedule.find((s) => s.id === editingVogItemId),
+             editingVogItemId
            )}
            initialText={schedule.find((s) => s.id === editingVogItemId)?.vogText || ''}
            initialVoiceId={schedule.find((s) => s.id === editingVogItemId)?.vogVoiceId || ''}
            initialVoiceName={schedule.find((s) => s.id === editingVogItemId)?.vogVoiceName || ''}
+           cues={schedule.map((row) => ({
+             id: row.id,
+             day: row.day || 1,
+             cueLabel: resolveScheduleCueLabel(row, row.id),
+             segmentName: String(row.segmentName || ''),
+             vogText: String(row.vogText || ''),
+             vogVoiceId: String(row.vogVoiceId || ''),
+             vogVoiceName: String(row.vogVoiceName || ''),
+           }))}
            readOnly={currentUserRole === 'VIEWER'}
            onClose={() => {
              setShowVogModal(false);
              setEditingVogItemId(null);
              handleModalClosed();
+           }}
+           onSelectCue={(itemId) => {
+             setEditingVogItemId(itemId);
+           }}
+           onApplyVoiceToCues={(itemIds, vogVoiceId, vogVoiceName) => {
+             if (currentUserRole === 'VIEWER' || !itemIds.length) return;
+             const idSet = new Set(itemIds);
+             setSchedule((prev) =>
+               prev.map((row) =>
+                 idSet.has(row.id)
+                   ? {
+                       ...row,
+                       vogVoiceId: vogVoiceId || undefined,
+                       vogVoiceName: vogVoiceName || undefined,
+                     }
+                   : row
+               )
+             );
+             handleUserEditing();
+             logChangeDebounced?.(
+               `vog_voice_bulk_${itemIds.join('_')}`,
+               'FIELD_UPDATE',
+               `Applied VOG voice “${vogVoiceName}” to ${itemIds.length} cues`,
+               {
+                 changeType: 'FIELD_CHANGE',
+                 fieldName: 'vogVoiceId',
+                 newValue: vogVoiceId,
+                 details: { itemIds, vogVoiceName },
+               }
+             );
            }}
            onSave={({ vogText, vogVoiceId, vogVoiceName }) => {
              if (editingVogItemId == null || currentUserRole === 'VIEWER') return;

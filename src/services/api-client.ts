@@ -1168,7 +1168,7 @@ class ApiClient {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Accept: 'audio/wav,audio/*,*/*',
+        Accept: 'audio/mpeg,audio/wav,audio/*,*/*',
         ...authHeaders(),
       },
       body: JSON.stringify(payload),

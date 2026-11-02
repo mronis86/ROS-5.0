@@ -185,6 +185,16 @@ export function normalizeColumnOrder(
       if (notesIdx >= 0) result.splice(notesIdx + 1, 0, key);
       else if (assetsIdx >= 0) result.splice(assetsIdx, 0, key);
       else result.push(key);
+    } else if (key === 'mittiWatch') {
+      const recIdx = result.indexOf('recording');
+      if (recIdx >= 0) result.splice(recIdx + 1, 0, key);
+      else result.push(key);
+    } else if (key === 'avWatch') {
+      const mittiIdx = result.indexOf('mittiWatch');
+      const recIdx = result.indexOf('recording');
+      if (mittiIdx >= 0) result.splice(mittiIdx + 1, 0, key);
+      else if (recIdx >= 0) result.splice(recIdx + 1, 0, key);
+      else result.push(key);
     } else {
       result.push(key);
     }
@@ -198,7 +208,30 @@ export function normalizeColumnOrder(
     }
   }
 
-  return result;
+  let next = result;
+
+  // Integer flex order only — keep Mitti/AV beside Recording (replaces old +0.5/+0.6 hacks).
+  const watches = (['mittiWatch', 'avWatch'] as const).filter((k) => next.includes(k));
+  if (watches.length) {
+    const without = next.filter((k) => k !== 'mittiWatch' && k !== 'avWatch');
+    const recIdx = without.indexOf('recording');
+    without.splice(recIdx >= 0 ? recIdx + 1 : without.length, 0, ...watches);
+    next = without;
+  }
+
+  // Always pin VOG between Notes and Assets. Older local/account saves often appended
+  // it at the end; insert-on-missing alone never moved those.
+  if (next.includes('vog')) {
+    const without = next.filter((k) => k !== 'vog');
+    const notesIdx = without.indexOf('notes');
+    const assetsIdx = without.indexOf('assets');
+    const at =
+      notesIdx >= 0 ? notesIdx + 1 : assetsIdx >= 0 ? assetsIdx : without.length;
+    without.splice(at, 0, 'vog');
+    next = without;
+  }
+
+  return next;
 }
 
 export function columnFlexOrderMap(order: string[]): Record<string, number> {
@@ -207,6 +240,21 @@ export function columnFlexOrderMap(order: string[]): Record<string, number> {
     map[key] = index + 1;
   });
   return map;
+}
+
+/** Fixed-size scroll column box — prevents min-width:auto content from stretching cells and tearing L↔R alignment. */
+export function scrollColumnBoxStyle(
+  width: number,
+  order: number
+): { width: number; minWidth: number; maxWidth: number; flex: string; order: number } {
+  const w = Math.max(0, Number(width) || 0);
+  return {
+    width: w,
+    minWidth: w,
+    maxWidth: w,
+    flex: `0 0 ${w}px`,
+    order,
+  };
 }
 
 export function moveColumnInOrder(order: string[], fromIndex: number, toIndex: number): string[] {

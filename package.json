@@ -27,6 +27,7 @@
     "googleapis": "^144.0.0",
     "helmet": "^8.1.0",
     "jose": "^6.2.3",
+    "jszip": "^3.10.2",
     "lucide-react": "^0.263.1",
     "mammoth": "^1.6.0",
     "moment": "^2.29.4",
