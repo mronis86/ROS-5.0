@@ -131,7 +131,8 @@ const OSCModalSimplified: React.FC<OSCModalSimplifiedProps> = ({
               {/* Offline Show — LAN show laptop */}
               <div className="text-center mb-4">
                 <a
-                  href={getAppDownloadUrl('powerpoint-bridge-v2.zip')}
+                  href={getAppDownloadUrl('powerpoint-bridge.zip')}
+                  download="powerpoint-bridge-v2.zip"
                   className="block bg-orange-600 hover:bg-orange-500 text-white text-sm py-3 px-6 rounded text-center transition-colors font-semibold"
                 >
                   PowerPoint Bridge V2 (Windows)

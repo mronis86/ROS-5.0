@@ -81,7 +81,7 @@ const DOWNLOAD_TOOLS = [
     title: 'PowerPoint Bridge V2',
     blurb: 'Use PowerPoint with Run of Show — timers from a live deck, or launch a cue’s .pptx',
     meta: 'Windows · unzip and run START.bat',
-    href: getAppDownloadUrl('powerpoint-bridge-v2.zip'),
+    href: getAppDownloadUrl('powerpoint-bridge.zip'),
     filename: 'powerpoint-bridge-v2.zip',
     details: [
       'V2 Open/Loaded thrash fix · Show with Timers or ROS PPT Launcher',

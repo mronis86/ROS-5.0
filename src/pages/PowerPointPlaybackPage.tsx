@@ -780,7 +780,8 @@ const PowerPointPlaybackPage: React.FC = () => {
             </button>
           ) : null}
           <a
-            href={getAppDownloadUrl('powerpoint-bridge-v2.zip')}
+            href={getAppDownloadUrl('powerpoint-bridge.zip')}
+            download="powerpoint-bridge-v2.zip"
             className="rounded bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-500"
           >
             Download Bridge V2

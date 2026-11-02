@@ -87,18 +87,28 @@ const s3 = new S3Client({
 });
 
 const body = fs.readFileSync(localPath);
-s3.send(
-  new PutObjectCommand({
-    Bucket: creds.bucketName,
-    Key: item.key,
-    Body: body,
-    ContentType: item.contentType,
-  })
+const keys = new Set([item.key]);
+// Keep legacy powerpoint-bridge.zip key in sync with V2 content.
+if (item.key.includes('powerpoint-bridge')) {
+  keys.add('downloads/powerpoint-bridge-v2.zip');
+  keys.add('downloads/powerpoint-bridge.zip');
+}
+
+Promise.all(
+  [...keys].map((key) =>
+    s3.send(
+      new PutObjectCommand({
+        Bucket: creds.bucketName,
+        Key: key,
+        Body: body,
+        ContentType: item.contentType,
+      })
+    ).then(() => console.log(`Uploaded to ros-downloads/${key}`))
+  )
 )
   .then(() => {
     const mb = (body.length / (1024 * 1024)).toFixed(2);
-    console.log(`Uploaded ${fileName} (${mb} MB) to ros-downloads/${item.key}`);
-    console.log('Set DOWNLOADS_BUCKET_* on ROS-5.0 (deploy skipped)');
+    console.log(`Done (${mb} MB). Set DOWNLOADS_BUCKET_* on ROS-5.0 (deploy skipped)`);
   })
   .catch((err) => {
     console.error('Upload failed:', err.message || err);

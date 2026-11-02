@@ -24,4 +24,9 @@ public/ROS-OSC-Control-portable.zip
 public/ros-civics-vmix-bridge.zip
 public/ros-vmix-datasource-bridge.zip
 public/powerpoint-bridge.zip
+public/powerpoint-bridge-v2.zip
 public/ros-hyperdeck-ingest.zip
+powerpoint-bridge/dist-openfix*/
+powerpoint-bridge/dist-syncfix/
+powerpoint-bridge/dist-cuefix/
+powerpoint-bridge/dist-daypick/
