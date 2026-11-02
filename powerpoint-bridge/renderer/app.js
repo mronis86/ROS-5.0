@@ -165,6 +165,13 @@ function eventDateMs(ev) {
 
 function eventNumberOfDays(ev) {
   const sd = ev?.schedule_data || ev?.scheduleData || {};
+  if (typeof sd === 'string') {
+    try {
+      return eventNumberOfDays({ ...ev, schedule_data: JSON.parse(sd) });
+    } catch {
+      /* ignore */
+    }
+  }
   const n = Number(ev?.numberOfDays ?? ev?.number_of_days ?? sd.numberOfDays ?? sd.number_of_days);
   return Math.max(1, Math.floor(Number.isFinite(n) ? n : 1));
 }
@@ -255,16 +262,10 @@ function fillDaySelect() {
   const ev = selectedEvent();
   const days = ev ? eventNumberOfDays(ev) : 1;
   if (!els.dayField || !els.daySelect) return;
-  els.dayField.hidden = days <= 1;
-  if (days <= 1) {
-    selectedDay = 1;
-    els.daySelect.innerHTML = '<option value="1">Day 1</option>';
-    if (els.dayHint) els.dayHint.textContent = '';
-    return;
-  }
+  els.dayField.hidden = false;
   const eventId = ev?.id != null ? String(ev.id) : '';
   const stored = eventId ? Number(selectedDaysByEvent[eventId]) : NaN;
-  const todayDay = eventCalendarDay(ev);
+  const todayDay = ev ? eventCalendarDay(ev) : null;
   if (Number.isFinite(stored) && stored >= 1 && stored <= days) selectedDay = stored;
   else if (todayDay) selectedDay = todayDay;
   else if (selectedDay < 1 || selectedDay > days) selectedDay = 1;
@@ -277,12 +278,19 @@ function fillDaySelect() {
     els.daySelect.appendChild(opt);
   }
   if (eventId) selectedDaysByEvent[eventId] = selectedDay;
-  if (els.dayHint) {
-    els.dayHint.textContent =
-      todayDay && todayDay !== selectedDay
-        ? `Today is Day ${todayDay}. Follow only opens Day ${selectedDay} cues.`
-        : `Follow only opens Day ${selectedDay} cues.`;
+  if (!els.dayHint) return;
+  if (!ev) {
+    els.dayHint.textContent = 'Load events and pick a show. Multi-day events list every day here.';
+    return;
   }
+  if (days <= 1) {
+    els.dayHint.textContent = 'This event is 1 day.';
+    return;
+  }
+  els.dayHint.textContent =
+    todayDay && todayDay !== selectedDay
+      ? `Today is Day ${todayDay}. Follow only opens Day ${selectedDay} cues.`
+      : `This event is ${days} days. Follow only opens Day ${selectedDay} cues.`;
 }
 
 function fillEvents(events, selectedId) {
@@ -376,6 +384,7 @@ async function load() {
   }
   applyStatus(await api.getStatus());
   applyLiveCapture(await api.getLiveCapture());
+  fillDaySelect();
 }
 
 document.getElementById('btn-save').onclick = async () => {

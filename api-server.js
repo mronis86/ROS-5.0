@@ -3109,6 +3109,8 @@ function normalizeCalendarEvent(row) {
   } else if (sd == null || typeof sd !== 'object') {
     row.schedule_data = row.schedule_data || {};
   }
+  const days = Number(row.schedule_data?.numberOfDays ?? row.schedule_data?.number_of_days ?? row.numberOfDays);
+  row.numberOfDays = Math.max(1, Math.floor(Number.isFinite(days) ? days : 1));
   return row;
 }
 
