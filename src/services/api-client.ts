@@ -1130,6 +1130,89 @@ class ApiClient {
     );
   }
 
+  async getVogStatus() {
+    return this.request<{ configured: boolean; provider?: string; apiBase?: string }>('/api/vog/status');
+  }
+
+  async listVogVoices() {
+    return this.request<{
+      configured: boolean;
+      voices: Array<{
+        voiceId: string;
+        name: string;
+        category?: string | null;
+        description?: string | null;
+        previewUrl?: string | null;
+        labels?: Record<string, string>;
+      }>;
+      hasMore?: boolean;
+      nextPageToken?: string | null;
+    }>('/api/vog/voices');
+  }
+
+  private async vogAudioRequest(
+    path: string,
+    payload: {
+      text: string;
+      voiceId: string;
+      modelId?: string;
+      outputFormat?: string;
+      voiceSettings?: Record<string, unknown>;
+      fileName?: string;
+    }
+  ): Promise<Blob> {
+    if (Date.now() < this.authBackoffUntil) {
+      throw new Error('Not authenticated');
+    }
+    const response = await fetch(`${API_BASE_URL}${path}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'audio/wav,audio/*,*/*',
+        ...authHeaders(),
+      },
+      body: JSON.stringify(payload),
+    });
+    if (response.status === 401) {
+      clearApiAccessTokenOnAuthFailure();
+      this.authBackoffUntil = Date.now() + 30_000;
+      throw new Error('Not authenticated');
+    }
+    if (!response.ok) {
+      let message = `VOG request failed (${response.status})`;
+      try {
+        const err = await response.json();
+        if (err?.error) message = String(err.error);
+      } catch {
+        /* ignore */
+      }
+      throw new Error(message);
+    }
+    this.authBackoffUntil = 0;
+    return response.blob();
+  }
+
+  async previewVogSpeech(payload: {
+    text: string;
+    voiceId: string;
+    modelId?: string;
+    outputFormat?: string;
+    voiceSettings?: Record<string, unknown>;
+  }) {
+    return this.vogAudioRequest('/api/vog/preview', payload);
+  }
+
+  async downloadVogSpeech(payload: {
+    text: string;
+    voiceId: string;
+    modelId?: string;
+    outputFormat?: string;
+    voiceSettings?: Record<string, unknown>;
+    fileName?: string;
+  }) {
+    return this.vogAudioRequest('/api/vog/download', payload);
+  }
+
   async convertPdfCueFileToPptx(fileId: string, eventId?: string, force = false) {
     const result = await this.request<{
       file: EventCueFile;

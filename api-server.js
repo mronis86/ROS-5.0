@@ -52,6 +52,7 @@ const {
 const { installOpsAlerts, createOpsErrorHandler } = require('./lib/ops-alerts');
 const { registerUserReportRoutes } = require('./lib/user-report');
 const { registerAppSettingsRoutes } = require('./lib/app-settings');
+const { registerElevenLabsVogRoutes } = require('./lib/elevenlabs-vog');
 const {
   registerEventCueFileRoutes,
   startEventCueFileCleanup,
@@ -1038,6 +1039,7 @@ app.use(createApiAuthMiddleware(pool, apiAuthConfig));
 registerAuthRoutes(app, pool, { requireAdminAuth });
 registerUserReportRoutes(app, pool);
 registerAppSettingsRoutes(app, pool, { requireAdminAccess });
+registerElevenLabsVogRoutes(app, { requireAdminAccess });
 registerEventCueFileRoutes(app, pool);
 registerAppDownloadRoutes(app);
 registerPowerpointRoutes(app, {

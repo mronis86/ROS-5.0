@@ -155,6 +155,7 @@ Neon is a **serverless PostgreSQL** database. The Railway API uses it as the onl
 ### IT Notes
 
 - **Secrets:** `NEON_DATABASE_URL` contains credentials; store only in env vars (Railway, local `.env`) and **never** in the repo.
+- **ElevenLabs VOG (optional):** `ELEVENLABS_API_KEY` on the Railway API service only. ROS proxies voice list / TTS; the key is never returned to Admin or the browser. See `docs/env-templates/elevenlabs-vog.env.example`.
 - **Branching:** Neon supports branches; the app typically uses one branch (e.g. main) for production. If you use multiple branches, ensure the API’s `NEON_DATABASE_URL` points to the intended branch.
 - **Availability:** Database availability directly affects the API; monitor Neon dashboard and the API `/health` endpoint.
 

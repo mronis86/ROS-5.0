@@ -67,6 +67,8 @@ export interface ScheduleRowProps {
   setEditingVoItemId?: Function;
   setShowVoModal?: Function;
   setTempVoCues?: Function;
+  setEditingVogItemId?: Function;
+  setShowVogModal?: Function;
   setViewingAssetsItem?: Function;
   setShowViewAssetsModal?: Function;
   setViewingSpeakersItem?: Function;
@@ -170,6 +172,8 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
   setEditingVoItemId,
   setShowVoModal,
   setTempVoCues,
+  setEditingVogItemId,
+  setShowVogModal,
   setViewingAssetsItem,
   setShowViewAssetsModal,
   setViewingSpeakersItem,
@@ -1524,6 +1528,37 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
           </div>
         </div>
       )}
+      {/* VOG column (ElevenLabs text-to-speech) */}
+      {visibleColumns.vog !== false && (
+        <div
+          className="px-2 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
+          style={{ width: columnWidths.vog || 100, order: flexOrder('vog') }}
+        >
+          <button
+            type="button"
+            className={`rounded-md px-2 py-1 text-xs font-semibold border ${
+              String(item.vogText || '').trim()
+                ? 'bg-violet-800/80 border-violet-500 text-white'
+                : 'bg-slate-700 border-slate-500 text-slate-200'
+            }`}
+            title={
+              String(item.vogText || '').trim()
+                ? `VOG script saved${item.vogVoiceName ? ` · ${item.vogVoiceName}` : ''}`
+                : 'Open VOG preview / download'
+            }
+            onClick={(e) => {
+              e.stopPropagation();
+              if (alertIfLocked(e)) return;
+              claimRowLock();
+              handleModalEditing?.();
+              setEditingVogItemId?.(item.id);
+              setShowVogModal?.(true);
+            }}
+          >
+            {String(item.vogText || '').trim() ? 'VOG ✓' : 'VOG'}
+          </button>
+        </div>
+      )}
       {/* Assets column (after Notes) */}
       {visibleColumns.assets && (
         <div 
@@ -1863,7 +1898,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
   const fieldsToCheck = [
     'programType', 'shotType', 'segmentName', 'segmentSpellingOk', 'segmentSpellingAskRos',
     'durationHours', 'durationMinutes', 'durationSeconds',
-    'notes', 'assets', 'speakers', 'speakersText',
+    'notes', 'vogText', 'vogVoiceId', 'vogVoiceName', 'assets', 'speakers', 'speakersText',
     'hasPPT', 'hasQA', 'needsRecording', 'recordingSource', 'otherRoom', 'isPublic',
     'checkboxStamps', 'mittiWatch', 'avWatch',
     'isTimedMarker', 'isIndented', 'markerTimeMode', 'markerOffsetSeconds', 'markerAbsoluteSeconds',
@@ -1918,6 +1953,8 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
   if (prevProps.persistScheduleCheckboxes !== nextProps.persistScheduleCheckboxes) return false;
   if (prevProps.setEditingNotesItem !== nextProps.setEditingNotesItem) return false;
   if (prevProps.setShowNotesModal !== nextProps.setShowNotesModal) return false;
+  if (prevProps.setEditingVogItemId !== nextProps.setEditingVogItemId) return false;
+  if (prevProps.setShowVogModal !== nextProps.setShowVogModal) return false;
   if (prevProps.setViewingAssetsItem !== nextProps.setViewingAssetsItem) return false;
   if (prevProps.setShowViewAssetsModal !== nextProps.setShowViewAssetsModal) return false;
   if (prevProps.setEditingAssetsItem !== nextProps.setEditingAssetsItem) return false;

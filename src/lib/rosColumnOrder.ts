@@ -10,6 +10,7 @@ export const BUILTIN_SCROLL_COLUMNS = [
   'mittiWatch',
   'avWatch',
   'notes',
+  'vog',
   'assets',
   'speakers',
   'public',
@@ -29,6 +30,7 @@ export const BUILTIN_COLUMN_LABELS: Record<BuiltinScrollColumn, string> = {
   mittiWatch: 'Mitti',
   avWatch: 'AV',
   notes: 'Notes',
+  vog: 'VOG',
   assets: 'Assets',
   speakers: 'Speakers',
   public: 'Public',
@@ -52,6 +54,7 @@ export type RosVisibleColumns = {
   mittiWatch: boolean;
   avWatch: boolean;
   notes: boolean;
+  vog: boolean;
   assets: boolean;
   participants: boolean;
   speakers: boolean;
@@ -71,6 +74,7 @@ export const DEFAULT_ROS_VISIBLE_COLUMNS: RosVisibleColumns = {
   mittiWatch: true,
   avWatch: true,
   notes: true,
+  vog: true,
   assets: true,
   participants: false,
   speakers: true,
@@ -173,10 +177,18 @@ export function normalizeColumnOrder(
   }
 
   for (const key of BUILTIN_SCROLL_COLUMNS) {
-    if (!seen.has(key)) {
+    if (seen.has(key)) continue;
+    // Keep VOG beside Notes / Assets even when older saved orders lack it.
+    if (key === 'vog') {
+      const notesIdx = result.indexOf('notes');
+      const assetsIdx = result.indexOf('assets');
+      if (notesIdx >= 0) result.splice(notesIdx + 1, 0, key);
+      else if (assetsIdx >= 0) result.splice(assetsIdx, 0, key);
+      else result.push(key);
+    } else {
       result.push(key);
-      seen.add(key);
     }
+    seen.add(key);
   }
 
   for (const key of customKeys) {

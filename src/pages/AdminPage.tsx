@@ -285,6 +285,7 @@ const ADMIN_NAV: { id: string; label: string }[] = [
   { id: 'presence', label: 'Events' },
   { id: 'access', label: 'Access' },
   { id: 'tokens', label: 'Tokens' },
+  { id: 'vog', label: 'VOG' },
   { id: 'domains', label: 'Domains' },
   { id: 'preflight', label: 'Pre-Flight' },
   { id: 'backup', label: 'Backup' },
@@ -495,6 +496,17 @@ export default function AdminPage() {
   >([]);
   const [integrationTokensLoading, setIntegrationTokensLoading] = useState(false);
   const [integrationTokensError, setIntegrationTokensError] = useState<string | null>(null);
+  const [vogStatus, setVogStatus] = useState<{
+    configured?: boolean;
+    ok?: boolean;
+    tier?: string | null;
+    characterCount?: number | null;
+    characterLimit?: number | null;
+    error?: string | null;
+    apiBase?: string;
+  } | null>(null);
+  const [vogStatusLoading, setVogStatusLoading] = useState(false);
+  const [vogStatusError, setVogStatusError] = useState<string | null>(null);
   const [newTokenName, setNewTokenName] = useState('');
   const [newTokenEventId, setNewTokenEventId] = useState('');
   const [newTokenScopes, setNewTokenScopes] = useState<string[]>(['read', 'control']);
@@ -2017,6 +2029,32 @@ export default function AdminPage() {
       ? buildApprovalMailtoUrl(accessEmailDraft.email, approvalEmailDraftContent)
       : '';
 
+  const fetchVogStatus = useCallback(async () => {
+    setVogStatusLoading(true);
+    setVogStatusError(null);
+    try {
+      const res = await adminFetch('/api/admin/vog/status');
+      if (res.status === 401) {
+        setVogStatusError('Unauthorized');
+        setVogStatus(null);
+        return;
+      }
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setVogStatusError((err as { error?: string }).error || `HTTP ${res.status}`);
+        setVogStatus(null);
+        return;
+      }
+      const data = (await res.json()) as typeof vogStatus;
+      setVogStatus(data);
+    } catch (e) {
+      setVogStatusError(e instanceof Error ? e.message : 'Request failed');
+      setVogStatus(null);
+    } finally {
+      setVogStatusLoading(false);
+    }
+  }, []);
+
   const fetchIntegrationTokens = useCallback(async () => {
     setIntegrationTokensLoading(true);
     setIntegrationTokensError(null);
@@ -2204,6 +2242,7 @@ export default function AdminPage() {
     fetchApprovedDomains();
     fetchPreflightTemplate();
     fetchIntegrationTokens();
+    fetchVogStatus();
     fetchAccessRequests();
     fetchPlatformMaintenance();
     fetchEventLifecycle();
@@ -2212,6 +2251,7 @@ export default function AdminPage() {
     fetchApprovedDomains,
     fetchPreflightTemplate,
     fetchIntegrationTokens,
+    fetchVogStatus,
     fetchAccessRequests,
     fetchPlatformMaintenance,
     fetchEventLifecycle,
@@ -3821,6 +3861,73 @@ export default function AdminPage() {
               </p>
             </div>
           )}
+        </section>
+
+        <section id="vog" className="scroll-mt-16 bg-slate-800/80 rounded-xl border border-slate-700/80 p-6 backdrop-blur-sm">
+          <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
+            <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+              <Key className="w-5 h-5 text-slate-400" />
+              ElevenLabs VOG
+            </h2>
+            <button
+              type="button"
+              onClick={fetchVogStatus}
+              disabled={vogStatusLoading}
+              className="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 disabled:opacity-50 text-white text-sm rounded-lg transition-colors"
+            >
+              {vogStatusLoading ? 'Checking…' : 'Test connection'}
+            </button>
+          </div>
+          <p className="text-slate-500 text-sm mb-4">
+            Voice-of-God text-to-speech. Set <code className="bg-slate-900 px-1 rounded text-slate-300">ELEVENLABS_API_KEY</code> on
+            the Railway API service only — the key never appears in the browser or Admin UI.
+          </p>
+          {vogStatusError && (
+            <div className="mb-4 px-4 py-2 rounded-lg bg-amber-900/30 border border-amber-700/50 text-amber-200 text-sm">
+              {vogStatusError}
+            </div>
+          )}
+          <div className="rounded-lg border border-slate-600 bg-slate-900/60 px-4 py-3 text-sm space-y-1">
+            <p className="text-slate-200">
+              Status:{' '}
+              <span
+                className={
+                  vogStatus?.ok
+                    ? 'text-emerald-300 font-semibold'
+                    : vogStatus?.configured
+                      ? 'text-amber-300 font-semibold'
+                      : 'text-slate-400 font-semibold'
+                }
+              >
+                {vogStatusLoading
+                  ? 'Checking…'
+                  : vogStatus?.ok
+                    ? 'Connected'
+                    : vogStatus?.configured
+                      ? 'Key set, connection failed'
+                      : 'Not configured'}
+              </span>
+            </p>
+            {vogStatus?.tier && (
+              <p className="text-slate-400">
+                Tier: <span className="text-slate-200">{vogStatus.tier}</span>
+              </p>
+            )}
+            {vogStatus?.characterLimit != null && (
+              <p className="text-slate-400">
+                Characters:{' '}
+                <span className="text-slate-200">
+                  {vogStatus.characterCount ?? 0} / {vogStatus.characterLimit}
+                </span>
+              </p>
+            )}
+            {vogStatus?.error && !vogStatus.ok && (
+              <p className="text-amber-200/90">{vogStatus.error}</p>
+            )}
+            {vogStatus?.apiBase && (
+              <p className="text-slate-500 text-xs font-mono">{vogStatus.apiBase}</p>
+            )}
+          </div>
         </section>
 
         <section id="tokens" className="scroll-mt-16 bg-slate-800/80 rounded-xl border border-slate-700/80 p-6 backdrop-blur-sm">

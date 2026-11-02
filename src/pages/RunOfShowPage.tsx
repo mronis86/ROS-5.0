@@ -127,6 +127,7 @@ import OSCModalSimple from '../components/OSCModalSimple';
 import OSCModalSimplified from '../components/OSCModalSimplified';
 import DisplayModal, { type DisplayOpenMode } from '../components/DisplayModal';
 import PinNotesColumnModal from '../components/PinNotesColumnModal';
+import VogModal from '../components/VogModal';
 import ComplaintLineModal from '../components/ComplaintLineModal';
 import ComplaintLineFab from '../components/ComplaintLineFab';
 import PreFlightChecklistModal from '../components/PreFlightChecklistModal';
@@ -380,6 +381,10 @@ interface ScheduleItem {
   timerDisplay?: 'countdown' | 'countUp' | 'timeOfDay' | 'todOnly';
   /** Optional VO / BGM chips in Notes (prototype) — metadata only, not timeline rows */
   voCues?: VoCue[];
+  /** ElevenLabs VOG script + last selected voice (preview/download only; audio not stored on ROS). */
+  vogText?: string;
+  vogVoiceId?: string;
+  vogVoiceName?: string;
   /** Legacy HH:MM restart clock stored on a Show Break row. */
   breakStartTime?: string | null;
   /** Pinned HH:MM on the first cue after a Show Break. */
@@ -1563,6 +1568,8 @@ const RunOfShowPage: React.FC = () => {
   const [editingNotesItem, setEditingNotesItem] = useState<number | null>(null);
   const [showVoModal, setShowVoModal] = useState(false);
   const [editingVoItemId, setEditingVoItemId] = useState<number | null>(null);
+  const [showVogModal, setShowVogModal] = useState(false);
+  const [editingVogItemId, setEditingVogItemId] = useState<number | null>(null);
   const [tempVoCues, setTempVoCues] = useState<VoCue[]>([]);
   const [voDraftTime, setVoDraftTime] = useState('08:45');
   const [voDraftLabel, setVoDraftLabel] = useState('');
@@ -2341,6 +2348,7 @@ const RunOfShowPage: React.FC = () => {
     pptQA: 192, // w-48 = 192px
     recording: 100,
     notes: 384, // w-96 = 384px
+    vog: 100,
     assets: 192, // w-48 = 192px
     participants: 256, // w-64 = 256px
     speakers: 384, // w-96 = 384px (same as notes)
@@ -3686,6 +3694,8 @@ const RunOfShowPage: React.FC = () => {
       activeModalRow = editingSpeakersItem;
     } else if (showParticipantsModal && editingParticipantsItem != null && editingParticipantsItem > 0) {
       activeModalRow = editingParticipantsItem;
+    } else if (showVogModal && editingVogItemId != null && editingVogItemId > 0) {
+      activeModalRow = editingVogItemId;
     } else if (showVoModal && editingVoItemId != null && editingVoItemId > 0) {
       activeModalRow = editingVoItemId;
     }
@@ -3697,9 +3707,11 @@ const RunOfShowPage: React.FC = () => {
           ? ['notes', 'voCues']
           : showVoModal
             ? ['voCues', 'notes']
-            : showAssetsModal
-              ? ['assets']
-              : ['speakers', 'speakersText'];
+            : showVogModal
+              ? ['vogText', 'vogVoiceId', 'vogVoiceName']
+              : showAssetsModal
+                ? ['assets']
+                : ['speakers', 'speakersText'];
       openFieldEditorRef.current = { rowId: activeModalRow, fields };
       claimRowEditLock(activeModalRow);
       return;
@@ -3723,6 +3735,8 @@ const RunOfShowPage: React.FC = () => {
     editingParticipantsItem,
     showVoModal,
     editingVoItemId,
+    showVogModal,
+    editingVogItemId,
     claimRowEditLock,
     releaseRowEditLock,
   ]);
@@ -4263,6 +4277,7 @@ const RunOfShowPage: React.FC = () => {
       showSpeakersModal ||
       showNotesModal ||
       showVoModal ||
+      showVogModal ||
       showAssetsModal ||
       showParticipantsModal ||
       showBackupModal ||
@@ -4296,7 +4311,7 @@ const RunOfShowPage: React.FC = () => {
         startCountdownTimer();
       }
     }
-  }, [isUserEditing, showSpeakersModal, showNotesModal, showVoModal, showAssetsModal, showParticipantsModal, showBackupModal, showExcelImportModal, showAgendaImportModal, showCSVImportModal, showGoogleSheetExportModal, showImportEventModal, showSpeakerManagerModal, showAddModal, showBreakoutRoomModal, showOtherRoomModal, showDelayBlockModal, showShowBreakModal, timedMarkerModal, showCustomColumnModal, showPublicBulkModal, event?.id, startCountdownTimer, scheduleSyncState]);
+  }, [isUserEditing, showSpeakersModal, showNotesModal, showVoModal, showVogModal, showAssetsModal, showParticipantsModal, showBackupModal, showExcelImportModal, showAgendaImportModal, showCSVImportModal, showGoogleSheetExportModal, showImportEventModal, showSpeakerManagerModal, showAddModal, showBreakoutRoomModal, showOtherRoomModal, showDelayBlockModal, showShowBreakModal, timedMarkerModal, showCustomColumnModal, showPublicBulkModal, event?.id, startCountdownTimer, scheduleSyncState]);
   
   
   // Load user role from navigation state or localStorage
@@ -6028,6 +6043,7 @@ const RunOfShowPage: React.FC = () => {
       showSpeakersModal ||
       showNotesModal ||
       showVoModal ||
+      showVogModal ||
       showAssetsModal ||
       showParticipantsModal ||
       showBackupModal ||
@@ -18284,6 +18300,19 @@ const RunOfShowPage: React.FC = () => {
                           />
                         </div>
                       )}
+                      {visibleColumns.vog !== false && (
+                        <div
+                          className="px-2 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
+                          style={{ width: columnWidths.vog || 100, order: colFlex('vog') }}
+                          title="ElevenLabs Voice of God — preview and download WAV"
+                        >
+                          <span className="text-white font-bold text-sm">VOG</span>
+                          <div
+                            className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 opacity-0 hover:opacity-100 transition-opacity"
+                            onMouseDown={(e) => handleResizeStart(e, 'vog')}
+                          />
+                        </div>
+                      )}
                       {visibleColumns.assets && (
                         <div 
                           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
@@ -19587,6 +19616,19 @@ const RunOfShowPage: React.FC = () => {
                       />
                     </div>
                   )}
+                  {visibleColumns.vog !== false && (
+                    <div
+                      className="px-2 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
+                      style={{ width: columnWidths.vog || 100, order: colFlex('vog') }}
+                      title="ElevenLabs Voice of God — preview and download WAV"
+                    >
+                      <span className="text-white font-bold text-sm">VOG</span>
+                      <div
+                        className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 opacity-0 hover:opacity-100 transition-opacity"
+                        onMouseDown={(e) => handleResizeStart(e, 'vog')}
+                      />
+                    </div>
+                  )}
                   {visibleColumns.assets && (
                     <div 
                       className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
@@ -19787,6 +19829,8 @@ const RunOfShowPage: React.FC = () => {
                         setEditingVoItemId={setEditingVoItemId}
                         setShowVoModal={setShowVoModal}
                         setTempVoCues={setTempVoCues}
+                        setEditingVogItemId={setEditingVogItemId}
+                        setShowVogModal={setShowVogModal}
                         setViewingAssetsItem={setViewingAssetsItem}
                         setShowViewAssetsModal={setShowViewAssetsModal}
                         setViewingSpeakersItem={setViewingSpeakersItem}
@@ -20541,6 +20585,55 @@ const RunOfShowPage: React.FC = () => {
              </div>
            </div>
          </div>
+       )}
+
+       {showVogModal && editingVogItemId !== null && (
+         <VogModal
+           open={showVogModal}
+           segmentName={schedule.find((s) => s.id === editingVogItemId)?.segmentName || ''}
+           cueLabel={String(
+             schedule.find((s) => s.id === editingVogItemId)?.customFields?.cue ||
+               schedule.find((s) => s.id === editingVogItemId)?.customFields?.Cue ||
+               ''
+           )}
+           initialText={schedule.find((s) => s.id === editingVogItemId)?.vogText || ''}
+           initialVoiceId={schedule.find((s) => s.id === editingVogItemId)?.vogVoiceId || ''}
+           initialVoiceName={schedule.find((s) => s.id === editingVogItemId)?.vogVoiceName || ''}
+           readOnly={currentUserRole === 'VIEWER'}
+           onClose={() => {
+             setShowVogModal(false);
+             setEditingVogItemId(null);
+             handleModalClosed();
+           }}
+           onSave={({ vogText, vogVoiceId, vogVoiceName }) => {
+             if (editingVogItemId == null || currentUserRole === 'VIEWER') return;
+             const itemId = editingVogItemId;
+             setSchedule((prev) =>
+               prev.map((row) =>
+                 row.id === itemId
+                   ? {
+                       ...row,
+                       vogText: vogText || undefined,
+                       vogVoiceId: vogVoiceId || undefined,
+                       vogVoiceName: vogVoiceName || undefined,
+                     }
+                   : row
+               )
+             );
+             handleUserEditing();
+             logChangeDebounced?.(
+               `vog_${itemId}`,
+               'FIELD_UPDATE',
+               `Updated VOG script on cue ${itemId}`,
+               {
+                 changeType: 'FIELD_CHANGE',
+                 itemId,
+                 fieldName: 'vogText',
+                 newValue: vogText.slice(0, 120),
+               }
+             );
+           }}
+         />
        )}
 
        {/* VO / BGM chips editor (prototype) */}
@@ -22619,6 +22712,7 @@ const RunOfShowPage: React.FC = () => {
                       pptQA: false,
                       recording: false,
                       notes: false,
+                      vog: false,
                       assets: false,
                       participants: false,
                       speakers: false,
