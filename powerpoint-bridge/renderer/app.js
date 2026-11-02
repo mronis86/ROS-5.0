@@ -87,12 +87,12 @@ function applyModeUi() {
   if (els.cacheCard) els.cacheCard.hidden = !playback;
   if (els.modeHint) {
     els.modeHint.textContent = playback
-      ? 'ROS PPT Launcher: pick a sync folder, then Sync decks. That downloads each deck and its slide images into the folder. Follow ROS opens the matching file — it does not export slides from live PowerPoint. Do not run both modes on this PC for the same event.'
+      ? 'ROS PPT Launcher: pick a sync folder, then Sync decks. Sync downloads each deck and pulls or captures slide images (PowerPoint may open briefly). Follow ROS opens the matching file. Do not run both modes on this PC for the same event.'
       : 'PowerPoint Show with Timers: capture stills and fire cues when a slide is live. Do not run both modes on this PC for the same event.';
   }
   if (els.pptHint) {
     els.pptHint.textContent = playback
-      ? 'If another deck is already open, Follow ROS cues closes it and opens the matching synced file. Slide images come from the sync folder, not a live PowerPoint export.'
+      ? 'If another deck is already open, Follow ROS cues closes it and opens the matching synced file. Run Sync decks after connecting so slide images are ready before follow.'
       : 'Open the deck in PowerPoint on this PC, then capture stills. Start follow before Slideshow so live slides fire the mapped cues.';
   }
 }
@@ -147,12 +147,78 @@ function renderCache(rows) {
     .join('');
 }
 
-function toast(msg) {
+function toast(msg, ms = 2800) {
   els.toast.hidden = false;
   els.toast.textContent = msg;
-  setTimeout(() => {
+  clearTimeout(toast._timer);
+  toast._timer = setTimeout(() => {
     els.toast.hidden = true;
-  }, 2800);
+  }, Math.max(1200, Number(ms) || 2800));
+}
+
+function confirmSyncDecks(reason) {
+  const lead =
+    reason === 'event'
+      ? 'Event selected. Sync PowerPoint decks and slide images now?\n\n'
+      : 'Sync this event’s PowerPoint decks now?\n\n';
+  return window.confirm(
+    lead +
+      '• Downloads / updates decks in the sync folder\n' +
+      '• Downloads slide images from ROS when available\n' +
+      '• Opens each missing deck briefly in PowerPoint to capture slide images\n\n' +
+      'You’ll get a confirmation when sync finishes.'
+  );
+}
+
+async function runSyncDecks({ reason } = {}) {
+  if (!els.eventSelect?.value?.trim()) {
+    els.stError.textContent = 'Pick an event first.';
+    return false;
+  }
+  if (!String(els.syncFolder?.value || '').trim()) {
+    els.stError.textContent = 'Pick a sync folder first.';
+    return false;
+  }
+  if (!confirmSyncDecks(reason)) return false;
+  await api.saveConfig(formConfig());
+  els.stError.textContent = 'Syncing decks and slide images…';
+  if (els.btnSync) els.btnSync.disabled = true;
+  try {
+    const result = await api.syncPlayback(formConfig());
+    const rows = Array.isArray(result) ? result : Array.isArray(result?.rows) ? result.rows : [];
+    window.__rosCacheRows = rows;
+    renderCache(rows);
+    const status = (await api.getStatus()) || window.__rosLastStatus || {};
+    const deckOk =
+      Number(result?.deckOk) ||
+      rows.filter((r) => r.state === 'ok' || r.state === 'replaced').length ||
+      status.cacheOk ||
+      0;
+    const deckTotal = Number(result?.deckTotal) || rows.length || status.cacheTotal || deckOk;
+    const slides = Number(result?.previewSlides ?? status.previewSlides ?? 0);
+    const missing = Number(result?.previewMissing ?? status.previewMissing ?? 0);
+    const captured = Number(result?.previewCaptured ?? status.previewCaptured ?? 0);
+    const summary =
+      result?.message ||
+      [
+        `Synced ${deckOk}/${deckTotal} decks`,
+        slides > 0 ? `${slides} slide images` : null,
+        captured > 0 ? `captured ${captured}` : null,
+        missing > 0 ? `${missing} still need images` : null,
+      ]
+        .filter(Boolean)
+        .join(' · ');
+    toast(`Sync complete · ${summary}`, 7000);
+    els.stError.textContent = missing > 0 ? `Sync finished with gaps: ${summary}` : '';
+    if (els.stAction) els.stAction.textContent = summary;
+    return true;
+  } catch (err) {
+    els.stError.textContent = err.message || String(err);
+    toast('Sync failed', 4000);
+    return false;
+  } finally {
+    if (els.btnSync) els.btnSync.disabled = false;
+  }
 }
 
 function eventDateMs(ev) {
@@ -329,6 +395,7 @@ function setEventFilter(next) {
 
 function applyStatus(status) {
   if (!status) return;
+  window.__rosLastStatus = status;
   els.runPill.textContent = status.running ? 'Following' : 'Stopped';
   els.runPill.className = `pill ${status.running ? 'running' : 'stopped'}`;
   els.stPpt.textContent = status.powerpoint ? 'Found' : 'Not found';
@@ -337,9 +404,9 @@ function applyStatus(status) {
     if (status.openMatch === 'unknown') {
       els.stOpen.textContent = `${status.deckName || 'Open file'} · not in sync folder`;
     } else if (status.openMatch === 'stale') {
-      els.stOpen.textContent = `Cue ${status.currentItemId} · older copy`;
+      els.stOpen.textContent = `${status.loadedCueLabel || `CUE ${status.currentItemId}`} · older copy`;
     } else if (status.currentItemId != null) {
-      els.stOpen.textContent = `Cue ${status.currentItemId}${status.deckName ? ` · ${status.deckName}` : ''}`;
+      els.stOpen.textContent = `${status.loadedCueLabel || `CUE ${status.currentItemId}`}${status.deckName ? ` · ${status.deckName}` : ''}`;
     } else {
       els.stOpen.textContent = status.powerpoint ? (status.deckName || 'Open, unidentified') : '—';
     }
@@ -355,10 +422,12 @@ function applyStatus(status) {
   if (els.stCue) {
     els.stCue.textContent =
       status.loadedCueLabel ||
-      (status.loadedItemId != null ? `Cue ${status.loadedItemId}` : '—');
+      (status.loadedItemId != null ? `CUE ${status.loadedItemId}` : '—');
   }
-  els.stAction.textContent = status.lastAction || '—';
-  els.stError.textContent = status.error || '';
+  els.stAction.textContent = status.lastAction || status.message || '—';
+  if (!(els.btnSync && els.btnSync.disabled)) {
+    els.stError.textContent = status.error || '';
+  }
   if (status.mode === 'playback' || bridgeMode === 'playback') {
     window.__rosOpenItemId = status.currentItemId;
     if (Array.isArray(status.cacheRows)) window.__rosCacheRows = status.cacheRows;
@@ -428,6 +497,9 @@ if (els.eventSelect) {
     if (Number.isFinite(stored) && stored >= 1) selectedDay = stored;
     fillDaySelect();
     await api.saveConfig(formConfig());
+    if (bridgeMode === 'playback' && id && String(els.syncFolder?.value || '').trim()) {
+      await runSyncDecks({ reason: 'event' });
+    }
   });
 }
 
@@ -453,17 +525,7 @@ document.querySelectorAll('[data-bridge-mode]').forEach((btn) => {
 
 if (els.btnSync) {
   els.btnSync.onclick = async () => {
-    try {
-      await api.saveConfig(formConfig());
-      els.stError.textContent = 'Syncing decks…';
-      const rows = await api.syncPlayback(formConfig());
-      window.__rosCacheRows = rows;
-      renderCache(rows);
-      toast('Decks synced');
-      els.stError.textContent = '';
-    } catch (err) {
-      els.stError.textContent = err.message || String(err);
-    }
+    await runSyncDecks({ reason: 'button' });
   };
 }
 

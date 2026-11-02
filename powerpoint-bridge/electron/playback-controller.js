@@ -8,6 +8,7 @@ const {
   reportPlaybackLive,
   fetchPlaybackPreviews,
   fetchPlaybackPreviewImage,
+  uploadPlaybackPreviews,
   httpFetch,
 } = require('./railway-client');
 const {
@@ -15,6 +16,8 @@ const {
   decidePlaybackAction,
   syncFileName,
   shouldReplaceLocalFile,
+  deckPathsEqual,
+  deckTitleKey,
   PREVIEW_DIR_NAME,
   rawPreviewSlideId,
   itemDayNumber,
@@ -55,6 +58,10 @@ class PlaybackController {
     this.cueFollowAuto = true;
     this.openMatch = '';
     this.openStale = false;
+    this.stickyOpenUntil = 0;
+    this.swapCooldownUntil = 0;
+    this.swapInFlight = false;
+    this.lastPreviewSync = { decks: 0, slides: 0, captured: 0, missing: 0 };
     this.manifest = { files: {} };
     this.status = this.blankStatus('Stopped');
   }
@@ -102,8 +109,16 @@ class PlaybackController {
       openMatch: this.openMatch,
       openStale: this.openStale,
       selectedDay: this.selectedDay(),
+      previewDecks: this.lastPreviewSync?.decks || 0,
+      previewSlides: this.lastPreviewSync?.slides || 0,
+      previewCaptured: this.lastPreviewSync?.captured || 0,
+      previewMissing: this.lastPreviewSync?.missing || 0,
     };
     this.onStatus(this.status);
+  }
+
+  markStickyOpen(ms = 5000) {
+    this.stickyOpenUntil = Date.now() + Math.max(0, Number(ms) || 0);
   }
 
   selectedDay() {
@@ -186,30 +201,61 @@ class PlaybackController {
       .toLowerCase();
   }
 
+  legacySyncNames(asset, cueLabel) {
+    const names = new Set();
+    const labeled = this.cueLabelFor(asset, cueLabel);
+    names.add(syncFileName(asset, labeled));
+    const itemId = Number(asset?.itemId);
+    if (Number.isFinite(itemId)) {
+      names.add(syncFileName(asset, `Cue ${itemId}`));
+      names.add(syncFileName(asset, `CUE ${itemId}`));
+    }
+    if (asset?.originalName) names.add(path.basename(String(asset.originalName)));
+    return [...names].filter(Boolean);
+  }
+
   matchLivePath(livePath) {
     const live = this.normPath(livePath);
     if (!live) return null;
     this.readManifest();
     const liveBase = path.basename(livePath).toLowerCase();
+    const liveTitle = deckTitleKey(livePath);
     for (const asset of this.assets || []) {
       if (!asset?.itemId) continue;
-      const dest = this.localPathFor(asset, this.cueLabelFor(asset));
+      const cueLabel = this.cueLabelFor(asset);
+      const dest = this.localPathFor(asset, cueLabel);
       const recorded = this.manifest.files[String(asset.itemId)] || {};
       const alt = recorded.localName ? path.join(this.syncDir(), recorded.localName) : '';
-      const candidates = [dest, alt, this.currentPath].filter(Boolean);
-      const pathHit = candidates.some((row) => this.normPath(row) === live);
+      const legacyPaths = this.legacySyncNames(asset, cueLabel).map((name) =>
+        path.join(this.syncDir(), name)
+      );
+      const candidates = [dest, alt, this.currentPath, ...legacyPaths].filter(Boolean);
+      const pathHit = candidates.some((row) => this.normPath(row) === live || deckPathsEqual(row, livePath));
       const nameHit =
         !pathHit &&
-        [asset.originalName, recorded.localName, dest ? path.basename(dest) : '']
+        [
+          asset.originalName,
+          recorded.localName,
+          dest ? path.basename(dest) : '',
+          ...this.legacySyncNames(asset, cueLabel),
+        ]
           .filter(Boolean)
-          .some((name) => path.basename(String(name)).toLowerCase() === liveBase);
+          .some((name) => {
+            const base = path.basename(String(name)).toLowerCase();
+            return base === liveBase || (!!liveTitle && deckTitleKey(name) === liveTitle);
+          });
       if (!pathHit && !nameHit) continue;
       const preferredId = String(asset.fileId || '');
       const localId = String(recorded.fileId || this.currentFileId || preferredId || '');
+      const resolved =
+        (dest && fs.existsSync(dest) && dest) ||
+        (alt && fs.existsSync(alt) && alt) ||
+        legacyPaths.find((row) => fs.existsSync(row)) ||
+        this.currentPath;
       return {
         itemId: Number(asset.itemId),
         fileId: localId || preferredId || null,
-        path: dest && fs.existsSync(dest) ? dest : alt && fs.existsSync(alt) ? alt : this.currentPath,
+        path: resolved || null,
         stale: !!(preferredId && localId && preferredId !== localId) || (!pathHit && nameHit),
         originalName: asset.originalName || path.basename(livePath),
       };
@@ -221,7 +267,8 @@ class PlaybackController {
     const prevFile = String(this.currentFileId || '');
     const prevItem = this.currentItemId;
     if (!livePath) {
-      this.openMatch = '';
+      // Mid-swap / PowerPoint briefly reports no path — keep last known open.
+      this.openMatch = this.currentItemId != null ? this.openMatch || 'sync' : '';
       this.openStale = false;
       return false;
     }
@@ -229,6 +276,11 @@ class PlaybackController {
     if (!info) {
       this.openMatch = 'unknown';
       this.openStale = false;
+      // Do not flash Open now off while we just opened/swapped or PowerPoint is mid-rename.
+      if (Date.now() < this.stickyOpenUntil || this.swapInFlight) return false;
+      if (this.currentItemId != null && this.currentPath && deckPathsEqual(this.currentPath, livePath)) {
+        return false;
+      }
       this.currentItemId = null;
       this.currentFileId = null;
       return prevFile !== '' || prevItem != null;
@@ -477,19 +529,44 @@ class PlaybackController {
       const localName = syncFileName(asset, cueLabel);
       const dest = path.join(dir, localName);
       const previous = this.manifest.files[itemKey] || {};
-      const previousPath = previous.localName ? path.join(dir, previous.localName) : dest;
+      let previousPath = previous.localName ? path.join(dir, previous.localName) : dest;
+      // Migrate Cue {itemId} → CUE {n} filenames so PowerPoint path identity stays stable.
+      if (
+        previousPath &&
+        previousPath.toLowerCase() !== dest.toLowerCase() &&
+        fs.existsSync(previousPath) &&
+        !fs.existsSync(dest) &&
+        !this.isLiveOpenItem(asset.itemId)
+      ) {
+        try {
+          fs.renameSync(previousPath, dest);
+          previousPath = dest;
+        } catch {
+          /* keep previousPath; download/replace can still use it */
+        }
+      } else if (
+        previousPath &&
+        previousPath.toLowerCase() !== dest.toLowerCase() &&
+        this.isLiveOpenItem(asset.itemId) &&
+        fs.existsSync(previousPath)
+      ) {
+        // Live open stays on the old path until follow swaps; keep reporting that path.
+        keep.add(previousPath.toLowerCase());
+      }
       keep.add(dest.toLowerCase());
-      let state = fs.existsSync(dest) || fs.existsSync(previousPath) ? 'ok' : 'missing';
+      const onDiskPath = fs.existsSync(dest) ? dest : fs.existsSync(previousPath) ? previousPath : null;
+      let state = onDiskPath ? 'ok' : 'missing';
       let detail = state === 'ok' ? 'Synced' : 'Not on disk';
       const needsReplace = shouldReplaceLocalFile(
         {
           fileId: previous.fileId,
-          sizeBytes: previous.sizeBytes ?? (fs.existsSync(dest) ? fs.statSync(dest).size : null),
-          path: previousPath,
+          sizeBytes:
+            previous.sizeBytes ?? (onDiskPath && fs.existsSync(onDiskPath) ? fs.statSync(onDiskPath).size : null),
+          path: onDiskPath || previousPath,
         },
         { fileId: asset.fileId, sizeBytes: asset.sizeBytes }
       );
-      const missing = !fs.existsSync(dest) && !fs.existsSync(previousPath);
+      const missing = !onDiskPath;
       const targeted = Number.isFinite(onlyItemId) && Number(asset.itemId) === onlyItemId;
       const shouldDownload =
         needsReplace &&
@@ -502,8 +579,12 @@ class PlaybackController {
           : 'Newer version waiting for Push';
         nextFiles[itemKey] = {
           fileId: previous.fileId || asset.fileId,
-          sizeBytes: previous.sizeBytes ?? (fs.existsSync(previousPath) ? fs.statSync(previousPath).size : null),
-          localName: previous.localName || localName,
+          sizeBytes:
+            previous.sizeBytes ??
+            (onDiskPath && fs.existsSync(onDiskPath) ? fs.statSync(onDiskPath).size : null),
+          localName: this.isLiveOpenItem(asset.itemId)
+            ? previous.localName || localName
+            : localName,
           originalName: previous.originalName || asset.originalName,
         };
       } else if (shouldDownload) {
@@ -544,11 +625,24 @@ class PlaybackController {
       } else {
         nextFiles[itemKey] = {
           fileId: previous.fileId || asset.fileId,
-          sizeBytes: previous.sizeBytes ?? (fs.existsSync(dest) ? fs.statSync(dest).size : null),
-          localName: previous.localName || localName,
+          sizeBytes:
+            previous.sizeBytes ??
+            (onDiskPath && fs.existsSync(onDiskPath) ? fs.statSync(onDiskPath).size : null),
+          localName: onDiskPath && onDiskPath.toLowerCase() === dest.toLowerCase()
+            ? localName
+            : previous.localName || localName,
           originalName: previous.originalName || asset.originalName,
         };
+        if (previous.localName && previous.localName !== localName && fs.existsSync(dest)) {
+          nextFiles[itemKey].localName = localName;
+          detail = 'Renamed to ROS cue';
+        }
       }
+      const rowPath =
+        nextFiles[itemKey].localName &&
+        fs.existsSync(path.join(dir, nextFiles[itemKey].localName))
+          ? path.join(dir, nextFiles[itemKey].localName)
+          : dest;
       rows.push({
         fileId: nextFiles[itemKey].fileId,
         itemId: asset.itemId,
@@ -560,23 +654,47 @@ class PlaybackController {
         day: itemDayNumber(asset),
         state,
         detail,
-        path: dest,
+        path: rowPath,
       });
     }
 
     this.manifest.files = nextFiles;
     this.writeManifest();
     this.previewHoldPath = '';
-    await this.downloadPreviewCatalog(nextFiles);
+    const previewStats = await this.syncSlideImages(nextFiles, { captureMissing: replace || !missingOnly });
     this.pruneOrphans(dir, keep);
     this.cacheRows = rows;
     this.lastSyncAt = Date.now();
+    const deckOk = rows.filter((r) => r.state === 'ok' || r.state === 'replaced').length;
+    const slideMsg =
+      previewStats.slides > 0
+        ? ` · ${previewStats.slides} slide images`
+        : previewStats.missing > 0
+          ? ` · ${previewStats.missing} deck(s) still need slide images`
+          : '';
+    const captureMsg =
+      previewStats.captured > 0 ? ` · captured ${previewStats.captured}` : '';
+    const message = `Synced ${deckOk}/${rows.length} decks${slideMsg}${captureMsg}`;
     this.emit({
-      message: `Synced ${rows.filter((r) => r.state === 'ok' || r.state === 'replaced').length}/${rows.length} decks`,
+      message,
       lastAction: 'Synced folder',
       syncFolder: this.config.syncFolder,
+      syncComplete: true,
+      previewDecks: previewStats.decks,
+      previewSlides: previewStats.slides,
+      previewCaptured: previewStats.captured,
+      previewMissing: previewStats.missing,
     });
-    return rows;
+    return {
+      rows,
+      message,
+      deckOk,
+      deckTotal: rows.length,
+      previewDecks: previewStats.decks,
+      previewSlides: previewStats.slides,
+      previewCaptured: previewStats.captured,
+      previewMissing: previewStats.missing,
+    };
   }
 
   pruneOrphans(root, keep) {
@@ -640,11 +758,11 @@ class PlaybackController {
       }
     }
     if (!asset?.downloadUrl) {
-      const rows = await this.syncCache({
+      const pack = await this.syncCache({
         replace: false,
         onlyItemId: Number.isFinite(Number(itemId)) ? Number(itemId) : null,
       });
-      return { rows };
+      return { rows: pack?.rows || [] };
     }
     this.mergePreferredFiles([asset]);
     const cueLabel = this.cueLabelFor(asset, asset.cueLabel) || this.cueLabelFor(asset.itemId || itemId);
@@ -681,7 +799,10 @@ class PlaybackController {
   }
 
   async followLoadedCue(loadedItemId, loadedCue = null, livePath = null, slideshowActive = false) {
-    const cueLabel = loadedCue?.cueLabel || (loadedItemId != null ? `Cue ${loadedItemId}` : '');
+    const cueLabel =
+      loadedCue?.cueLabel ||
+      this.cueLabelFor(loadedItemId) ||
+      (loadedItemId != null ? `CUE ${loadedItemId}` : '');
     const timerState = loadedCue?.timerState || null;
     if (this.manualHold || this.closedByOperator) {
       const runningOther =
@@ -789,7 +910,9 @@ class PlaybackController {
     if (decision.action === 'keep') {
       this.lastLoadedItemId = loadedItemId;
       this.currentItemId = loadedItemId;
+      if (asset?.fileId) this.currentFileId = asset.fileId;
       this.currentPath = decision.path || this.currentPath;
+      this.markStickyOpen(4000);
       void this.ensureFolderPreviews(this.currentFileId);
       this.emit({
         loadedCueLabel: cueLabel,
@@ -801,7 +924,9 @@ class PlaybackController {
     if (decision.action === 'run') {
       this.lastLoadedItemId = loadedItemId;
       this.currentItemId = loadedItemId;
+      if (asset?.fileId) this.currentFileId = asset.fileId;
       this.currentPath = decision.path || this.currentPath;
+      this.markStickyOpen(4000);
       if (this.lastStartedItemId === loadedItemId && this.status.slideshowActive) {
         void this.ensureFolderPreviews(this.currentFileId);
         this.emit({
@@ -835,10 +960,22 @@ class PlaybackController {
       return;
     }
     if (decision.action === 'swap') {
+      if (this.swapInFlight || Date.now() < this.swapCooldownUntil) {
+        this.emit({
+          loadedCueLabel: cueLabel,
+          message: `${cueLabel} · waiting for PowerPoint`,
+          lastAction: 'Swap cooldown',
+        });
+        return;
+      }
+      this.swapInFlight = true;
+      this.markStickyOpen(8000);
       let result;
       try {
         result = await ppt.swapDeck(decision.path, decision.closePath);
       } catch (err) {
+        this.swapInFlight = false;
+        this.swapCooldownUntil = Date.now() + 2500;
         this.lastError = err.message || 'Could not open deck';
         this.emit({
           loadedCueLabel: cueLabel,
@@ -849,6 +986,8 @@ class PlaybackController {
         return;
       }
       if (!result || result.ok === false) {
+        this.swapInFlight = false;
+        this.swapCooldownUntil = Date.now() + 2500;
         this.lastError = result?.error || 'Could not open deck';
         this.emit({
           loadedCueLabel: cueLabel,
@@ -865,7 +1004,7 @@ class PlaybackController {
       this.lastError = result.showWarning || '';
       const slideIndex = Number(result.slideIndex);
       this.previewReady = false;
-      void this.ensureFolderPreviews(this.currentFileId);
+      void this.captureAndUploadPreviews(this.currentPath, { force: false });
       if (!result.slideshowActive) {
         try {
           const started = await ppt.startShow(this.currentPath);
@@ -880,6 +1019,9 @@ class PlaybackController {
       } else {
         this.lastStartedItemId = loadedItemId;
       }
+      this.swapInFlight = false;
+      this.swapCooldownUntil = Date.now() + 2500;
+      this.markStickyOpen(6000);
       this.emit({
         powerpoint: true,
         slideshowActive: !!result.slideshowActive || timerState === 'running',
@@ -1131,19 +1273,216 @@ class PlaybackController {
       );
       files = pack?.files && typeof pack.files === 'object' ? pack.files : {};
     } catch {
-      return;
+      files = {};
     }
     const seen = new Set();
+    let decks = 0;
+    let slides = 0;
     for (const row of Object.values(nextFiles || {})) {
       const fileId = String(row?.fileId || '').trim();
       if (!fileId || seen.has(fileId)) continue;
       seen.add(fileId);
       try {
-        await this.writePreviewsFromRemote(fileId, files[fileId] || []);
+        const local = await this.writePreviewsFromRemote(fileId, files[fileId] || []);
+        if (local?.slides?.length) {
+          decks += 1;
+          slides += local.slides.length;
+        }
       } catch {
         /* keep the deck even if stills fail */
       }
     }
+    return { decks, slides, files };
+  }
+
+  countLocalPreviewSlides(fileId) {
+    const local = this.readLocalPreviews(fileId);
+    return local?.slides?.length || 0;
+  }
+
+  writeLocalPreviews(fileId, stills) {
+    if (!fileId || !stills?.slides?.length) return null;
+    const dir = this.previewDirFor(fileId);
+    fs.mkdirSync(dir, { recursive: true });
+    const slides = [];
+    for (const slide of stills.slides) {
+      const pptSlideId = String(slide.pptSlideId || '').trim();
+      if (!pptSlideId || !slide.imageBase64) continue;
+      fs.writeFileSync(path.join(dir, `${pptSlideId}.jpg`), Buffer.from(slide.imageBase64, 'base64'));
+      slides.push({
+        pptSlideId,
+        slideIndex: Number(slide.slideIndex),
+        title: slide.title || '',
+        width: slide.width || 360,
+        height: slide.height || 202,
+      });
+    }
+    if (!slides.length) return null;
+    fs.writeFileSync(
+      path.join(dir, 'manifest.json'),
+      JSON.stringify(
+        {
+          fileId,
+          deckName: stills.deckName || '',
+          capturedAt: new Date().toISOString(),
+          source: 'capture',
+          slides,
+        },
+        null,
+        2
+      ),
+      'utf8'
+    );
+    return this.readLocalPreviews(fileId);
+  }
+
+  async captureAndUploadPreviews(filePath, opts = {}) {
+    if (!filePath || this.previewBusy) return null;
+    if (this.previewHoldPath && this.previewHoldPath === filePath && !opts.force) return null;
+    const fileId = String(opts.fileId || this.currentFileId || '').trim();
+    if (!fileId) return null;
+    if (!opts.force) {
+      const existing = this.readLocalPreviews(fileId);
+      if (existing?.slides?.length) {
+        this.previewPath = filePath;
+        this.previewFileId = fileId;
+        this.previewReady = true;
+        return existing;
+      }
+    }
+    this.previewBusy = true;
+    try {
+      const stills = await ppt.captureStills({ width: 360, height: 202 });
+      if (!stills || stills.ok === false || !Array.isArray(stills.slides) || !stills.slides.length) {
+        return null;
+      }
+      const local = this.writeLocalPreviews(fileId, stills);
+      try {
+        await uploadPlaybackPreviews(this.config.apiBaseUrl, this.config.apiToken, this.config.eventId, {
+          fileId,
+          deckName: stills.deckName || this.status.deckName,
+          slides: stills.slides,
+        });
+      } catch {
+        /* local stills still usable */
+      }
+      this.previewPath = filePath;
+      this.previewFileId = fileId;
+      this.previewHoldPath = '';
+      this.previewReady = !!(local?.slides?.length);
+      this.emit({
+        slideCount: stills.slideCount || stills.slides.length,
+        lastAction: `Captured ${stills.slides.length} slide images`,
+      });
+      return local;
+    } catch (err) {
+      this.lastError = err.message || 'Could not capture slide images';
+      this.emit({ error: this.lastError });
+      return null;
+    } finally {
+      this.previewBusy = false;
+    }
+  }
+
+  async capturePreviewsFromSyncedFile(filePath, fileId) {
+    const wanted = String(fileId || '').trim();
+    if (!filePath || !wanted || !fs.existsSync(filePath)) return null;
+    const priorPath = this.currentPath;
+    const priorFile = this.currentFileId;
+    const priorItem = this.currentItemId;
+    const restoreNeeded = !priorPath || !deckPathsEqual(priorPath, filePath);
+    try {
+      if (restoreNeeded) {
+        await ppt.openDeck(filePath, null);
+      }
+      const local = await this.captureAndUploadPreviews(filePath, { force: true, fileId: wanted });
+      return local;
+    } finally {
+      if (restoreNeeded && priorPath && fs.existsSync(priorPath)) {
+        try {
+          await ppt.openDeck(priorPath, filePath);
+          this.currentPath = priorPath;
+          this.currentFileId = priorFile;
+          this.currentItemId = priorItem;
+        } catch {
+          /* leave capture deck open if restore fails */
+        }
+      } else if (restoreNeeded && !priorPath) {
+        try {
+          await ppt.closeDeck(filePath);
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+  }
+
+  async syncSlideImages(nextFiles, opts = {}) {
+    const captureMissing = opts.captureMissing !== false;
+    this.emit({ message: 'Downloading slide images…', lastAction: 'Sync images' });
+    const downloaded = await this.downloadPreviewCatalog(nextFiles);
+    let decks = downloaded.decks || 0;
+    let slides = downloaded.slides || 0;
+    let captured = 0;
+    let missing = 0;
+    const seen = new Set();
+    for (const row of Object.values(nextFiles || {})) {
+      const fileId = String(row?.fileId || '').trim();
+      if (!fileId || seen.has(fileId)) continue;
+      seen.add(fileId);
+      const localCount = this.countLocalPreviewSlides(fileId);
+      if (localCount > 0) {
+        if (!downloaded.decks || localCount) {
+          /* already counted if from API; recount unique below */
+        }
+        continue;
+      }
+      if (!captureMissing) {
+        missing += 1;
+        continue;
+      }
+      const localName = row.localName || '';
+      const filePath = localName ? path.join(this.syncDir(), localName) : '';
+      if (!filePath || !fs.existsSync(filePath)) {
+        missing += 1;
+        continue;
+      }
+      this.emit({
+        message: `Capturing slide images · ${path.basename(filePath)}`,
+        lastAction: 'Capture images',
+      });
+      try {
+        const local = await this.capturePreviewsFromSyncedFile(filePath, fileId);
+        if (local?.slides?.length) {
+          captured += 1;
+          decks += 1;
+          slides += local.slides.length;
+        } else {
+          missing += 1;
+        }
+      } catch {
+        missing += 1;
+      }
+    }
+    // Recount from disk so toast is accurate even when API already had some.
+    decks = 0;
+    slides = 0;
+    missing = 0;
+    const counted = new Set();
+    for (const row of Object.values(nextFiles || {})) {
+      const fileId = String(row?.fileId || '').trim();
+      if (!fileId || counted.has(fileId)) continue;
+      counted.add(fileId);
+      const n = this.countLocalPreviewSlides(fileId);
+      if (n > 0) {
+        decks += 1;
+        slides += n;
+      } else {
+        missing += 1;
+      }
+    }
+    this.lastPreviewSync = { decks, slides, captured, missing };
+    return this.lastPreviewSync;
   }
 
   async downloadPreviewsForFile(fileId) {
@@ -1227,8 +1566,9 @@ class PlaybackController {
     if (this.previewHoldPath && !opts.force) return;
     if (!opts.force && this.previewReady && this.previewFileId === wanted) return;
     this.previewBusy = true;
+    let local = null;
     try {
-      let local = this.readLocalPreviews(wanted);
+      local = this.readLocalPreviews(wanted);
       if (!local?.slides?.length) {
         try {
           local = await this.downloadPreviewsForFile(wanted);
@@ -1244,20 +1584,28 @@ class PlaybackController {
           slideCount: local.slides.length,
           lastAction: `Loaded ${local.slides.length} synced slide images`,
         });
+        return;
       }
     } finally {
       this.previewBusy = false;
     }
+    if (this.currentPath && fs.existsSync(this.currentPath)) {
+      await this.captureAndUploadPreviews(this.currentPath, { force: !!opts.force, fileId: wanted });
+    }
   }
 
   async reportAndRefresh(_unusedLive) {
+    const sticky =
+      (Date.now() < this.stickyOpenUntil || this.swapInFlight) &&
+      this.currentItemId == null &&
+      this.lastLoadedItemId != null;
     await reportPlaybackLive(this.config.apiBaseUrl, this.config.apiToken, this.config.eventId, {
       helperMode: 'playback',
       deckName: this.status.deckName || '',
       slideCount: this.status.slideCount || 0,
       slideshowActive: !!this.status.slideshowActive,
       currentIndex: this.status.currentIndex,
-      currentItemId: this.currentItemId,
+      currentItemId: sticky ? this.lastLoadedItemId : this.currentItemId,
       currentFileId: this.currentFileId,
       cacheOk: this.cacheRows.filter((r) => r.state === 'ok' || r.state === 'replaced').length,
       cacheTotal: this.cacheRows.length,

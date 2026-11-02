@@ -6,6 +6,7 @@ const {
   shouldReplaceLocalFile,
   preferredAssetForItem,
   decidePlaybackAction,
+  deckPathsEqual,
   rawPreviewSlideId,
   PREVIEW_DIR_NAME,
   itemDayNumber,
@@ -97,6 +98,16 @@ assert.strictEqual(
   }).startShow,
   true
 );
+assert.strictEqual(
+  decidePlaybackAction({
+    hasPPT: true,
+    cachedPath: 'C:\\sync\\CUE 3 - Uphill Battle.pptx',
+    livePath: 'C:\\sync\\Cue 4 - Uphill Battle.pptx',
+    slideshowActive: true,
+  }).action,
+  'keep'
+);
+assert.ok(deckPathsEqual('C:\\a\\CUE 3 - Deck.pptx', 'C:\\a\\Cue 4 - Deck.pptx'));
 assert.ok(syncFileName({ itemId: 7, originalName: 'Map.pptx' }, 'CUE 7').startsWith('CUE 7 - Map'));
 assert.strictEqual(
   shouldReplaceLocalFile({ fileId: 'old', sizeBytes: 10 }, { fileId: 'new', sizeBytes: 10 }),

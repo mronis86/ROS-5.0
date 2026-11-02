@@ -76,7 +76,7 @@ function decidePlaybackAction({
   if (!cachedPath) {
     return { action: 'warn', path: null, closePath: null, warning: 'PPT checked but no synced deck for this cue' };
   }
-  if (openPath && pathsEqual(cachedPath, openPath)) {
+  if (openPath && deckPathsEqual(cachedPath, openPath)) {
     if (!slideshowActive) {
       return { action: 'run', path: cachedPath, closePath: null };
     }
@@ -93,6 +93,31 @@ function decidePlaybackAction({
 function pathsEqual(a, b) {
   if (!a || !b) return false;
   return String(a).replace(/\//g, '\\').toLowerCase() === String(b).replace(/\//g, '\\').toLowerCase();
+}
+
+/** Same deck even if cue-label rename changed the sync filename (Cue 4 → CUE 3). */
+function deckTitleKey(filePath) {
+  const base = String(filePath || '')
+    .replace(/\//g, '\\')
+    .split('\\')
+    .pop()
+    .toLowerCase()
+    .replace(/\.pptx?$/i, '');
+  return base
+    .replace(/^cue\s+\d+\s*-\s*/i, '')
+    .replace(/^item\s+\d+\s*-\s*/i, '')
+    .trim();
+}
+
+function deckPathsEqual(a, b) {
+  if (pathsEqual(a, b)) return true;
+  if (!a || !b) return false;
+  const ba = String(a).replace(/\//g, '\\').split('\\').pop().toLowerCase();
+  const bb = String(b).replace(/\//g, '\\').split('\\').pop().toLowerCase();
+  if (ba && ba === bb) return true;
+  const ta = deckTitleKey(a);
+  const tb = deckTitleKey(b);
+  return !!(ta && tb && ta === tb);
 }
 
 function itemDayNumber(item) {
@@ -142,6 +167,8 @@ module.exports = {
   preferredAssetForItem,
   decidePlaybackAction,
   pathsEqual,
+  deckPathsEqual,
+  deckTitleKey,
   PREVIEW_DIR_NAME,
   rawPreviewSlideId,
   itemDayNumber,

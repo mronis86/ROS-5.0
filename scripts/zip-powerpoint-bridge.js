@@ -13,6 +13,7 @@ const prefix = 'powerpoint-bridge';
 
 function findUnpacked() {
   const candidates = [
+    path.join(bridgeRoot, 'dist-syncfix', 'win-unpacked'),
     path.join(bridgeRoot, 'dist-cuefix', 'win-unpacked'),
     path.join(bridgeRoot, 'dist-daypick', 'win-unpacked'),
     path.join(bridgeRoot, 'dist', 'win-unpacked'),
