@@ -3879,8 +3879,10 @@ export default function AdminPage() {
             </button>
           </div>
           <p className="text-slate-500 text-sm mb-4">
-            Voice-of-God text-to-speech. Set <code className="bg-slate-900 px-1 rounded text-slate-300">ELEVENLABS_API_KEY</code> on
-            the Railway API service only — the key never appears in the browser or Admin UI.
+            Voice-of-God text-to-speech (Eleven v4 for emotion/context). Set{' '}
+            <code className="bg-slate-900 px-1 rounded text-slate-300">ELEVENLABS_API_KEY</code> on the Railway API
+            service only — the key never appears in the browser or Admin UI. Optional override:{' '}
+            <code className="bg-slate-900 px-1 rounded text-slate-300">ELEVENLABS_MODEL_ID</code>.
           </p>
           {vogStatusError && (
             <div className="mb-4 px-4 py-2 rounded-lg bg-amber-900/30 border border-amber-700/50 text-amber-200 text-sm">
