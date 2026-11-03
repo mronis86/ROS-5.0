@@ -42,6 +42,7 @@ const els = {
   stLivecapSrc: document.getElementById('st-livecap-src'),
   livecapError: document.getElementById('livecap-error'),
   focusTarget: document.getElementById('focusTarget'),
+  forceEditMode: document.getElementById('forceEditMode'),
 };
 
 let loadedEvents = [];
@@ -74,8 +75,10 @@ function formConfig() {
     selectedDaysByEvent,
     focusTarget: (() => {
       const raw = String(els.focusTarget?.value || 'off').trim().toLowerCase();
-      return raw === 'presentation' || raw === 'app' ? raw : 'off';
+      if (raw === 'presentation') return 'slideshow';
+      return raw === 'slideshow' || raw === 'app' ? raw : 'off';
     })(),
+    forceEditMode: Boolean(els.forceEditMode?.checked),
   };
 }
 
@@ -454,13 +457,16 @@ async function load() {
   applyCaptureSourceUi();
   if (els.focusTarget) {
     const raw = String(cfg.focusTarget || '').trim().toLowerCase();
-    if (raw === 'presentation' || raw === 'app' || raw === 'off') {
+    if (raw === 'slideshow' || raw === 'app' || raw === 'off') {
       els.focusTarget.value = raw;
-    } else if (cfg.focusPresentationView) {
-      els.focusTarget.value = 'presentation';
+    } else if (raw === 'presentation' || cfg.focusPresentationView) {
+      els.focusTarget.value = 'slideshow';
     } else {
       els.focusTarget.value = 'off';
     }
+  }
+  if (els.forceEditMode) {
+    els.forceEditMode.checked = cfg.forceEditMode !== false;
   }
   if (cfg.eventId) {
     const opt = document.createElement('option');

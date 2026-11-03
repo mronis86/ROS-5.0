@@ -70,6 +70,15 @@ function createWindow() {
 
 app.whenReady().then(() => {
   liveCapture.init({ onStatus: sendLiveCapture });
+  try {
+    const cfg = loadConfig();
+    ppt.setOptions({
+      focusTarget: cfg.focusTarget,
+      forceEditMode: cfg.forceEditMode,
+    });
+  } catch {
+    /* ignore */
+  }
   createWindow();
 });
 app.on('window-all-closed', () => {
@@ -87,6 +96,14 @@ ipcMain.handle('config:save', (_e, partial) => {
   const next = saveConfig(partial || {});
   if (playback.running) playback.config = { ...playback.config, ...next };
   if (follow.running) follow.config = { ...follow.config, ...next };
+  try {
+    ppt.setOptions({
+      focusTarget: next.focusTarget,
+      forceEditMode: next.forceEditMode,
+    });
+  } catch {
+    /* ignore */
+  }
   return next;
 });
 ipcMain.handle('api:validate', (_e, partial) => {

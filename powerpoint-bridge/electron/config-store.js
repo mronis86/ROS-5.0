@@ -15,8 +15,10 @@ const DEFAULTS = {
   selectedDay: 1,
   selectedDaysByEvent: {},
   helperInstanceId: '',
-  /** After open/swap: 'off' | 'presentation' (slideshow) | 'app' (PowerPoint window). */
+  /** After open/swap: 'off' | 'slideshow' | 'app' (PowerPoint edit window). */
   focusTarget: 'off',
+  /** When true, force Enable Editing for Protected View / security notification bars. */
+  forceEditMode: true,
 };
 
 function configPath() {
@@ -63,15 +65,16 @@ function saveConfig(partial) {
   }
   {
     const raw = String(next.focusTarget || '').trim().toLowerCase();
-    if (raw === 'presentation' || raw === 'app' || raw === 'off') {
+    if (raw === 'slideshow' || raw === 'app' || raw === 'off') {
       next.focusTarget = raw;
-    } else if (next.focusPresentationView === true) {
-      next.focusTarget = 'presentation';
+    } else if (raw === 'presentation' || next.focusPresentationView === true) {
+      next.focusTarget = 'slideshow';
     } else {
       next.focusTarget = 'off';
     }
     delete next.focusPresentationView;
   }
+  next.forceEditMode = next.forceEditMode !== false;
   const day = Math.floor(Number(next.selectedDay) || 1);
   next.selectedDay = day >= 1 ? day : 1;
   if (next.selectedDaysByEvent == null || typeof next.selectedDaysByEvent !== 'object') {

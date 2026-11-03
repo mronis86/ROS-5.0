@@ -425,6 +425,7 @@ class PlaybackController {
       ppt.setOptions({
         focusTarget: this.config.focusTarget,
         focusPresentationView: this.config.focusPresentationView,
+        forceEditMode: this.config.forceEditMode,
       });
     } catch {
       /* ignore */
@@ -1724,6 +1725,7 @@ class PlaybackController {
       ppt.setOptions({
         focusTarget: this.config.focusTarget,
         focusPresentationView: this.config.focusPresentationView,
+        forceEditMode: this.config.forceEditMode,
       });
     } catch {
       /* ignore */

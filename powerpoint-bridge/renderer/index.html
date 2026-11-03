@@ -97,10 +97,17 @@
           Focus after open / switch
           <select id="focusTarget">
             <option value="off">Don’t force focus</option>
-            <option value="presentation">Presentation view (slideshow)</option>
+            <option value="slideshow">Slide show window</option>
             <option value="app">PowerPoint app window</option>
           </select>
-          <span class="hint">Pick which window Windows should bring forward when a deck opens or switches.</span>
+          <span class="hint">Slide show = the full-screen show. App = the edit / ribbon window.</span>
+        </label>
+        <label class="check-row">
+          <input type="checkbox" id="forceEditMode" checked />
+          <span>
+            Force Enable Editing
+            <span class="hint">When Protected View or a security bar blocks the deck, click Enable Editing automatically.</span>
+          </span>
         </label>
         <div class="status-grid">
           <div><span class="k">PowerPoint</span><span id="st-ppt">—</span></div>

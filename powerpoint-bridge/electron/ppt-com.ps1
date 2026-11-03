@@ -6,9 +6,24 @@ param(
   [int]$SlideIndex = 0,
   [int]$Width = 0,
   [int]$Height = 0,
-  # off | presentation | app — which window to bring forward after open/swap/startShow
-  [string]$FocusTarget = 'off'
+  # off | slideshow | app — which window to bring forward after open/swap/startShow
+  # legacy: "presentation" is treated as slideshow
+  [string]$FocusTarget = 'off',
+  # when true: strip MotW + call Protected View → Enable Editing (security/notification bar)
+  [string]$ForceEditMode = 'false'
 )
+
+function Want-ForceEdit {
+  $v = ([string]$ForceEditMode).Trim().ToLowerInvariant()
+  return ($v -eq 'true' -or $v -eq '1' -or $v -eq 'yes' -or $v -eq 'on')
+}
+
+function Normalize-FocusTarget([string]$raw) {
+  $mode = ([string]$raw).Trim().ToLowerInvariant()
+  if ($mode -eq 'presentation') { return 'slideshow' } # legacy label meant slide show
+  if ($mode -eq 'slideshow' -or $mode -eq 'app' -or $mode -eq 'off') { return $mode }
+  return 'off'
+}
 
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
@@ -141,6 +156,7 @@ function Unblock-Deck($path) {
 }
 
 function Enable-ProtectedViewEdit($pv) {
+  if (-not (Want-ForceEdit)) { return $null }
   if (-not $pv) { return $null }
   try { return $pv.Edit('') } catch {}
   try { return $pv.Edit() } catch {}
@@ -149,6 +165,7 @@ function Enable-ProtectedViewEdit($pv) {
 
 function Try-ProtectedView($app, $path) {
   # If the deck is already in Protected View, force Enable Editing so slideshow/COM work.
+  if (-not (Want-ForceEdit)) { return $null }
   try {
     $want = Normalize-Path $path
     $wantName = ''
@@ -188,6 +205,7 @@ function Try-ProtectedView($app, $path) {
 
 function Try-OpenViaProtectedView($app, $path) {
   # Explicit PV open → Edit when Presentations.Open lands in / fails under Protected View.
+  if (-not (Want-ForceEdit)) { return $null }
   try {
     $pv = $app.ProtectedViewWindows.Open($path)
     if (-not $pv) { return $null }
@@ -262,7 +280,7 @@ function Start-Show-OnTop($app, $pres) {
       $live = $null
       try { $live = $app.SlideShowWindows.Item(1).Presentation } catch {}
       if ($live -and ((Normalize-Path $live.FullName) -eq (Normalize-Path $pres.FullName))) {
-        Focus-Show $app $pres
+        Focus-Show $app $pres $FocusTarget
         return $true
       }
     }
@@ -274,7 +292,7 @@ function Start-Show-OnTop($app, $pres) {
     try { $settings.RangeType = 1 } catch {}
     $settings.Run() | Out-Null
     Start-Sleep -Milliseconds 80
-    Focus-Show $app $pres
+    Focus-Show $app $pres $FocusTarget
     try { return ([int]$app.SlideShowWindows.Count -gt 0) } catch { return $true }
   } catch {
     return $false
@@ -307,7 +325,7 @@ function Swap-To-Presentation($app, $path) {
   try {
     if ([int]$app.SlideShowWindows.Count -lt 1) { Start-Show-OnTop $app $opened | Out-Null }
   } catch {}
-  Focus-Show $app $opened
+  Focus-Show $app $opened $FocusTarget
   return $opened
 }
 
@@ -351,7 +369,7 @@ function Start-Show($pres) {
       $live = $null
       try { $live = $app.SlideShowWindows.Item(1).Presentation } catch {}
       if ($live -and ((Normalize-Path $live.FullName) -eq (Normalize-Path $pres.FullName))) {
-        Focus-Show $app $pres
+        Focus-Show $app $pres $FocusTarget
         return $true
       }
       Exit-Shows $app
@@ -372,14 +390,14 @@ function Start-Show($pres) {
   if (-not $ran) {
     try {
       Add-Type -AssemblyName System.Windows.Forms
-      Focus-Show $app $pres
+      Focus-Show $app $pres 'app'
       Start-Sleep -Milliseconds 200
       [System.Windows.Forms.SendKeys]::SendWait('{F5}')
       Start-Sleep -Milliseconds 450
     } catch {}
   }
   Start-Sleep -Milliseconds 250
-  Focus-Show $app $pres
+  Focus-Show $app $pres $FocusTarget
   try { return ([int]$app.SlideShowWindows.Count -gt 0) } catch { return $ran }
 }
 
@@ -459,34 +477,52 @@ function Focus-Hwnd([IntPtr]$hwnd) {
   } catch {}
 }
 
+function Get-SlideShowHwnd($app) {
+  # Prefer the largest SlideShow window (audience display over notes / presenter chrome).
+  $best = [IntPtr]::Zero
+  $bestArea = -1
+  try {
+    $n = [int]$app.SlideShowWindows.Count
+    for ($i = 1; $i -le $n; $i++) {
+      $ssw = $null
+      try { $ssw = $app.SlideShowWindows.Item($i) } catch { continue }
+      if (-not $ssw) { continue }
+      try { $ssw.Activate() } catch {}
+      $h = [IntPtr]::Zero
+      try { $h = [IntPtr]$ssw.HWND } catch { $h = [IntPtr]::Zero }
+      if ($h -eq [IntPtr]::Zero) { continue }
+      $area = 0
+      try { $area = [math]::Abs([int]$ssw.Width) * [math]::Abs([int]$ssw.Height) } catch { $area = $i }
+      if ($area -ge $bestArea) {
+        $bestArea = $area
+        $best = $h
+      }
+    }
+  } catch {}
+  return $best
+}
+
 function Focus-Show($app, $pres, $target) {
-  $mode = ([string]$target).Trim().ToLowerInvariant()
-  if ($mode -ne 'presentation' -and $mode -ne 'app') { return }
+  $mode = Normalize-FocusTarget $target
+  if ($mode -ne 'slideshow' -and $mode -ne 'app') { return }
 
   try { $app.Visible = $true } catch {
     try { $app.Visible = -1 } catch {}
   }
-  try { $app.Activate() } catch {}
 
   $hwnd = [IntPtr]::Zero
-  if ($mode -eq 'presentation') {
-    # Prefer the live slideshow window (audience / presenter view).
-    try {
-      if ($app.SlideShowWindows.Count -gt 0) {
-        $ssw = $app.SlideShowWindows.Item(1)
-        try { $ssw.Activate() } catch {}
-        try { $hwnd = [IntPtr]$ssw.HWND } catch { $hwnd = [IntPtr]::Zero }
-      }
-    } catch {}
-    if ($hwnd -eq [IntPtr]::Zero) {
-      try {
-        if ($pres -and $pres.Windows.Count -gt 0) { $pres.Windows.Item(1).Activate() }
-      } catch {}
-      try { $hwnd = [IntPtr]$app.HWND } catch { $hwnd = [IntPtr]::Zero }
+  if ($mode -eq 'slideshow') {
+    # Slide show only — never fall back to Normal/edit "presentation" window.
+    for ($attempt = 0; $attempt -lt 8; $attempt++) {
+      $hwnd = Get-SlideShowHwnd $app
+      if ($hwnd -ne [IntPtr]::Zero) { break }
+      Start-Sleep -Milliseconds 80
     }
+    if ($hwnd -eq [IntPtr]::Zero) { return }
   } else {
-    # Prefer the PowerPoint application / document window (not the show).
-    try { $app.WindowState = 1 } catch {} # ppWindowNormal — avoid staying behind show-only
+    # PowerPoint app / document window (edit UI), not the slide show.
+    try { $app.Activate() } catch {}
+    try { $app.WindowState = 1 } catch {} # ppWindowNormal
     try {
       if ($pres -and $pres.Windows.Count -gt 0) { $pres.Windows.Item(1).Activate() }
     } catch {}
@@ -580,7 +616,8 @@ if ($Command -eq 'open' -or $Command -eq 'swap') {
     } catch {}
   }
   Start-Sleep -Milliseconds 250
-  if ($FocusTarget -and $FocusTarget -ne 'off') { Focus-Show $ppt $pres $FocusTarget }
+  $focusMode = Normalize-FocusTarget $FocusTarget
+  if ($focusMode -ne 'off') { Focus-Show $ppt $pres $focusMode }
   $payload = Live-Payload $ppt $pres
   $payload.fullName = $FilePath
   if (-not $started -and -not $payload.slideshowActive) {
@@ -606,7 +643,8 @@ if ($Command -eq 'startShow') {
   }
   Start-Show $pres
   Start-Sleep -Milliseconds 200
-  if ($FocusTarget -and $FocusTarget -ne 'off') { Focus-Show $ppt $pres $FocusTarget }
+  $focusMode = Normalize-FocusTarget $FocusTarget
+  if ($focusMode -ne 'off') { Focus-Show $ppt $pres $focusMode }
   Write-Json (Live-Payload $ppt $pres)
   exit 0
 }

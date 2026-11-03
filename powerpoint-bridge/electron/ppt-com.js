@@ -15,13 +15,15 @@ const LIVE_FILE = path.join(LIVE_DIR, 'ros-ppt-live.json');
 
 let watcher = null;
 let watcherPaused = false;
-/** off | presentation | app — which window to bring forward after open/swap/startShow. */
+/** off | slideshow | app — which window to bring forward after open/swap/startShow. */
 let focusTarget = 'off';
+/** When true, force Enable Editing for Protected View / security bars. */
+let forceEditMode = true;
 
 function normalizeFocusTarget(value, legacyBool) {
   const raw = String(value || '').trim().toLowerCase();
-  if (raw === 'presentation' || raw === 'app' || raw === 'off') return raw;
-  if (legacyBool === true) return 'presentation';
+  if (raw === 'slideshow' || raw === 'app' || raw === 'off') return raw;
+  if (raw === 'presentation' || legacyBool === true) return 'slideshow';
   return 'off';
 }
 
@@ -29,11 +31,20 @@ function setOptions(opts = {}) {
   if (opts.focusTarget != null || opts.focusPresentationView != null) {
     focusTarget = normalizeFocusTarget(opts.focusTarget, opts.focusPresentationView);
   }
+  if (opts.forceEditMode != null) {
+    forceEditMode = opts.forceEditMode !== false;
+  }
 }
 
 function focusArgs() {
-  if (!focusTarget || focusTarget === 'off') return [];
-  return ['-FocusTarget', focusTarget];
+  const args = [];
+  if (focusTarget && focusTarget !== 'off') {
+    args.push('-FocusTarget', focusTarget);
+  }
+  if (forceEditMode) {
+    args.push('-ForceEditMode', 'true');
+  }
+  return args;
 }
 
 function cleanPptError(raw) {
