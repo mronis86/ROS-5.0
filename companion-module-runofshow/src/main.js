@@ -150,9 +150,8 @@ class RunOfShowInstance extends InstanceBase {
 	}
 
 	/**
-	 * Publish DSM mode for Companion Triggers / button programming.
+	 * Publish DSM mode variables (still available for Triggers if wanted).
 	 * Sets dsm_mode + bumps dsm_fire so Triggers always see a change (even LED→LED).
-	 * Does not talk to Ultrix/ATEM/vMix/OBS — wire those in Companion.
 	 */
 	publishDsmMode(mode, source = 'manual') {
 		const normalized = normalizeDsmLayoutMode(mode)
@@ -164,7 +163,60 @@ class RunOfShowInstance extends InstanceBase {
 		return normalized
 	}
 
-	/** Manual preset / action: DSM Clock layout + publish variables for Triggers. */
+	/** Config keys for the Companion button that owns each DSM mode. */
+	dsmButtonConfigIds(mode) {
+		const key = { full: 'Full', led: 'Led', vid: 'Vid', ppt: 'Ppt' }[normalizeDsmLayoutMode(mode)]
+		return {
+			page: `dsmBtn${key}Page`,
+			row: `dsmBtn${key}Row`,
+			column: `dsmBtn${key}Column`,
+		}
+	}
+
+	/**
+	 * Press the Companion button configured for this DSM mode (page / row / column).
+	 * Uses Companion's local HTTP API so that button can hold Ultrix / ATEM / vMix / OBS / Ross Talk actions.
+	 * Page 0 or empty = not configured (skip).
+	 */
+	async pressDsmCompanionButton(mode) {
+		const normalized = normalizeDsmLayoutMode(mode)
+		const ids = this.dsmButtonConfigIds(normalized)
+		const page = parseInt(this.config?.[ids.page], 10)
+		if (!Number.isFinite(page) || page < 1) {
+			this.log('debug', `DSM ${normalized}: no Companion button page set — skip press`)
+			return false
+		}
+		const row = Math.max(0, parseInt(this.config?.[ids.row], 10) || 0)
+		const column = Math.max(0, parseInt(this.config?.[ids.column], 10) || 0)
+		const base = String(this.config?.companionHttpBase || 'http://127.0.0.1:8000')
+			.trim()
+			.replace(/\/+$/, '')
+		const key = String(this.config?.companionHttpApiKey || '').trim()
+		let url = `${base}/api/location/${page}/${row}/${column}/press`
+		if (key) url += `?key=${encodeURIComponent(key)}`
+		const headers = { Accept: 'application/json' }
+		if (key) headers.Authorization = `Bearer ${key}`
+		try {
+			const res = await fetch(url, { method: 'POST', headers })
+			if (!res.ok) {
+				const body = await res.text().catch(() => '')
+				throw new Error(`HTTP ${res.status}${body ? `: ${body.slice(0, 120)}` : ''}`)
+			}
+			this.log(
+				'info',
+				`DSM ${dsmLayoutLabel(normalized)}: pressed Companion button page ${page} row ${row} col ${column}`
+			)
+			return true
+		} catch (err) {
+			this.log(
+				'error',
+				`DSM ${normalized}: Companion button press failed (page ${page}/${row}/${column}): ${err.message}`
+			)
+			return false
+		}
+	}
+
+	/** Manual preset / action: DSM Clock layout + publish + press configured Companion button. */
 	async applyDsmMode(mode, { layout = true, source = 'manual' } = {}) {
 		const normalized = normalizeDsmLayoutMode(mode)
 		const eventId = this.config?.eventId
@@ -177,11 +229,12 @@ class RunOfShowInstance extends InstanceBase {
 			}
 		}
 		this.publishDsmMode(normalized, source)
+		await this.pressDsmCompanionButton(normalized)
 		return normalized
 	}
 
 	/**
-	 * On cue load: if the row has DSM enabled, publish that mode (Triggers / wired presets).
+	 * On cue load: if the row has DSM enabled, publish mode + press the configured Companion button.
 	 * force=true ignores the row checkbox (manual path via applyDsmMode).
 	 */
 	async fireDsmForLoadedItem(itemId, { force = false, mode: modeOverride } = {}) {
@@ -196,11 +249,12 @@ class RunOfShowInstance extends InstanceBase {
 				: item
 					? effectiveDsmLayoutMode(item)
 					: 'led'
-		// Server already set DSM Clock layout on load; Companion publishes for Triggers.
+		// Server already set DSM Clock layout on load; Companion publishes + presses button.
 		if (force) {
 			await this.applyDsmMode(mode, { layout: true, source: 'manual' })
 		} else {
 			this.publishDsmMode(mode, 'cue_load')
+			await this.pressDsmCompanionButton(mode)
 		}
 		return true
 	}
@@ -452,19 +506,36 @@ class RunOfShowInstance extends InstanceBase {
 			{
 				type: 'static-text',
 				id: 'dsmHeading',
-				label: 'DSM presets (switcher-agnostic)',
+				label: 'DSM → Companion buttons',
 				width: 12,
 				value:
-					'DSM presets only set Clock layout + variables (dsm_mode / dsm_fire). Wire Companion Triggers or multi-actions to Ross Talk, ATEM, vMix, or OBS so you can test buttons in advance.',
+					'Build one Companion page with Full / LED / VID / PPT buttons (put Ultrix, ATEM, vMix, OBS, Ross Talk, etc. on those buttons). Enter each button page / row / column below. On cue load (and when you press a DSM preset), this module presses that button. Page 0 = unused.',
+			},
+			{
+				type: 'textinput',
+				id: 'companionHttpBase',
+				label: 'Companion HTTP base URL',
+				width: 8,
+				default: 'http://127.0.0.1:8000',
+				tooltip:
+					'Local Companion HTTP API (Settings → HTTP Server must be enabled). Default http://127.0.0.1:8000',
+			},
+			{
+				type: 'textinput',
+				id: 'companionHttpApiKey',
+				label: 'Companion HTTP API key (optional)',
+				width: 4,
+				default: '',
+				tooltip: 'If Companion requires an API key / passphrase, paste it here.',
 			},
 			{
 				type: 'checkbox',
 				id: 'dsmPublishOnCueLoad',
-				label: 'Publish DSM mode on cue load',
+				label: 'Press DSM button on cue load',
 				width: 8,
 				default: true,
 				tooltip:
-					'When ON, loading a DSM-enabled cue updates $(dsm_mode) and bumps $(dsm_fire) so your Triggers can fire Ultrix/ATEM/vMix/OBS.',
+					'When ON, loading a DSM-enabled cue presses the Companion button for that row DSM mode (and updates dsm_mode / dsm_fire).',
 			},
 			{
 				type: 'number',
@@ -474,7 +545,55 @@ class RunOfShowInstance extends InstanceBase {
 				default: 2,
 				min: 1,
 				max: 10,
-				tooltip: 'How often to check for cue loads from ROS/OSC (when publish on cue load is ON).',
+				tooltip: 'How often to check for cue loads from ROS/OSC (when press on cue load is ON).',
+			},
+			...this.dsmButtonLocationFields('Full', 'full'),
+			...this.dsmButtonLocationFields('LED', 'led'),
+			...this.dsmButtonLocationFields('VID', 'vid'),
+			...this.dsmButtonLocationFields('PPT', 'ppt'),
+		]
+	}
+
+	/** Page / row / column fields for one DSM mode button. */
+	dsmButtonLocationFields(label, mode) {
+		const ids = this.dsmButtonConfigIds(mode)
+		return [
+			{
+				type: 'static-text',
+				id: `dsmBtn${label}Heading`,
+				label: `DSM · ${label} button`,
+				width: 12,
+				value: `Companion location to press for ${label} DSM.`,
+			},
+			{
+				type: 'number',
+				id: ids.page,
+				label: `${label} · Page`,
+				width: 4,
+				default: 0,
+				min: 0,
+				max: 999,
+				tooltip: 'Companion page number (1+). 0 = do not press.',
+			},
+			{
+				type: 'number',
+				id: ids.row,
+				label: `${label} · Row`,
+				width: 4,
+				default: 0,
+				min: 0,
+				max: 99,
+				tooltip: 'Companion row (usually 0-based).',
+			},
+			{
+				type: 'number',
+				id: ids.column,
+				label: `${label} · Column`,
+				width: 4,
+				default: 0,
+				min: 0,
+				max: 99,
+				tooltip: 'Companion column (usually 0-based).',
 			},
 		]
 	}

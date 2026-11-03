@@ -287,7 +287,7 @@ module.exports = function (self) {
 			},
 		},
 		dsm_clock_layout: {
-			name: 'DSM Mode (Clock + publish)',
+			name: 'DSM Mode (Clock + press button)',
 			options: [
 				{
 					id: 'mode',
@@ -322,7 +322,7 @@ module.exports = function (self) {
 			},
 		},
 		dsm_mode_full: {
-			name: 'DSM · Full (test / publish)',
+			name: 'DSM · Full (test / press)',
 			options: [],
 			callback: async () => {
 				try {
@@ -333,7 +333,7 @@ module.exports = function (self) {
 			},
 		},
 		dsm_mode_led: {
-			name: 'DSM · LED (test / publish)',
+			name: 'DSM · LED (test / press)',
 			options: [],
 			callback: async () => {
 				try {
@@ -344,7 +344,7 @@ module.exports = function (self) {
 			},
 		},
 		dsm_mode_vid: {
-			name: 'DSM · VID (test / publish)',
+			name: 'DSM · VID (test / press)',
 			options: [],
 			callback: async () => {
 				try {
@@ -355,7 +355,7 @@ module.exports = function (self) {
 			},
 		},
 		dsm_mode_ppt: {
-			name: 'DSM · PPT (test / publish)',
+			name: 'DSM · PPT (test / press)',
 			options: [],
 			callback: async () => {
 				try {

@@ -6,7 +6,7 @@ Bitfocus Companion v3 module for Run of Show (ROS). Controls your ROS schedule v
 
 - **Load Cue** – Load any cue/row from the schedule
 - **Start / Stop / Reset Timer** – Full timer control
-- **DSM presets** – Full / LED / VID / PPT: update DSM Clock layout and publish `dsm_mode` / `dsm_fire` variables. Wire Companion Triggers or button multi-actions to Ross Talk, ATEM, vMix, or OBS (testable without loading a cue)
+- **DSM presets** – Full / LED / VID / PPT: set Clock layout and press a Companion button you configure by page / row / column (put Ultrix / ATEM / vMix / OBS / Ross Talk on that page)
 - **Variables** – Current cue, segment name, timer state; plus **per-cue** label/value
 - **Feedbacks** – Timer running, cue loaded, "loaded cue is (choice)"
 - **Presets** – One preset per cue (auto-updates with Event ID); drag onto buttons for Load Cue + text + feedback
@@ -40,7 +40,9 @@ Bitfocus Companion v3 module for Run of Show (ROS). Controls your ROS schedule v
 - **Event ID**: From your Run of Show web app (Events list)
 - **Day**: 1–10 for multi-day events
 - **Sync interval (seconds)**: How often to fetch schedule/timer (5–600, default 60)
-- **DSM publish on cue load**: When ON, a DSM-enabled cue load updates `dsm_mode` and bumps `dsm_fire` so Companion Triggers can drive your switcher.
+- **Press DSM button on cue load**: When ON, a DSM-enabled cue load presses the Companion button (page/row/column) configured for that mode.
+- **DSM Full/LED/VID/PPT page · row · column**: Locations of the buttons that hold your switcher actions.
+- **Companion HTTP base URL**: Default `http://127.0.0.1:8000` (HTTP Server must be enabled in Companion).
 
 ## Presets (drag and drop, auto-update by Event ID)
 
@@ -48,7 +50,7 @@ After you set **Event ID** and the module syncs, open the **Presets** tab in Com
 
 - **Cues** – One preset per **regular** (non-indented) cue only (e.g. "CUE 1: Opening", "CUE 2: Keynote"). Each runs **Load Cue** and uses **Loaded cue is** feedback. Sub-cues are not listed here.
 - **Timer** – Presets: **Start Timer**, **Stop Timer**, **Reset Timer**, **Timer +1 min**, **Timer -1 min**, **Timer +5 min**, **Timer -5 min**, **Stop all sub-timers**. Drag onto buttons for one-tap timer control.
-- **DSM** – **Full / LED / VID / PPT** (sets DSM Clock layout + publishes mode variables for Triggers / multi-actions).
+- **DSM** – **Full / LED / VID / PPT** (sets DSM Clock layout + presses the configured Companion button).
 - **Sub-Timers** – One preset per **sub-cue** (indented row) only for **Start Sub-Timer** (e.g. "Sub: CUE 1.1 – Intro"). Regular cues are not listed here.
 
 The preset list updates when the schedule changes.
@@ -69,7 +71,7 @@ This module calls the Run of Show Railway API directly:
 - `POST /api/timers/stop` – Stop timer
 - `POST /api/timers/reset` – Reset timer
 - `POST /api/dsm-clock/layout` – `{ event_id, mode: "full" | "led" | "vid" | "ppt" }` for DSM Clock pages
-- Variables dsm_mode, dsm_fire – for Companion Triggers (no built-in switcher protocol)
+- Variables dsm_mode, dsm_fire – still published; primary path is pressing configured Companion buttons
 
 ## License
 

@@ -29,10 +29,11 @@ Control your Run of Show schedule directly from Bitfocus Companion. No Electron 
 ### LED Text Graphics
 - **LED Clear Output** – Clears the transparent LED output page for this event (same as **Clear Output** on the LED Layouts page). All connected `/led-output` browser sources hide their content.
 
-### DSM (presets + Triggers)
-- **DSM · Full / LED / VID / PPT** – Sets DSM Clock layout and publishes `dsm_mode` / `dsm_fire`. Press these to test before show.
-- Wire Companion **Triggers** (on `dsm_fire` or `dsm_mode`) — or add multi-actions on the same buttons — to Ross Talk, ATEM, vMix, or OBS.
-- With **Publish DSM mode on cue load** ON, loading a DSM-enabled cue publishes the same variables so your Triggers run automatically.
+### DSM (presets → Companion buttons)
+- In module settings, set **page / row / column** for Full, LED, VID, and PPT. Put all Ultrix / ATEM / vMix / OBS / Ross Talk actions on those Companion buttons.
+- Enable Companion **HTTP Server** (default `http://127.0.0.1:8000`).
+- With **Press DSM button on cue load** ON, loading a DSM-enabled cue presses the matching button.
+- **DSM · Full / LED / VID / PPT** presets: set Clock layout, publish variables, and press the same configured button (for dry-run).
 
 ## Variables
 
