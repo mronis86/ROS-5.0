@@ -59,13 +59,13 @@ module.exports = function (self) {
 						duration_seconds: dur ?? 300,
 					})
 					await self.fetchActiveTimer(eventId)
-					// Mark watch so the 2s poll does not double-fire; send Ross Talk now if DSM enabled
+					// Mark watch so the 2s poll does not double-publish; publish DSM vars if row enabled
 					self._dsmWatchPrev = {
 						itemId: String(itemId),
 						state: String(self.activeTimer?.timer_state || 'loaded'),
 					}
-					if (self.fireDsmRossTalkForItem) {
-						await self.fireDsmRossTalkForItem(itemId, { force: false })
+					if (self.fireDsmForLoadedItem) {
+						await self.fireDsmForLoadedItem(itemId, { force: false })
 					}
 					self.updateVariableValues()
 					self.updateFeedbacks()
@@ -287,7 +287,7 @@ module.exports = function (self) {
 			},
 		},
 		dsm_clock_layout: {
-			name: 'DSM Mode (Clock + Ross Talk)',
+			name: 'DSM Mode (Clock + publish)',
 			options: [
 				{
 					id: 'mode',
@@ -307,7 +307,7 @@ module.exports = function (self) {
 				const mode = event.options.mode || 'led'
 				try {
 					if (self.applyDsmMode) {
-						await self.applyDsmMode(mode, { layout: true, rossTalk: true })
+						await self.applyDsmMode(mode, { layout: true, source: 'manual' })
 					} else {
 						const eventId = self.config?.eventId
 						if (!eventId) {
@@ -322,44 +322,44 @@ module.exports = function (self) {
 			},
 		},
 		dsm_mode_full: {
-			name: 'DSM · Full (Clock + Ross Talk)',
+			name: 'DSM · Full (test / publish)',
 			options: [],
 			callback: async () => {
 				try {
-					await self.applyDsmMode('full', { layout: true, rossTalk: true })
+					await self.applyDsmMode('full', { layout: true, source: 'manual' })
 				} catch (err) {
 					self.log('error', `DSM Full failed: ${err.message}`)
 				}
 			},
 		},
 		dsm_mode_led: {
-			name: 'DSM · LED (Clock + Ross Talk)',
+			name: 'DSM · LED (test / publish)',
 			options: [],
 			callback: async () => {
 				try {
-					await self.applyDsmMode('led', { layout: true, rossTalk: true })
+					await self.applyDsmMode('led', { layout: true, source: 'manual' })
 				} catch (err) {
 					self.log('error', `DSM LED failed: ${err.message}`)
 				}
 			},
 		},
 		dsm_mode_vid: {
-			name: 'DSM · VID (Clock + Ross Talk)',
+			name: 'DSM · VID (test / publish)',
 			options: [],
 			callback: async () => {
 				try {
-					await self.applyDsmMode('vid', { layout: true, rossTalk: true })
+					await self.applyDsmMode('vid', { layout: true, source: 'manual' })
 				} catch (err) {
 					self.log('error', `DSM VID failed: ${err.message}`)
 				}
 			},
 		},
 		dsm_mode_ppt: {
-			name: 'DSM · PPT (Clock + Ross Talk)',
+			name: 'DSM · PPT (test / publish)',
 			options: [],
 			callback: async () => {
 				try {
-					await self.applyDsmMode('ppt', { layout: true, rossTalk: true })
+					await self.applyDsmMode('ppt', { layout: true, source: 'manual' })
 				} catch (err) {
 					self.log('error', `DSM PPT failed: ${err.message}`)
 				}
@@ -370,7 +370,7 @@ module.exports = function (self) {
 			options: [],
 			callback: async () => {
 				try {
-					await self.applyDsmMode('led', { layout: true, rossTalk: true })
+					await self.applyDsmMode('led', { layout: true, source: 'manual' })
 				} catch (err) {
 					self.log('error', `DSM 16:9/LED failed: ${err.message}`)
 				}
@@ -381,7 +381,7 @@ module.exports = function (self) {
 			options: [],
 			callback: async () => {
 				try {
-					await self.applyDsmMode('full', { layout: true, rossTalk: true })
+					await self.applyDsmMode('full', { layout: true, source: 'manual' })
 				} catch (err) {
 					self.log('error', `DSM Full failed: ${err.message}`)
 				}

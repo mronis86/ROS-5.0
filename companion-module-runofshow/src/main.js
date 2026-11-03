@@ -3,7 +3,6 @@ const UpgradeScripts = require('./upgrades')
 const UpdateActions = require('./actions')
 const UpdateFeedbacks = require('./feedbacks')
 const UpdateVariableDefinitions = require('./variables')
-const { sendRossTalkCommand } = require('./ross-talk')
 const {
 	normalizeDsmLayoutMode,
 	effectiveDsmLayoutMode,
@@ -20,12 +19,13 @@ class RunOfShowInstance extends InstanceBase {
 		this.pollInterval = null
 		this.autoDisableTimeout = null
 		this.timerTickInterval = null
-		this.rossTalkWatchInterval = null
+		this.dsmCueWatchInterval = null
 		this.refreshStartedAt = null
 		this.syncPausedByTimer = false
 		this._dsmWatchPrev = null
 		this.lastDsmMode = ''
-		this.lastRossTalkStatus = '—'
+		this.lastDsmSource = '—'
+		this.dsmFireCount = 0
 	}
 
 	async init(config) {
@@ -41,7 +41,7 @@ class RunOfShowInstance extends InstanceBase {
 		this.checkAllFeedbacks()
 		if (this.getSyncIntervalEnabled()) this.startPolling()
 		this.startTimerTick()
-		this.startRossTalkTimerWatch()
+		this.startDsmCueLoadWatch()
 		this.updateStatus(InstanceStatus.Ok)
 	}
 
@@ -49,7 +49,7 @@ class RunOfShowInstance extends InstanceBase {
 		if (this.pollInterval) clearInterval(this.pollInterval)
 		if (this.autoDisableTimeout) clearTimeout(this.autoDisableTimeout)
 		if (this.timerTickInterval) clearInterval(this.timerTickInterval)
-		if (this.rossTalkWatchInterval) clearInterval(this.rossTalkWatchInterval)
+		if (this.dsmCueWatchInterval) clearInterval(this.dsmCueWatchInterval)
 	}
 
 	async configUpdated(config) {
@@ -70,7 +70,7 @@ class RunOfShowInstance extends InstanceBase {
 		this.updateVariableValues()
 		this.checkAllFeedbacks()
 		this.startTimerTick()
-		this.startRossTalkTimerWatch()
+		this.startDsmCueLoadWatch()
 		this.updateStatus(InstanceStatus.Ok)
 	}
 
@@ -144,86 +144,50 @@ class RunOfShowInstance extends InstanceBase {
 		)
 	}
 
-	isRossTalkEnabled() {
-		const v = this.config?.rossTalkEnabled
-		return v === true || v === 'true'
-	}
-
-	isRossTalkOnCueLoad() {
-		if (!this.isRossTalkEnabled()) return false
-		const v = this.config?.rossTalkOnCueLoad
+	isDsmPublishOnCueLoad() {
+		const v = this.config?.dsmPublishOnCueLoad
 		return v !== false && v !== 'false'
 	}
 
-	getRossTalkCommandForMode(mode) {
-		const m = normalizeDsmLayoutMode(mode)
-		const cfg = this.config || {}
-		if (m === 'full') return String(cfg.rossTalkCmdFull || '').trim()
-		if (m === 'vid') return String(cfg.rossTalkCmdVid || '').trim()
-		if (m === 'ppt') return String(cfg.rossTalkCmdPpt || '').trim()
-		return String(cfg.rossTalkCmdLed || '').trim()
-	}
-
-	async sendDsmRossTalk(mode) {
-		if (!this.isRossTalkEnabled()) {
-			this.lastRossTalkStatus = 'disabled'
-			return false
-		}
+	/**
+	 * Publish DSM mode for Companion Triggers / button programming.
+	 * Sets dsm_mode + bumps dsm_fire so Triggers always see a change (even LED→LED).
+	 * Does not talk to Ultrix/ATEM/vMix/OBS — wire those in Companion.
+	 */
+	publishDsmMode(mode, source = 'manual') {
 		const normalized = normalizeDsmLayoutMode(mode)
-		const command = this.getRossTalkCommandForMode(normalized)
-		if (!command) {
-			this.lastRossTalkStatus = `no cmd (${normalized})`
-			this.log('warn', `Ross Talk: no command configured for ${dsmLayoutLabel(normalized)}`)
-			this.updateVariableValues()
-			return false
-		}
-		const host = String(this.config?.rossTalkHost || '').trim()
-		const port = parseInt(this.config?.rossTalkPort, 10) || 7788
-		try {
-			await sendRossTalkCommand({ host, port, command })
-			this.lastDsmMode = normalized
-			this.lastRossTalkStatus = `ok ${normalized}`
-			this.log('info', `Ross Talk sent (${dsmLayoutLabel(normalized)}): ${command}`)
-			this.updateVariableValues()
-			return true
-		} catch (err) {
-			this.lastRossTalkStatus = `err ${err.message}`
-			this.log('error', `Ross Talk failed (${normalized}): ${err.message}`)
-			this.updateVariableValues()
-			return false
-		}
+		this.lastDsmMode = normalized
+		this.lastDsmSource = source
+		this.dsmFireCount = (Number(this.dsmFireCount) || 0) + 1
+		this.updateVariableValues()
+		this.log('info', `DSM mode published: ${dsmLayoutLabel(normalized)} (${source}) fire=${this.dsmFireCount}`)
+		return normalized
 	}
 
-	/** Push DSM Clock layout (API) and/or Ross Talk for a mode. */
-	async applyDsmMode(mode, { layout = true, rossTalk = true } = {}) {
+	/** Manual preset / action: DSM Clock layout + publish variables for Triggers. */
+	async applyDsmMode(mode, { layout = true, source = 'manual' } = {}) {
 		const normalized = normalizeDsmLayoutMode(mode)
 		const eventId = this.config?.eventId
 		if (layout && eventId) {
 			try {
 				await this.apiPost('/api/dsm-clock/layout', { event_id: eventId, mode: normalized })
-				this.lastDsmMode = normalized
 				this.log('info', `DSM Clock layout set to ${normalized}`)
 			} catch (err) {
 				this.log('error', `DSM Clock layout failed: ${err.message}`)
 			}
 		}
-		if (rossTalk) {
-			await this.sendDsmRossTalk(normalized)
-		} else {
-			this.lastDsmMode = normalized
-		}
-		this.updateVariableValues()
+		this.publishDsmMode(normalized, source)
 		return normalized
 	}
 
 	/**
-	 * On cue load: if the row has DSM enabled, send its mode via Ross Talk.
-	 * force=true always sends (manual preset), ignoring the row checkbox.
+	 * On cue load: if the row has DSM enabled, publish that mode (Triggers / wired presets).
+	 * force=true ignores the row checkbox (manual path via applyDsmMode).
 	 */
-	async fireDsmRossTalkForItem(itemId, { force = false, mode: modeOverride } = {}) {
+	async fireDsmForLoadedItem(itemId, { force = false, mode: modeOverride } = {}) {
 		const item = this.findScheduleItem(itemId)
 		if (!force && item?.dsmEnabled !== true) {
-			this.log('debug', `DSM Ross Talk skipped — DSM not enabled on item ${itemId}`)
+			this.log('debug', `DSM publish skipped — DSM not enabled on item ${itemId}`)
 			return false
 		}
 		const mode =
@@ -232,42 +196,41 @@ class RunOfShowInstance extends InstanceBase {
 				: item
 					? effectiveDsmLayoutMode(item)
 					: 'led'
-		// Cue-load path: server already set DSM Clock layout; Companion only needs Ross Talk.
-		// Manual force still sends layout when called via applyDsmMode from actions.
+		// Server already set DSM Clock layout on load; Companion publishes for Triggers.
 		if (force) {
-			await this.applyDsmMode(mode, { layout: true, rossTalk: true })
+			await this.applyDsmMode(mode, { layout: true, source: 'manual' })
 		} else {
-			await this.sendDsmRossTalk(mode)
+			this.publishDsmMode(mode, 'cue_load')
 		}
 		return true
 	}
 
 	/** Watch active timer for cue-load changes (ROS / OSC / other clients). */
-	startRossTalkTimerWatch() {
-		if (this.rossTalkWatchInterval) {
-			clearInterval(this.rossTalkWatchInterval)
-			this.rossTalkWatchInterval = null
+	startDsmCueLoadWatch() {
+		if (this.dsmCueWatchInterval) {
+			clearInterval(this.dsmCueWatchInterval)
+			this.dsmCueWatchInterval = null
 		}
-		if (!this.isRossTalkOnCueLoad()) return
+		if (!this.isDsmPublishOnCueLoad()) return
 		const self = this
-		const ms = Math.max(1000, Math.min(10000, parseInt(this.config?.rossTalkWatchSeconds, 10) * 1000 || 2000))
-		this.rossTalkWatchInterval = setInterval(() => {
+		const ms = Math.max(1000, Math.min(10000, parseInt(this.config?.dsmCueWatchSeconds, 10) * 1000 || 2000))
+		this.dsmCueWatchInterval = setInterval(() => {
 			const eventId = self.config?.eventId
 			if (!eventId) return
 			self
 				.fetchActiveTimer(eventId)
 				.then(() => {
-					self.maybeFireDsmRossTalkFromActiveTimer()
+					self.maybePublishDsmFromActiveTimer()
 					self.updateVariableValues()
 					self.checkAllFeedbacks()
 				})
 				.catch(() => {})
 		}, ms)
-		this.log('info', `Ross Talk cue-load watch every ${Math.round(ms / 1000)}s`)
+		this.log('info', `DSM cue-load watch every ${Math.round(ms / 1000)}s`)
 	}
 
-	maybeFireDsmRossTalkFromActiveTimer() {
-		if (!this.isRossTalkOnCueLoad()) return
+	maybePublishDsmFromActiveTimer() {
+		if (!this.isDsmPublishOnCueLoad()) return
 		const t = this.activeTimer
 		if (!t || t.item_id == null) return
 		const itemId = String(t.item_id)
@@ -284,7 +247,7 @@ class RunOfShowInstance extends InstanceBase {
 		const becameLoaded = state === 'loaded' && prev.state !== 'loaded'
 		this._dsmWatchPrev = { itemId, state }
 		if (!itemChanged && !becameLoaded) return
-		void this.fireDsmRossTalkForItem(itemId, { force: false })
+		void this.fireDsmForLoadedItem(itemId, { force: false })
 	}
 
 	itemDurationSeconds(item) {
@@ -322,7 +285,7 @@ class RunOfShowInstance extends InstanceBase {
 			await this.fetchEvents()
 			await this.fetchRunOfShow(eventId, this.config?.day || 1)
 			await this.fetchActiveTimer(eventId)
-			this.maybeFireDsmRossTalkFromActiveTimer()
+			this.maybePublishDsmFromActiveTimer()
 		} catch (err) {
 			this.log('error', `Failed to fetch data: ${err.message}`)
 		}
@@ -488,88 +451,30 @@ class RunOfShowInstance extends InstanceBase {
 			},
 			{
 				type: 'static-text',
-				id: 'rossTalkHeading',
-				label: 'Ross Talk (DSM)',
+				id: 'dsmHeading',
+				label: 'DSM presets (switcher-agnostic)',
 				width: 12,
 				value:
-					'Send Ross Talk TCP commands when a DSM-enabled cue loads (or via DSM presets). Fill in the exact strings your switcher expects.',
+					'DSM presets only set Clock layout + variables (dsm_mode / dsm_fire). Wire Companion Triggers or multi-actions to Ross Talk, ATEM, vMix, or OBS so you can test buttons in advance.',
 			},
 			{
 				type: 'checkbox',
-				id: 'rossTalkEnabled',
-				label: 'Enable Ross Talk',
-				width: 6,
-				default: false,
-				tooltip: 'When ON, this module opens a TCP connection and sends the command for the DSM mode.',
-			},
-			{
-				type: 'checkbox',
-				id: 'rossTalkOnCueLoad',
-				label: 'Send on cue load (DSM-enabled rows)',
-				width: 6,
+				id: 'dsmPublishOnCueLoad',
+				label: 'Publish DSM mode on cue load',
+				width: 8,
 				default: true,
 				tooltip:
-					'When ON, loading a cue that has the DSM column checkbox enabled sends that row’s Full/LED/VID/PPT command. Works for loads from ROS, OSC, or Companion.',
-			},
-			{
-				type: 'textinput',
-				id: 'rossTalkHost',
-				label: 'Ross Talk host / IP',
-				width: 8,
-				default: '',
-				tooltip: 'Switcher or Ross Talk listener IP (e.g. Carbonite / Ultrix / openGear).',
+					'When ON, loading a DSM-enabled cue updates $(dsm_mode) and bumps $(dsm_fire) so your Triggers can fire Ultrix/ATEM/vMix/OBS.',
 			},
 			{
 				type: 'number',
-				id: 'rossTalkPort',
-				label: 'Ross Talk port',
-				width: 4,
-				default: 7788,
-				min: 1,
-				max: 65535,
-				tooltip: 'Default Ross Talk port is 7788.',
-			},
-			{
-				type: 'number',
-				id: 'rossTalkWatchSeconds',
+				id: 'dsmCueWatchSeconds',
 				label: 'Cue-load watch (seconds)',
 				width: 4,
 				default: 2,
 				min: 1,
 				max: 10,
-				tooltip: 'How often to check active timer for cue loads from ROS/OSC (when Send on cue load is ON).',
-			},
-			{
-				type: 'textinput',
-				id: 'rossTalkCmdFull',
-				label: 'Command · Full DSM',
-				width: 12,
-				default: '',
-				tooltip: 'Ross Talk string for Full DSM (leave blank to skip).',
-			},
-			{
-				type: 'textinput',
-				id: 'rossTalkCmdLed',
-				label: 'Command · LED DSM',
-				width: 12,
-				default: '',
-				tooltip: 'Ross Talk string for LED DSM (leave blank to skip).',
-			},
-			{
-				type: 'textinput',
-				id: 'rossTalkCmdVid',
-				label: 'Command · VID DSM',
-				width: 12,
-				default: '',
-				tooltip: 'Ross Talk string for VID DSM (leave blank to skip).',
-			},
-			{
-				type: 'textinput',
-				id: 'rossTalkCmdPpt',
-				label: 'Command · PPT DSM',
-				width: 12,
-				default: '',
-				tooltip: 'Ross Talk string for PPT DSM (leave blank to skip).',
+				tooltip: 'How often to check for cue loads from ROS/OSC (when publish on cue load is ON).',
 			},
 		]
 	}
@@ -907,7 +812,9 @@ class RunOfShowInstance extends InstanceBase {
 			timer_duration: timerDisplay.duration,
 			event_name: event?.name ?? '—',
 			dsm_mode: this.lastDsmMode || '—',
-			ross_talk_status: this.lastRossTalkStatus || '—',
+			dsm_mode_label: this.lastDsmMode ? dsmLayoutLabel(this.lastDsmMode) : '—',
+			dsm_fire: String(this.dsmFireCount || 0),
+			dsm_source: this.lastDsmSource || '—',
 		}
 
 		// Per-cue variables: label shows CUE 1 / CUE 1.1 not just 1

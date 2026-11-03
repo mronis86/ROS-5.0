@@ -10,7 +10,9 @@ module.exports = function (self) {
 		{ variableId: 'timer_duration', name: 'Timer Duration (M:SS)' },
 		{ variableId: 'event_name', name: 'Event Name' },
 		{ variableId: 'dsm_mode', name: 'Last DSM mode (full/led/vid/ppt)' },
-		{ variableId: 'ross_talk_status', name: 'Last Ross Talk status' },
+		{ variableId: 'dsm_mode_label', name: 'Last DSM mode label' },
+		{ variableId: 'dsm_fire', name: 'DSM fire counter (bumps on each publish — use for Triggers)' },
+		{ variableId: 'dsm_source', name: 'DSM publish source (manual / cue_load)' },
 	]
 	// Per-cue variables: use $(runofshow:cue_<itemId>_label) and $(runofshow:cue_<itemId>_value) in button text
 	// so each button can show the cue name/value for the cue selected in that button's Load Cue dropdown

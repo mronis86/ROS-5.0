@@ -22940,7 +22940,8 @@ const RunOfShowPage: React.FC = () => {
               <div className="flex flex-wrap gap-2">
                 <button
                   onClick={() => {
-                    setVisibleColumns({ ...DEFAULT_ROS_VISIBLE_COLUMNS, participants: true, custom: true });
+                    // Keep Participants hidden — it stays opt-in only (default false).
+                    setVisibleColumns({ ...DEFAULT_ROS_VISIBLE_COLUMNS, custom: true });
                     // Show all custom columns
                     const allCustomVisible: Record<string, boolean> = {};
                     customColumns.forEach(column => {
