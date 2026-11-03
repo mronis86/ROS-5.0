@@ -15,6 +15,8 @@ const DEFAULTS = {
   selectedDay: 1,
   selectedDaysByEvent: {},
   helperInstanceId: '',
+  /** Bring slideshow / presentation to the front when opening or switching decks. */
+  focusPresentationView: false,
 };
 
 function configPath() {
@@ -59,6 +61,7 @@ function saveConfig(partial) {
   if (next.liveCaptureRooms != null && typeof next.liveCaptureRooms !== 'object') {
     next.liveCaptureRooms = {};
   }
+  next.focusPresentationView = !!next.focusPresentationView;
   const day = Math.floor(Number(next.selectedDay) || 1);
   next.selectedDay = day >= 1 ? day : 1;
   if (next.selectedDaysByEvent == null || typeof next.selectedDaysByEvent !== 'object') {

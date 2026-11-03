@@ -41,6 +41,7 @@ const els = {
   stLivecap: document.getElementById('st-livecap'),
   stLivecapSrc: document.getElementById('st-livecap-src'),
   livecapError: document.getElementById('livecap-error'),
+  focusPresentationView: document.getElementById('focusPresentationView'),
 };
 
 let loadedEvents = [];
@@ -71,6 +72,7 @@ function formConfig() {
     selectedDay,
     numberOfDays: ev ? eventNumberOfDays(ev) : 1,
     selectedDaysByEvent,
+    focusPresentationView: !!(els.focusPresentationView && els.focusPresentationView.checked),
   };
 }
 
@@ -447,6 +449,9 @@ async function load() {
   applyModeUi();
   liveCaptureSource = cfg.liveCaptureSource === 'camera' ? 'camera' : 'screen';
   applyCaptureSourceUi();
+  if (els.focusPresentationView) {
+    els.focusPresentationView.checked = !!cfg.focusPresentationView;
+  }
   if (cfg.eventId) {
     const opt = document.createElement('option');
     opt.value = cfg.eventId;

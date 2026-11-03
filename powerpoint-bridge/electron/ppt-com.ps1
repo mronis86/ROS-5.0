@@ -5,7 +5,8 @@ param(
   [string]$ClosePath = '',
   [int]$SlideIndex = 0,
   [int]$Width = 0,
-  [int]$Height = 0
+  [int]$Height = 0,
+  [switch]$FocusShow = $false
 )
 
 $ErrorActionPreference = 'Stop'
@@ -359,21 +360,59 @@ function Close-AllPresentations($app, $keepPath) {
   Start-Sleep -Milliseconds 250
 }
 
+# Win32 helpers — COM Activate alone often loses to Windows focus-stealing rules.
+try {
+  Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class RosPptFocus {
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+  [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+  [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
+  [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+}
+"@ -ErrorAction SilentlyContinue
+} catch {}
+
+function Focus-Hwnd([IntPtr]$hwnd) {
+  if (-not $hwnd -or $hwnd -eq [IntPtr]::Zero) { return }
+  try {
+    [void][RosPptFocus]::ShowWindow($hwnd, 9) # SW_RESTORE
+    $fg = [RosPptFocus]::GetForegroundWindow()
+    $fgPid = [uint32]0
+    $fgTid = [RosPptFocus]::GetWindowThreadProcessId($fg, [ref]$fgPid)
+    $curTid = [RosPptFocus]::GetCurrentThreadId()
+    if ($fgTid -ne $curTid) { [void][RosPptFocus]::AttachThreadInput($curTid, $fgTid, $true) }
+    [void][RosPptFocus]::BringWindowToTop($hwnd)
+    [void][RosPptFocus]::SetForegroundWindow($hwnd)
+    if ($fgTid -ne $curTid) { [void][RosPptFocus]::AttachThreadInput($curTid, $fgTid, $false) }
+  } catch {}
+}
+
 function Focus-Show($app, $pres) {
   try { $app.Visible = $true } catch {
     try { $app.Visible = -1 } catch {}
   }
   try { $app.Activate() } catch {}
-  try { $app.WindowState = 3 } catch {}
+  try { $app.WindowState = 3 } catch {} # ppWindowMaximized
   try {
     if ($pres -and $pres.Windows.Count -gt 0) { $pres.Windows.Item(1).Activate() }
   } catch {}
+  $hwnd = [IntPtr]::Zero
   try {
     if ($app.SlideShowWindows.Count -gt 0) {
       $ssw = $app.SlideShowWindows.Item(1)
       try { $ssw.Activate() } catch {}
+      try { $hwnd = [IntPtr]$ssw.HWND } catch { $hwnd = [IntPtr]::Zero }
     }
   } catch {}
+  if ($hwnd -eq [IntPtr]::Zero) {
+    try { $hwnd = [IntPtr]$app.HWND } catch { $hwnd = [IntPtr]::Zero }
+  }
+  if ($hwnd -ne [IntPtr]::Zero) { Focus-Hwnd $hwnd }
 }
 
 try {
@@ -460,7 +499,7 @@ if ($Command -eq 'open' -or $Command -eq 'swap') {
     } catch {}
   }
   Start-Sleep -Milliseconds 250
-  Focus-Show $ppt $pres
+  if ($FocusShow) { Focus-Show $ppt $pres }
   $payload = Live-Payload $ppt $pres
   $payload.fullName = $FilePath
   if (-not $started -and -not $payload.slideshowActive) {
@@ -485,6 +524,8 @@ if ($Command -eq 'startShow') {
     exit 0
   }
   Start-Show $pres
+  Start-Sleep -Milliseconds 200
+  if ($FocusShow) { Focus-Show $ppt $pres }
   Write-Json (Live-Payload $ppt $pres)
   exit 0
 }

@@ -421,6 +421,11 @@ class PlaybackController {
       this.emit({ error: this.lastError, message: 'No sync folder' });
       return;
     }
+    try {
+      ppt.setOptions({ focusPresentationView: !!this.config.focusPresentationView });
+    } catch {
+      /* ignore */
+    }
     this.running = true;
     this.lastError = '';
     this.emit({ message: 'Starting ROS PPT Launcher…', error: '' });
@@ -1712,6 +1717,11 @@ class PlaybackController {
 
   async syncNow(config) {
     if (config) this.config = { ...this.config, ...config };
+    try {
+      ppt.setOptions({ focusPresentationView: !!this.config.focusPresentationView });
+    } catch {
+      /* ignore */
+    }
     if (!this.config?.eventId) throw new Error('Pick an event first.');
     if (!String(this.config.syncFolder || '').trim()) throw new Error('Pick a sync folder first.');
     return this.syncCache({ replace: true });

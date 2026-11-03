@@ -15,6 +15,18 @@ const LIVE_FILE = path.join(LIVE_DIR, 'ros-ppt-live.json');
 
 let watcher = null;
 let watcherPaused = false;
+/** When true, open/swap/startShow force Windows focus onto the slideshow. */
+let focusPresentationView = false;
+
+function setOptions(opts = {}) {
+  if (opts.focusPresentationView != null) {
+    focusPresentationView = !!opts.focusPresentationView;
+  }
+}
+
+function focusArgs() {
+  return focusPresentationView ? ['-FocusShow'] : [];
+}
 
 function cleanPptError(raw) {
   const text = String(raw || '').replace(/\s+/g, ' ').trim();
@@ -188,13 +200,21 @@ function extra(flag, value) {
 
 async function openDeck(filePath, closePath) {
   return withWatchPaused(() =>
-    runPptCommand('open', [...extra('-FilePath', filePath), ...extra('-ClosePath', closePath)])
+    runPptCommand('open', [
+      ...extra('-FilePath', filePath),
+      ...extra('-ClosePath', closePath),
+      ...focusArgs(),
+    ])
   );
 }
 
 async function swapDeck(filePath, closePath) {
   return withWatchPaused(() =>
-    runPptCommand('swap', [...extra('-FilePath', filePath), ...extra('-ClosePath', closePath)])
+    runPptCommand('swap', [
+      ...extra('-FilePath', filePath),
+      ...extra('-ClosePath', closePath),
+      ...focusArgs(),
+    ])
   );
 }
 
@@ -207,7 +227,9 @@ async function closeAll() {
 }
 
 async function startShow(filePath) {
-  return withWatchPaused(() => runPptCommand('startShow', extra('-FilePath', filePath)));
+  return withWatchPaused(() =>
+    runPptCommand('startShow', [...extra('-FilePath', filePath), ...focusArgs()])
+  );
 }
 
 async function endShow() {
@@ -246,4 +268,5 @@ module.exports = {
   gotoSlide,
   startLiveWatch,
   stopLiveWatch,
+  setOptions,
 };

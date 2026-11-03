@@ -1,0 +1,27 @@
+{
+  "appId": "com.sinor.ros.powerpoint-bridge",
+  "productName": "ROS PowerPoint Bridge V2",
+  "directories": {
+    "output": "dist-openfix5",
+    "buildResources": "build"
+  },
+  "files": [
+    "electron/**/*",
+    "renderer/**/*",
+    "package.json"
+  ],
+  "extraResources": [
+    {
+      "from": "electron/ppt-com.ps1",
+      "to": "ppt-com.ps1"
+    }
+  ],
+  "win": {
+    "target": [
+      {
+        "target": "dir",
+        "arch": ["x64"]
+      }
+    ]
+  }
+}
