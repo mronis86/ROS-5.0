@@ -102,6 +102,13 @@ Get-ChildItem $UploadDir -File -Recurse | Where-Object { $_.Length -gt $MaxFileB
     Write-Host "Removed oversized: $rel"
 }
 
+# Always rebuild the main Companion download so Pages does not ship a stale module zip
+Write-Host 'Rebuilding companion-module-runofshow-full.zip...'
+& node (Join-Path $ProjectRoot 'scripts\zip-companion-module-full.js')
+if ($LASTEXITCODE -ne 0) {
+    throw "zip-companion-module-full.js failed with exit $LASTEXITCODE"
+}
+
 $OptionalZips = @(
     'companion-module-runofshow-full.zip',
     'companion-module-runofshow-resolume-full.zip',
