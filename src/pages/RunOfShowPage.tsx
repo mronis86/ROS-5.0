@@ -2054,6 +2054,7 @@ const RunOfShowPage: React.FC = () => {
   const [showReportsSubmenu, setShowReportsSubmenu] = useState(false);
   const [fullScreenTimerWindow, setFullScreenTimerWindow] = useState<Window | null>(null);
   const [clockWindow, setClockWindow] = useState<Window | null>(null);
+  const [dsmClockWindow, setDsmClockWindow] = useState<Window | null>(null);
   const [pinNotesWindow, setPinNotesWindow] = useState<Window | null>(null);
   const [pinNotesColumns, setPinNotesColumns] = useState<{ type: 'notes' | 'custom' | 'cue'; id: string; name: string }[]>([]);
   const [showPinNotesColumnModal, setShowPinNotesColumnModal] = useState(false);
@@ -8994,6 +8995,70 @@ const RunOfShowPage: React.FC = () => {
     }
   };
 
+  // Open DSM Clock (fork of Clock) — same open modes as Clock
+  const openDsmClock = (mode: DisplayOpenMode = 'external') => {
+    setShowMenuDropdown(false);
+
+    if (dsmClockWindow && !dsmClockWindow.closed) {
+      dsmClockWindow.close();
+    }
+
+    const activeTimerIds = Object.keys(activeTimers);
+    const currentItem = activeTimerIds.length > 0
+      ? schedule.find(item => activeTimers[item.id])
+      : schedule.find(item => item.id === activeItemId);
+
+    const timerData = {
+      isRunning: activeTimerIds.length > 0,
+      elapsedTime: currentItem && timerProgress[currentItem.id]
+        ? timerProgress[currentItem.id].elapsed
+        : 0,
+      totalDuration: currentItem
+        ? currentItem.durationHours * 3600 + currentItem.durationMinutes * 60 + currentItem.durationSeconds
+        : 0,
+      eventId: event?.id,
+      mainTimer: currentItem ? {
+        cue: currentItem.customFields.cue || 'CUE',
+        segmentName: currentItem.segmentName || ''
+      } : null,
+      secondaryTimer: secondaryTimer ? {
+        itemId: secondaryTimer.itemId,
+        remaining: secondaryTimer.remaining,
+        duration: secondaryTimer.duration,
+        cue: schedule.find(item => item.id === secondaryTimer.itemId)?.customFields.cue || 'CUE',
+        segmentName: schedule.find(item => item.id === secondaryTimer.itemId)?.segmentName || ''
+      } : null
+    };
+
+    const dsmUrl = event?.id ? `/dsm-clock?eventId=${encodeURIComponent(event.id)}` : '/dsm-clock';
+
+    if (mode === 'same') {
+      navigate(dsmUrl, { state: timerData });
+      return;
+    }
+
+    if (mode === 'tab') {
+      window.open(dsmUrl, '_blank', 'noopener,noreferrer');
+      return;
+    }
+
+    const newDsmWindow = window.open(
+      dsmUrl,
+      'dsm-clock',
+      'width=1920,height=1080,fullscreen=yes,menubar=no,toolbar=no,location=no,status=no,scrollbars=no,resizable=yes'
+    );
+
+    if (newDsmWindow) {
+      setDsmClockWindow(newDsmWindow);
+      newDsmWindow.addEventListener('load', () => {
+        newDsmWindow.postMessage({
+          type: 'TIMER_UPDATE',
+          ...timerData
+        }, '*');
+      });
+    }
+  };
+
   // Close menus when clicking outside (but not when clicking inside the menu dropdown)
   const menuDropdownContainerRef = useRef<HTMLDivElement>(null);
   const menuMainPanelRef = useRef<HTMLDivElement>(null);
@@ -14853,19 +14918,20 @@ const RunOfShowPage: React.FC = () => {
       const next = document.querySelector(
         '.sticky-header-scroll-container'
       ) as HTMLElement | null;
-      if (next === stickyHeaderContainer) return;
-      if (stickyHeaderContainer) {
-        stickyHeaderContainer.removeEventListener('scroll', handleStickyHeaderScroll);
-      }
-      stickyHeaderContainer = next;
-      if (stickyHeaderContainer) {
-        stickyHeaderContainer.addEventListener('scroll', handleStickyHeaderScroll, {
-          passive: true,
-        });
-        // Align once when the floating header mounts
-        if (stickyHeaderContainer.scrollLeft !== mainScrollContainer.scrollLeft) {
-          stickyHeaderContainer.scrollLeft = mainScrollContainer.scrollLeft;
+      if (next !== stickyHeaderContainer) {
+        if (stickyHeaderContainer) {
+          stickyHeaderContainer.removeEventListener('scroll', handleStickyHeaderScroll);
         }
+        stickyHeaderContainer = next;
+        if (stickyHeaderContainer) {
+          stickyHeaderContainer.addEventListener('scroll', handleStickyHeaderScroll, {
+            passive: true,
+          });
+        }
+      }
+      // Always re-align when sticky header is shown/resized (not only on first bind)
+      if (stickyHeaderContainer && stickyHeaderContainer.scrollLeft !== mainScrollContainer.scrollLeft) {
+        stickyHeaderContainer.scrollLeft = mainScrollContainer.scrollLeft;
       }
     };
 
@@ -14886,7 +14952,7 @@ const RunOfShowPage: React.FC = () => {
       }
       observer.disconnect();
     };
-  }, []);
+  }, [showGridHeaders]);
 
   // Drag-to-scroll functionality for horizontal scrolling
   useEffect(() => {
@@ -18067,8 +18133,9 @@ const RunOfShowPage: React.FC = () => {
               </div>
             </div>
           </div>
-          {/* Duplicate Grid Headers - Fixed at Top */}
-          <div className={`px-8 transition-all duration-500 ease-in-out overflow-hidden ${showGridHeaders ? 'max-h-80 opacity-100 -mb-6' : 'max-h-0 opacity-0 mb-0'}`}>
+          {/* Duplicate Grid Headers — same max-w/px as schedule so columns match when sticky */}
+          <div className={`transition-all duration-500 ease-in-out overflow-hidden ${showGridHeaders ? 'max-h-80 opacity-100 -mb-6' : 'max-h-0 opacity-0 mb-0'}`}>
+            <div className="max-w-[95%] mx-auto px-6">
             <div className="bg-slate-800 rounded-xl p-4 shadow-2xl" style={{ zoom: 0.75 }}>
               <div className="flex border-2 border-slate-600 rounded-lg overflow-hidden bg-slate-900">
                 {/* Row Number Column Header - click to cycle: normal → small → hidden */}
@@ -18104,8 +18171,14 @@ const RunOfShowPage: React.FC = () => {
                   </div>
                   {startPinnedBesideCue && (
                     <div
-                      className="h-16 bg-slate-700 border-b-3 border-slate-600 flex items-center justify-center relative cursor-pointer hover:bg-slate-600 transition-colors"
-                      style={{ width: columnWidths.start, borderRight: '6px solid #475569' }}
+                      className="h-16 bg-slate-700 border-b-3 border-slate-600 flex items-center justify-center relative cursor-pointer hover:bg-slate-600 transition-colors min-w-0"
+                      style={{
+                        width: columnWidths.start,
+                        minWidth: columnWidths.start,
+                        maxWidth: columnWidths.start,
+                        flex: `0 0 ${columnWidths.start}px`,
+                        borderRight: '6px solid #475569',
+                      }}
                       onClick={toggleStartTimeDisplayMode}
                       title={`Start time: ${startTimeDisplayModeLabel(startTimeDisplayMode)} (click for ${startTimeDisplayModeLabel(cycleStartTimeDisplayMode(startTimeDisplayMode))})`}
                     >
@@ -18126,7 +18199,10 @@ const RunOfShowPage: React.FC = () => {
 
 
                 {/* Center Scrollable Section Headers */}
-                <div className="flex-1 overflow-x-auto overflow-y-hidden sticky-header-scroll-container" style={{ scrollbarWidth: 'thin' }}>
+                <div
+                  className="flex-1 overflow-x-auto overflow-y-hidden sticky-header-scroll-container"
+                  style={{ scrollbarWidth: 'none' }}
+                >
                   <div className="min-w-max">
                     <div className="h-16 bg-slate-700 border-b-3 border-slate-600 flex">
                       {visibleColumns.start && !startPinnedBesideCue && (
@@ -18445,6 +18521,7 @@ const RunOfShowPage: React.FC = () => {
                   </div>
                 </div>
               </div>
+            </div>
             </div>
           </div>
         </div>
@@ -19363,11 +19440,16 @@ const RunOfShowPage: React.FC = () => {
             {/* Start pinned beside CUE (outside horizontal scroll) */}
             {startPinnedBesideCue && (
               <div
-                className="flex-shrink-0 bg-slate-900"
-                style={{ width: columnWidths.start }}
+                className="flex-shrink-0 bg-slate-900 min-w-0"
+                style={{
+                  width: columnWidths.start,
+                  minWidth: columnWidths.start,
+                  maxWidth: columnWidths.start,
+                  flex: `0 0 ${columnWidths.start}px`,
+                }}
               >
                 <div
-                  className="h-24 bg-slate-700 border-b-3 border-slate-600 flex items-center justify-center relative cursor-pointer hover:bg-slate-600 transition-colors"
+                  className="h-24 bg-slate-700 border-b-3 border-slate-600 flex items-center justify-center relative cursor-pointer hover:bg-slate-600 transition-colors min-w-0 w-full"
                   style={{ borderRight: '6px solid #475569' }}
                   onClick={toggleStartTimeDisplayMode}
                   title={`Start time: ${startTimeDisplayModeLabel(startTimeDisplayMode)} (click for ${startTimeDisplayModeLabel(cycleStartTimeDisplayMode(startTimeDisplayMode))})`}
@@ -23036,6 +23118,7 @@ const RunOfShowPage: React.FC = () => {
         onClose={() => setShowDisplayModal(false)}
         onSelectFullscreenTimer={openFullScreenTimer}
         onSelectClock={openClock}
+        onSelectDsmClock={openDsmClock}
       />
 
       {/* Pin-Notes popout: choose one or more columns, then open movable window */}

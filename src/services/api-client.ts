@@ -1300,6 +1300,22 @@ class ApiClient {
     });
   }
 
+  async getDsmClockLayout(eventId: string) {
+    return this.request<{ event_id: string; mode: '16x9' | 'full' | null }>(
+      `/api/dsm-clock/layout/${encodeURIComponent(eventId)}`
+    );
+  }
+
+  async setDsmClockLayout(eventId: string, mode: '16x9' | 'full') {
+    return this.request<{ ok: boolean; event_id: string; mode: '16x9' | 'full' }>(
+      '/api/dsm-clock/layout',
+      {
+        method: 'POST',
+        body: JSON.stringify({ event_id: eventId, mode }),
+      }
+    );
+  }
+
   async requestEventAccess(eventId: string) {
     const result = await this.request<{
       ok?: boolean;

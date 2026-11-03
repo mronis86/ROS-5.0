@@ -488,6 +488,33 @@ class RunOfShowInstance extends InstanceBase {
 			],
 		}
 
+		presets.dsm_clock_16x9 = {
+			type: 'button',
+			category: 'DSM Clock',
+			name: 'DSM · 16:9 ON',
+			style: {
+				text: 'DSM\n16:9',
+				size: 'auto',
+				color: combineRgb(0, 0, 0),
+				bgcolor: combineRgb(245, 158, 11),
+			},
+			feedbacks: [],
+			steps: [{ down: [{ actionId: 'dsm_clock_16x9', options: {} }], up: [] }],
+		}
+		presets.dsm_clock_full = {
+			type: 'button',
+			category: 'DSM Clock',
+			name: 'DSM · Full',
+			style: {
+				text: 'DSM\nFull',
+				size: 'auto',
+				color: combineRgb(255, 255, 255),
+				bgcolor: combineRgb(51, 65, 85),
+			},
+			feedbacks: [],
+			steps: [{ down: [{ actionId: 'dsm_clock_full', options: {} }], up: [] }],
+		}
+
 		// Timer display preset: adaptive – Duration (loaded) / Remaining (running) / Overtime (over). Two-line: label (small) \n value (large)
 		presets.timer_display_adaptive = {
 			type: 'button',

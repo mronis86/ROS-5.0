@@ -1,0 +1,741 @@
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import DsmClock from '../components/DsmClock';
+import { DatabaseService } from '../services/database';
+import { apiClient } from '../services/api-client';
+import { socketClient } from '../services/socket-client';
+import { Event } from '../types/Event';
+import { EventSelectorDropdown } from '../components/EventSelectorDropdown';
+import { useEventDisplaySyncGate } from '../hooks/useEventDisplaySyncGate';
+import DisplaySyncPausedBanner from '../components/DisplaySyncPausedBanner';
+import {
+  DISPLAY_SESSION_MAX_HOURS,
+  DISPLAY_SESSION_MAX_HINT,
+  DISPLAY_SESSION_MAX_LABEL,
+  DISPLAY_SESSION_PICK_TIME_ALERT,
+} from '../lib/displaySession';
+
+function applyDsmLayoutMode(mode: unknown): boolean | null {
+  const m = String(mode || '').toLowerCase();
+  if (m === 'full') return false;
+  if (m === '16x9' || m === '16:9') return true;
+  return null;
+}
+
+/** DSM Clock Timer page — duplicate of ClockPage for DSM-specific UI. */
+const DsmClockPage: React.FC = () => {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+
+  // Get event ID from URL parameters
+  const eventIdFromUrl = searchParams.get('eventId');
+
+  // Get timer data from location state or use defaults
+  const timerData = location.state || {};
+
+  // Clock component handles its own timer state via WebSocket
+  // ClockPage only manages messages to avoid state conflicts
+  const [message, setMessage] = useState('');
+  const [messageEnabled, setMessageEnabled] = useState(false);
+  const [supabaseMessage, setSupabaseMessage] = useState(null);
+  const [eventId, setEventId] = useState(eventIdFromUrl || timerData.eventId || null);
+  const [showDisconnectModal, setShowDisconnectModal] = useState(false);
+  const [showDisconnectNotification, setShowDisconnectNotification] = useState(false);
+  const [disconnectDuration, setDisconnectDuration] = useState('');
+  const [disconnectTimer, setDisconnectTimer] = useState<NodeJS.Timeout | null>(null);
+  const [hasShownModalOnce, setHasShownModalOnce] = useState(false);
+  /** False after auto-disconnect until user reconnects — blocks schedule poll and socket reconnect. */
+  const connectionEnabledRef = useRef(true);
+  const { displaySyncEnabledRef, displaySyncPaused } = useEventDisplaySyncGate(eventId ?? undefined);
+  const [reconnectKey, setReconnectKey] = useState(0);
+
+  // Event selector (same pattern as PhotoView / Green Room)
+  const [events, setEvents] = useState<Event[]>([]);
+  const [eventsLoading, setEventsLoading] = useState(true);
+  const [showEventSelector, setShowEventSelector] = useState(false);
+  const [isFullScreen, setIsFullScreen] = useState(!!document.fullscreenElement);
+
+  // Schedule items for current event (used to know if active cue should show time-of-day instead of countdown)
+  const [scheduleItems, setScheduleItems] = useState<any[]>([]);
+
+  // Periodic schedule sync (for Clock popup to pick up Timer changes from main window): enable/disable + countdown for UI
+  const [scheduleSyncEnabled, setScheduleSyncEnabled] = useState(true);
+  const [scheduleSyncCountdown, setScheduleSyncCountdown] = useState(60);
+
+  // DSM layout reference controls (hidden in fullscreen with the rest of page chrome)
+  const [force16x9Ref, setForce16x9Ref] = useState(true);
+  const [simSecondary, setSimSecondary] = useState(false);
+  const [simOvertime, setSimOvertime] = useState(false);
+
+  const publishDsmLayout = useCallback(
+    async (nextForce16x9: boolean) => {
+      setForce16x9Ref(nextForce16x9);
+      if (!eventId) return;
+      try {
+        await apiClient.setDsmClockLayout(eventId, nextForce16x9 ? '16x9' : 'full');
+      } catch (err) {
+        console.warn('DSM layout publish failed:', err);
+      }
+    },
+    [eventId]
+  );
+
+  // Sync eventId from URL when it changes (e.g. user changed event via selector)
+  useEffect(() => {
+    if (eventIdFromUrl !== null && eventIdFromUrl !== eventId) {
+      setEventId(eventIdFromUrl);
+    }
+  }, [eventIdFromUrl, eventId]);
+
+  const [eventsRefreshSuccessAt, setEventsRefreshSuccessAt] = useState<number | null>(null);
+
+  // Load events list for the event selector dropdown (callable for refresh)
+  const loadEvents = useCallback(async (showSuccess = false) => {
+    try {
+      setEventsLoading(true);
+      const calendarEvents = await DatabaseService.getCalendarEvents();
+      const mapped: Event[] = (calendarEvents || []).map((calEvent: any) => {
+        const dateObj = new Date(calEvent.date);
+        const simpleDate = dateObj.toISOString().split('T')[0];
+        return {
+          id: calEvent.id || '',
+          name: calEvent.name,
+          date: simpleDate,
+          location: calEvent.schedule_data?.location || '',
+          numberOfDays: calEvent.schedule_data?.numberOfDays || 1,
+          timezone: calEvent.schedule_data?.timezone,
+          created_at: calEvent.created_at,
+          updated_at: calEvent.updated_at
+        };
+      });
+      mapped.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+      setEvents(mapped.filter((e) => e.id));
+    } catch (e) {
+      console.warn('ClockPage: Failed to load events for selector:', e);
+      setEvents([]);
+    } finally {
+      setEventsLoading(false);
+      if (showSuccess) setEventsRefreshSuccessAt(Date.now());
+    }
+  }, []);
+
+  useEffect(() => {
+    loadEvents();
+  }, [loadEvents]);
+
+  // Load run-of-show schedule for current event so Clock can show time-of-day vs countdown per cue (Timer column)
+  useEffect(() => {
+    if (!eventId) {
+      setScheduleItems([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await DatabaseService.getRunOfShowData(eventId);
+        if (!cancelled && data?.schedule_items) {
+          setScheduleItems(Array.isArray(data.schedule_items) ? data.schedule_items : []);
+        } else if (!cancelled) {
+          setScheduleItems([]);
+        }
+      } catch {
+        if (!cancelled) setScheduleItems([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [eventId]);
+
+  // Periodic refetch (60s) when enabled, plus 1s tick to drive countdown display
+  const SCHEDULE_POLL_INTERVAL_MS = 60000; // 60 seconds
+  useEffect(() => {
+    if (!eventId || !scheduleSyncEnabled) return;
+    setScheduleSyncCountdown(60);
+    const refetchInterval = setInterval(async () => {
+      if (!connectionEnabledRef.current || !displaySyncEnabledRef.current) return;
+      try {
+        const data = await DatabaseService.getRunOfShowData(eventId);
+        if (data?.schedule_items) {
+          setScheduleItems(Array.isArray(data.schedule_items) ? data.schedule_items : []);
+        }
+        setScheduleSyncCountdown(60);
+      } catch {
+        setScheduleSyncCountdown(60);
+      }
+    }, SCHEDULE_POLL_INTERVAL_MS);
+    const countdownInterval = setInterval(() => {
+      setScheduleSyncCountdown((c) => (c <= 0 ? 60 : c - 1));
+    }, 1000);
+    return () => {
+      clearInterval(refetchInterval);
+      clearInterval(countdownInterval);
+    };
+  }, [eventId, scheduleSyncEnabled]);
+
+  // When only one event exists and no event selected, auto-select it so schedule (and Timer/Time Of Day) loads
+  useEffect(() => {
+    if (eventsLoading || eventId) return;
+    if (events.length === 1 && events[0]?.id) {
+      setEventId(events[0].id);
+      navigate(`/dsm-clock?eventId=${encodeURIComponent(events[0].id)}`, { replace: true });
+    }
+  }, [eventsLoading, eventId, events, navigate]);
+
+  useEffect(() => {
+    if (eventsRefreshSuccessAt == null) return;
+    const t = setTimeout(() => setEventsRefreshSuccessAt(null), 2500);
+    return () => clearTimeout(t);
+  }, [eventsRefreshSuccessAt]);
+
+  // Track fullscreen so we can hide event selector when in fullscreen
+  useEffect(() => {
+    const handleFullscreenChange = () => setIsFullScreen(!!document.fullscreenElement);
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+  }, []);
+
+  // Handle keyboard shortcuts
+  useEffect(() => {
+    const handleKeyPress = (e: KeyboardEvent) => {
+      switch (e.key) {
+        case 'Escape':
+          window.close();
+          break;
+        // Timer controls are managed by RunOfShowPage via WebSocket
+        // Clock is a display-only component
+        case '+':
+        case '=':
+          if (e.ctrlKey || e.metaKey) {
+            e.preventDefault();
+            // Zoom in functionality could be added here
+          }
+          break;
+        case '-':
+          if (e.ctrlKey || e.metaKey) {
+            e.preventDefault();
+            // Zoom out functionality could be added here
+          }
+          break;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyPress);
+    return () => window.removeEventListener('keydown', handleKeyPress);
+  }, []);
+
+  // Handle window close
+  const handleClose = async () => {
+    // Clear Supabase message if there's an active message
+    if (eventId && (messageEnabled || supabaseMessage)) {
+      try {
+        const messages = await DatabaseService.getTimerMessagesForEvent(eventId);
+        const activeMessage = messages.find(msg => msg.enabled);
+        if (activeMessage) {
+          await DatabaseService.disableTimerMessage(activeMessage.id!);
+          console.log('✅ Message disabled in Supabase on close');
+        }
+      } catch (error) {
+        console.error('❌ Error clearing message on close:', error);
+      }
+    }
+    
+    window.close();
+  };
+
+  // WebSocket-based real-time updates for timer messages ONLY
+  // Timer state is now handled exclusively by Clock component to prevent flickering
+  useEffect(() => {
+    if (!eventId) return;
+    connectionEnabledRef.current = true;
+
+    const loadMessage = async () => {
+      if (!connectionEnabledRef.current || !displaySyncEnabledRef.current) return;
+      try {
+        const message = await DatabaseService.getTimerMessage(eventId);
+        // Enabled-only (or null) — never keep a disabled message as the active prop
+        setSupabaseMessage(message);
+        console.log('📨 Loaded timer message from API:', message);
+      } catch (error) {
+        console.error('❌ Error loading timer message:', error);
+      }
+    };
+
+    const loadDsmLayout = async () => {
+      try {
+        const res = await apiClient.getDsmClockLayout(eventId);
+        const next = applyDsmLayoutMode(res?.mode);
+        if (next != null) setForce16x9Ref(next);
+      } catch (error) {
+        console.warn('DSM layout load failed:', error);
+      }
+    };
+
+    loadMessage(); // Load initial data
+    void loadDsmLayout();
+
+    // Set up WebSocket connection for timer messages only
+    // Clock component handles its own timer WebSocket connection
+    const callbacks = {
+      onTimerMessageUpdated: (data: any) => {
+        console.log('📨 WebSocket: Timer message updated:', data);
+        if (data && data.event_id === eventId) {
+          // Clear prop when disabled so Clock cannot fall back to a stale enabled message
+          setSupabaseMessage(data.enabled ? data : null);
+        }
+      },
+      onDsmClockLayout: (data: any) => {
+        if (!data || String(data.event_id || '') !== String(eventId)) return;
+        const next = applyDsmLayoutMode(data.mode);
+        if (next != null) setForce16x9Ref(next);
+      },
+      onConnectionChange: (connected: boolean) => {
+        console.log('📨 ClockPage: WebSocket connection status:', connected);
+        if (connected) {
+          // Reload message when reconnected
+          loadMessage();
+          void loadDsmLayout();
+        }
+      }
+    };
+
+    if (connectionEnabledRef.current && displaySyncEnabledRef.current) {
+      socketClient.connect(eventId, callbacks, 'clockPage');
+    }
+
+    if (!hasShownModalOnce && connectionEnabledRef.current && displaySyncEnabledRef.current) {
+      setShowDisconnectModal(true);
+      setHasShownModalOnce(true);
+    }
+
+    const handleVisibilityChange = () => {
+      if (!connectionEnabledRef.current || !displaySyncEnabledRef.current) return;
+      if (document.hidden) return;
+      if (!socketClient.isConnected()) {
+        console.log('👁️ ClockPage: Tab visible - reconnecting WebSocket (no modal)');
+        socketClient.connect(eventId, callbacks, 'clockPage');
+      }
+      loadMessage();
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      console.log('📨 Cleaning up ClockPage WebSocket connection');
+      socketClient.disconnect(eventId, 'clockPage');
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      if (disconnectTimer) clearTimeout(disconnectTimer);
+    };
+  }, [eventId, reconnectKey]);
+
+  // DISABLED: postMessage updates - now using WebSocket only to prevent conflicts
+  // The postMessage method was causing timer flipping because it conflicted with WebSocket updates
+  // WebSocket provides authoritative timer data directly from the database
+  /*
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data.type === 'TIMER_UPDATE') {
+        const { isRunning, elapsedTime, totalDuration, eventId, itemId, mainTimer, secondaryTimer } = event.data;
+        if (isRunning !== undefined) setIsRunning(isRunning);
+        if (elapsedTime !== undefined) setElapsedTime(elapsedTime);
+        if (totalDuration !== undefined) setTotalDuration(totalDuration);
+        if (eventId !== undefined) setEventId(eventId);
+        if (itemId !== undefined) setItemId(itemId);
+        if (mainTimer !== undefined) setMainTimer(mainTimer);
+        if (secondaryTimer !== undefined) setSecondaryTimer(secondaryTimer);
+      } else if (event.data.type === 'MESSAGE_UPDATE') {
+        const { message, enabled } = event.data;
+        if (message !== undefined) setMessage(message);
+        if (enabled !== undefined) setMessageEnabled(enabled);
+      }
+    };
+
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, []);
+  */
+
+  // Clock page always runs in WebSocket-only mode
+  // Clock component handles all timer state via its own WebSocket connection
+  // ClockPage only passes message data to avoid state conflicts
+
+  // Handle disconnect timer confirmation
+  const handleDisconnectTimerConfirm = (hours: number, minutes: number) => {
+    const totalMinutes = (hours * 60) + minutes;
+    
+    if (totalMinutes === 0) {
+      alert(DISPLAY_SESSION_PICK_TIME_ALERT);
+      return;
+    }
+    
+    // Clear any existing timer
+    if (disconnectTimer) clearTimeout(disconnectTimer);
+    connectionEnabledRef.current = true;
+
+    const ms = totalMinutes * 60 * 1000;
+    const timer = setTimeout(() => {
+      let timeText = '';
+      if (hours > 0) timeText += `${hours}h `;
+      if (minutes > 0) timeText += `${minutes}m`;
+      
+      console.log(`⏰ ClockPage: Auto-disconnect timer expired (${timeText.trim()})`);
+      console.log('📢 ClockPage: Showing disconnect notification...');
+
+      connectionEnabledRef.current = false;
+      setDisconnectDuration(timeText.trim());
+      setShowDisconnectNotification(true);
+      console.log('✅ ClockPage: Notification state set to true');
+      
+      setTimeout(() => {
+        if (eventId) {
+          socketClient.disconnect(eventId, 'clockPage');
+          console.log('🔌 ClockPage: WebSocket disconnected');
+        }
+      }, 100);
+    }, ms);
+    
+    setDisconnectTimer(timer);
+    setShowDisconnectModal(false);
+    
+    let timeText = '';
+    if (hours > 0) timeText += `${hours}h `;
+    if (minutes > 0) timeText += `${minutes}m`;
+    console.log(`⏰ ClockPage: Disconnect timer set to ${timeText.trim()}`);
+
+    if (eventId && !socketClient.isConnected()) {
+      setReconnectKey((k) => k + 1);
+    }
+  };
+  
+  // Handle never disconnect
+  const handleNeverDisconnect = () => {
+    handleDisconnectTimerConfirm(DISPLAY_SESSION_MAX_HOURS, 0);
+  };
+  
+  // Handle reconnect from notification
+  const handleReconnect = () => {
+    connectionEnabledRef.current = true;
+    setShowDisconnectNotification(false);
+    if (eventId) {
+      setReconnectKey((k) => k + 1);
+      setShowDisconnectModal(true);
+    }
+  };
+
+  const handleEventSelect = (selected: Event) => {
+    setEventId(selected.id);
+    setShowEventSelector(false);
+    navigate(`/dsm-clock?eventId=${encodeURIComponent(selected.id)}`, { replace: true });
+  };
+
+  useEffect(() => {
+    const prev = document.title;
+    document.title = 'DSM Clock Timer';
+    return () => {
+      document.title = prev;
+    };
+  }, []);
+
+  return (
+    <>
+      {displaySyncPaused ? <DisplaySyncPausedBanner /> : null}
+      <div className="relative w-full min-h-screen dsm-clock-page">
+        <DsmClock
+        onClose={handleClose}
+        message={message}
+        messageEnabled={messageEnabled}
+        eventId={eventId}
+        supabaseMessage={supabaseMessage}
+        scheduleItems={scheduleItems}
+        force16x9Ref={force16x9Ref}
+        simSecondary={simSecondary}
+        simOvertime={simOvertime}
+      />
+
+        {/* Event selector + DSM layout refs — left side; hidden in fullscreen */}
+        {!isFullScreen && (
+          <div className="fixed top-[115px] left-4 z-[100] bg-black/50 backdrop-blur-sm rounded-lg p-3 space-y-2 overflow-visible min-w-[160px]">
+            {events.length > 1 && (
+              showEventSelector ? (
+                <div className="overflow-visible space-y-2">
+                  <label className="text-sm text-gray-400 block mb-1">Event:</label>
+                  <EventSelectorDropdown
+                    events={events}
+                    value={eventId ?? null}
+                    onChange={handleEventSelect}
+                    disabled={eventsLoading}
+                    loading={eventsLoading}
+                    placeholder="Select event…"
+                    selectClassName="min-w-[160px] max-w-[240px] px-3 py-2"
+                    listMaxHeight="200px"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => loadEvents(true)}
+                    disabled={eventsLoading}
+                    className="px-2 py-1 text-xs rounded border border-slate-600 bg-slate-700 text-gray-300 hover:bg-slate-600 transition-colors w-full disabled:opacity-60 flex items-center justify-center gap-1"
+                    title="Refresh events list"
+                  >
+                    {eventsLoading ? (
+                      '…'
+                    ) : eventsRefreshSuccessAt ? (
+                      <>
+                        <svg className="w-3.5 h-3.5 text-green-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                        </svg>
+                        Refreshed
+                      </>
+                    ) : (
+                      'Refresh events'
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowEventSelector(false)}
+                    className="px-2 py-1 text-xs rounded border border-slate-600 bg-slate-700 text-gray-300 hover:bg-slate-600 transition-colors w-full"
+                    title="Hide event selector"
+                  >
+                    Hide
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setShowEventSelector(true)}
+                  className="px-3 py-2 text-sm rounded border border-slate-600 bg-slate-700 text-gray-300 hover:bg-slate-600 transition-colors w-full"
+                  title="Change event"
+                >
+                  Change event
+                </button>
+              )
+            )}
+            <div
+              className={`flex flex-col items-stretch gap-1.5 ${
+                events.length > 1 ? 'pt-1 border-t border-slate-600/60' : ''
+              }`}
+            >
+              <button
+                type="button"
+                onClick={() => void publishDsmLayout(!force16x9Ref)}
+                className={`px-3 py-1.5 rounded-md text-xs font-semibold tracking-wide border ${
+                  force16x9Ref
+                    ? 'bg-amber-500 text-black border-amber-200'
+                    : 'bg-slate-800/90 text-white border-slate-500 hover:bg-slate-700'
+                }`}
+                title="Show a 16:9 reference frame like Cue Cards / Teleprompter / PowerPoint (also controllable from Companion)"
+              >
+                DSM · {force16x9Ref ? '16:9 ON' : '16:9 OFF'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setSimSecondary((v) => !v)}
+                className={`px-3 py-1.5 rounded-md text-xs font-semibold tracking-wide border ${
+                  simSecondary
+                    ? 'bg-orange-500 text-black border-orange-200'
+                    : 'bg-slate-800/90 text-white border-slate-500 hover:bg-slate-700'
+                }`}
+                title="Simulate a secondary (ALT) timer for DSM layout"
+              >
+                Sim · Secondary {simSecondary ? 'ON' : 'OFF'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setSimOvertime((v) => !v)}
+                className={`px-3 py-1.5 rounded-md text-xs font-semibold tracking-wide border ${
+                  simOvertime
+                    ? 'bg-red-500 text-white border-red-200'
+                    : 'bg-slate-800/90 text-white border-slate-500 hover:bg-slate-700'
+                }`}
+                title="Simulate OVER TIME label / negative remaining for DSM layout"
+              >
+                Sim · Overtime {simOvertime ? 'ON' : 'OFF'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Schedule sync - bottom right (opposite Timer Status bottom left), countdown + enable checkbox */}
+        {!isFullScreen && eventId && (
+          <div className="fixed bottom-10 right-4 z-[100] bg-black/50 backdrop-blur-sm rounded-lg p-3 space-y-2 min-w-[140px]">
+            <label className="flex items-center gap-2 cursor-pointer text-sm text-gray-300">
+              <input
+                type="checkbox"
+                checked={scheduleSyncEnabled}
+                onChange={(e) => setScheduleSyncEnabled(e.target.checked)}
+                className="rounded border-slate-500 bg-slate-700 text-blue-500 focus:ring-blue-500"
+              />
+              <span>Schedule sync</span>
+            </label>
+            {scheduleSyncEnabled ? (
+              <div className="text-sm text-gray-400 font-mono" title="Refreshes run-of-show every 60s so Timer changes from main window appear here">
+                Sync in {scheduleSyncCountdown}s
+              </div>
+            ) : (
+              <div className="text-sm text-gray-500">Sync off</div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Disconnect Timer Modal - same as Electron app */}
+      {showDisconnectModal && <DisconnectTimerModal onConfirm={handleDisconnectTimerConfirm} onNever={handleNeverDisconnect} />}
+      
+      {/* Disconnect Notification - same as Electron app */}
+      {showDisconnectNotification && <DisconnectNotification duration={disconnectDuration} onReconnect={handleReconnect} />}
+    </>
+  );
+};
+
+// Disconnect Timer Modal Component
+const DisconnectTimerModal: React.FC<{ onConfirm: (hours: number, mins: number) => void; onNever: () => void }> = ({ onConfirm, onNever }) => {
+  const [hours, setHours] = useState(2);
+  const [minutes, setMinutes] = useState(0);
+  
+  const minuteValues = [0, 5, 10, 15, 20, 25, 30];
+  const hoursRef = React.useRef<HTMLDivElement>(null);
+  const minutesRef = React.useRef<HTMLDivElement>(null);
+  
+  // Initialize scroll position on mount
+  React.useEffect(() => {
+    if (hoursRef.current) {
+      hoursRef.current.scrollTop = hours * 50; // 50px per item
+    }
+    if (minutesRef.current) {
+      minutesRef.current.scrollTop = minuteValues.indexOf(minutes) * 50;
+    }
+  }, []);
+  
+  // Handle scroll for hours
+  const handleHoursScroll = () => {
+    if (!hoursRef.current) return;
+    const index = Math.round(hoursRef.current.scrollTop / 50);
+    setHours(Math.max(0, Math.min(index, 24)));
+  };
+  
+  // Handle scroll for minutes
+  const handleMinutesScroll = () => {
+    if (!minutesRef.current) return;
+    const index = Math.round(minutesRef.current.scrollTop / 50);
+    setMinutes(minuteValues[Math.max(0, Math.min(index, minuteValues.length - 1))]);
+  };
+  
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-[999999]">
+      <div className="bg-slate-800 p-10 rounded-2xl border border-slate-700 shadow-2xl max-w-3xl w-[90%]">
+        <h3 className="text-slate-100 text-3xl font-semibold mb-2 text-center">⏰ Auto-Disconnect Timer</h3>
+        <p className="text-slate-400 mb-8 text-center">How long should this connection stay active?</p>
+        
+        <div className="flex items-center justify-center gap-12 mb-10 py-8">
+          {/* Hours Picker */}
+          <div className="flex flex-col items-center gap-4">
+            <div className="text-slate-300 text-sm font-medium uppercase tracking-wider">Hours</div>
+            <div className="relative w-32 h-56 bg-slate-900 border border-slate-600 rounded-2xl shadow-inner overflow-hidden">
+              {/* Highlight bar */}
+              <div className="absolute top-1/2 left-0 right-0 h-12 -translate-y-1/2 bg-blue-500/10 border-y border-slate-500/20 pointer-events-none z-10" />
+              {/* Fade gradients */}
+              <div className="absolute top-0 left-0 right-0 h-20 bg-gradient-to-b from-slate-900 to-transparent pointer-events-none z-20" />
+              <div className="absolute bottom-0 left-0 right-0 h-20 bg-gradient-to-t from-slate-900 to-transparent pointer-events-none z-20" />
+              {/* Scrollable list */}
+              <div 
+                ref={hoursRef}
+                onScroll={handleHoursScroll}
+                className="h-full overflow-y-scroll scrollbar-hide pt-24 pb-24 snap-y snap-mandatory"
+                style={{ scrollBehavior: 'smooth' }}
+              >
+                {Array.from({length: 25}, (_, i) => (
+                  <div 
+                    key={i}
+                    className={`h-12 flex items-center justify-center text-2xl font-medium snap-center transition-all ${
+                      hours === i ? 'text-slate-100 scale-110' : 'text-slate-600 scale-90'
+                    }`}
+                  >
+                    {i}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+          
+          <div className="text-slate-300 text-4xl font-light mt-10">:</div>
+          
+          {/* Minutes Picker */}
+          <div className="flex flex-col items-center gap-4">
+            <div className="text-slate-300 text-sm font-medium uppercase tracking-wider">Minutes</div>
+            <div className="relative w-32 h-56 bg-slate-900 border border-slate-600 rounded-2xl shadow-inner overflow-hidden">
+              {/* Highlight bar */}
+              <div className="absolute top-1/2 left-0 right-0 h-12 -translate-y-1/2 bg-blue-500/10 border-y border-slate-500/20 pointer-events-none z-10" />
+              {/* Fade gradients */}
+              <div className="absolute top-0 left-0 right-0 h-20 bg-gradient-to-b from-slate-900 to-transparent pointer-events-none z-20" />
+              <div className="absolute bottom-0 left-0 right-0 h-20 bg-gradient-to-t from-slate-900 to-transparent pointer-events-none z-20" />
+              {/* Scrollable list */}
+              <div 
+                ref={minutesRef}
+                onScroll={handleMinutesScroll}
+                className="h-full overflow-y-scroll scrollbar-hide pt-24 pb-24 snap-y snap-mandatory"
+                style={{ scrollBehavior: 'smooth' }}
+              >
+                {minuteValues.map(m => (
+                  <div 
+                    key={m}
+                    className={`h-12 flex items-center justify-center text-2xl font-medium snap-center transition-all ${
+                      minutes === m ? 'text-slate-100 scale-110' : 'text-slate-600 scale-90'
+                    }`}
+                  >
+                    {m}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <div className="flex gap-3">
+          <button 
+            onClick={() => onConfirm(hours, minutes)}
+            className="flex-1 px-8 py-4 bg-blue-600 hover:bg-blue-700 rounded-xl text-white text-lg font-medium transition transform hover:-translate-y-0.5 hover:shadow-lg hover:shadow-blue-600/30"
+          >
+            ✓ Confirm
+          </button>
+          <button 
+            onClick={onNever}
+            className="flex-1 px-8 py-4 bg-slate-600 hover:bg-slate-500 rounded-xl text-slate-200 text-lg font-medium transition transform hover:-translate-y-0.5 hover:shadow-lg hover:shadow-slate-600/30"
+          >
+            {DISPLAY_SESSION_MAX_LABEL}
+          </button>
+        </div>
+        
+        <p className="mt-6 text-sm text-slate-500 text-center">⚠️ {DISPLAY_SESSION_MAX_HINT}</p>
+      </div>
+    </div>
+  );
+};
+
+// Disconnect Notification Component
+const DisconnectNotification: React.FC<{ duration: string; onReconnect: () => void }> = ({ duration, onReconnect }) => {
+  React.useEffect(() => {
+    console.log('🔔 DisconnectNotification component mounted with duration:', duration);
+    return () => console.log('🔔 DisconnectNotification component unmounted');
+  }, []);
+  
+  return (
+    <>
+      <div className="fixed inset-0 bg-black bg-opacity-70 z-[999998] animate-fade-in pointer-events-auto" />
+      <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[999999] animate-slide-in pointer-events-auto">
+        <div className="bg-gradient-to-br from-slate-800 to-slate-700 p-10 rounded-2xl border-2 border-slate-600 shadow-2xl flex items-center gap-6 min-w-[450px]">
+          <div className="text-6xl animate-pulse-slow">🔌</div>
+          <div className="flex-1">
+            <h4 className="text-slate-100 text-2xl font-semibold mb-2">Connection Closed</h4>
+            <p className="text-slate-400 text-base">Auto-disconnected after {duration}</p>
+          </div>
+          <button 
+            onClick={onReconnect}
+            className="px-6 py-3 bg-blue-600 hover:bg-blue-700 rounded-xl text-white text-base font-medium whitespace-nowrap transition transform hover:-translate-y-1 hover:shadow-lg hover:shadow-blue-600/40"
+          >
+            🔄 Reconnect
+          </button>
+        </div>
+      </div>
+    </>
+  );
+};
+
+export default DsmClockPage;

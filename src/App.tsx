@@ -17,6 +17,7 @@ import RunOfShowPage from './pages/RunOfShowPage';
 import RunOfShowMobilePage from './pages/RunOfShowMobilePage';
 import FullScreenTimerPage from './pages/FullScreenTimerPage';
 import ClockPage from './pages/ClockPage';
+import DsmClockPage from './pages/DsmClockPage';
 import LowerThirdsXMLPage from './pages/LowerThirdsXMLPage';
 import NetlifyLowerThirdsXMLPage from './pages/NetlifyLowerThirdsXMLPage';
 import NetlifyScheduleXMLPage from './pages/NetlifyScheduleXMLPage';
@@ -78,6 +79,7 @@ function AppContent() {
   const isPinNotesPopout = location.pathname === '/pin-notes-popout';
   const isOperatorTimerPopout = location.pathname === '/operator-timer';
   const isClock = location.pathname === '/clock';
+  const isDsmClock = location.pathname === '/dsm-clock';
   const isStreamGuide = location.pathname === '/stream-guide';
   const isGreenRoom = location.pathname === '/green-room';
   const isPhotoView = location.pathname === '/photo-view';
@@ -151,17 +153,18 @@ function AppContent() {
     isLedOutput ||
     isUltritouchHealth ||
     isClock ||
+    isDsmClock ||
     isStreamGuide ||
     isAdmin ||
     isReports;
 
   return (
     <ActiveViewersProvider>
-    <div className={`App min-h-screen text-slate-200 ${isLedOutput ? 'led-output-page bg-transparent' : 'bg-slate-900'} ${isClock ? 'clock-page' : ''}`}>
+    <div className={`App min-h-screen text-slate-200 ${isLedOutput ? 'led-output-page bg-transparent' : 'bg-slate-900'} ${isClock || isDsmClock ? 'clock-page' : ''}`}>
       {/* Render AppHeader outside AuthGuard for pages that need authentication */}
       {!isFullScreenTimer && !isPinNotesPopout && !isOperatorTimerPopout && !isGreenRoom && !isPhotoView && !isDirectorView && !isDirectorControl && !isMicManager && !isOperatorCueDisplay && !isScriptsFollow && !isTeleprompter && !isCueCards && !isPowerPoint && !isGoogleSheets && !isLocalXML && !isNetlifyXML && !isAdmin && !isQuickMode && !isComparison && !isResetPassword && !isAccessPortal && !isGuestEvent && !isStreamRequest && !isTraining && !isLedOutput && !isUltritouchHealth && !isStreamGuide && !isReports && <AppHeader />}
       
-      {!isPinNotesPopout && !isOperatorTimerPopout && !isComparison && !isResetPassword && !isAccessPortal && !isGuestEvent && !isStreamRequest && !isTraining && !isNetlifyXML && !isLocalXML && !isAdmin && !isClock && (
+      {!isPinNotesPopout && !isOperatorTimerPopout && !isComparison && !isResetPassword && !isAccessPortal && !isGuestEvent && !isStreamRequest && !isTraining && !isNetlifyXML && !isLocalXML && !isAdmin && !isClock && !isDsmClock && (
         <AuthGuard>
           <div className="min-h-screen bg-slate-900">
           <Routes>
@@ -214,6 +217,7 @@ function AppContent() {
         <Route path="/pin-notes-popout" element={<PinNotesPopoutPage />} />
         <Route path="/operator-timer" element={<OperatorTimerPopoutPage />} />
         <Route path="/clock" element={<ClockPage />} />
+        <Route path="/dsm-clock" element={<DsmClockPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route path="/access" element={<AccessPortalPage />} />
         <Route path="/guest" element={<GuestEventPage />} />

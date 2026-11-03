@@ -162,3 +162,23 @@ test('LAN Companion LED clear broadcasts the same event as Railway', async () =>
     )
   );
 });
+
+test('LAN Companion DSM clock layout broadcasts 16x9 / full', async () => {
+  const setFull = await request('/api/dsm-clock/layout', {
+    method: 'POST',
+    body: JSON.stringify({ event_id: 'event-1', mode: 'full' }),
+  });
+  assert.equal(setFull.response.status, 200);
+  assert.deepEqual(setFull.body, { ok: true, event_id: 'event-1', mode: 'full' });
+  assert.ok(
+    updates.some(
+      (update) =>
+        update.type === 'dsmClockLayout' &&
+        update.eventId === 'event-1' &&
+        update.data.mode === 'full'
+    )
+  );
+  const got = await request('/api/dsm-clock/layout/event-1');
+  assert.equal(got.response.status, 200);
+  assert.equal(got.body.mode, 'full');
+});

@@ -93,12 +93,20 @@ const StartTimeColumnCell: React.FC<StartTimeColumnCellProps> = ({
         calculateStartTimeWithOvertime &&
         String(calculateStartTime(index)) !== String(calculateStartTimeWithOvertime(index))));
 
+  const w = Math.max(0, Number(width) || 0);
   return (
     <div
-      className={`px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 ${className} ${
+      className={`px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 min-w-0 ${className} ${
         isTimedMarker && onEditTimedMarker ? 'cursor-pointer hover:bg-sky-950/40' : ''
       }`}
-      style={{ width, ...style }}
+      style={{
+        // Lock width like scrollColumnBoxStyle — OT badges must not widen Start and shift Program Type+
+        width: w,
+        minWidth: w,
+        maxWidth: w,
+        flex: `0 0 ${w}px`,
+        ...style,
+      }}
       onClick={isTimedMarker && onEditTimedMarker ? onEditTimedMarker : undefined}
       title={
         isTimedMarker

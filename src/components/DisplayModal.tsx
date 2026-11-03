@@ -15,6 +15,7 @@ interface DisplayModalProps {
   onClose: () => void;
   onSelectFullscreenTimer: (mode: DisplayOpenMode) => void;
   onSelectClock: (mode: DisplayOpenMode) => void;
+  onSelectDsmClock?: (mode: DisplayOpenMode) => void;
 }
 
 function normalizeSavedMode(saved: string | null): DisplayOpenMode {
@@ -29,6 +30,7 @@ const DisplayModal: React.FC<DisplayModalProps> = ({
   onClose,
   onSelectFullscreenTimer,
   onSelectClock,
+  onSelectDsmClock,
 }) => {
   const [openMode, setOpenMode] = useState<DisplayOpenMode>('external');
   const [hideFullscreenTimer, setHideFullscreenTimer] = useState(() => getHideFullscreenTimerOption());
@@ -186,6 +188,29 @@ const DisplayModal: React.FC<DisplayModalProps> = ({
               </div>
             </div>
           </button>
+
+          {typeof onSelectDsmClock === 'function' && (
+            <button
+              type="button"
+              onClick={() => {
+                onSelectDsmClock(openMode);
+                onClose();
+              }}
+              className="w-full p-4 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors text-left"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-amber-600 rounded-lg flex items-center justify-center shrink-0">
+                  <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="text-white font-semibold">DSM Clock</h3>
+                  <p className="text-slate-400 text-sm">DSM variant of the clock — safe to restyle without changing Clock</p>
+                </div>
+              </div>
+            </button>
+          )}
         </div>
       </div>
     </div>

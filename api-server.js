@@ -254,6 +254,9 @@ const mittiPendingByEvent = new Map();
 const avplayoutTimeSourceByEvent = new Map();
 const avplayoutPendingByEvent = new Map();
 
+/** DSM Clock layout: eventId -> '16x9' | 'full' (Companion / UI remote control) */
+const dsmClockLayoutByEvent = new Map();
+
 function applyResolumeMeta(eventId, timerRow, options = {}) {
   if (!timerRow || typeof timerRow !== 'object') return timerRow;
   const wantsSubCue = options.isSubCue === true;
@@ -6557,6 +6560,37 @@ app.post('/api/led-output/clear', async (req, res) => {
   } catch (error) {
     console.error('Error clearing LED output:', error);
     res.status(500).json({ error: 'Failed to clear LED output' });
+  }
+});
+
+/** DSM Clock: set 16:9 reference frame vs classic full viewport (Companion + DSM UI). */
+app.post('/api/dsm-clock/layout', async (req, res) => {
+  try {
+    const { event_id: eventId, mode: rawMode } = req.body || {};
+    if (!eventId) {
+      return res.status(400).json({ error: 'event_id is required' });
+    }
+    const mode = String(rawMode || '').toLowerCase() === 'full' ? 'full' : '16x9';
+    dsmClockLayoutByEvent.set(String(eventId), mode);
+    broadcastUpdate(eventId, 'dsmClockLayout', { event_id: eventId, mode });
+    res.json({ ok: true, event_id: eventId, mode });
+  } catch (error) {
+    console.error('Error setting DSM clock layout:', error);
+    res.status(500).json({ error: 'Failed to set DSM clock layout' });
+  }
+});
+
+app.get('/api/dsm-clock/layout/:eventId', async (req, res) => {
+  try {
+    const eventId = String(req.params.eventId || '');
+    if (!eventId) {
+      return res.status(400).json({ error: 'eventId is required' });
+    }
+    const mode = dsmClockLayoutByEvent.get(eventId) || null;
+    res.json({ event_id: eventId, mode });
+  } catch (error) {
+    console.error('Error reading DSM clock layout:', error);
+    res.status(500).json({ error: 'Failed to read DSM clock layout' });
   }
 });
 

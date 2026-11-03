@@ -693,6 +693,27 @@ function registerRoutes(app, db, helpers) {
     res.json({ ok: true });
   });
 
+  const dsmClockLayoutByEvent = new Map();
+
+  app.post('/api/dsm-clock/layout', (req, res) => {
+    const { event_id: eventId, mode: rawMode } = req.body || {};
+    if (!eventId) {
+      return res.status(400).json({ error: 'event_id is required' });
+    }
+    const mode = String(rawMode || '').toLowerCase() === 'full' ? 'full' : '16x9';
+    dsmClockLayoutByEvent.set(String(eventId), mode);
+    broadcastUpdate(eventId, 'dsmClockLayout', { event_id: eventId, mode });
+    res.json({ ok: true, event_id: eventId, mode });
+  });
+
+  app.get('/api/dsm-clock/layout/:eventId', (req, res) => {
+    const eventId = String(req.params.eventId || '');
+    if (!eventId) {
+      return res.status(400).json({ error: 'eventId is required' });
+    }
+    res.json({ event_id: eventId, mode: dsmClockLayoutByEvent.get(eventId) || null });
+  });
+
   // ─── Completed cues ─────────────────────────────────────────────────────────
   app.get('/api/completed-cues/:eventId', (req, res) => {
     const rows = db.prepare('SELECT * FROM completed_cues WHERE event_id = ?').all(req.params.eventId);

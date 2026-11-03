@@ -6,6 +6,7 @@ Bitfocus Companion v3 module for Run of Show (ROS). Controls your ROS schedule v
 
 - **Load Cue** – Load any cue/row from the schedule
 - **Start / Stop / Reset Timer** – Full timer control
+- **DSM Clock Layout** – Set DSM timer to **16:9** reference frame or classic **Full** viewport
 - **Variables** – Current cue, segment name, timer state; plus **per-cue** label/value
 - **Feedbacks** – Timer running, cue loaded, "loaded cue is (choice)"
 - **Presets** – One preset per cue (auto-updates with Event ID); drag onto buttons for Load Cue + text + feedback
@@ -46,6 +47,7 @@ After you set **Event ID** and the module syncs, open the **Presets** tab in Com
 
 - **Cues** – One preset per **regular** (non-indented) cue only (e.g. "CUE 1: Opening", "CUE 2: Keynote"). Each runs **Load Cue** and uses **Loaded cue is** feedback. Sub-cues are not listed here.
 - **Timer** – Presets: **Start Timer**, **Stop Timer**, **Reset Timer**, **Timer +1 min**, **Timer -1 min**, **Timer +5 min**, **Timer -5 min**, **Stop all sub-timers**. Drag onto buttons for one-tap timer control.
+- **DSM Clock** – **DSM · 16:9 ON** and **DSM · Full** (classic Clock layout on `/dsm-clock`).
 - **Sub-Timers** – One preset per **sub-cue** (indented row) only for **Start Sub-Timer** (e.g. "Sub: CUE 1.1 – Intro"). Regular cues are not listed here.
 
 The preset list updates when the schedule changes.
@@ -65,6 +67,7 @@ This module calls the Run of Show Railway API directly:
 - `POST /api/timers/start` – Start timer
 - `POST /api/timers/stop` – Stop timer
 - `POST /api/timers/reset` – Reset timer
+- `POST /api/dsm-clock/layout` – `{ event_id, mode: "16x9" | "full" }` for DSM Clock pages
 
 ## License
 

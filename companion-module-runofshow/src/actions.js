@@ -278,6 +278,69 @@ module.exports = function (self) {
 				}
 			},
 		},
+		dsm_clock_layout: {
+			name: 'DSM Clock Layout',
+			options: [
+				{
+					id: 'mode',
+					type: 'dropdown',
+					label: 'Mode',
+					default: '16x9',
+					choices: [
+						{ id: '16x9', label: '16:9 reference frame' },
+						{ id: 'full', label: 'Full (classic Clock)' },
+					],
+				},
+			],
+			callback: async (event) => {
+				const eventId = self.config?.eventId
+				if (!eventId) {
+					self.log('warn', 'DSM Clock Layout: Event ID is required')
+					return
+				}
+				const mode = event.options.mode === 'full' ? 'full' : '16x9'
+				try {
+					await self.apiPost('/api/dsm-clock/layout', { event_id: eventId, mode })
+					self.log('info', `DSM Clock layout set to ${mode}`)
+				} catch (err) {
+					self.log('error', `DSM Clock Layout failed: ${err.message}`)
+				}
+			},
+		},
+		dsm_clock_16x9: {
+			name: 'DSM Clock · 16:9 ON',
+			options: [],
+			callback: async () => {
+				const eventId = self.config?.eventId
+				if (!eventId) {
+					self.log('warn', 'DSM Clock 16:9: Event ID is required')
+					return
+				}
+				try {
+					await self.apiPost('/api/dsm-clock/layout', { event_id: eventId, mode: '16x9' })
+					self.log('info', 'DSM Clock layout set to 16x9')
+				} catch (err) {
+					self.log('error', `DSM Clock 16:9 failed: ${err.message}`)
+				}
+			},
+		},
+		dsm_clock_full: {
+			name: 'DSM Clock · Full',
+			options: [],
+			callback: async () => {
+				const eventId = self.config?.eventId
+				if (!eventId) {
+					self.log('warn', 'DSM Clock Full: Event ID is required')
+					return
+				}
+				try {
+					await self.apiPost('/api/dsm-clock/layout', { event_id: eventId, mode: 'full' })
+					self.log('info', 'DSM Clock layout set to full')
+				} catch (err) {
+					self.log('error', `DSM Clock Full failed: ${err.message}`)
+				}
+			},
+		},
 		resume_sync: {
 			name: 'Resume sync',
 			options: [],

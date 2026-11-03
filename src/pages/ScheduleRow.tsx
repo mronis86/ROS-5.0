@@ -556,7 +556,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
               ? () => onEditTimedMarker(item.id)
               : undefined
           }
-          style={{ order: flexOrder('start') }}
+          style={colBox(columnWidths.start, 'start')}
         />
       ) : null}
       {/* Program type column (moved directly after Start) */}
