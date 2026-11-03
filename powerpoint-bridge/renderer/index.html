@@ -93,12 +93,14 @@
       <section class="card">
         <h2>PowerPoint</h2>
         <p id="ppt-hint" class="hint">Open the deck in PowerPoint on this PC, then capture stills. Start follow before Slideshow so live slides fire the mapped cues.</p>
-        <label class="check-row">
-          <input id="focusPresentationView" type="checkbox" />
-          <span>
-            Focus presentation view when opening / switching decks
-            <span class="hint">Brings the slideshow window to the front (recommended for show PCs).</span>
-          </span>
+        <label>
+          Focus after open / switch
+          <select id="focusTarget">
+            <option value="off">Don’t force focus</option>
+            <option value="presentation">Presentation view (slideshow)</option>
+            <option value="app">PowerPoint app window</option>
+          </select>
+          <span class="hint">Pick which window Windows should bring forward when a deck opens or switches.</span>
         </label>
         <div class="status-grid">
           <div><span class="k">PowerPoint</span><span id="st-ppt">—</span></div>

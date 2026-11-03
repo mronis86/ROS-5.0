@@ -15,17 +15,25 @@ const LIVE_FILE = path.join(LIVE_DIR, 'ros-ppt-live.json');
 
 let watcher = null;
 let watcherPaused = false;
-/** When true, open/swap/startShow force Windows focus onto the slideshow. */
-let focusPresentationView = false;
+/** off | presentation | app — which window to bring forward after open/swap/startShow. */
+let focusTarget = 'off';
+
+function normalizeFocusTarget(value, legacyBool) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (raw === 'presentation' || raw === 'app' || raw === 'off') return raw;
+  if (legacyBool === true) return 'presentation';
+  return 'off';
+}
 
 function setOptions(opts = {}) {
-  if (opts.focusPresentationView != null) {
-    focusPresentationView = !!opts.focusPresentationView;
+  if (opts.focusTarget != null || opts.focusPresentationView != null) {
+    focusTarget = normalizeFocusTarget(opts.focusTarget, opts.focusPresentationView);
   }
 }
 
 function focusArgs() {
-  return focusPresentationView ? ['-FocusShow'] : [];
+  if (!focusTarget || focusTarget === 'off') return [];
+  return ['-FocusTarget', focusTarget];
 }
 
 function cleanPptError(raw) {

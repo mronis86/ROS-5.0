@@ -15,8 +15,8 @@ const DEFAULTS = {
   selectedDay: 1,
   selectedDaysByEvent: {},
   helperInstanceId: '',
-  /** Bring slideshow / presentation to the front when opening or switching decks. */
-  focusPresentationView: false,
+  /** After open/swap: 'off' | 'presentation' (slideshow) | 'app' (PowerPoint window). */
+  focusTarget: 'off',
 };
 
 function configPath() {
@@ -61,7 +61,17 @@ function saveConfig(partial) {
   if (next.liveCaptureRooms != null && typeof next.liveCaptureRooms !== 'object') {
     next.liveCaptureRooms = {};
   }
-  next.focusPresentationView = !!next.focusPresentationView;
+  {
+    const raw = String(next.focusTarget || '').trim().toLowerCase();
+    if (raw === 'presentation' || raw === 'app' || raw === 'off') {
+      next.focusTarget = raw;
+    } else if (next.focusPresentationView === true) {
+      next.focusTarget = 'presentation';
+    } else {
+      next.focusTarget = 'off';
+    }
+    delete next.focusPresentationView;
+  }
   const day = Math.floor(Number(next.selectedDay) || 1);
   next.selectedDay = day >= 1 ? day : 1;
   if (next.selectedDaysByEvent == null || typeof next.selectedDaysByEvent !== 'object') {

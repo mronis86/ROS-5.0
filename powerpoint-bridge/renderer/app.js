@@ -41,7 +41,7 @@ const els = {
   stLivecap: document.getElementById('st-livecap'),
   stLivecapSrc: document.getElementById('st-livecap-src'),
   livecapError: document.getElementById('livecap-error'),
-  focusPresentationView: document.getElementById('focusPresentationView'),
+  focusTarget: document.getElementById('focusTarget'),
 };
 
 let loadedEvents = [];
@@ -72,7 +72,10 @@ function formConfig() {
     selectedDay,
     numberOfDays: ev ? eventNumberOfDays(ev) : 1,
     selectedDaysByEvent,
-    focusPresentationView: !!(els.focusPresentationView && els.focusPresentationView.checked),
+    focusTarget: (() => {
+      const raw = String(els.focusTarget?.value || 'off').trim().toLowerCase();
+      return raw === 'presentation' || raw === 'app' ? raw : 'off';
+    })(),
   };
 }
 
@@ -449,8 +452,15 @@ async function load() {
   applyModeUi();
   liveCaptureSource = cfg.liveCaptureSource === 'camera' ? 'camera' : 'screen';
   applyCaptureSourceUi();
-  if (els.focusPresentationView) {
-    els.focusPresentationView.checked = !!cfg.focusPresentationView;
+  if (els.focusTarget) {
+    const raw = String(cfg.focusTarget || '').trim().toLowerCase();
+    if (raw === 'presentation' || raw === 'app' || raw === 'off') {
+      els.focusTarget.value = raw;
+    } else if (cfg.focusPresentationView) {
+      els.focusTarget.value = 'presentation';
+    } else {
+      els.focusTarget.value = 'off';
+    }
   }
   if (cfg.eventId) {
     const opt = document.createElement('option');

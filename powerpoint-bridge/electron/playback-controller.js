@@ -422,7 +422,10 @@ class PlaybackController {
       return;
     }
     try {
-      ppt.setOptions({ focusPresentationView: !!this.config.focusPresentationView });
+      ppt.setOptions({
+        focusTarget: this.config.focusTarget,
+        focusPresentationView: this.config.focusPresentationView,
+      });
     } catch {
       /* ignore */
     }
@@ -1718,7 +1721,10 @@ class PlaybackController {
   async syncNow(config) {
     if (config) this.config = { ...this.config, ...config };
     try {
-      ppt.setOptions({ focusPresentationView: !!this.config.focusPresentationView });
+      ppt.setOptions({
+        focusTarget: this.config.focusTarget,
+        focusPresentationView: this.config.focusPresentationView,
+      });
     } catch {
       /* ignore */
     }

@@ -6,7 +6,8 @@ param(
   [int]$SlideIndex = 0,
   [int]$Width = 0,
   [int]$Height = 0,
-  [switch]$FocusShow = $false
+  # off | presentation | app — which window to bring forward after open/swap/startShow
+  [string]$FocusTarget = 'off'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -129,24 +130,69 @@ function Live-Payload($app, $pres) {
 
 function Unblock-Deck($path) {
   if (-not $path) { return }
+  # Strip Mark-of-the-Web so Office is less likely to open in Protected View.
   try { Unblock-File -LiteralPath $path -ErrorAction SilentlyContinue } catch {}
+  try {
+    $zone = "$path`:Zone.Identifier"
+    if (Test-Path -LiteralPath $zone) {
+      Remove-Item -LiteralPath $zone -Force -ErrorAction SilentlyContinue
+    }
+  } catch {}
+}
+
+function Enable-ProtectedViewEdit($pv) {
+  if (-not $pv) { return $null }
+  try { return $pv.Edit('') } catch {}
+  try { return $pv.Edit() } catch {}
+  return $null
 }
 
 function Try-ProtectedView($app, $path) {
+  # If the deck is already in Protected View, force Enable Editing so slideshow/COM work.
   try {
+    $want = Normalize-Path $path
+    $wantName = ''
+    try { $wantName = [IO.Path]::GetFileName($path).ToLowerInvariant() } catch {}
     foreach ($pv in @($app.ProtectedViewWindows)) {
+      $match = $false
       $source = ''
       try { $source = [string]$pv.SourcePath } catch {}
       try { if (-not $source) { $source = [string]$pv.Presentation.FullName } } catch {}
-      if ($source -and ((Normalize-Path $source) -eq (Normalize-Path $path))) {
-        return $pv.Edit('')
+      if ($want -and $source -and ((Normalize-Path $source) -eq $want)) { $match = $true }
+      if (-not $match -and $wantName -and $source) {
+        try {
+          if ([IO.Path]::GetFileName($source).ToLowerInvariant() -eq $wantName) { $match = $true }
+        } catch {}
       }
-      try {
-        if (([string]$pv.Caption -replace ' \[Protected View\]$', '') -eq [IO.Path]::GetFileName($path)) {
-          return $pv.Edit('')
-        }
-      } catch {}
+      if (-not $match -and $wantName) {
+        try {
+          $cap = (([string]$pv.Caption) -replace ' \[Protected View\]$', '').ToLowerInvariant()
+          if ($cap -eq $wantName) { $match = $true }
+        } catch {}
+      }
+      if ($match) {
+        $edited = Enable-ProtectedViewEdit $pv
+        if ($edited) { return $edited }
+      }
     }
+    # Single PV window after our open attempt — treat as the target deck.
+    try {
+      if ([int]$app.ProtectedViewWindows.Count -eq 1) {
+        $edited = Enable-ProtectedViewEdit $app.ProtectedViewWindows.Item(1)
+        if ($edited) { return $edited }
+      }
+    } catch {}
+  } catch {}
+  return $null
+}
+
+function Try-OpenViaProtectedView($app, $path) {
+  # Explicit PV open → Edit when Presentations.Open lands in / fails under Protected View.
+  try {
+    $pv = $app.ProtectedViewWindows.Open($path)
+    if (-not $pv) { return $null }
+    Start-Sleep -Milliseconds 120
+    return (Enable-ProtectedViewEdit $pv)
   } catch {}
   return $null
 }
@@ -173,9 +219,20 @@ function Try-OpenPath($app, $path) {
   if ($existing) { return $existing }
   $fromPv = Try-ProtectedView $app $path
   if ($fromPv) { return $fromPv }
-  try { return $app.Presentations.Open($path, $false, $false, $true) } catch {}
-  try { return $app.Presentations.Open($path) } catch {}
-  return $null
+  try {
+    $p = $app.Presentations.Open($path, $false, $false, $true)
+    if ($p) { return $p }
+  } catch {}
+  # Open frequently lands in Protected View (MotW / internet) instead of Presentations.
+  $fromPv = Try-ProtectedView $app $path
+  if ($fromPv) { return $fromPv }
+  try {
+    $p = $app.Presentations.Open($path)
+    if ($p) { return $p }
+  } catch {}
+  $fromPv = Try-ProtectedView $app $path
+  if ($fromPv) { return $fromPv }
+  return (Try-OpenViaProtectedView $app $path)
 }
 
 function Try-OpenHidden($app, $path) {
@@ -183,9 +240,19 @@ function Try-OpenHidden($app, $path) {
   if ($existing) { return $existing }
   $fromPv = Try-ProtectedView $app $path
   if ($fromPv) { return $fromPv }
-  try { return $app.Presentations.Open($path, $false, $false, $false) } catch {}
-  try { return $app.Presentations.Open($path, 0, 0, 0) } catch {}
-  return $null
+  try {
+    $p = $app.Presentations.Open($path, $false, $false, $false)
+    if ($p) { return $p }
+  } catch {}
+  $fromPv = Try-ProtectedView $app $path
+  if ($fromPv) { return $fromPv }
+  try {
+    $p = $app.Presentations.Open($path, 0, 0, 0)
+    if ($p) { return $p }
+  } catch {}
+  $fromPv = Try-ProtectedView $app $path
+  if ($fromPv) { return $fromPv }
+  return (Try-OpenViaProtectedView $app $path)
 }
 
 function Start-Show-OnTop($app, $pres) {
@@ -392,26 +459,40 @@ function Focus-Hwnd([IntPtr]$hwnd) {
   } catch {}
 }
 
-function Focus-Show($app, $pres) {
+function Focus-Show($app, $pres, $target) {
+  $mode = ([string]$target).Trim().ToLowerInvariant()
+  if ($mode -ne 'presentation' -and $mode -ne 'app') { return }
+
   try { $app.Visible = $true } catch {
     try { $app.Visible = -1 } catch {}
   }
   try { $app.Activate() } catch {}
-  try { $app.WindowState = 3 } catch {} # ppWindowMaximized
-  try {
-    if ($pres -and $pres.Windows.Count -gt 0) { $pres.Windows.Item(1).Activate() }
-  } catch {}
+
   $hwnd = [IntPtr]::Zero
-  try {
-    if ($app.SlideShowWindows.Count -gt 0) {
-      $ssw = $app.SlideShowWindows.Item(1)
-      try { $ssw.Activate() } catch {}
-      try { $hwnd = [IntPtr]$ssw.HWND } catch { $hwnd = [IntPtr]::Zero }
+  if ($mode -eq 'presentation') {
+    # Prefer the live slideshow window (audience / presenter view).
+    try {
+      if ($app.SlideShowWindows.Count -gt 0) {
+        $ssw = $app.SlideShowWindows.Item(1)
+        try { $ssw.Activate() } catch {}
+        try { $hwnd = [IntPtr]$ssw.HWND } catch { $hwnd = [IntPtr]::Zero }
+      }
+    } catch {}
+    if ($hwnd -eq [IntPtr]::Zero) {
+      try {
+        if ($pres -and $pres.Windows.Count -gt 0) { $pres.Windows.Item(1).Activate() }
+      } catch {}
+      try { $hwnd = [IntPtr]$app.HWND } catch { $hwnd = [IntPtr]::Zero }
     }
-  } catch {}
-  if ($hwnd -eq [IntPtr]::Zero) {
+  } else {
+    # Prefer the PowerPoint application / document window (not the show).
+    try { $app.WindowState = 1 } catch {} # ppWindowNormal — avoid staying behind show-only
+    try {
+      if ($pres -and $pres.Windows.Count -gt 0) { $pres.Windows.Item(1).Activate() }
+    } catch {}
     try { $hwnd = [IntPtr]$app.HWND } catch { $hwnd = [IntPtr]::Zero }
   }
+
   if ($hwnd -ne [IntPtr]::Zero) { Focus-Hwnd $hwnd }
 }
 
@@ -499,7 +580,7 @@ if ($Command -eq 'open' -or $Command -eq 'swap') {
     } catch {}
   }
   Start-Sleep -Milliseconds 250
-  if ($FocusShow) { Focus-Show $ppt $pres }
+  if ($FocusTarget -and $FocusTarget -ne 'off') { Focus-Show $ppt $pres $FocusTarget }
   $payload = Live-Payload $ppt $pres
   $payload.fullName = $FilePath
   if (-not $started -and -not $payload.slideshowActive) {
@@ -525,7 +606,7 @@ if ($Command -eq 'startShow') {
   }
   Start-Show $pres
   Start-Sleep -Milliseconds 200
-  if ($FocusShow) { Focus-Show $ppt $pres }
+  if ($FocusTarget -and $FocusTarget -ne 'off') { Focus-Show $ppt $pres $FocusTarget }
   Write-Json (Live-Payload $ppt $pres)
   exit 0
 }

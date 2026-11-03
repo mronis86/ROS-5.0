@@ -14,6 +14,8 @@ const prefix = 'powerpoint-bridge-v2';
 
 function findUnpacked() {
   const candidates = [
+    path.join(bridgeRoot, 'dist-openfix7', 'win-unpacked'),
+    path.join(bridgeRoot, 'dist-openfix6', 'win-unpacked'),
     path.join(bridgeRoot, 'dist-openfix5', 'win-unpacked'),
     path.join(bridgeRoot, 'dist-openfix4', 'win-unpacked'),
     path.join(bridgeRoot, 'dist-openfix3', 'win-unpacked'),
@@ -73,9 +75,10 @@ if not exist "%~dp0resources\\app.asar" (
 start "" "%~dp0${exeName}"
 endlocal
 `;
-  const readme = `ROS PowerPoint Bridge V2 (0.2.2)
+  const readme = `ROS PowerPoint Bridge V2 (0.2.4)
 
-Open/Loaded thrash fix build. Use this V2 zip only — quit any older bridge first.
+Focus after open (presentation vs app) + auto Enable Editing when Protected View blocks the deck.
+Use this V2 zip only — quit any older bridge first.
 Only one Mode 2 helper should run per event.
 
 No Node.js / npm install required.
