@@ -6,8 +6,8 @@ param(
   [int]$SlideIndex = 0,
   [int]$Width = 0,
   [int]$Height = 0,
-  # off | slideshow | app — which window to bring forward after open/swap/startShow
-  # legacy: "presentation" is treated as slideshow
+  # off | presenter | slideshow | app — which window to bring forward after open/swap/startShow
+  # legacy: "presentation" → presenter (operator Presenter View)
   [string]$FocusTarget = 'off',
   # when true: strip MotW + call Protected View → Enable Editing (security/notification bar)
   [string]$ForceEditMode = 'false'
@@ -20,8 +20,8 @@ function Want-ForceEdit {
 
 function Normalize-FocusTarget([string]$raw) {
   $mode = ([string]$raw).Trim().ToLowerInvariant()
-  if ($mode -eq 'presentation') { return 'slideshow' } # legacy label meant slide show
-  if ($mode -eq 'slideshow' -or $mode -eq 'app' -or $mode -eq 'off') { return $mode }
+  if ($mode -eq 'presentation') { return 'presenter' } # original request: Presenter View
+  if ($mode -eq 'presenter' -or $mode -eq 'slideshow' -or $mode -eq 'app' -or $mode -eq 'off') { return $mode }
   return 'off'
 }
 
@@ -287,13 +287,14 @@ function Start-Show-OnTop($app, $pres) {
   } catch {}
   try {
     $settings = $pres.SlideShowSettings
-    $settings.ShowType = 1
+    $settings.ShowType = 1 # ppShowTypeSpeaker — keeps Presenter View when ShowPresenterView is on
     $settings.LoopUntilStopped = 0
     try { $settings.RangeType = 1 } catch {}
+    # Do not force ShowPresenterView off — respect deck / PowerPoint dual-monitor Presenter View.
     $settings.Run() | Out-Null
-    Start-Sleep -Milliseconds 80
+    Start-Sleep -Milliseconds 120
     Focus-Show $app $pres $FocusTarget
-    try { return ([int]$app.SlideShowWindows.Count -gt 0) } catch { return $true }
+    try { return ([int]$app.SlideShowWindows.Count -gt 0 -or ((Get-PresenterViewHwnd) -ne [IntPtr]::Zero)) } catch { return $true }
   } catch {
     return $false
   }
@@ -379,7 +380,7 @@ function Start-Show($pres) {
   $ran = $false
   try {
     $settings = $pres.SlideShowSettings
-    $settings.ShowType = 1
+    $settings.ShowType = 1 # ppShowTypeSpeaker — leave ShowPresenterView as configured
     $settings.LoopUntilStopped = 0
     try { $settings.RangeType = 1 } catch {}
     $settings.Run() | Out-Null
@@ -446,11 +447,15 @@ function Close-AllPresentations($app, $keepPath) {
 }
 
 # Win32 helpers — COM Activate alone often loses to Windows focus-stealing rules.
+# Presenter View is usually a separate HWND (PodiumParent / "Presenter View"), not SlideShowWindows[1].
 try {
   Add-Type -TypeDefinition @"
 using System;
+using System.Text;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 public static class RosPptFocus {
+  public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
   [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr hWnd);
@@ -458,6 +463,35 @@ public static class RosPptFocus {
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
   [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
   [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+  [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+
+  public static List<string> ListPptWindows(int[] pids) {
+    var found = new List<string>();
+    var pidSet = new HashSet<int>(pids ?? new int[0]);
+    EnumWindows((hWnd, l) => {
+      if (!IsWindowVisible(hWnd)) return true;
+      uint pid = 0;
+      GetWindowThreadProcessId(hWnd, out pid);
+      if (!pidSet.Contains((int)pid)) return true;
+      var title = new StringBuilder(512);
+      var cls = new StringBuilder(256);
+      GetWindowText(hWnd, title, title.Capacity);
+      GetClassName(hWnd, cls, cls.Capacity);
+      var t = title.ToString();
+      if (string.IsNullOrWhiteSpace(t) && cls.ToString() != "PodiumParent" && cls.ToString() != "screenClass") return true;
+      int area = 0;
+      RECT r;
+      if (GetWindowRect(hWnd, out r)) area = Math.Abs(r.Right - r.Left) * Math.Abs(r.Bottom - r.Top);
+      found.Add(hWnd.ToInt64() + "\t" + cls + "\t" + t + "\t" + area);
+      return true;
+    }, IntPtr.Zero);
+    return found;
+  }
 }
 "@ -ErrorAction SilentlyContinue
 } catch {}
@@ -477,10 +511,88 @@ function Focus-Hwnd([IntPtr]$hwnd) {
   } catch {}
 }
 
-function Get-SlideShowHwnd($app) {
-  # Prefer the largest SlideShow window (audience display over notes / presenter chrome).
+function Raise-Hwnd([IntPtr]$hwnd) {
+  if (-not $hwnd -or $hwnd -eq [IntPtr]::Zero) { return }
+  try {
+    [void][RosPptFocus]::ShowWindow($hwnd, 9)
+    [void][RosPptFocus]::BringWindowToTop($hwnd)
+  } catch {}
+}
+
+function Get-PptPids {
+  try {
+    return @(Get-Process -Name POWERPNT -ErrorAction SilentlyContinue | ForEach-Object { [int]$_.Id })
+  } catch {
+    return @()
+  }
+}
+
+function Get-PptWindowRows {
+  $pids = Get-PptPids
+  if (-not $pids -or $pids.Count -lt 1) { return @() }
+  try {
+    $raw = [RosPptFocus]::ListPptWindows([int[]]$pids)
+    $rows = @()
+    foreach ($line in @($raw)) {
+      $parts = ([string]$line) -split "`t", 4
+      if ($parts.Count -lt 4) { continue }
+      $rows += [pscustomobject]@{
+        Hwnd  = [IntPtr]([int64]$parts[0])
+        Class = [string]$parts[1]
+        Title = [string]$parts[2]
+        Area  = [int]$parts[3]
+      }
+    }
+    return $rows
+  } catch {
+    return @()
+  }
+}
+
+function Get-PresenterViewHwnd {
+  # Presenter View is typically class PodiumParent or a titled "Presenter View" window.
   $best = [IntPtr]::Zero
-  $bestArea = -1
+  $bestScore = -1
+  foreach ($row in @(Get-PptWindowRows)) {
+    $cls = $row.Class
+    $title = $row.Title
+    $isPresenter = $false
+    if ($cls -eq 'PodiumParent') { $isPresenter = $true }
+    elseif ($title -match '(?i)presenter\s*view') { $isPresenter = $true }
+    elseif ($title -match '(?i)presenterscherm|vista\s+del\s+presentador|mode\s+pr[eé]sentateur') { $isPresenter = $true }
+    if (-not $isPresenter) { continue }
+    $score = [int]$row.Area
+    if ($cls -eq 'PodiumParent') { $score += 50000000 }
+    if ($score -ge $bestScore) {
+      $bestScore = $score
+      $best = $row.Hwnd
+    }
+  }
+  return $best
+}
+
+function Get-AudienceShowHwnd($app) {
+  # Audience slide show: screenClass / "PowerPoint Slide Show" / largest fullscreen COM SlideShowWindow.
+  $best = [IntPtr]::Zero
+  $bestScore = -1
+  foreach ($row in @(Get-PptWindowRows)) {
+    $cls = $row.Class
+    $title = $row.Title
+    $isAudience = $false
+    if ($cls -eq 'screenClass') { $isAudience = $true }
+    elseif ($title -match '(?i)power\s*point\s+slide\s+show') { $isAudience = $true }
+    elseif ($title -match '(?i)diaporama|presentaci[oó]n\s+con\s+diapositivas') { $isAudience = $true }
+    if (-not $isAudience) { continue }
+    if ($title -match '(?i)presenter\s*view') { continue }
+    $score = [int]$row.Area
+    if ($cls -eq 'screenClass') { $score += 10000000 }
+    if ($score -ge $bestScore) {
+      $bestScore = $score
+      $best = $row.Hwnd
+    }
+  }
+  if ($best -ne [IntPtr]::Zero) { return $best }
+
   try {
     $n = [int]$app.SlideShowWindows.Count
     for ($i = 1; $i -le $n; $i++) {
@@ -493,8 +605,12 @@ function Get-SlideShowHwnd($app) {
       if ($h -eq [IntPtr]::Zero) { continue }
       $area = 0
       try { $area = [math]::Abs([int]$ssw.Width) * [math]::Abs([int]$ssw.Height) } catch { $area = $i }
-      if ($area -ge $bestArea) {
-        $bestArea = $area
+      $full = $false
+      try { $full = [bool]$ssw.IsFullScreen } catch {}
+      $score = $area
+      if ($full) { $score += 10000000 }
+      if ($score -ge $bestScore) {
+        $bestScore = $score
         $best = $h
       }
     }
@@ -504,32 +620,48 @@ function Get-SlideShowHwnd($app) {
 
 function Focus-Show($app, $pres, $target) {
   $mode = Normalize-FocusTarget $target
-  if ($mode -ne 'slideshow' -and $mode -ne 'app') { return }
+  if ($mode -ne 'presenter' -and $mode -ne 'slideshow' -and $mode -ne 'app') { return }
 
   try { $app.Visible = $true } catch {
     try { $app.Visible = -1 } catch {}
   }
 
-  $hwnd = [IntPtr]::Zero
-  if ($mode -eq 'slideshow') {
-    # Slide show only — never fall back to Normal/edit "presentation" window.
-    for ($attempt = 0; $attempt -lt 8; $attempt++) {
-      $hwnd = Get-SlideShowHwnd $app
-      if ($hwnd -ne [IntPtr]::Zero) { break }
-      Start-Sleep -Milliseconds 80
-    }
-    if ($hwnd -eq [IntPtr]::Zero) { return }
-  } else {
-    # PowerPoint app / document window (edit UI), not the slide show.
+  if ($mode -eq 'app') {
     try { $app.Activate() } catch {}
     try { $app.WindowState = 1 } catch {} # ppWindowNormal
     try {
       if ($pres -and $pres.Windows.Count -gt 0) { $pres.Windows.Item(1).Activate() }
     } catch {}
+    $hwnd = [IntPtr]::Zero
     try { $hwnd = [IntPtr]$app.HWND } catch { $hwnd = [IntPtr]::Zero }
+    if ($hwnd -ne [IntPtr]::Zero) { Focus-Hwnd $hwnd }
+    return
   }
 
-  if ($hwnd -ne [IntPtr]::Zero) { Focus-Hwnd $hwnd }
+  $audience = [IntPtr]::Zero
+  $presenter = [IntPtr]::Zero
+  for ($attempt = 0; $attempt -lt 10; $attempt++) {
+    $audience = Get-AudienceShowHwnd $app
+    $presenter = Get-PresenterViewHwnd
+    if ($mode -eq 'presenter' -and $presenter -ne [IntPtr]::Zero) { break }
+    if ($mode -eq 'slideshow' -and $audience -ne [IntPtr]::Zero) { break }
+    if ($audience -ne [IntPtr]::Zero -or $presenter -ne [IntPtr]::Zero) { break }
+    Start-Sleep -Milliseconds 100
+  }
+
+  if ($mode -eq 'presenter') {
+    # Presenter mode: raise audience display AND focus Presenter View (notes / next / timer).
+    if ($audience -ne [IntPtr]::Zero) { Raise-Hwnd $audience }
+    if ($presenter -ne [IntPtr]::Zero) {
+      Focus-Hwnd $presenter
+      return
+    }
+    if ($audience -ne [IntPtr]::Zero) { Focus-Hwnd $audience }
+    return
+  }
+
+  # Audience slide show only.
+  if ($audience -ne [IntPtr]::Zero) { Focus-Hwnd $audience }
 }
 
 try {

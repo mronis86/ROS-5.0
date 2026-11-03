@@ -75,8 +75,8 @@ function formConfig() {
     selectedDaysByEvent,
     focusTarget: (() => {
       const raw = String(els.focusTarget?.value || 'off').trim().toLowerCase();
-      if (raw === 'presentation') return 'slideshow';
-      return raw === 'slideshow' || raw === 'app' ? raw : 'off';
+      if (raw === 'presentation') return 'presenter';
+      return raw === 'presenter' || raw === 'slideshow' || raw === 'app' ? raw : 'off';
     })(),
     forceEditMode: Boolean(els.forceEditMode?.checked),
   };
@@ -457,10 +457,10 @@ async function load() {
   applyCaptureSourceUi();
   if (els.focusTarget) {
     const raw = String(cfg.focusTarget || '').trim().toLowerCase();
-    if (raw === 'slideshow' || raw === 'app' || raw === 'off') {
+    if (raw === 'presenter' || raw === 'slideshow' || raw === 'app' || raw === 'off') {
       els.focusTarget.value = raw;
     } else if (raw === 'presentation' || cfg.focusPresentationView) {
-      els.focusTarget.value = 'slideshow';
+      els.focusTarget.value = 'presenter';
     } else {
       els.focusTarget.value = 'off';
     }

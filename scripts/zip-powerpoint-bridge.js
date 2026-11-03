@@ -14,6 +14,7 @@ const prefix = 'powerpoint-bridge-v2';
 
 function findUnpacked() {
   const candidates = [
+    path.join(bridgeRoot, 'dist-openfix10', 'win-unpacked'),
     path.join(bridgeRoot, 'dist-openfix9', 'win-unpacked'),
     path.join(bridgeRoot, 'dist-openfix8', 'win-unpacked'),
     path.join(bridgeRoot, 'dist-openfix7', 'win-unpacked'),
@@ -77,9 +78,10 @@ if not exist "%~dp0resources\\app.asar" (
 start "" "%~dp0${exeName}"
 endlocal
 `;
-  const readme = `ROS PowerPoint Bridge V2 (0.2.5)
+  const readme = `ROS PowerPoint Bridge V2 (0.2.6)
 
-Focus: Slide show window vs PowerPoint app. Optional Force Enable Editing for Protected View.
+Focus: Presenter view (+ audience), audience slide show only, or PowerPoint app.
+Optional Force Enable Editing for Protected View.
 Use this V2 zip only — quit any older bridge first.
 Only one Mode 2 helper should run per event.
 

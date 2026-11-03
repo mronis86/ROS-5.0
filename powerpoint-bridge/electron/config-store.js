@@ -15,7 +15,7 @@ const DEFAULTS = {
   selectedDay: 1,
   selectedDaysByEvent: {},
   helperInstanceId: '',
-  /** After open/swap: 'off' | 'slideshow' | 'app' (PowerPoint edit window). */
+  /** After open/swap: 'off' | 'presenter' | 'slideshow' | 'app'. */
   focusTarget: 'off',
   /** When true, force Enable Editing for Protected View / security notification bars. */
   forceEditMode: true,
@@ -65,10 +65,10 @@ function saveConfig(partial) {
   }
   {
     const raw = String(next.focusTarget || '').trim().toLowerCase();
-    if (raw === 'slideshow' || raw === 'app' || raw === 'off') {
+    if (raw === 'presenter' || raw === 'slideshow' || raw === 'app' || raw === 'off') {
       next.focusTarget = raw;
     } else if (raw === 'presentation' || next.focusPresentationView === true) {
-      next.focusTarget = 'slideshow';
+      next.focusTarget = 'presenter';
     } else {
       next.focusTarget = 'off';
     }
