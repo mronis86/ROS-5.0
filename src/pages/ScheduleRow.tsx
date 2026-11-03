@@ -17,6 +17,12 @@ import { SegmentSpellingChip, useSegmentNameSpelling } from '../components/Segme
 import { addSpellingOk, misspelledSegmentWords, replaceSegmentWord } from '../lib/segmentNameSpellcheck';
 import { isShowBreakProgramType } from '../lib/showBreak';
 import { scrollColumnBoxStyle } from '../lib/rosColumnOrder';
+import {
+  DSM_LAYOUT_OPTIONS,
+  effectiveDsmLayoutMode,
+  suggestedDsmLayoutMode,
+  type DsmLayoutMode,
+} from '../lib/dsmClockLayout';
 
 export interface ScheduleRowProps {
   item: any;
@@ -60,6 +66,11 @@ export interface ScheduleRowProps {
   /** Exclusive next-Mitti-play checkbox. */
   persistMittiWatch?: (itemId: number, enabled: boolean) => void | Promise<void>;
   persistAvWatch?: (itemId: number, enabled: boolean) => void | Promise<void>;
+  /** Per-row DSM enable + layout mode (Full / LED / VID / PPT). */
+  persistDsmCue?: (
+    itemId: number,
+    patch: { enabled?: boolean; mode?: DsmLayoutMode; modeManual?: boolean }
+  ) => void | Promise<void>;
   calculateStartTimeWithOvertime?: (index: number) => string | number;
   calculateStartTime?: (index: number) => string | number;
   onEditTimedMarker?: (itemId: number) => void;
@@ -165,6 +176,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
   persistScheduleCheckboxes,
   persistMittiWatch,
   persistAvWatch,
+  persistDsmCue,
   calculateStartTimeWithOvertime,
   calculateStartTime,
   onEditTimedMarker,
@@ -407,6 +419,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
     if (visibleColumns.recording) w += Number(columnWidths.recording) || 0;
     if (visibleColumns.mittiWatch) w += 88;
     if (visibleColumns.avWatch) w += 72;
+    if (visibleColumns.dsm) w += 148;
     if (visibleColumns.notes) w += Number(columnWidths.notes) || 0;
     if (visibleColumns.vog !== false) w += Number(columnWidths.vog) || 100;
     if (visibleColumns.assets) w += Number(columnWidths.assets) || 0;
@@ -598,18 +611,31 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
                       programType,
                     })
                   : {};
+              const autoDsm =
+                !item.dsmModeManual
+                  ? {
+                      dsmMode: suggestedDsmLayoutMode({
+                        programType,
+                        hasPPT: !!item.hasPPT,
+                      }),
+                    }
+                  : {};
               setSchedule((prev: any[]) => prev.map(scheduleItem =>
                 scheduleItem.id === item.id
                   ? {
                       ...scheduleItem,
                       programType,
                       ...autoShot,
+                      ...autoDsm,
                       ...(isShowBreakProgramType(programType)
                         ? { durationHours: 0, durationMinutes: 0, durationSeconds: 0 }
                         : {}),
                     }
                   : scheduleItem
               ));
+              if (autoDsm.dsmMode && item.dsmEnabled && persistDsmCue) {
+                void persistDsmCue(item.id, { mode: autoDsm.dsmMode, modeManual: false });
+              }
               logChangeDebounced(
                 `programType_${item.id}`,
                 'FIELD_UPDATE',
@@ -1172,14 +1198,29 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
                   if (!beginCellEdit()) return;
                   const oldValue = !!item.hasPPT;
                   const checked = e.target.checked;
+                  const autoDsm =
+                    !item.dsmModeManual
+                      ? {
+                          dsmMode: suggestedDsmLayoutMode({
+                            programType: item.programType,
+                            hasPPT: checked,
+                          }),
+                        }
+                      : {};
                   setSchedule((prev: any[]) => prev.map(scheduleItem => 
                     Number(scheduleItem.id) === Number(item.id)
-                      ? stampScheduleCheckboxes({ ...scheduleItem, hasPPT: checked }, ['hasPPT'])
+                      ? stampScheduleCheckboxes(
+                          { ...scheduleItem, hasPPT: checked, ...autoDsm },
+                          ['hasPPT']
+                        )
                       : scheduleItem
                   ));
                   void Promise.resolve(
                     persistScheduleCheckboxes?.(item.id, { hasPPT: checked })
                   ).catch((err) => console.warn('persistScheduleCheckboxes hasPPT failed:', err));
+                  if (autoDsm.dsmMode && item.dsmEnabled && persistDsmCue) {
+                    void persistDsmCue(item.id, { mode: autoDsm.dsmMode, modeManual: false });
+                  }
                   logChangeDebounced(
                     `hasPPT_${item.id}`,
                     'FIELD_UPDATE', 
@@ -1691,7 +1732,86 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
           </div>
         </div>
       )}
-      {/* Public column (after Speakers) */}
+      {visibleColumns.dsm && (
+        <div
+          className="px-1.5 py-2 border-r border-slate-600 flex items-center justify-center gap-1 flex-shrink-0"
+          style={colBox(148, 'dsm')}
+        >
+          <label
+            className="flex flex-col items-center gap-0.5"
+            onMouseDown={(e) => { if (alertIfLocked(e)) return; }}
+          >
+            <input
+              type="checkbox"
+              checked={!!item.dsmEnabled}
+              onChange={(e) => {
+                if (!beginCellEdit()) return;
+                const enabled = e.target.checked;
+                const mode = effectiveDsmLayoutMode(item);
+                void persistDsmCue?.(item.id, {
+                  enabled,
+                  mode,
+                  modeManual: !!item.dsmModeManual,
+                });
+              }}
+              disabled={isLockedByOther || currentUserRole === 'VIEWER' || !persistDsmCue}
+              className={`w-5 h-5 rounded border-2 ${
+                item.dsmEnabled
+                  ? 'border-emerald-300 bg-emerald-600'
+                  : isRowDimmed
+                    ? 'border-purple-600/50 bg-purple-950/70'
+                    : 'border-slate-400 bg-slate-700'
+              }`}
+              title={
+                isLockedByOther
+                  ? lockLabel
+                  : 'When checked, loading this cue sends the selected DSM layout to DSM Clock pages'
+              }
+            />
+          </label>
+          <select
+            value={effectiveDsmLayoutMode(item)}
+            onFocus={() => beginCellEdit()}
+            onBlur={handleSelectBlur}
+            onMouseDown={(e) => {
+              if (alertIfLocked(e)) return;
+              e.stopPropagation();
+            }}
+            onChange={(e) => {
+              if (!beginCellEdit()) return;
+              if (currentUserRole === 'VIEWER') {
+                alert('Only EDITORs and OPERATORs can change DSM mode.');
+                return;
+              }
+              const mode = e.target.value as DsmLayoutMode;
+              void persistDsmCue?.(item.id, {
+                enabled: !!item.dsmEnabled,
+                mode,
+                modeManual: true,
+              });
+            }}
+            onClick={(e) => e.stopPropagation()}
+            disabled={isLockedByOther || currentUserRole === 'VIEWER' || !persistDsmCue}
+            className={`min-w-0 flex-1 max-w-[104px] rounded border text-[10px] font-semibold py-1 px-1 disabled:opacity-70 disabled:cursor-not-allowed ${
+              item.dsmEnabled
+                ? 'border-emerald-500/70 bg-emerald-950/40 text-emerald-100'
+                : 'border-slate-500 bg-slate-800 text-slate-300'
+            }`}
+            title={
+              isLockedByOther
+                ? lockLabel
+                : 'DSM layout sent when this cue is loaded (auto: LED, Video→VID, PPT→PPT)'
+            }
+          >
+            {DSM_LAYOUT_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+      {/* Public column (after DSM) */}
       {visibleColumns.public && (
         <div 
           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
@@ -1930,7 +2050,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
     'durationHours', 'durationMinutes', 'durationSeconds',
     'notes', 'vogText', 'vogVoiceId', 'vogVoiceName', 'assets', 'speakers', 'speakersText',
     'hasPPT', 'hasQA', 'needsRecording', 'recordingSource', 'otherRoom', 'isPublic',
-    'checkboxStamps', 'mittiWatch', 'avWatch',
+    'checkboxStamps', 'mittiWatch', 'avWatch', 'dsmEnabled', 'dsmMode', 'dsmModeManual',
     'isTimedMarker', 'isIndented', 'markerTimeMode', 'markerOffsetSeconds', 'markerAbsoluteSeconds',
     'breakStartTime',
     'sessionStartTime',

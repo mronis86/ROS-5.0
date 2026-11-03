@@ -1070,6 +1070,37 @@ class ApiClient {
     );
   }
 
+  async setDsmCue(
+    eventId: string,
+    itemId: number,
+    patch: { enabled?: boolean; mode?: string; modeManual?: boolean }
+  ) {
+    const result = await this.request<any>(
+      `/api/run-of-show-data/${encodeURIComponent(eventId)}/dsm-cue`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({
+          item_id: itemId,
+          enabled: patch.enabled,
+          mode: patch.mode,
+          mode_manual: patch.modeManual,
+        }),
+      }
+    );
+    this.cache.delete(`runOfShowData_${eventId}`);
+    return result;
+  }
+
+  async setDsmColumn(eventId: string, enabled: boolean) {
+    return this.request<{ enabled: boolean }>(
+      `/api/run-of-show-data/${encodeURIComponent(eventId)}/dsm-column`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ enabled }),
+      }
+    );
+  }
+
   async getEventCueFilesStatus() {
     return this.request<{ configured: boolean; retentionMonths: number; maxFileBytes: number }>(
       '/api/event-cue-files/status',
@@ -1306,8 +1337,8 @@ class ApiClient {
     );
   }
 
-  async setDsmClockLayout(eventId: string, mode: '16x9' | 'full') {
-    return this.request<{ ok: boolean; event_id: string; mode: '16x9' | 'full' }>(
+  async setDsmClockLayout(eventId: string, mode: 'full' | 'led' | 'vid' | 'ppt' | '16x9') {
+    return this.request<{ ok: boolean; event_id: string; mode: string }>(
       '/api/dsm-clock/layout',
       {
         method: 'POST',

@@ -29,12 +29,19 @@ Control your Run of Show schedule directly from Bitfocus Companion. No Electron 
 ### LED Text Graphics
 - **LED Clear Output** – Clears the transparent LED output page for this event (same as **Clear Output** on the LED Layouts page). All connected `/led-output` browser sources hide their content.
 
+### DSM + Ross Talk
+- **DSM · Full / LED / VID / PPT** – Sets DSM Clock layout and sends the matching Ross Talk TCP command (if Ross Talk is enabled in module settings).
+- Enable **Ross Talk**, set host/port, and paste the four command strings your switcher expects.
+- With **Send on cue load** ON, loading a cue that has the ROS **DSM** column checkbox enabled automatically sends that row’s mode (from ROS, OSC, or Companion Load Cue).
+
 ## Variables
 
 - **Current Cue** – The cue label of the loaded item.
 - **Current Segment Name** – The segment name of the loaded item.
 - **Timer Running** – "Yes" or "No".
 - **Event Name** – The name of the selected event.
+- **Last DSM mode** – full / led / vid / ppt.
+- **Last Ross Talk status** – ok / error / disabled.
 
 ## Feedbacks
 

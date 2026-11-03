@@ -6,7 +6,7 @@ Bitfocus Companion v3 module for Run of Show (ROS). Controls your ROS schedule v
 
 - **Load Cue** – Load any cue/row from the schedule
 - **Start / Stop / Reset Timer** – Full timer control
-- **DSM Clock Layout** – Set DSM timer to **16:9** reference frame or classic **Full** viewport
+- **DSM + Ross Talk** – Full / LED / VID / PPT: updates DSM Clock layout and can send Ross Talk TCP commands (manual presets or auto on cue load when the ROS DSM column is checked)
 - **Variables** – Current cue, segment name, timer state; plus **per-cue** label/value
 - **Feedbacks** – Timer running, cue loaded, "loaded cue is (choice)"
 - **Presets** – One preset per cue (auto-updates with Event ID); drag onto buttons for Load Cue + text + feedback
@@ -40,6 +40,7 @@ Bitfocus Companion v3 module for Run of Show (ROS). Controls your ROS schedule v
 - **Event ID**: From your Run of Show web app (Events list)
 - **Day**: 1–10 for multi-day events
 - **Sync interval (seconds)**: How often to fetch schedule/timer (5–600, default 60)
+- **Ross Talk**: Enable, host/IP, port (default 7788), and one command string each for Full / LED / VID / PPT. Optional **Send on cue load** watches the active timer (~2s) and fires when a DSM-enabled cue is loaded from ROS, OSC, or Companion.
 
 ## Presets (drag and drop, auto-update by Event ID)
 
@@ -47,7 +48,7 @@ After you set **Event ID** and the module syncs, open the **Presets** tab in Com
 
 - **Cues** – One preset per **regular** (non-indented) cue only (e.g. "CUE 1: Opening", "CUE 2: Keynote"). Each runs **Load Cue** and uses **Loaded cue is** feedback. Sub-cues are not listed here.
 - **Timer** – Presets: **Start Timer**, **Stop Timer**, **Reset Timer**, **Timer +1 min**, **Timer -1 min**, **Timer +5 min**, **Timer -5 min**, **Stop all sub-timers**. Drag onto buttons for one-tap timer control.
-- **DSM Clock** – **DSM · 16:9 ON** and **DSM · Full** (classic Clock layout on `/dsm-clock`).
+- **DSM** – **Full / LED / VID / PPT** (sets DSM Clock layout + sends the matching Ross Talk command if enabled).
 - **Sub-Timers** – One preset per **sub-cue** (indented row) only for **Start Sub-Timer** (e.g. "Sub: CUE 1.1 – Intro"). Regular cues are not listed here.
 
 The preset list updates when the schedule changes.
@@ -67,7 +68,8 @@ This module calls the Run of Show Railway API directly:
 - `POST /api/timers/start` – Start timer
 - `POST /api/timers/stop` – Stop timer
 - `POST /api/timers/reset` – Reset timer
-- `POST /api/dsm-clock/layout` – `{ event_id, mode: "16x9" | "full" }` for DSM Clock pages
+- `POST /api/dsm-clock/layout` – `{ event_id, mode: "full" | "led" | "vid" | "ppt" }` for DSM Clock pages
+- Ross Talk – TCP to configured host:port (not via Railway)
 
 ## License
 

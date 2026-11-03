@@ -356,6 +356,12 @@ interface ScheduleItem {
   mittiWatch?: boolean;
   /** Exclusive: the next AV-Playout play syncs this row. Only one cue is true. */
   avWatch?: boolean;
+  /** When true, loading this cue pushes DSM layout to DSM Clock pages. */
+  dsmEnabled?: boolean;
+  /** full | led | vid | ppt */
+  dsmMode?: string;
+  /** When true, auto LED/Video/PPT suggestions do not overwrite dsmMode. */
+  dsmModeManual?: boolean;
   /** Who marked REC: 'comms' (ASAP) vs 'ros' (export / planned post). */
   recordingSource?: 'comms' | 'ros' | null;
   /**
@@ -445,6 +451,9 @@ function scheduleItemSignature(item: any): string {
     JSON.stringify(item.checkboxStamps || {}),
     item.mittiWatch ? '1' : '',
     item.avWatch ? '1' : '',
+    item.dsmEnabled ? '1' : '',
+    asText(item.dsmMode),
+    item.dsmModeManual ? '1' : '',
     asText(item.recordingSource),
     asText(item.otherRoom),
     asText(item.timerId),
@@ -3137,15 +3146,20 @@ const RunOfShowPage: React.FC = () => {
   const [mittiWatchColumnEnabled, setMittiWatchColumnEnabled] = useState(false);
   /** Per event. Hidden until Operator Actions turns the AV column on. */
   const [avWatchColumnEnabled, setAvWatchColumnEnabled] = useState(false);
+  /** Per event. Hidden until Operator Actions turns the DSM column on. */
+  const [dsmColumnEnabled, setDsmColumnEnabled] = useState(false);
   const showMittiWatchColumn = mittiWatchColumnEnabled && visibleColumns.mittiWatch !== false;
   const showAvWatchColumn = avWatchColumnEnabled && visibleColumns.avWatch !== false;
+  // Operator Actions is source of truth; force-show even if Filter Columns hid DSM.
+  const showDsmColumn = dsmColumnEnabled;
   const scrollVisibleColumns = useMemo(
     () => ({
       ...scrollVisibleColumnsBase,
       mittiWatch: showMittiWatchColumn,
       avWatch: showAvWatchColumn,
+      dsm: showDsmColumn,
     }),
-    [scrollVisibleColumnsBase, showMittiWatchColumn, showAvWatchColumn]
+    [scrollVisibleColumnsBase, showMittiWatchColumn, showAvWatchColumn, showDsmColumn]
   );
   const [unsyncedCount, setUnsyncedCount] = useState(0);
   const [timeStatus, setTimeStatus] = useState<'early' | 'late' | 'on-time' | null>(null);
@@ -9928,6 +9942,39 @@ const RunOfShowPage: React.FC = () => {
     [event?.id, rememberCheckboxRows, rememberSyncedSchedule]
   );
 
+  const persistDsmCue = useCallback(
+    async (
+      itemId: number,
+      patch: { enabled?: boolean; mode?: string; modeManual?: boolean }
+    ) => {
+      if (!event?.id) return;
+      const at = Date.now();
+      const nextRows = (scheduleRef.current || []).map((row) => {
+        if (Number(row.id) !== Number(itemId)) return row;
+        const next: ScheduleItem = { ...row };
+        const stampFields: string[] = [];
+        if (patch.enabled !== undefined) {
+          next.dsmEnabled = patch.enabled;
+          stampFields.push('dsmEnabled');
+        }
+        if (patch.mode !== undefined) next.dsmMode = patch.mode;
+        if (patch.modeManual !== undefined) next.dsmModeManual = patch.modeManual;
+        return stampFields.length
+          ? stampScheduleCheckboxes(next, stampFields, at)
+          : next;
+      });
+      rememberCheckboxRows(nextRows.filter((row, index) => row !== (scheduleRef.current || [])[index]));
+      setSchedule(nextRows);
+      try {
+        const result = await apiClient.setDsmCue(event.id, itemId, patch);
+        rememberSyncedSchedule(result);
+      } catch (err) {
+        console.warn('DSM cue update failed', err);
+      }
+    },
+    [event?.id, rememberCheckboxRows, rememberSyncedSchedule]
+  );
+
   const persistScheduleCheckboxes = useCallback(
     async (
       itemId: number,
@@ -10089,6 +10136,7 @@ const RunOfShowPage: React.FC = () => {
         
         setMittiWatchColumnEnabled(data.settings?.mittiWatchColumn === true);
         setAvWatchColumnEnabled(data.settings?.avWatchColumn === true);
+        setDsmColumnEnabled(data.settings?.dsmColumn === true);
         setVoAlertsEnabled(voAlertsEnabledFromSettings(data.settings));
         if (data.settings?.eventName) setEventName(data.settings.eventName);
         if (data.settings?.masterStartTime) setMasterStartTime(data.settings.masterStartTime);
@@ -10330,6 +10378,7 @@ const RunOfShowPage: React.FC = () => {
         rememberSyncedSchedule(data);
         setMittiWatchColumnEnabled(data.settings?.mittiWatchColumn === true);
         setAvWatchColumnEnabled(data.settings?.avWatchColumn === true);
+        setDsmColumnEnabled(data.settings?.dsmColumn === true);
         setVoAlertsEnabled(voAlertsEnabledFromSettings(data.settings));
         if (data.settings?.eventName) setEventName(data.settings.eventName);
         if (data.settings?.masterStartTime) setMasterStartTime(data.settings.masterStartTime);
@@ -10468,6 +10517,9 @@ const RunOfShowPage: React.FC = () => {
                 ...row,
                 mittiWatch: remote.mittiWatch === true,
                 avWatch: remote.avWatch === true,
+                dsmEnabled: remote.dsmEnabled === true,
+                dsmMode: remote.dsmMode != null ? String(remote.dsmMode) : row.dsmMode,
+                dsmModeManual: remote.dsmModeManual === true,
               },
               mergeNewerCheckboxFields(row, remote)
             );
@@ -10479,6 +10531,9 @@ const RunOfShowPage: React.FC = () => {
       }
       if (data?.settings?.avWatchColumn !== undefined) {
         setAvWatchColumnEnabled(data.settings.avWatchColumn === true);
+      }
+      if (data?.settings?.dsmColumn !== undefined) {
+        setDsmColumnEnabled(data.settings.dsmColumn === true);
       }
       if (data?.settings?.voAlertsEnabled !== undefined) {
         setVoAlertsEnabled(voAlertsEnabledFromSettings(data.settings));
@@ -10547,6 +10602,9 @@ const RunOfShowPage: React.FC = () => {
             }
             if (data.settings.avWatchColumn !== undefined) {
               setAvWatchColumnEnabled(data.settings.avWatchColumn === true);
+            }
+            if (data.settings.dsmColumn !== undefined) {
+              setDsmColumnEnabled(data.settings.dsmColumn === true);
             }
             if (data.settings.voAlertsEnabled !== undefined) {
               setVoAlertsEnabled(voAlertsEnabledFromSettings(data.settings));
@@ -11271,6 +11329,9 @@ const RunOfShowPage: React.FC = () => {
       },
       onAvWatchColumnUpdate: (data: { event_id: string; enabled: boolean }) => {
         if (data?.event_id === event?.id) setAvWatchColumnEnabled(data.enabled === true);
+      },
+      onDsmColumnUpdate: (data: { event_id: string; enabled: boolean }) => {
+        if (data?.event_id === event?.id) setDsmColumnEnabled(data.enabled === true);
       },
       onShowModeUpdate: (data: {
         event_id: string;
@@ -17102,6 +17163,37 @@ const RunOfShowPage: React.FC = () => {
                                 </span>
                               ) : null}
                             </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (!event?.id || currentUserRole === 'VIEWER') return;
+                                const next = !dsmColumnEnabled;
+                                setDsmColumnEnabled(next);
+                                if (next) {
+                                  setVisibleColumns((prev) =>
+                                    prev.dsm === false ? { ...prev, dsm: true } : prev
+                                  );
+                                }
+                                void apiClient.setDsmColumn(event.id, next).catch((err) => {
+                                  console.warn('DSM column toggle failed', err);
+                                  setDsmColumnEnabled(!next);
+                                });
+                              }}
+                              className={`w-full px-4 py-2 text-left transition-colors flex items-center gap-3 ${
+                                currentUserRole === 'VIEWER'
+                                  ? 'text-slate-500 cursor-not-allowed'
+                                  : 'text-white hover:bg-slate-700'
+                              }`}
+                              title="Show a DSM column (before Public). Check a row to send Full/LED/VID/PPT when that cue is loaded."
+                            >
+                              <span className="w-4 text-center font-black">{dsmColumnEnabled ? '☑' : '☐'}</span>
+                              <span className="flex-1">DSM column</span>
+                              {dsmColumnEnabled ? (
+                                <span className="text-[10px] font-semibold uppercase tracking-wide text-emerald-300">
+                                  On
+                                </span>
+                              ) : null}
+                            </button>
                           </div>
                         )}
                       </div>
@@ -18444,6 +18536,15 @@ const RunOfShowPage: React.FC = () => {
                           />
                         </div>
                       )}
+                      {showDsmColumn && (
+                        <div
+                          className="px-2 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
+                          style={colBox(148, 'dsm')}
+                          title="Checked rows send DSM layout (Full/LED/VID/PPT) when the cue is loaded."
+                        >
+                          <span className="text-white font-bold text-sm">DSM</span>
+                        </div>
+                      )}
                       {visibleColumns.public && (
                         <div 
                           className="px-4 py-2 border-r border-slate-600 flex-shrink-0 relative"
@@ -19766,6 +19867,15 @@ const RunOfShowPage: React.FC = () => {
                       />
                     </div>
                   )}
+                  {showDsmColumn && (
+                    <div
+                      className="px-2 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
+                      style={colBox(148, 'dsm')}
+                      title="Checked rows send DSM layout (Full/LED/VID/PPT) when the cue is loaded."
+                    >
+                      <span className="text-white font-bold text-sm">DSM</span>
+                    </div>
+                  )}
                   {visibleColumns.public && (
                     <div 
                       className="px-4 py-2 border-r border-slate-600 flex-shrink-0 relative"
@@ -19909,6 +20019,7 @@ const RunOfShowPage: React.FC = () => {
                         persistScheduleCheckboxes={persistScheduleCheckboxes}
                         persistMittiWatch={persistMittiWatch}
                         persistAvWatch={persistAvWatch}
+                        persistDsmCue={persistDsmCue}
                         onEditTimedMarker={editTimedMarkerTime}
                         setEditingNotesItem={setEditingNotesItem}
                         setShowNotesModal={setShowNotesModal}

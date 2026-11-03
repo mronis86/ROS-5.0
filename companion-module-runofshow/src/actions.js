@@ -59,6 +59,14 @@ module.exports = function (self) {
 						duration_seconds: dur ?? 300,
 					})
 					await self.fetchActiveTimer(eventId)
+					// Mark watch so the 2s poll does not double-fire; send Ross Talk now if DSM enabled
+					self._dsmWatchPrev = {
+						itemId: String(itemId),
+						state: String(self.activeTimer?.timer_state || 'loaded'),
+					}
+					if (self.fireDsmRossTalkForItem) {
+						await self.fireDsmRossTalkForItem(itemId, { force: false })
+					}
 					self.updateVariableValues()
 					self.updateFeedbacks()
 					self.checkAllFeedbacks()
@@ -279,65 +287,103 @@ module.exports = function (self) {
 			},
 		},
 		dsm_clock_layout: {
-			name: 'DSM Clock Layout',
+			name: 'DSM Mode (Clock + Ross Talk)',
 			options: [
 				{
 					id: 'mode',
 					type: 'dropdown',
 					label: 'Mode',
-					default: '16x9',
+					default: 'led',
 					choices: [
-						{ id: '16x9', label: '16:9 reference frame' },
-						{ id: 'full', label: 'Full (classic Clock)' },
+						{ id: 'full', label: 'Full DSM' },
+						{ id: 'led', label: 'LED DSM' },
+						{ id: 'vid', label: 'VID DSM' },
+						{ id: 'ppt', label: 'PPT DSM' },
+						{ id: '16x9', label: '16:9 (legacy → LED)' },
 					],
 				},
 			],
 			callback: async (event) => {
-				const eventId = self.config?.eventId
-				if (!eventId) {
-					self.log('warn', 'DSM Clock Layout: Event ID is required')
-					return
-				}
-				const mode = event.options.mode === 'full' ? 'full' : '16x9'
+				const mode = event.options.mode || 'led'
 				try {
-					await self.apiPost('/api/dsm-clock/layout', { event_id: eventId, mode })
-					self.log('info', `DSM Clock layout set to ${mode}`)
+					if (self.applyDsmMode) {
+						await self.applyDsmMode(mode, { layout: true, rossTalk: true })
+					} else {
+						const eventId = self.config?.eventId
+						if (!eventId) {
+							self.log('warn', 'DSM Mode: Event ID is required')
+							return
+						}
+						await self.apiPost('/api/dsm-clock/layout', { event_id: eventId, mode })
+					}
 				} catch (err) {
-					self.log('error', `DSM Clock Layout failed: ${err.message}`)
+					self.log('error', `DSM Mode failed: ${err.message}`)
+				}
+			},
+		},
+		dsm_mode_full: {
+			name: 'DSM · Full (Clock + Ross Talk)',
+			options: [],
+			callback: async () => {
+				try {
+					await self.applyDsmMode('full', { layout: true, rossTalk: true })
+				} catch (err) {
+					self.log('error', `DSM Full failed: ${err.message}`)
+				}
+			},
+		},
+		dsm_mode_led: {
+			name: 'DSM · LED (Clock + Ross Talk)',
+			options: [],
+			callback: async () => {
+				try {
+					await self.applyDsmMode('led', { layout: true, rossTalk: true })
+				} catch (err) {
+					self.log('error', `DSM LED failed: ${err.message}`)
+				}
+			},
+		},
+		dsm_mode_vid: {
+			name: 'DSM · VID (Clock + Ross Talk)',
+			options: [],
+			callback: async () => {
+				try {
+					await self.applyDsmMode('vid', { layout: true, rossTalk: true })
+				} catch (err) {
+					self.log('error', `DSM VID failed: ${err.message}`)
+				}
+			},
+		},
+		dsm_mode_ppt: {
+			name: 'DSM · PPT (Clock + Ross Talk)',
+			options: [],
+			callback: async () => {
+				try {
+					await self.applyDsmMode('ppt', { layout: true, rossTalk: true })
+				} catch (err) {
+					self.log('error', `DSM PPT failed: ${err.message}`)
 				}
 			},
 		},
 		dsm_clock_16x9: {
-			name: 'DSM Clock · 16:9 ON',
+			name: 'DSM Clock · 16:9 ON (legacy → LED)',
 			options: [],
 			callback: async () => {
-				const eventId = self.config?.eventId
-				if (!eventId) {
-					self.log('warn', 'DSM Clock 16:9: Event ID is required')
-					return
-				}
 				try {
-					await self.apiPost('/api/dsm-clock/layout', { event_id: eventId, mode: '16x9' })
-					self.log('info', 'DSM Clock layout set to 16x9')
+					await self.applyDsmMode('led', { layout: true, rossTalk: true })
 				} catch (err) {
-					self.log('error', `DSM Clock 16:9 failed: ${err.message}`)
+					self.log('error', `DSM 16:9/LED failed: ${err.message}`)
 				}
 			},
 		},
 		dsm_clock_full: {
-			name: 'DSM Clock · Full',
+			name: 'DSM Clock · Full (legacy)',
 			options: [],
 			callback: async () => {
-				const eventId = self.config?.eventId
-				if (!eventId) {
-					self.log('warn', 'DSM Clock Full: Event ID is required')
-					return
-				}
 				try {
-					await self.apiPost('/api/dsm-clock/layout', { event_id: eventId, mode: 'full' })
-					self.log('info', 'DSM Clock layout set to full')
+					await self.applyDsmMode('full', { layout: true, rossTalk: true })
 				} catch (err) {
-					self.log('error', `DSM Clock Full failed: ${err.message}`)
+					self.log('error', `DSM Full failed: ${err.message}`)
 				}
 			},
 		},

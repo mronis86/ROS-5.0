@@ -7,6 +7,7 @@ export const SCHEDULE_CHECKBOX_FIELDS = [
   'recordingSource',
   'mittiWatch',
   'avWatch',
+  'dsmEnabled',
   'isPublic',
 ] as const;
 

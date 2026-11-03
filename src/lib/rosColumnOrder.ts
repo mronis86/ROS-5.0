@@ -13,6 +13,7 @@ export const BUILTIN_SCROLL_COLUMNS = [
   'vog',
   'assets',
   'speakers',
+  'dsm',
   'public',
   'timer',
 ] as const;
@@ -29,6 +30,7 @@ export const BUILTIN_COLUMN_LABELS: Record<BuiltinScrollColumn, string> = {
   recording: 'Recording',
   mittiWatch: 'Mitti',
   avWatch: 'AV',
+  dsm: 'DSM',
   notes: 'Notes',
   vog: 'VOG',
   assets: 'Assets',
@@ -53,6 +55,7 @@ export type RosVisibleColumns = {
   recording: boolean;
   mittiWatch: boolean;
   avWatch: boolean;
+  dsm: boolean;
   notes: boolean;
   vog: boolean;
   assets: boolean;
@@ -73,6 +76,7 @@ export const DEFAULT_ROS_VISIBLE_COLUMNS: RosVisibleColumns = {
   recording: true,
   mittiWatch: true,
   avWatch: true,
+  dsm: true,
   notes: true,
   vog: true,
   assets: true,
@@ -195,6 +199,11 @@ export function normalizeColumnOrder(
       if (mittiIdx >= 0) result.splice(mittiIdx + 1, 0, key);
       else if (recIdx >= 0) result.splice(recIdx + 1, 0, key);
       else result.push(key);
+    } else if (key === 'dsm') {
+      // Keep DSM immediately before Public (Operator Actions column).
+      const publicIdx = result.indexOf('public');
+      if (publicIdx >= 0) result.splice(publicIdx, 0, key);
+      else result.push(key);
     } else {
       result.push(key);
     }
@@ -228,6 +237,14 @@ export function normalizeColumnOrder(
     const at =
       notesIdx >= 0 ? notesIdx + 1 : assetsIdx >= 0 ? assetsIdx : without.length;
     without.splice(at, 0, 'vog');
+    next = without;
+  }
+
+  // Always pin DSM immediately before Public (same idea as VOG / Mitti watches).
+  if (next.includes('dsm')) {
+    const without = next.filter((k) => k !== 'dsm');
+    const publicIdx = without.indexOf('public');
+    without.splice(publicIdx >= 0 ? publicIdx : without.length, 0, 'dsm');
     next = without;
   }
 

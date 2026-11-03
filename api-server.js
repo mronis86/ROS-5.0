@@ -19,6 +19,10 @@ const pdf = require('pdf-parse');
 const mammoth = require('mammoth');
 const XLSX = require('xlsx');
 const { parseAgenda, findFirstTimeLineIndex } = require('./lib/agenda-parser');
+const {
+  normalizeDsmLayoutMode,
+  suggestedDsmLayoutMode,
+} = require('./lib/dsm-clock-layout');
 
 // Force Railway rebuild - 2025-02-05 - Backup error details + redeploy
 // Auth is now handled via direct database connection
@@ -254,8 +258,45 @@ const mittiPendingByEvent = new Map();
 const avplayoutTimeSourceByEvent = new Map();
 const avplayoutPendingByEvent = new Map();
 
-/** DSM Clock layout: eventId -> '16x9' | 'full' (Companion / UI remote control) */
+/** DSM Clock layout: eventId -> 'full' | 'led' | 'vid' | 'ppt' (Companion / UI / schedule column) */
 const dsmClockLayoutByEvent = new Map();
+
+function setDsmClockLayoutMode(eventId, rawMode) {
+  const mode = normalizeDsmLayoutMode(rawMode);
+  dsmClockLayoutByEvent.set(String(eventId), mode);
+  broadcastUpdate(eventId, 'dsmClockLayout', { event_id: eventId, mode });
+  return mode;
+}
+
+/** When a cue is loaded and that row has DSM enabled, push the selected layout to DSM Clock pages. */
+async function applyDsmLayoutFromLoadedCue(eventId, itemId) {
+  if (!eventId || itemId == null) return;
+  try {
+    const result = await pool.query(
+      'SELECT schedule_items FROM run_of_show_data WHERE event_id = $1',
+      [eventId]
+    );
+    if (!result.rows.length) return;
+    let items = result.rows[0].schedule_items;
+    if (typeof items === 'string') {
+      try {
+        items = JSON.parse(items);
+      } catch {
+        items = [];
+      }
+    }
+    if (!Array.isArray(items)) return;
+    const item = items.find((row) => Number(row.id) === Number(itemId));
+    if (!item || item.dsmEnabled !== true) return;
+    const mode = normalizeDsmLayoutMode(
+      item.dsmModeManual ? item.dsmMode : suggestedDsmLayoutMode(item)
+    );
+    const applied = setDsmClockLayoutMode(eventId, mode);
+    console.log(`🖥️ DSM layout from loaded cue ${itemId}: ${applied}`);
+  } catch (err) {
+    console.warn('DSM layout from cue failed:', err.message || err);
+  }
+}
 
 function applyResolumeMeta(eventId, timerRow, options = {}) {
   if (!timerRow || typeof timerRow !== 'object') return timerRow;
@@ -5159,6 +5200,7 @@ const SCHEDULE_CHECKBOX_FIELDS = [
   'recordingSource',
   'mittiWatch',
   'avWatch',
+  'dsmEnabled',
   'isPublic',
 ];
 
@@ -5649,6 +5691,130 @@ app.patch('/api/run-of-show-data/:eventId/av-watch-column', async (req, res) => 
   } catch (error) {
     console.error('Error updating AV watch column:', error);
     res.status(500).json({ error: 'Failed to update AV watch column' });
+  }
+});
+
+// Per-row DSM: enable + mode (Full / LED / VID / PPT). Multiple rows may be enabled.
+app.patch('/api/run-of-show-data/:eventId/dsm-cue', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    if (!eventId) return res.status(400).json({ error: 'eventId is required' });
+    if (!userCanAccessEvent(req.auth, eventId)) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    const body = req.body || {};
+    const itemId = Number(body.item_id ?? body.itemId ?? body.id);
+    if (!Number.isFinite(itemId)) {
+      return res.status(400).json({ error: 'item_id is required' });
+    }
+
+    const existing = await pool.query('SELECT * FROM run_of_show_data WHERE event_id = $1', [eventId]);
+    if (existing.rows.length === 0) {
+      return res.status(404).json({ error: 'Event not found' });
+    }
+    let items = existing.rows[0].schedule_items;
+    if (typeof items === 'string') {
+      try {
+        items = JSON.parse(items);
+      } catch {
+        items = [];
+      }
+    }
+    if (!Array.isArray(items)) items = [];
+
+    let found = false;
+    const stampedAt = Date.now();
+    const hasEnabled =
+      body.enabled !== undefined ||
+      body.dsm_enabled !== undefined ||
+      body.dsmEnabled !== undefined;
+    const hasMode = body.mode !== undefined || body.dsm_mode !== undefined || body.dsmMode !== undefined;
+    const hasManual =
+      body.mode_manual !== undefined ||
+      body.dsm_mode_manual !== undefined ||
+      body.dsmModeManual !== undefined;
+
+    const nextItems = items.map((item) => {
+      if (Number(item.id) !== itemId) return item;
+      found = true;
+      let next = { ...item };
+      const stampFields = [];
+      if (hasEnabled) {
+        next.dsmEnabled =
+          body.enabled === true || body.dsm_enabled === true || body.dsmEnabled === true;
+        stampFields.push('dsmEnabled');
+      }
+      if (hasMode) {
+        next.dsmMode = normalizeDsmLayoutMode(body.mode ?? body.dsm_mode ?? body.dsmMode);
+      }
+      if (hasManual) {
+        next.dsmModeManual =
+          body.mode_manual === true ||
+          body.dsm_mode_manual === true ||
+          body.dsmModeManual === true;
+      }
+      if (!next.dsmMode) {
+        next.dsmMode = suggestedDsmLayoutMode(next);
+      }
+      if (stampFields.length) {
+        next = stampScheduleCheckboxes(next, stampFields, stampedAt);
+      }
+      return next;
+    });
+    if (!found) return res.status(404).json({ error: 'Cue not found' });
+
+    const result = await pool.query(
+      `UPDATE run_of_show_data SET
+         schedule_items = $1,
+         last_change_at = NOW(),
+         updated_at = NOW(),
+         version = COALESCE(version, 1) + 1
+       WHERE event_id = $2
+       RETURNING *`,
+      [JSON.stringify(nextItems), eventId]
+    );
+    const savedData = result.rows[0];
+    await regenerateUpstashCache(eventId, savedData);
+    broadcastUpdate(eventId, 'runOfShowDataUpdated', savedData);
+    const row = nextItems.find((item) => Number(item.id) === itemId);
+    res.json({
+      success: true,
+      item_id: itemId,
+      enabled: row?.dsmEnabled === true,
+      mode: normalizeDsmLayoutMode(row?.dsmMode),
+      mode_manual: row?.dsmModeManual === true,
+      schedule_items: savedData.schedule_items,
+      version: savedData.version,
+    });
+  } catch (error) {
+    console.error('Error updating DSM cue:', error);
+    res.status(500).json({ error: 'Failed to update DSM cue' });
+  }
+});
+
+app.patch('/api/run-of-show-data/:eventId/dsm-column', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    if (!eventId) return res.status(400).json({ error: 'eventId is required' });
+    if (!userCanAccessEvent(req.auth, eventId)) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    const enabled = req.body?.enabled === true;
+    const result = await pool.query(
+      `UPDATE run_of_show_data
+       SET settings = COALESCE(settings, '{}'::jsonb) || $2::jsonb, updated_at = NOW()
+       WHERE event_id = $1
+       RETURNING settings`,
+      [eventId, JSON.stringify({ dsmColumn: enabled })]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Event not found' });
+    }
+    broadcastUpdate(eventId, 'dsmColumnUpdate', { event_id: eventId, enabled });
+    res.json({ enabled });
+  } catch (error) {
+    console.error('Error updating DSM column:', error);
+    res.status(500).json({ error: 'Failed to update DSM column' });
   }
 });
 
@@ -6563,16 +6729,14 @@ app.post('/api/led-output/clear', async (req, res) => {
   }
 });
 
-/** DSM Clock: set 16:9 reference frame vs classic full viewport (Companion + DSM UI). */
+/** DSM Clock: set layout mode (full / led / vid / ppt; legacy 16x9 → led). Companion + DSM UI + schedule column. */
 app.post('/api/dsm-clock/layout', async (req, res) => {
   try {
     const { event_id: eventId, mode: rawMode } = req.body || {};
     if (!eventId) {
       return res.status(400).json({ error: 'event_id is required' });
     }
-    const mode = String(rawMode || '').toLowerCase() === 'full' ? 'full' : '16x9';
-    dsmClockLayoutByEvent.set(String(eventId), mode);
-    broadcastUpdate(eventId, 'dsmClockLayout', { event_id: eventId, mode });
+    const mode = setDsmClockLayoutMode(eventId, rawMode);
     res.json({ ok: true, event_id: eventId, mode });
   } catch (error) {
     console.error('Error setting DSM clock layout:', error);
@@ -8233,6 +8397,9 @@ app.post('/api/active-timers', async (req, res) => {
     if (followState === 'running' || followState === 'loaded') {
       void resolveAndBroadcastScriptCueFollow(event_id, timerData.item_id ?? item_id);
     }
+    if (followState === 'loaded') {
+      void applyDsmLayoutFromLoadedCue(event_id, timerData.item_id ?? item_id);
+    }
     broadcastUpdate(event_id, 'timerUpdated', timerData);
     
     res.status(201).json(timerData);
@@ -9566,6 +9733,7 @@ app.post('/api/cues/load', async (req, res) => {
       item_id
     });
     
+    void applyDsmLayoutFromLoadedCue(event_id, item_id);
     const broadcastData = broadcastTimerUpdated(event_id, timerData);
     console.log(`📡 Socket.IO: timerUpdated broadcast to event:${event_id}`, broadcastData);
     

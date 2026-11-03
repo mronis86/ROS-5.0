@@ -15,11 +15,10 @@ import {
   DISPLAY_SESSION_PICK_TIME_ALERT,
 } from '../lib/displaySession';
 
+import { applyDsmLayoutModeToForce16x9 } from '../lib/dsmClockLayout';
+
 function applyDsmLayoutMode(mode: unknown): boolean | null {
-  const m = String(mode || '').toLowerCase();
-  if (m === 'full') return false;
-  if (m === '16x9' || m === '16:9') return true;
-  return null;
+  return applyDsmLayoutModeToForce16x9(mode);
 }
 
 /** DSM Clock Timer page — duplicate of ClockPage for DSM-specific UI. */

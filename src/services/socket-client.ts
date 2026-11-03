@@ -52,6 +52,7 @@ interface SocketCallbacks {
   onMicAssignmentsUpdate?: (data: { event_id: string; assignments?: Record<string, any>; changes?: any[] }) => void;
   onMittiWatchColumnUpdate?: (data: { event_id: string; enabled: boolean }) => void;
   onAvWatchColumnUpdate?: (data: { event_id: string; enabled: boolean }) => void;
+  onDsmColumnUpdate?: (data: { event_id: string; enabled: boolean }) => void;
   onPresenceUpdated?: (viewers: { userId: string; userName: string; userEmail: string; userRole: string }[]) => void;
   onForceDisconnect?: (data?: { reason?: string }) => void; // Admin forced disconnect – show message and do not reconnect
   onRowLocked?: (data: { eventId: string; rowId: number; userId: string; userName: string }) => void;
@@ -352,6 +353,9 @@ class SocketClient {
           break;
         case 'avWatchColumnUpdate':
           this.callbacks.onAvWatchColumnUpdate?.(message.data);
+          break;
+        case 'dsmColumnUpdate':
+          this.callbacks.onDsmColumnUpdate?.(message.data);
           break;
         case 'presenceUpdated':
           console.log('📡 SocketClient: presenceUpdated', message.data?.length ?? 0, 'viewers');
