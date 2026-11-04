@@ -108,6 +108,8 @@ export interface Event {
   extendEventControlsEnabled?: boolean;
   /** Which Extend Event Controls modules are on (e.g. civicsBee). */
   extendEventControlModules?: import('../lib/extendEventControls').ExtendEventControlModule[];
+  /** Admin-enabled Pre-Flight checklist for this event (also needs global Admin switch). */
+  preflightChecklistEnabled?: boolean;
   /** False when this account can see the event but cannot open it yet. */
   canAccess?: boolean;
   /** Pending/denied request status for a locked event. */

@@ -36,6 +36,11 @@ import EventListRowActions from '../components/EventListRowActions';
 import { isEventPast, isEventUpcoming } from '../lib/eventActiveWindow';
 import { parseDisplaySyncEnabled, DISPLAY_SYNC_COLUMN_LABEL } from '../lib/displaySync';
 import { parseExtendEventControls } from '../lib/extendEventControls';
+import {
+  getPreflightFeatureEnabled,
+  parsePreflightChecklistEnabled,
+  PREFLIGHT_FEATURE_CHANGE_EVENT,
+} from '../lib/preflightFeature';
 import EventDisplaySyncToggle from '../components/EventDisplaySyncToggle';
 import ExtendEventControlsConfigModal from '../components/ExtendEventControlsConfigModal';
 import ShareEventAccessModal from '../components/ShareEventAccessModal';
@@ -159,6 +164,10 @@ const EventListPage: React.FC = () => {
   const [displaySyncSavingId, setDisplaySyncSavingId] = useState<string | null>(null);
   const [extendControlsEvent, setExtendControlsEvent] = useState<Event | null>(null);
   const [extendControlsSaving, setExtendControlsSaving] = useState(false);
+  const [preflightSavingId, setPreflightSavingId] = useState<string | null>(null);
+  const [preflightFeatureEnabled, setPreflightFeatureEnabled] = useState(() =>
+    getPreflightFeatureEnabled()
+  );
   const [splitDaysEvent, setSplitDaysEvent] = useState<Event | null>(null);
   const [splitDaysBusy, setSplitDaysBusy] = useState(false);
   const [splitDaysError, setSplitDaysError] = useState<string | null>(null);
@@ -215,6 +224,28 @@ const EventListPage: React.FC = () => {
     setExtendControlsEvent(null);
   };
 
+  const togglePreflightChecklist = async (event: Event) => {
+    if (!isAdminUser || event.isQuickMode) return;
+    const calendarId = event.calendarId || event.id;
+    const nextEnabled = event.preflightChecklistEnabled !== true;
+    setPreflightSavingId(event.id);
+    setEvents((prev) =>
+      prev.map((e) =>
+        e.id === event.id ? { ...e, preflightChecklistEnabled: nextEnabled } : e
+      )
+    );
+    const ok = await DatabaseService.setPreflightChecklistEnabled(calendarId, nextEnabled);
+    setPreflightSavingId(null);
+    if (!ok) {
+      setEvents((prev) =>
+        prev.map((e) =>
+          e.id === event.id ? { ...e, preflightChecklistEnabled: !nextEnabled } : e
+        )
+      );
+      alert('Failed to update Pre-Flight for this event.');
+    }
+  };
+
   const generateDeleteCode = () => {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
     let code = '';
@@ -225,6 +256,13 @@ const EventListPage: React.FC = () => {
   // Clear any legacy local-server preference (app uses Railway only)
   useEffect(() => {
     localStorage.removeItem('forceLocalServer');
+  }, []);
+
+  useEffect(() => {
+    const sync = () => setPreflightFeatureEnabled(getPreflightFeatureEnabled());
+    sync();
+    window.addEventListener(PREFLIGHT_FEATURE_CHANGE_EVENT, sync);
+    return () => window.removeEventListener(PREFLIGHT_FEATURE_CHANGE_EVENT, sync);
   }, []);
 
   // Catering-only / Comms-only accounts land on their home, not the full Event List
@@ -333,6 +371,7 @@ const EventListPage: React.FC = () => {
             ),
             isQuickMode: isQuickModeCalendarEvent(calEvent),
             displaySyncEnabled: parseDisplaySyncEnabled(calEvent.schedule_data),
+            preflightChecklistEnabled: parsePreflightChecklistEnabled(calEvent.schedule_data),
             ...(() => {
               const fromApi = (calEvent as {
                 extendEventControlsEnabled?: boolean;
@@ -1483,6 +1522,25 @@ const EventListPage: React.FC = () => {
                               >
                                 Extend {event.extendEventControlsEnabled ? 'On' : 'Off'}
                               </button>
+                              <button
+                                type="button"
+                                onClick={() => void togglePreflightChecklist(event)}
+                                disabled={preflightSavingId === event.id}
+                                title={
+                                  preflightFeatureEnabled
+                                    ? 'Enable Pre-Flight checklist for this event (global switch is On in Admin)'
+                                    : 'Global Pre-Flight is Off in Admin — you can still pre-enable this event'
+                                }
+                                className={`rounded border px-2 py-0.5 text-[10px] font-semibold disabled:opacity-50 ${
+                                  event.preflightChecklistEnabled
+                                    ? preflightFeatureEnabled
+                                      ? 'border-emerald-600/70 bg-emerald-950/50 text-emerald-200'
+                                      : 'border-amber-600/60 bg-amber-950/40 text-amber-200'
+                                    : 'border-slate-600 bg-slate-800 text-slate-400 hover:text-slate-200'
+                                }`}
+                              >
+                                Preflight {event.preflightChecklistEnabled ? 'On' : 'Off'}
+                              </button>
                             </div>
                           </td>
                         )}
@@ -1553,6 +1611,9 @@ const EventListPage: React.FC = () => {
             displaySyncSavingId={displaySyncSavingId}
             onToggleDisplaySync={(event) => void toggleDisplaySync(event)}
             onConfigureExtendControls={(event) => setExtendControlsEvent(event)}
+            onTogglePreflightChecklist={(event) => void togglePreflightChecklist(event)}
+            preflightSavingId={preflightSavingId}
+            preflightFeatureEnabled={preflightFeatureEnabled}
           />
         )}
       </div>

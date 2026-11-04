@@ -27,6 +27,13 @@ export function programTypeSurfaceStyle(
   return { backgroundColor };
 }
 
+/** Chip text on ROS program-type fills — light types need dark type. */
+export function programTypeTextColor(programType: string | null | undefined): string {
+  const type = String(programType || '').trim();
+  if (type === 'Sub Cue') return '#111827';
+  return '#ffffff';
+}
+
 export function isPreshowProgramType(programType: string | null | undefined): boolean {
   const t = String(programType || '').trim();
   return t === PRESHOW_PROGRAM_TYPE || t === LEGACY_PRESHOW_END_PROGRAM_TYPE;

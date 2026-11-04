@@ -403,6 +403,21 @@ class ApiClient {
     return result;
   }
 
+  async patchPreflightChecklistEnabled(
+    calendarEventId: string,
+    preflightChecklistEnabled: boolean
+  ) {
+    const result = await this.request<{ preflightChecklistEnabled?: boolean }>(
+      `/api/calendar-events/${encodeURIComponent(calendarEventId)}/preflight-checklist`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ preflightChecklistEnabled }),
+      }
+    );
+    this.invalidateCalendarEventsCache();
+    return result;
+  }
+
   async getExtendEventControls(eventId: string): Promise<{
     enabled: boolean;
     modules: string[];

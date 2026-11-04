@@ -42,10 +42,15 @@ import {
   saveAdminHideFullscreenTimerOption,
   saveAdminAutoShotTypeFromSpeakers,
   saveAdminShowLiveSyncStatusBadge,
+  saveAdminPreflightChecklistEnabled,
   saveAdminRefreshNotice,
   syncAdminAppSettingsTable,
   type RefreshNotice,
 } from '../lib/appSettings';
+import {
+  applyPreflightFeatureEnabled,
+  getPreflightFeatureEnabled,
+} from '../lib/preflightFeature';
 import { fetchLiveRosVersion } from '../lib/rosVersionPoll';
 import AppLogo from '../components/AppLogo';
 import AppBrandTitle from '../components/AppBrandTitle';
@@ -554,6 +559,9 @@ export default function AdminPage() {
   const [showLiveSyncStatusBadge, setShowLiveSyncStatusBadgeState] = useState(
     () => getShowLiveSyncStatusBadge()
   );
+  const [preflightChecklistEnabled, setPreflightChecklistEnabledState] = useState(
+    () => getPreflightFeatureEnabled()
+  );
   const [logoSettingsLoading, setLogoSettingsLoading] = useState(false);
   const [logoSettingsSaving, setLogoSettingsSaving] = useState(false);
   const [logoSettingsError, setLogoSettingsError] = useState<string | null>(null);
@@ -811,6 +819,7 @@ export default function AdminPage() {
     hideFullscreenTimerOption: boolean;
     autoShotTypeFromSpeakers: boolean;
     showLiveSyncStatusBadge: boolean;
+    preflightChecklistEnabled?: boolean;
     refreshNotice?: RefreshNotice | null;
     updatedAt: string | null;
     needsMigration?: boolean;
@@ -822,6 +831,10 @@ export default function AdminPage() {
     applyHideFullscreenTimerOption(settings.hideFullscreenTimerOption);
     applyAutoShotTypeFromSpeakers(settings.autoShotTypeFromSpeakers);
     applyShowLiveSyncStatusBadge(settings.showLiveSyncStatusBadge);
+    if (settings.preflightChecklistEnabled !== undefined) {
+      applyPreflightFeatureEnabled(settings.preflightChecklistEnabled);
+      setPreflightChecklistEnabledState(settings.preflightChecklistEnabled);
+    }
     setLogoVariantIdState(settings.logoVariantId);
     setGreenRoomLayoutIdState(settings.greenRoomLayoutId);
     setCountdownColorModeIdState(settings.countdownColorModeId);
@@ -954,6 +967,24 @@ export default function AdminPage() {
       setLogoSettingsNeedsMigration(false);
     } catch (err) {
       setLogoSettingsError(err instanceof Error ? err.message : 'Failed to save live sync badge setting');
+    } finally {
+      setLogoSettingsSaving(false);
+    }
+  };
+
+  const handlePreflightFeatureChange = async (enabled: boolean) => {
+    if (logoSettingsSaving || logoSettingsNeedsMigration) return;
+    setLogoSettingsSaving(true);
+    setLogoSettingsError(null);
+    setPreflightTemplateError(null);
+    try {
+      const settings = await saveAdminPreflightChecklistEnabled(enabled);
+      applyAllLogoSettings({ ...settings, needsMigration: false });
+      setLogoSettingsNeedsMigration(false);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to save Pre-Flight feature setting';
+      setLogoSettingsError(msg);
+      setPreflightTemplateError(msg);
     } finally {
       setLogoSettingsSaving(false);
     }
@@ -4203,11 +4234,11 @@ export default function AdminPage() {
           <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
             <div>
               <h2 className="flex items-center gap-2 text-lg font-semibold text-white">
-                Pre-Flight checklist template
+                Pre-Flight checklist
               </h2>
               <p className="mt-1 text-sm text-slate-500">
-                Standard items loaded into each event/day checklist. Uncheck to exclude from new checklists.
-                Existing show checklists are not changed.
+                Global switch plus per-event On/Off on the Event List. Both must be on for Admin/Crew to see
+                Pre-Flight in Run of Show. Template below seeds new checklists when the feature is used.
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -4230,9 +4261,47 @@ export default function AdminPage() {
             </div>
           </div>
 
+          <label
+            className={`mb-4 flex items-start gap-3 rounded-xl border p-4 cursor-pointer transition-colors ${
+              preflightChecklistEnabled
+                ? 'border-emerald-500 bg-emerald-950/30 ring-1 ring-emerald-500/40'
+                : 'border-slate-700 bg-slate-900/40 hover:border-slate-500'
+            } ${logoSettingsSaving || logoSettingsLoading || logoSettingsNeedsMigration ? 'opacity-60' : ''}`}
+          >
+            <input
+              type="checkbox"
+              className="mt-1"
+              checked={preflightChecklistEnabled}
+              disabled={logoSettingsSaving || logoSettingsLoading || logoSettingsNeedsMigration}
+              onChange={(e) => void handlePreflightFeatureChange(e.target.checked)}
+            />
+            <span>
+              <span className="block font-semibold text-white">
+                Enable Pre-Flight globally{' '}
+                <span
+                  className={`ml-1 text-xs font-semibold uppercase tracking-wide ${
+                    preflightChecklistEnabled ? 'text-emerald-300' : 'text-slate-500'
+                  }`}
+                >
+                  {preflightChecklistEnabled ? 'On' : 'Off'}
+                </span>
+              </span>
+              <span className="block mt-1 text-sm text-slate-400">
+                Master switch for the whole site. Off by default until you are ready to use checklists.
+                After turning this on, enable Pre-Flight on each event from the Event List (Admin column).
+              </span>
+            </span>
+          </label>
+
           {preflightTemplateError ? (
             <p className="mb-3 text-sm text-red-300">{preflightTemplateError}</p>
           ) : null}
+
+          <h3 className="mb-2 text-base font-semibold text-white">Checklist template</h3>
+          <p className="mb-4 text-sm text-slate-500">
+            Standard items loaded into each event/day checklist. Uncheck to exclude from new checklists.
+            Existing show checklists are not changed.
+          </p>
 
           <div className="mb-4 flex flex-col gap-2 rounded-lg border border-slate-700 bg-slate-900/50 p-3 sm:flex-row">
             <select
@@ -4875,6 +4944,32 @@ export default function AdminPage() {
           </div>
 
           <div className="rounded-xl border border-amber-500/30 bg-amber-950/20 p-4 space-y-3 text-sm text-slate-200">
+            <div>
+              <h3 className="text-base font-semibold text-amber-100">
+                Feature Updates page — thumbs / approve polish (parked 2026-11-04)
+              </h3>
+              <p className="mt-1 text-slate-300 leading-relaxed">
+                Changelog / Feature Updates work (Admin edit + approve, clearer Sept/Oct/Nov copy, real stills under{' '}
+                <code className="text-amber-200/90 text-xs">public/feature-updates/</code>, Neon{' '}
+                <code className="text-amber-200/90 text-xs">imageUrl</code> only) is parked on branch{' '}
+                <code className="text-amber-200/90 text-xs">feature/feature-updates-by-date-page</code> at{' '}
+                <code className="text-amber-200/90 text-xs">0b77138</code>. Revisit later for remaining stills,
+                October copy pass, Railway redeploy so the API keeps <code className="text-amber-200/90 text-xs">imageUrl</code>,
+                and whether to merge or trim what already landed on master.
+              </p>
+              <ul className="mt-2 list-disc pl-5 space-y-1 text-slate-300">
+                <li>
+                  Resume from <code className="text-amber-200/90 text-xs">feature/feature-updates-by-date-page</code> — do not
+                  rebuild from scratch.
+                </li>
+                <li>
+                  Binaries later: Railway object storage; Neon stores URL only. Client may merge default still URLs until
+                  API stops stripping <code className="text-amber-200/90 text-xs">imageUrl</code>.
+                </li>
+                <li>Quiet week only — not mid-show.</li>
+              </ul>
+            </div>
+
             <div>
               <h3 className="text-base font-semibold text-amber-100">
                 Offline Show — Linux / Raspberry Pi pack (parked 2026-10-04)

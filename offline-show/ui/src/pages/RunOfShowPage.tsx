@@ -1,63 +1,75 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+﻿import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Event, LOCATION_OPTIONS, normalizeDayLocations } from '../types/Event';
 import { DatabaseService, TimerMessage } from '../services/database';
-import { apiClient, getApiBaseUrl } from '../services/api-client';
+import { apiClient, getApiBaseUrl, EventCueFile, type SpeakerDirectoryRow } from '../services/api-client';
 import { changeLogService, LocalChange } from '../services/changeLogService';
-import { NeonBackupService, BackupData } from '../services/neon-backup-service';
-
-import { useAuth } from '../contexts/OfflineAuthContext';
-import { useActiveViewers } from '../contexts/ActiveViewersContext';
-import { sseClient } from '../services/sse-client';
-import { socketClient, onCloudModeChange } from '../services/socket-client';
-import {
-  type AudioCalloutKind,
-  type VoCue,
-  formatCalloutChipText,
-  syncCalloutsIntoNotes,
-  prependSettleCueNote,
-} from '../lib/audioCallouts';
-import { suggestNoteLabelActions, removePlainLineFromNotesHtml } from '../lib/notesLabelSuggest';
-import NotesLabelSuggestBanner from '../components/NotesLabelSuggestBanner';
-import CueReorderNumberModal from '../components/CueReorderNumberModal';
-import {
-  getEventLocalHHMM,
-  getSyncedNow,
-  wallClockLabelToMinutes,
-  hhmmToMinutes,
-  isCalloutDue,
-  resolveShowTimezone,
-  eventLocalSecondsOfDay,
-} from '../lib/eventLocalClock';
-import { computeLiveStartAnchor, type LiveStartAnchor } from '../lib/liveStartProjection';
-import { defaultSpeakerLocationForProgram } from '../lib/shotTypeFromSpeakers';
-import {
-  HEAD_TABLE_PROGRAM_TYPE,
-  ROS_PROGRAM_TYPE_COLORS,
-  buildRosProgramTypes,
-} from '../lib/rosProgramTypes';
-import RoleSelectionModal from '../components/RoleSelectionModal';
-import CompleteChangeLog from '../components/CompleteChangeLog';
-import OSCModal from '../components/OSCModal';
-import OSCModalSimple from '../components/OSCModalSimple';
-import OSCModalSimplified from '../components/OSCModalSimplified';
-import DisplayModal from '../components/DisplayModal';
-import PinNotesColumnModal from '../components/PinNotesColumnModal';
-import ExcelImportModal from '../components/ExcelImportModal';
-import AgendaImportModal from '../components/AgendaImportModal';
-import ImportCSVModal from '../components/ImportCSVModal';
-import ImportEventModal from '../components/ImportEventModal';
-import ConfirmModal from '../components/ConfirmModal';
-import TimeToastIcon from '../components/TimeToastIcon';
-// import { driftDetector } from '../services/driftDetector'; // REMOVED: Using WebSocket-only approach
-import ScheduleRow from './ScheduleRow';
-import {
-  findParentScheduleIndex,
-  isIndentedScheduleItem,
-  shouldApplyShowStartOvertime,
-} from '../lib/scheduleStartTime';
-import { verifyClearLogPassword } from '../lib/adminAuth';
+import { NeonBackupService, BackupData, AutoBackupLease } from '../services/neon-backup-service';
+import { getBackupPreviewStats } from '../lib/backupPreview';
 import { apiJsonHeaders } from '../lib/sessionAuth';
+import { getCountdownPrimaryHex, useCountdownColorMode, RAINBOW_COUNTDOWN_GRADIENT } from '../lib/countdownColor';
+import { overtimeSignPrefix, useOvertimeSign } from '../lib/overtimeSign';
+import { OvertimeClockText, pageClockSignClass } from '../lib/OvertimeClockText';
+import {
+  findSessionPreshowCue,
+  findTopPreshowCue,
+  isPreshowArmedForKey,
+  isPreshowProgramType,
+  isPreshowTimerMessage,
+  parsePreshowShowDay,
+  resolvePreshowStartHHMM,
+  resolvePreshowWorkingDay,
+  type PreshowShowDayArmed,
+  PRESHOW_COUNTDOWN_MESSAGE,
+  PRESHOW_MESSAGE_TYPE,
+  PRESHOW_WARN_MINUTES_BEFORE,
+} from '../lib/preshowCountdown';
+import {
+  buildAutoRollSlots,
+  parseAutoRoll,
+  resolveAutoRoll,
+  readStoredAutoRoll,
+  writeStoredAutoRoll,
+  autoRollSettingsPatch,
+  pickCurrentAutoRollSlot,
+  pickNextAutoRollSlot,
+  slotAllowedAfterArm,
+  type AutoRollArmed,
+} from '../lib/autoRoll';
+import { shouldUsePreshowRainbow, isActiveTimerRunning } from '../lib/usePreshowRainbow';
+import {
+  normalizeSchedulePreshowEndTypes,
+  programTypeSurfaceStyle,
+} from '../lib/rosProgramTypeSplit';
+import { shotTypePatchFromSpeakers, shotTypeManualEditPatch, defaultSpeakerLocationForProgram, parseSpeakersForShotType } from '../lib/shotTypeFromSpeakers';
+import { getAutoShotTypeFromSpeakers } from '../lib/branding';
+import {
+  shouldFoldPreshowOvertimeIntoShowStart,
+} from '../lib/showDelay';
+import {
+  buildDuplicateCueMap,
+  duplicateCueTooltip,
+  formatCueNumber,
+  formatTimerCueStatus,
+  isDelayProgramType,
+  resolveScheduleCueLabel,
+} from '../lib/cueDisplay';
+import {
+  SHOW_BREAK_PROGRAM_TYPE,
+  activeShowSectionBreakIndex,
+  firstSessionCueIndexAfter,
+  isIndexFrozenByShowSection,
+  isIndexInActiveShowSection,
+  isScheduleOnlyProgramType,
+  isShowBreakProgramType,
+  lastShowBreakIndexBefore,
+  nextSessionCueOf,
+  normalizeBreakStartTime,
+  parseBreakStartTimeToSeconds,
+  sameShowSession,
+  sessionStartTimeOf,
+} from '../lib/showBreak';
+
 import {
   clearRunOfShowReconnectHandlers,
   registerRunOfShowLocalFlush,
@@ -74,15 +86,264 @@ function eventIdsMatch(a: unknown, b: unknown): boolean {
   return a != null && b != null && String(a) === String(b);
 }
 
+import { useAuth } from '../contexts/OfflineAuthContext';
+import { useActiveViewers } from '../contexts/ActiveViewersContext';
+import { getAppHeaderOffsetPx, useAppHeaderCollapse } from '../contexts/AppHeaderCollapseContext';
+import { useLiveSyncStatus } from '../contexts/LiveSyncStatusContext';
+import { sseClient } from '../services/sse-client';
+import { socketClient, onCloudModeChange } from '../services/socket-client';
+import { canAccessAccessManager, canAccessAdmin, canAccessPreFlightChecklist, canSelectOperatorRole } from '../services/auth-service';
+import { eventHasExtendEventControls, parseExtendEventControls } from '../lib/extendEventControls';
+import { shouldConfirmCueRecordingMark, CUE_RECORDING_HOVER_TITLE, CUE_RECORDING_HOVER_BODY } from '../lib/cueRecording';
+import {
+  applyNewerCheckboxFields,
+  idsWithCheckboxChanges,
+  mergeNewerCheckboxFields,
+  overlayExclusiveWatch,
+  stampScheduleCheckboxes,
+} from '../lib/scheduleCheckboxMerge';
+import {
+  type AudioCalloutKind,
+  type VoCue,
+  formatCalloutChipText,
+  normalizeVoCues,
+  syncCalloutsIntoNotes,
+  ensureNotesEditorTypingSpace,
+  handleNotesChipEnter,
+  withNotesTypingSpacer,
+  prependSettleCueNote,
+  voAlertsEnabledFromSettings,
+  voCueAppearsInNotes,
+  reconcileVoCuesWithNotes,
+} from '../lib/audioCallouts';
+import { suggestNoteLabelActions, removePlainLineFromNotesHtml } from '../lib/notesLabelSuggest';
+import DuplicateCueFlag from '../components/DuplicateCueFlag';
+import NotesLabelSuggestBanner from '../components/NotesLabelSuggestBanner';
+import CueReorderNumberModal from '../components/CueReorderNumberModal';
+import { boostNotesContrastHtml } from '../lib/notesContrast';
+import {
+  getEventLocalHHMM,
+  getSyncedNow,
+  wallClockLabelToMinutes,
+  hhmmToMinutes,
+  isCalloutDue,
+  normalizeCalloutTimeToHHMM,
+  resolveShowTimezone,
+  wallClockStartUtcMs,
+  eventLocalSecondsOfDay,
+} from '../lib/eventLocalClock';
+import {
+  computeLiveStartAnchor,
+  parseLiveStartProjectionArmed,
+  type LiveStartAnchor,
+} from '../lib/liveStartProjection';
+import RoleSelectionModal from '../components/RoleSelectionModal';
+import OSCModal from '../components/OSCModal';
+import OSCModalSimple from '../components/OSCModalSimple';
+import OSCModalSimplified from '../components/OSCModalSimplified';
+import DisplayModal, { type DisplayOpenMode } from '../components/DisplayModal';
+import PinNotesColumnModal from '../components/PinNotesColumnModal';
+import VogModal from '../components/VogModal';
+import ComplaintLineModal from '../components/ComplaintLineModal';
+import ComplaintLineFab from '../components/ComplaintLineFab';
+import PreFlightChecklistModal from '../components/PreFlightChecklistModal';
+import { getEventDayNumberForDate, parseCompletedDays, resolveLaunchSelectedDay } from '../lib/preflightChecklist';
+import ExcelImportModal from '../components/ExcelImportModal';
+import AgendaImportModal from '../components/AgendaImportModal';
+import ImportCSVModal from '../components/ImportCSVModal';
+import ImportEventModal from '../components/ImportEventModal';
+import ConfirmModal from '../components/ConfirmModal';
+import OperatorCountdownModal from '../components/OperatorCountdownModal';
+import TimedMarkerModal, { TimedMarkerModalResult } from '../components/TimedMarkerModal';
+import { mapOperatorCountdownRow, operatorCountdownRemaining, formatOperatorCountdownTime } from '../lib/operatorCountdown';
+import ShowVsRehearsalPanel from '../components/ShowVsRehearsalPanel';
+import TimeToastIcon from '../components/TimeToastIcon';
+import AssetRetentionNotice from '../components/AssetRetentionNotice';
+import CuePlatformFileList from '../components/CuePlatformFileList';
+import { cueFileDisplayName } from '../lib/cueFileVersions';
+import { OperatorPptPendingDecks } from '../components/PptPendingDeckBanner';
+// import { driftDetector } from '../services/driftDetector'; // REMOVED: Using WebSocket-only approach
+import ScheduleRow from './ScheduleRow';
+import StartTimeColumnCell from '../components/StartTimeColumnCell';
+import {
+  findParentScheduleIndex,
+  isIndentedScheduleItem,
+  isKilledScheduleItem,
+  itemCountsTowardStartTime,
+  shouldApplyShowStartOvertime,
+} from '../lib/scheduleStartTime';
+import {
+  isTimedMarkerItem,
+  normalizeMarkerAbsoluteSeconds,
+  normalizeMarkerOffsetSeconds,
+  normalizeMarkerTimeMode,
+  parseClockToSeconds,
+  resolveTimedMarkerDisplayTime,
+  timedMarkerPersistFields,
+} from '../lib/timedMarker';
+import {
+  cycleSegmentNameDisplayMode,
+  cycleStartTimeDisplayMode,
+  formatScheduleClock,
+  segmentNameDisplayModeLabel,
+  startTimeDisplayModeLabel,
+  type SegmentNameDisplayMode,
+  type StartTimeDisplayMode,
+} from '../lib/scheduleClockFormat';
+import {
+  BUILTIN_COLUMN_LABELS,
+  DEFAULT_ROS_VISIBLE_COLUMNS,
+  ROS_COLUMN_ORDER_STORAGE_KEY,
+  columnFlexOrderMap,
+  customColumnOrderKey,
+  customColumnVisibilityToNames,
+  loadRosVisibleColumns,
+  moveColumnInOrder,
+  normalizeColumnOrder,
+  parseCustomColumnOrderKey,
+  saveRosVisibleColumns,
+  saveRosVisibleCustomByName,
+  scrollColumnBoxStyle,
+  visibleCustomColumnsFromNames,
+  type RosVisibleColumns,
+} from '../lib/rosColumnOrder';
+import {
+  applyRosUiPreferencesToLocal,
+  fetchUserUiPreferences,
+  fromPortableColumnOrder,
+  loadFilterViewAccountSync,
+  readLocalRosUiPreferences,
+  rosUiPreferencesHasContent,
+  saveFilterViewAccountSync,
+  saveUserUiPreferences,
+  toPortableColumnOrder,
+  type RosUiPreferences,
+} from '../lib/userUiPreferences';
+import { verifyClearLogPassword } from '../lib/adminAuth';
+import {
+  baselineToOriginalDurations,
+  buildRehearsalBaseline,
+  diffScheduleAgainstBaseline,
+  parseRehearsalBaseline,
+  type RehearsalBaseline,
+} from '../lib/rehearsalBaseline';
+import {
+  buildRosProgramTypes,
+  HEAD_TABLE_PROGRAM_TYPE,
+  ROS_PROGRAM_TYPE_COLORS,
+} from '../lib/guestRosHelpers';
+import { sessionRoleLabel } from '../lib/sessionRoleLabels';
+
+import {
+  SPEAKER_LOCATIONS,
+  type SpeakerLocation,
+  speakerLocationPrefix,
+} from '../lib/speakerLocations';
+
 // Speaker interface/type definition
 interface Speaker {
   id: string;
   slot: number;
-  location: 'Podium' | 'Seat' | 'Virtual' | 'Moderator';
+  location: SpeakerLocation | string;
   fullName: string;
   title: string;
   org: string;
   photoLink: string;
+  /** Optional link to global speaker DB row (not required in saved cue JSON). */
+  speakerDbId?: string;
+}
+
+function normalizeSpeakerNameKey(name: string): string {
+  return String(name || '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toLowerCase();
+}
+
+type SpeakerSyncAction = {
+  type: 'add' | 'update';
+  id?: string;
+  full_name: string;
+  title: string;
+  org: string;
+  photo_link: string;
+  accepted: boolean;
+};
+
+export type { AudioCalloutKind, VoCue };
+
+/** Keep a menu panel inside the viewport. */
+function clampMenuPanelToViewport(
+  el: HTMLElement | null,
+  mode: 'dropdown' | 'flyout' = 'flyout',
+  /** For flyouts: horizontal anchor (main menu panel). Falls back to parent. */
+  xAnchorEl?: HTMLElement | null
+) {
+  if (!el) return;
+  const pad = 8;
+  const gap = 8; // clear space between main menu and side flyout (match Import/Export)
+  const vh = window.innerHeight;
+  const vw = window.innerWidth;
+
+  if (mode === 'dropdown') {
+    el.style.position = '';
+    el.style.top = '';
+    el.style.left = '';
+    el.style.right = '';
+    el.style.bottom = '';
+    el.style.maxHeight = '';
+    el.style.transform = '';
+    // Keep overflow visible so side flyouts aren't clipped / mis-measured
+    el.style.overflowY = 'visible';
+    const measured = el.getBoundingClientRect();
+    el.style.maxHeight = `${Math.max(120, vh - pad - measured.top)}px`;
+    return;
+  }
+
+  // Flyouts: fixed to the viewport. Y = row; X = always just past the main panel.
+  const trigger = el.parentElement;
+  const triggerRect = trigger?.getBoundingClientRect();
+  if (!triggerRect) return;
+
+  const xAnchor = xAnchorEl ?? trigger;
+  const xRect = xAnchor.getBoundingClientRect();
+
+  // Ignore CSS left-full / ml-1 — those cause Operator Actions to sit on top of the panel.
+  el.classList.remove('left-full', 'ml-1');
+  const width = Math.max(el.getBoundingClientRect().width || el.offsetWidth || 208, 176);
+
+  let left = Math.round(xRect.right + gap);
+  if (left + width > vw - pad) {
+    // Prefer staying to the right with a smaller gap over overlapping the panel
+    const fitRight = vw - pad - width;
+    if (fitRight >= xRect.right) {
+      left = Math.round(xRect.right + Math.min(gap, fitRight - xRect.right));
+    } else if (fitRight >= xRect.left + 40) {
+      left = Math.round(Math.max(xRect.right, fitRight));
+    } else {
+      left = Math.round(Math.max(pad, xRect.left - width - gap));
+    }
+  }
+
+  let top = Math.round(triggerRect.top);
+
+  el.style.setProperty('position', 'fixed', 'important');
+  el.style.setProperty('left', `${left}px`, 'important');
+  el.style.setProperty('right', 'auto', 'important');
+  el.style.setProperty('top', `${top}px`, 'important');
+  el.style.setProperty('bottom', 'auto', 'important');
+  el.style.setProperty('margin', '0', 'important');
+  el.style.setProperty('transform', 'none', 'important');
+  el.style.setProperty('z-index', '70', 'important');
+  el.style.overflowY = 'auto';
+  el.style.maxHeight = `${Math.max(120, vh - pad - top)}px`;
+
+  const after = el.getBoundingClientRect();
+  if (after.bottom > vh - pad) {
+    top = Math.max(pad, vh - pad - after.height);
+    el.style.setProperty('top', `${top}px`, 'important');
+    el.style.maxHeight = `${Math.max(120, vh - pad - top)}px`;
+  }
 }
 
 interface ScheduleItem {
@@ -90,7 +351,13 @@ interface ScheduleItem {
   day: number;
   programType: string;
   shotType: string;
+  /** When true, auto shot-from-speakers skips this cue until shot type is cleared. */
+  shotTypeManualOverride?: boolean;
   segmentName: string;
+  /** Lowercase words in this segment name that were reviewed as OK. */
+  segmentSpellingOk?: string[];
+  /** Creative pushed this row so ROS should show the spelling chip. */
+  segmentSpellingAskRos?: boolean;
   durationHours: number;
   durationMinutes: number;
   durationSeconds: number;
@@ -101,6 +368,18 @@ interface ScheduleItem {
   hasPPT: boolean;
   hasQA: boolean;
   needsRecording?: boolean;
+  /** Exclusive: the next Mitti play syncs this row. Only one cue is true. */
+  mittiWatch?: boolean;
+  /** Exclusive: the next AV-Playout play syncs this row. Only one cue is true. */
+  avWatch?: boolean;
+  /** When true, loading this cue pushes DSM layout to DSM Clock pages. */
+  dsmEnabled?: boolean;
+  /** full | led | vid | ppt */
+  dsmMode?: string;
+  /** When true, auto LED/Video/PPT suggestions do not overwrite dsmMode. */
+  dsmModeManual?: boolean;
+  /** Who marked REC: 'comms' (ASAP) vs 'ros' (export / planned post). */
+  recordingSource?: 'comms' | 'ros' | null;
   /**
    * Optional room when this cue happens off the main program room
    * (not a breakout). Blank/null = main event room for that day.
@@ -110,10 +389,34 @@ interface ScheduleItem {
   customFields: Record<string, string>;
   isPublic: boolean;
   isIndented: boolean;
+  /**
+   * Grouped timed marker under a parent cue (like indented timers):
+   * start time only, no duration, does not advance the show clock.
+   */
+  isTimedMarker?: boolean;
+  /** absolute = fixed wall clock; offset = relative to parent (follows OT). */
+  markerTimeMode?: 'absolute' | 'offset';
+  /** Seconds after parent start (offset mode). */
+  markerOffsetSeconds?: number;
+  /** Seconds since midnight (absolute mode). */
+  markerAbsoluteSeconds?: number;
   /** Clock page display: 'countdown' | 'countUp' | 'timeOfDay' (swap + progress bar) | 'todOnly' (time of day only) */
   timerDisplay?: 'countdown' | 'countUp' | 'timeOfDay' | 'todOnly';
-  /** Optional VO / BGM chips in Notes — metadata only, not timeline rows */
+  /** Optional VO / BGM chips in Notes (prototype) — metadata only, not timeline rows */
   voCues?: VoCue[];
+  /** ElevenLabs VOG script + last selected voice (preview/download only; audio not stored on ROS). */
+  vogText?: string;
+  vogVoiceId?: string;
+  vogVoiceName?: string;
+  /** Legacy HH:MM restart clock stored on a Show Break row. */
+  breakStartTime?: string | null;
+  /** Pinned HH:MM on the first cue after a Show Break. */
+  sessionStartTime?: string | null;
+  /** Start Section toggle is ON for this Show Break. */
+  sectionStarted?: boolean;
+  /** Cyan session ★ after a Show Break. */
+  isSessionStartCue?: boolean;
+  sessionStartOvertime?: number;
 }
 
 interface CustomColumn {
@@ -132,16 +435,200 @@ function resolveRosTimerDisplayMode(item: any): 'countdown' | 'countUp' | 'timeO
   return 'countdown';
 }
 
+/** Stable compare so a cell edit does not look like every other row changed. */
+function scheduleItemSignature(item: any): string {
+  if (!item) return '';
+  const asText = (value: unknown) => (value == null || value === false ? '' : String(value));
+  const custom = item.customFields && typeof item.customFields === 'object' ? item.customFields : {};
+  const customSorted = Object.keys(custom)
+    .sort()
+    .map((key) => `${key}=${custom[key] ?? ''}`)
+    .join('|');
+  return [
+    asText(item.id),
+    asText(item.day),
+    asText(item.programType),
+    asText(item.shotType),
+    item.shotTypeManualOverride ? '1' : '',
+    asText(item.segmentName),
+    JSON.stringify(item.segmentSpellingOk || []),
+    item.segmentSpellingAskRos ? '1' : '',
+    asText(item.durationHours),
+    asText(item.durationMinutes),
+    asText(item.durationSeconds),
+    asText(item.notes),
+    asText(item.assets),
+    asText(item.speakers),
+    asText(item.speakersText),
+    item.hasPPT ? '1' : '',
+    item.hasQA ? '1' : '',
+    item.needsRecording ? '1' : '',
+    asText(item.recordingUpdatedAt),
+    JSON.stringify(item.checkboxStamps || {}),
+    item.mittiWatch ? '1' : '',
+    item.avWatch ? '1' : '',
+    item.dsmEnabled ? '1' : '',
+    asText(item.dsmMode),
+    item.dsmModeManual ? '1' : '',
+    asText(item.recordingSource),
+    asText(item.otherRoom),
+    asText(item.timerId),
+    customSorted,
+    item.isPublic ? '1' : '',
+    item.isIndented ? '1' : '',
+    item.isTimedMarker ? '1' : '',
+    asText(item.markerTimeMode),
+    asText(item.markerOffsetSeconds),
+    asText(item.markerAbsoluteSeconds),
+    asText(item.timerDisplay),
+    item.isStartCue ? '1' : '',
+    asText(item.breakStartTime),
+    asText(item.sessionStartTime),
+    item.sectionStarted ? '1' : '',
+    item.isSessionStartCue ? '1' : '',
+    asText(item.sessionStartOvertime),
+    JSON.stringify(item.voCues || []),
+  ].join('\u001f');
+}
+
+type SessionRole = 'VIEWER' | 'EDITOR' | 'OPERATOR';
+
+function resolveSessionRole(
+  role: string | null | undefined,
+  user: { is_admin?: boolean; is_event_manager?: boolean } | null | undefined
+): SessionRole {
+  if (!role || !['VIEWER', 'EDITOR', 'OPERATOR'].includes(role)) return 'VIEWER';
+  if (role === 'OPERATOR' && !canSelectOperatorRole(user)) return 'VIEWER';
+  return role as SessionRole;
+}
+
+/** Ensure voCues times are padded 24h HH:MM for toast matching across clients. */
+function withNormalizedVoCues<T extends { voCues?: VoCue[]; vo_cues?: unknown; notes?: string }>(item: T): T {
+  const raw = (item as any).voCues ?? (item as any).vo_cues;
+  const normalized = reconcileVoCuesWithNotes(
+    (item as any).notes || '',
+    normalizeVoCues(raw).map((vo) => {
+      const time = normalizeCalloutTimeToHHMM(vo.time);
+      return time ? { ...vo, time } : vo;
+    })
+  );
+  if (!normalized.length) {
+    const { vo_cues: _drop, ...rest } = item as T & { vo_cues?: unknown };
+    return { ...(rest as T), voCues: undefined };
+  }
+  const { vo_cues: _drop, ...rest } = item as T & { vo_cues?: unknown };
+  return { ...(rest as T), voCues: normalized };
+}
+
+function generateRandomTimerId(used?: Set<string>): string {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  let result = '';
+  do {
+    result = '';
+    for (let i = 0; i < 5; i++) {
+      result += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+  } while (used?.has(result));
+  used?.add(result);
+  return result;
+}
+
+/** Fill blank timerIds so the Timer column never falls back to the literal "TIMER". */
+function ensureScheduleTimerIds(
+  items: any[],
+  options?: { preferExisting?: any[] | null; assignMissing?: boolean }
+): { items: any[]; changed: boolean } {
+  const preferExisting = options?.preferExisting;
+  const assignMissing = options?.assignMissing !== false;
+  const preferById = new Map(
+    (preferExisting || [])
+      .filter((i) => i && i.id != null)
+      .map((i) => [Number(i.id), i])
+  );
+  const used = new Set<string>();
+  for (const item of items) {
+    const t = typeof item?.timerId === 'string' ? item.timerId.trim().toUpperCase() : '';
+    if (t) used.add(t);
+  }
+  for (const item of preferExisting || []) {
+    const t = typeof item?.timerId === 'string' ? item.timerId.trim().toUpperCase() : '';
+    if (t) used.add(t);
+  }
+
+  let changed = false;
+  const next = items.map((item) => {
+    if (!item || isScheduleOnlyProgramType(item.programType)) return item;
+    const existing = typeof item.timerId === 'string' ? item.timerId.trim() : '';
+    if (existing) {
+      return existing === item.timerId ? item : { ...item, timerId: existing };
+    }
+
+    const preferred = preferById.get(Number(item.id));
+    const preferredTid =
+      preferred && typeof preferred.timerId === 'string' ? preferred.timerId.trim() : '';
+    if (preferredTid) {
+      changed = true;
+      used.add(preferredTid.toUpperCase());
+      return { ...item, timerId: preferredTid };
+    }
+
+    if (!assignMissing) return item;
+
+    const timerId = generateRandomTimerId(used);
+    changed = true;
+    return { ...item, timerId };
+  });
+  return { items: next, changed };
+}
+
+function normalizeScheduleVoCues(
+  items: any[] | null | undefined,
+  preferExisting?: any[] | null,
+  assignMissing = true
+): any[] {
+  if (!Array.isArray(items)) return [];
+  const withVo = items.map((item) => withNormalizedVoCues(item));
+  return ensureScheduleTimerIds(withVo, { preferExisting, assignMissing }).items;
+}
+
+function normalizeScheduleWithTimerIds(
+  items: any[] | null | undefined,
+  preferExisting?: any[] | null,
+  assignMissing = true
+): { items: any[]; changed: boolean } {
+  if (!Array.isArray(items)) return { items: [], changed: false };
+  const withVo = items.map((item) => withNormalizedVoCues(item));
+  const withProgramTypes = normalizeSchedulePreshowEndTypes(withVo);
+  const programTypesChanged = withProgramTypes !== withVo;
+  const ensured = ensureScheduleTimerIds(withProgramTypes, { preferExisting, assignMissing });
+  return { items: ensured.items, changed: ensured.changed || programTypesChanged };
+}
+
 const RunOfShowPage: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
   let event: Event = location.state?.event;
   let userRole: string = location.state?.userRole;
+  const countdownColorMode = useCountdownColorMode();
+  const overtimeSign = useOvertimeSign();
   
   // Authentication state
   const { user, loading: authLoading } = useAuth();
-  const [currentUserRole, setCurrentUserRole] = useState<'VIEWER' | 'EDITOR' | 'OPERATOR'>('VIEWER');
-  const currentUserRoleRef = useRef<'VIEWER' | 'EDITOR' | 'OPERATOR'>(currentUserRole);
+  const [currentUserRole, setCurrentUserRole] = useState<SessionRole>(() => {
+    const eid = (location.state as { event?: Event } | null)?.event?.id;
+    if (eid) {
+      try {
+        const saved = localStorage.getItem(`userRole_${eid}`);
+        if (saved === 'VIEWER' || saved === 'EDITOR' || saved === 'OPERATOR') return saved;
+      } catch {
+        /* ignore */
+      }
+    }
+    return 'VIEWER';
+  });
+  const currentUserRoleRef = useRef<SessionRole>(currentUserRole);
+  /** Skip persisting until role hydrate finishes (avoids default VIEWER wiping Editor/Operator). */
+  const roleHydratedRef = useRef(false);
 
   useEffect(() => {
     currentUserRoleRef.current = currentUserRole;
@@ -162,6 +649,12 @@ const RunOfShowPage: React.FC = () => {
   const [changeLog, setChangeLog] = useState<LocalChange[]>([]);
   const [masterChangeLog, setMasterChangeLog] = useState<any[]>([]);
   const [showMasterChangeLog, setShowMasterChangeLog] = useState(false);
+  const [changeLogTab, setChangeLogTab] = useState<'local' | 'master' | 'vs-rehearsal'>('local');
+  const [changeLogSearch, setChangeLogSearch] = useState('');
+  const [changeLogFieldFilter, setChangeLogFieldFilter] = useState<string>('all');
+  const [expandedChangeLogIds, setExpandedChangeLogIds] = useState<Set<string>>(() => new Set());
+  const [rehearsalBaseline, setRehearsalBaseline] = useState<RehearsalBaseline | null>(null);
+  const [recapturingBaseline, setRecapturingBaseline] = useState(false);
 
   // Debounced change tracking
   const [pendingChanges, setPendingChanges] = useState<Map<string, any>>(new Map());
@@ -516,6 +1009,383 @@ const RunOfShowPage: React.FC = () => {
     };
   };
 
+  /** Normalize local/master change-log rows for display + Admin restore. */
+  const parseChangeLogDetails = (change: any): Record<string, any> => {
+    let details = change?.details ?? change?.new_values_json ?? {};
+    if (typeof details === 'string') {
+      try {
+        details = JSON.parse(details);
+      } catch {
+        details = {};
+      }
+    }
+    let metadata = change?.metadata ?? {};
+    if (typeof metadata === 'string') {
+      try {
+        metadata = JSON.parse(metadata);
+      } catch {
+        metadata = {};
+      }
+    }
+    const nested = metadata?.details && typeof metadata.details === 'object' ? metadata.details : {};
+    return { ...nested, ...details, metadata };
+  };
+
+  const unwrapChangeLogStoredValue = (value: unknown, depth = 0): unknown => {
+    if (value == null) return '';
+    if (depth > 4) return value;
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (!trimmed || /^(empty|\(empty\)|null|undefined)$/i.test(trimmed)) return '';
+      if (
+        (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+        (trimmed.startsWith('{') && trimmed.endsWith('}')) ||
+        (trimmed.startsWith('[') && trimmed.endsWith(']'))
+      ) {
+        try {
+          return unwrapChangeLogStoredValue(JSON.parse(trimmed), depth + 1);
+        } catch {
+          return value;
+        }
+      }
+      return value;
+    }
+    if (typeof value === 'object' && !Array.isArray(value)) {
+      const rec = value as Record<string, unknown>;
+      if (rec.notes != null && typeof rec.notes !== 'object') {
+        return unwrapChangeLogStoredValue(rec.notes, depth + 1);
+      }
+      if (rec.value != null && rec.value !== value) {
+        return unwrapChangeLogStoredValue(rec.value, depth + 1);
+      }
+    }
+    return value;
+  };
+
+  const pickChangeLogSide = (...candidates: unknown[]) => {
+    for (const candidate of candidates) {
+      const unwrapped = unwrapChangeLogStoredValue(candidate);
+      if (unwrapped !== '' && unwrapped != null) return unwrapped;
+    }
+    return '';
+  };
+
+  const getChangeLogFieldInfo = (change: any) => {
+    const details = parseChangeLogDetails(change);
+    const action = change?.action || change?.changeType || '';
+    const fieldName = String(
+      change?.field_name || details.fieldName || details.changeType || ''
+    ).trim();
+    const oldValue = pickChangeLogSide(
+      change?.old_value,
+      details.oldValue,
+      details.old_value
+    );
+    const newValue = pickChangeLogSide(
+      change?.new_value,
+      details.newValue,
+      details.new_value
+    );
+    const itemIdRaw = details.itemId ?? details.item_id;
+    let itemId =
+      itemIdRaw != null && itemIdRaw !== ''
+        ? typeof itemIdRaw === 'number'
+          ? itemIdRaw
+          : parseInt(String(itemIdRaw), 10)
+        : null;
+    const cueRaw = change?.cue_number ?? details.cueNumber ?? details.cue;
+    if ((itemId == null || Number.isNaN(itemId)) && cueRaw != null && String(cueRaw).trim()) {
+      const cueText = String(cueRaw).replace(/^CUE\s*/i, '').trim();
+      const byCue = schedule.find((s) => {
+        const rowCue = String(s.customFields?.cue || '').replace(/^CUE\s*/i, '').trim();
+        return rowCue === cueText || rowCue === String(cueRaw).trim();
+      });
+      if (byCue) itemId = byCue.id;
+    }
+    if ((itemId == null || Number.isNaN(itemId)) && change?.row_number != null) {
+      const idx = Number(change.row_number) - 1;
+      if (Number.isFinite(idx) && idx >= 0 && idx < schedule.length) {
+        itemId = schedule[idx]?.id ?? null;
+      }
+    }
+    if ((itemId == null || Number.isNaN(itemId)) && details.rowNumber != null) {
+      const idx = Number(details.rowNumber) - 1;
+      if (Number.isFinite(idx) && idx >= 0 && idx < schedule.length) {
+        itemId = schedule[idx]?.id ?? null;
+      }
+    }
+    return {
+      action,
+      fieldName,
+      oldValue,
+      newValue,
+      itemId: itemId != null && Number.isFinite(itemId) ? itemId : null,
+      details,
+      description: change?.description || details.itemName || '',
+    };
+  };
+
+  const formatChangeLogPreview = (value: unknown, expanded: boolean): string => {
+    if (value == null) return '(empty)';
+    let text: string;
+    if (typeof value === 'string') {
+      text = value;
+    } else if (typeof value === 'number' || typeof value === 'boolean') {
+      text = String(value);
+    } else {
+      try {
+        text = JSON.stringify(value);
+      } catch {
+        text = String(value);
+      }
+    }
+    if (typeof text !== 'string') text = String(text);
+    // Strip simple HTML tags for notes readability in the log
+    text = text.replace(/<br\s*\/?>/gi, '\n').replace(/<\/p>/gi, '\n').replace(/<[^>]+>/g, '');
+    text = text.replace(/\s+/g, ' ').trim();
+    if (!text) return '(empty)';
+    if (expanded || text.length <= 180) return text;
+    return `${text.slice(0, 180)}…`;
+  };
+
+  const changeLogValueHasContent = (value: unknown): boolean =>
+    formatChangeLogPreview(value, true) !== '(empty)';
+
+  const isChangeLogFieldRestorable = (change: any): boolean => {
+    if (!canAccessAdmin(user)) return false;
+    const info = getChangeLogFieldInfo(change);
+    if (info.action !== 'FIELD_UPDATE') return false;
+    if (!info.fieldName || info.itemId == null) return false;
+    if (!changeLogValueHasContent(info.oldValue) && !changeLogValueHasContent(info.newValue)) {
+      return false;
+    }
+    // Skip non-schedule / settings-only fields
+    if (
+      [
+        'showMode',
+        'showStartOvertime',
+        'overtimeMinutes',
+        'overtimeOffsets',
+        'masterStartTime',
+        'rehearsalBaseline',
+      ].includes(info.fieldName)
+    ) {
+      return false;
+    }
+    return schedule.some((item) => item.id === info.itemId);
+  };
+
+  const applyRestoredFieldToItem = (item: ScheduleItem, fieldName: string, rawValue: unknown): ScheduleItem => {
+    const asString = rawValue == null ? '' : String(rawValue);
+    const asBool = asString === 'true' || asString === '1';
+    const asNum = Number(asString);
+
+    if (fieldName === 'notes') {
+      const voCues = reconcileVoCuesWithNotes(asString, item.voCues);
+      return { ...item, notes: asString, voCues: voCues.length ? voCues : undefined };
+    }
+    if (fieldName === 'speakers') {
+      return { ...item, speakers: asString, speakersText: asString };
+    }
+    if (fieldName === 'assets') return { ...item, assets: asString };
+    if (fieldName === 'segmentName') return { ...item, segmentName: asString };
+    if (fieldName === 'programType') return { ...item, programType: asString };
+    if (fieldName === 'shotType') return { ...item, shotType: asString };
+    if (fieldName === 'cue') {
+      return { ...item, customFields: { ...item.customFields, cue: asString } };
+    }
+    if (fieldName === 'durationHours') {
+      return { ...item, durationHours: Number.isFinite(asNum) ? asNum : item.durationHours };
+    }
+    if (fieldName === 'durationMinutes') {
+      return { ...item, durationMinutes: Number.isFinite(asNum) ? asNum : item.durationMinutes };
+    }
+    if (fieldName === 'durationSeconds') {
+      return { ...item, durationSeconds: Number.isFinite(asNum) ? asNum : item.durationSeconds };
+    }
+    if (fieldName === 'needsRecording') return { ...item, needsRecording: asBool };
+    if (fieldName === 'hasPPT') return { ...item, hasPPT: asBool };
+    if (fieldName === 'hasQA') return { ...item, hasQA: asBool };
+    if (fieldName === 'isPublic') return { ...item, isPublic: asBool };
+    if (fieldName === 'timerDisplay') return { ...item, timerDisplay: asString as any };
+    if (fieldName === 'voCues') {
+      try {
+        const parsed = typeof rawValue === 'string' ? JSON.parse(rawValue) : rawValue;
+        const next = Array.isArray(parsed) ? normalizeVoCues(parsed) : [];
+        const previous = Array.isArray(item.voCues) ? item.voCues : [];
+        return {
+          ...item,
+          voCues: next.length ? next : undefined,
+          notes: syncCalloutsIntoNotes(item.notes || '', previous, next),
+        };
+      } catch {
+        return item;
+      }
+    }
+    if (fieldName.startsWith('custom_')) {
+      const colName = fieldName.slice('custom_'.length);
+      return {
+        ...item,
+        customFields: { ...item.customFields, [colName]: asString },
+      };
+    }
+    // Unknown named custom column (logged without custom_ prefix)
+    if (item.customFields && Object.prototype.hasOwnProperty.call(item.customFields, fieldName)) {
+      return {
+        ...item,
+        customFields: { ...item.customFields, [fieldName]: asString },
+      };
+    }
+    return item;
+  };
+
+  const restoreChangeLogValue = (change: any, which: 'old' | 'new') => {
+    if (!canAccessAdmin(user)) {
+      alert('Only Admins can restore values from the change log.');
+      return;
+    }
+    if (currentUserRole === 'VIEWER') {
+      alert('Switch to Editor or Operator first, then restore from the change log.');
+      return;
+    }
+    const info = getChangeLogFieldInfo(change);
+    const preferred = which === 'new' ? info.newValue : info.oldValue;
+    const fallback = which === 'new' ? info.oldValue : info.newValue;
+    const rawValue = changeLogValueHasContent(preferred) ? preferred : fallback;
+    if (!isChangeLogFieldRestorable(change) || info.itemId == null || !changeLogValueHasContent(rawValue)) {
+      alert('This log entry has no text to restore.');
+      return;
+    }
+    const item = schedule.find((s) => s.id === info.itemId);
+    if (!item) {
+      alert('Could not find that cue in the current schedule.');
+      return;
+    }
+    const knownFields = new Set([
+      'notes',
+      'speakers',
+      'assets',
+      'segmentName',
+      'programType',
+      'shotType',
+      'cue',
+      'durationHours',
+      'durationMinutes',
+      'durationSeconds',
+      'needsRecording',
+      'hasPPT',
+      'hasQA',
+      'isPublic',
+      'timerDisplay',
+      'voCues',
+    ]);
+    const canApply =
+      knownFields.has(info.fieldName) ||
+      info.fieldName.startsWith('custom_') ||
+      Object.prototype.hasOwnProperty.call(item.customFields || {}, info.fieldName);
+    if (!canApply) {
+      alert(`Restore is not supported for field "${info.fieldName}" yet. Copy the value from the log manually.`);
+      return;
+    }
+
+    const preview = formatChangeLogPreview(rawValue, true);
+    const ok = window.confirm(
+      `${which === 'new' ? 'Restore this logged value' : 'Restore the previous value'} for Admin recovery?\n\n` +
+        `Cue: ${item.customFields?.cue || item.segmentName || info.itemId}\n` +
+        `Field: ${info.fieldName}\n` +
+        `Restore to:\n${preview.slice(0, 500)}${preview.length > 500 ? '…' : ''}\n\n` +
+        `This overwrites the current field and logs a new change.`
+    );
+    if (!ok) return;
+
+    const currentValue = (() => {
+      if (info.fieldName === 'notes') return item.notes;
+      if (info.fieldName === 'speakers') return item.speakersText || item.speakers;
+      if (info.fieldName === 'assets') return item.assets;
+      if (info.fieldName === 'segmentName') return item.segmentName;
+      if (info.fieldName === 'programType') return item.programType;
+      if (info.fieldName === 'shotType') return item.shotType;
+      if (info.fieldName === 'cue') return item.customFields?.cue;
+      if (info.fieldName.startsWith('custom_')) {
+        return item.customFields?.[info.fieldName.slice('custom_'.length)];
+      }
+      return (item as any)[info.fieldName];
+    })();
+
+    handleUserEditing();
+    setSchedule((prev) =>
+      prev.map((row) =>
+        row.id === info.itemId ? applyRestoredFieldToItem(row, info.fieldName, rawValue) : row
+      )
+    );
+    logChange(
+      'FIELD_UPDATE',
+      `Admin restored ${info.fieldName} from change log for "${item.segmentName}"`,
+      {
+        changeType: 'FIELD_CHANGE',
+        itemId: info.itemId,
+        itemName: item.segmentName,
+        fieldName: info.fieldName,
+        oldValue: currentValue,
+        newValue: rawValue,
+        details: {
+          restoredFromChangeLog: true,
+          sourceChangeId: change?.id || null,
+          restoredByAdmin: true,
+          restoredWhich: which,
+        },
+      }
+    );
+    console.log('⏪ Admin restored change-log value', {
+      fieldName: info.fieldName,
+      itemId: info.itemId,
+      sourceChangeId: change?.id,
+      which,
+    });
+  };
+
+  const changeLogEntryMatchesFilters = (change: any): boolean => {
+    const info = getChangeLogFieldInfo(change);
+    if (changeLogFieldFilter !== 'all') {
+      const field = (info.fieldName || '').toLowerCase();
+      if (changeLogFieldFilter === 'notes' && field !== 'notes') return false;
+      if (changeLogFieldFilter === 'speakers' && field !== 'speakers') return false;
+      if (changeLogFieldFilter === 'assets' && field !== 'assets') return false;
+      if (
+        changeLogFieldFilter === 'other' &&
+        (field === 'notes' || field === 'speakers' || field === 'assets' || !field)
+      ) {
+        return false;
+      }
+    }
+    const q = changeLogSearch.trim().toLowerCase();
+    if (!q) return true;
+    const haystack = [
+      info.action,
+      info.fieldName,
+      info.description,
+      change?.user_name,
+      change?.userName,
+      String(info.oldValue ?? ''),
+      String(info.newValue ?? ''),
+      String(info.itemId ?? ''),
+      String(change?.cue_number ?? ''),
+      String(change?.row_number ?? ''),
+    ]
+      .join(' ')
+      .toLowerCase();
+    return haystack.includes(q);
+  };
+
+  const toggleChangeLogExpanded = (id: string) => {
+    setExpandedChangeLogIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
   // Force finalize all pending changes (call this when user saves or navigates away)
   const finalizeAllPendingChanges = async () => {
     console.log('🔄 Finalizing all pending changes...');
@@ -655,6 +1525,7 @@ const RunOfShowPage: React.FC = () => {
     setUnsyncedCount(unsynced);
   }, [changeLog, pendingChanges]);
 
+  
   // Fallback: Try to get event from localStorage if not in location state
   if (!event) {
     const savedEvents = localStorage.getItem('events');
@@ -666,7 +1537,9 @@ const RunOfShowPage: React.FC = () => {
   }
 
   
-  // Debug: Log the event data (reduced logging)
+
+
+    // Debug: Log the event data (reduced logging)
   if (process.env.NODE_ENV === 'development' && Math.random() < 0.01) { // Only log 1% of the time
     console.log('Event from location.state:', location.state?.event);
     console.log('Final event data:', event);
@@ -681,7 +1554,15 @@ const RunOfShowPage: React.FC = () => {
   const [masterStartTime, setMasterStartTime] = useState('');
   const [dayStartTimes, setDayStartTimes] = useState<Record<number, string>>({});
   const [selectedDay, setSelectedDay] = useState<number>(1);
+  const initialDayAppliedForEventRef = useRef<string | null>(null);
+  const userChangedDayRef = useRef(false);
+  const [completedDays, setCompletedDays] = useState<number[]>([]);
   const [eventTimezone, setEventTimezone] = useState<string>('America/New_York'); // Default to EST
+  /** Calendar venue TZ — wins over ROS settings so laptop/default NY does not override. */
+  const calendarTimezoneRef = useRef<string | null>(null);
+  const [extendEventControlsEnabled, setExtendEventControlsEnabled] = useState(
+    event?.extendEventControlsEnabled === true
+  );
   
   // Change tracking state
   const [lastChangeAt, setLastChangeAt] = useState<string | null>(null);
@@ -695,6 +1576,17 @@ const RunOfShowPage: React.FC = () => {
   const [showInsertRowModal, setShowInsertRowModal] = useState(false);
   const [insertRowPosition, setInsertRowPosition] = useState<number | null>(null);
   const [showDelayBlockModal, setShowDelayBlockModal] = useState(false);
+  const [showShowBreakModal, setShowShowBreakModal] = useState(false);
+  const [showBreakLabel, setShowBreakLabel] = useState('Evening');
+  const [showBreakStartTime, setShowBreakStartTime] = useState('17:00');
+  const [timedMarkerModal, setTimedMarkerModal] = useState<{
+    mode: 'add' | 'edit';
+    parentId: number;
+    itemId?: number;
+    /** When adding from an existing marker, insert after this row id. */
+    insertAfterId?: number;
+  } | null>(null);
+  const timedMarkerIdSeqRef = useRef(0);
   const [delayBlockDay, setDelayBlockDay] = useState(1);
   const [delayDuration, setDelayDuration] = useState({ hours: 0, minutes: 5, seconds: 0 });
   const [showCustomColumnModal, setShowCustomColumnModal] = useState(false);
@@ -702,6 +1594,8 @@ const RunOfShowPage: React.FC = () => {
   const [editingNotesItem, setEditingNotesItem] = useState<number | null>(null);
   const [showVoModal, setShowVoModal] = useState(false);
   const [editingVoItemId, setEditingVoItemId] = useState<number | null>(null);
+  const [showVogModal, setShowVogModal] = useState(false);
+  const [editingVogItemId, setEditingVogItemId] = useState<number | null>(null);
   const [tempVoCues, setTempVoCues] = useState<VoCue[]>([]);
   const [voDraftTime, setVoDraftTime] = useState('08:45');
   const [voDraftLabel, setVoDraftLabel] = useState('');
@@ -715,11 +1609,76 @@ const RunOfShowPage: React.FC = () => {
     segmentName: string;
     vo: VoCue;
   } | null>(null);
+  /** Pre-show 5-minute warning (top PreShow/End cue only) */
+  const [dismissedPreshowWarnKeys, setDismissedPreshowWarnKeys] = useState<Set<string>>(
+    () => new Set()
+  );
+  const [activePreshowWarn, setActivePreshowWarn] = useState<{
+    itemId: number;
+    segmentName: string;
+    startLabel: string;
+    startHHMM: string;
+  } | null>(null);
+  const [preshowWarnTick, setPreshowWarnTick] = useState(0);
+  /** Global show-day arm — when set, any client may auto load+start Pre-Show. */
+  const [preshowShowDayArmed, setPreshowShowDayArmed] = useState<PreshowShowDayArmed | null>(null);
+  const [preshowConfirmBusy, setPreshowConfirmBusy] = useState(false);
+  /** Local-only dismiss for Admin/Crew In-Show nudge (cleared when a new PreShow run starts). */
+  const [inShowNudgeDismissed, setInShowNudgeDismissed] = useState(false);
+  const [inShowNudgeEligible, setInShowNudgeEligible] = useState(false);
+  const inShowNudgeRunKeyRef = useRef<string | null>(null);
+  const inShowNudgeFirstSeenMsRef = useRef<number | null>(null);
+  const preshowAutoStartedKeyRef = useRef<string | null>(null);
+  const preshowAutoStartInFlightRef = useRef(false);
+  const loadCueRef = useRef<(itemId: number) => Promise<void>>(async () => {});
+  const toggleTimerRef = useRef<
+    (itemId: number, options?: { ignoreOtherRunning?: boolean }) => Promise<void>
+  >(async () => {});
+  const preshowShowDayArmedRef = useRef<PreshowShowDayArmed | null>(null);
+  const [autoRollArmed, setAutoRollArmed] = useState<AutoRollArmed | null>(null);
+  const [autoRollHud, setAutoRollHud] = useState('');
+  const [autoRollBusy, setAutoRollBusy] = useState(false);
+  const autoRollArmedRef = useRef<AutoRollArmed | null>(null);
+  const autoRollStartedKeyRef = useRef<string | null>(null);
+  const autoRollInFlightRef = useRef(false);
+  useEffect(() => {
+    autoRollArmedRef.current = autoRollArmed;
+  }, [autoRollArmed]);
+  useEffect(() => {
+    preshowShowDayArmedRef.current = preshowShowDayArmed;
+  }, [preshowShowDayArmed]);
+  /** In-progress notes HTML while the modal is open (survives tab hide / schedule sync). */
+  const [tempNotesHtml, setTempNotesHtml] = useState('');
+  const [tempNotesVoCues, setTempNotesVoCues] = useState<VoCue[]>([]);
+  const tempNotesVoCuesRef = useRef<VoCue[]>([]);
+  tempNotesVoCuesRef.current = tempNotesVoCues;
+  const notesEditorRef = useRef<HTMLDivElement | null>(null);
   const [showSpeakersModal, setShowSpeakersModal] = useState(false);
   const [editingSpeakersItem, setEditingSpeakersItem] = useState<number | null>(null);
   const [tempSpeakersText, setTempSpeakersText] = useState<Speaker[]>([]);
+  const [speakerDbSearchId, setSpeakerDbSearchId] = useState<string | null>(null);
+  const [speakerDbQuery, setSpeakerDbQuery] = useState('');
+  const [speakerDbHits, setSpeakerDbHits] = useState<SpeakerDirectoryRow[]>([]);
+  const [speakerDbBusy, setSpeakerDbBusy] = useState(false);
+  const [speakerSyncPending, setSpeakerSyncPending] = useState<SpeakerSyncAction[] | null>(null);
+  const [speakerSyncBusy, setSpeakerSyncBusy] = useState(false);
   const [showAssetsModal, setShowAssetsModal] = useState(false);
   const [editingAssetsItem, setEditingAssetsItem] = useState<number | null>(null);
+  /** Pre-assigned cue id while Add Item modal is open (enables ROS file upload before Save). */
+  const [modalDraftItemId, setModalDraftItemId] = useState<number | null>(null);
+  /** In-progress assets while the modal is open (survives schedule sync). */
+  const [tempAssets, setTempAssets] = useState<Array<{ id: string; name: string; link: string; showLink: boolean }>>([]);
+  const [platformUploadConfigured, setPlatformUploadConfigured] = useState(false);
+  const [platformCueFiles, setPlatformCueFiles] = useState<EventCueFile[]>([]);
+  const [platformUploadBusy, setPlatformUploadBusy] = useState(false);
+  const [platformUploadError, setPlatformUploadError] = useState<string | null>(null);
+  const [platformUploadNote, setPlatformUploadNote] = useState<string | null>(null);
+  const [platformUsingVersionId, setPlatformUsingVersionId] = useState<string | null>(null);
+  const [pdfConvertPrompt, setPdfConvertPrompt] = useState<EventCueFile | null>(null);
+  const [pdfConvertQueue, setPdfConvertQueue] = useState<EventCueFile[]>([]);
+  const [pdfConvertBusyId, setPdfConvertBusyId] = useState<string | null>(null);
+  const [platformUploadDragOver, setPlatformUploadDragOver] = useState(false);
+  const platformFileInputRef = useRef<HTMLInputElement | null>(null);
   const [showViewAssetsModal, setShowViewAssetsModal] = useState(false);
   const [viewingAssetsItem, setViewingAssetsItem] = useState<number | null>(null);
   const [showViewSpeakersModal, setShowViewSpeakersModal] = useState(false);
@@ -745,9 +1704,63 @@ const RunOfShowPage: React.FC = () => {
   const [activeTimerIntervals, setActiveTimerIntervals] = useState<Record<number, NodeJS.Timeout>>({});
   const [subCueTimers, setSubCueTimers] = useState<Record<number, NodeJS.Timeout>>({});
   const [completedCues, setCompletedCues] = useState<Record<number, boolean>>({});
+  /** Keep live cue ids available to async completed-cue sync (refresh / tab return). */
+  const activeTimersRef = useRef<Record<number, boolean>>({});
+  const activeLoadedItemIdRef = useRef<number | null>(null);
   const [indentedCues, setIndentedCues] = useState<Record<number, { parentId: number; userId: string; userName: string }>>({});
   const [startCueId, setStartCueId] = useState<number | null>(null);
   const [showStartOvertime, setShowStartOvertime] = useState<number>(0); // Minutes late (+) or early (-)
+  const [sessionStartCueId, setSessionStartCueId] = useState<number | null>(null);
+  const [sessionShowStartOvertime, setSessionShowStartOvertime] = useState<number>(0);
+
+  const activeShowSectionBreakIndexValue = useMemo(
+    () => activeShowSectionBreakIndex(schedule),
+    [schedule]
+  );
+  const resolveSessionPreshowCue = (day?: number | null) => {
+    const workingDay = day != null ? Number(day) : selectedDay;
+    if (activeShowSectionBreakIndexValue >= 0) {
+      const session = findSessionPreshowCue(
+        schedule,
+        indentedCues,
+        workingDay,
+        activeShowSectionBreakIndexValue
+      );
+      if (session) return session;
+    }
+    return findTopPreshowCue(schedule, indentedCues, workingDay);
+  };
+
+  const rowShowStartOvertime = (index: number): number => {
+    const row = schedule[index];
+    if (!row) return 0;
+    if (isIndexInActiveShowSection(schedule, index)) {
+      if (!sessionShowStartOvertime || sessionStartCueId == null) return 0;
+      const startCueIndex = schedule.findIndex((s) => s.id === sessionStartCueId);
+      return shouldApplyShowStartOvertime({
+        showStartOvertime: sessionShowStartOvertime,
+        startCueId: sessionStartCueId,
+        startCueIndex,
+        rowIndex: index,
+        schedule,
+        rowDay: row.day || 1,
+      })
+        ? sessionShowStartOvertime
+        : 0;
+    }
+    if (!showStartOvertime || startCueId == null) return 0;
+    const startCueIndex = schedule.findIndex((s) => s.id === startCueId);
+    return shouldApplyShowStartOvertime({
+      showStartOvertime,
+      startCueId,
+      startCueIndex,
+      rowIndex: index,
+      schedule,
+      rowDay: row.day || 1,
+    })
+      ? showStartOvertime
+      : 0;
+  };
   
   const [showMode, setShowMode] = useState<'rehearsal' | 'in-show'>('rehearsal');
   const showModeRef = useRef<'rehearsal' | 'in-show'>(showMode);
@@ -757,21 +1770,15 @@ const RunOfShowPage: React.FC = () => {
   const [showClearOffsetsConfirmModal, setShowClearOffsetsConfirmModal] = useState(false);
   const [offsetAdjustTarget, setOffsetAdjustTarget] = useState<'root' | 'prev'>('root');
   const [trackWasDurations, setTrackWasDurations] = useState(false);
-  const [showCompletedHighlight, setShowCompletedHighlight] = useState(() => {
-    try {
-      const raw = localStorage.getItem('rosShowCompletedHighlight');
-      if (raw === null) return true;
-      return raw === 'true';
-    } catch {
-      return true;
-    }
-  });
+  const [liveStartProjectionArmed, setLiveStartProjectionArmed] = useState(false);
+  const liveStartProjectionArmedRef = useRef(false);
   useEffect(() => {
-    try {
-      localStorage.setItem('rosShowCompletedHighlight', showCompletedHighlight ? 'true' : 'false');
-    } catch {
-      /* ignore */
-    }
+    liveStartProjectionArmedRef.current = liveStartProjectionArmed;
+  }, [liveStartProjectionArmed]);
+  const [showCompletedHighlight, setShowCompletedHighlight] = useState(true);
+  const showCompletedHighlightRef = useRef(showCompletedHighlight);
+  useEffect(() => {
+    showCompletedHighlightRef.current = showCompletedHighlight;
   }, [showCompletedHighlight]);
   const [originalDurations, setOriginalDurations] = useState<Record<number, { durationHours: number; durationMinutes: number; durationSeconds: number }>>({});
   /** Start times frozen when entering In-Show — WAS under Start stays on these. */
@@ -780,16 +1787,21 @@ const RunOfShowPage: React.FC = () => {
   useEffect(() => { lockedStartTimesRef.current = lockedStartTimes; }, [lockedStartTimes]);
   /** When each cue actually started running (item id → epoch ms) — "ran" under Start. */
   const [cueActualStarts, setCueActualStarts] = useState<Record<number, number>>({});
+  const persistedActualStartsRef = useRef<Record<number, number>>({});
   const noteCueActualStart = useCallback((timer: any) => {
     if (!timer) return;
-    const running =
-      timer.timer_state === 'running' || (timer.is_running === true && timer.is_active !== false);
-    if (!running) return;
-    const id = Number(timer.item_id);
-    const ms = new Date(timer.started_at).getTime();
-    if (!Number.isFinite(id) || !Number.isFinite(ms) || new Date(ms).getUTCFullYear() >= 2090) return;
+    const id = parseInt(String(timer.item_id ?? timer.itemId ?? timer.timerId ?? ''), 10);
+    const startedRaw = timer.started_at || timer.timer_started_at || timer.startedAt;
+    if (startedRaw == null || (typeof startedRaw === 'string' && startedRaw.startsWith('2099'))) return;
+    const started = startedRaw instanceof Date ? startedRaw : new Date(startedRaw);
+    const ms = started.getTime();
+    if (!Number.isFinite(id) || !Number.isFinite(ms) || started.getUTCFullYear() >= 2090) return;
     setCueActualStarts((prev) => (prev[id] === ms ? prev : { ...prev, [id]: ms }));
-  }, []);
+    if (event?.id && persistedActualStartsRef.current[id] !== ms) {
+      persistedActualStartsRef.current[id] = ms;
+      void DatabaseService.saveCueActualStart(event.id, id, ms);
+    }
+  }, [event?.id]);
   /** Re-evaluates the live Start projection while a cue runs over / between cues. */
   const [liveProjectionTick, setLiveProjectionTick] = useState(0);
   useEffect(() => {
@@ -800,6 +1812,7 @@ const RunOfShowPage: React.FC = () => {
   const originalDurationsSetForEventRef = useRef<string | null>(null);
   useEffect(() => { originalDurationsSetForEventRef.current = null; }, [event?.id]);
   // Reset duration "was" capture when leaving in-show or unchecking track.
+  // Rehearsal baseline is kept across brief Rehearsal flips.
   useEffect(() => {
     if (showMode !== 'in-show') {
       originalDurationsSetForEventRef.current = null;
@@ -807,12 +1820,16 @@ const RunOfShowPage: React.FC = () => {
       setLockedStartTimes({});
     } else if (!trackWasDurations) {
       originalDurationsSetForEventRef.current = null;
-      setOriginalDurations({});
     }
   }, [showMode, trackWasDurations]);
   useEffect(() => {
     if (showMode !== 'in-show' || !trackWasDurations || !event?.id || !schedule.length) return;
     if (originalDurationsSetForEventRef.current === event.id) return;
+    if (rehearsalBaseline?.items && Object.keys(rehearsalBaseline.items).length > 0) {
+      setOriginalDurations(baselineToOriginalDurations(rehearsalBaseline));
+      originalDurationsSetForEventRef.current = event.id;
+      return;
+    }
     const next: Record<number, { durationHours: number; durationMinutes: number; durationSeconds: number }> = {};
     schedule.forEach((s: ScheduleItem) => {
       next[s.id] = {
@@ -823,13 +1840,39 @@ const RunOfShowPage: React.FC = () => {
     });
     setOriginalDurations(prev => Object.keys(next).length ? { ...prev, ...next } : prev);
     originalDurationsSetForEventRef.current = event.id;
-  }, [showMode, trackWasDurations, event?.id, schedule]);
+  }, [showMode, trackWasDurations, event?.id, schedule, rehearsalBaseline]);
   
   useEffect(() => {
     if (!event?.id) return;
+    userChangedDayRef.current = false;
+    setCompletedDays([]);
+    if (!(event.numberOfDays && event.numberOfDays > 1)) {
+      setSelectedDay(1);
+      initialDayAppliedForEventRef.current = event.id;
+      return;
+    }
+    setSelectedDay(
+      resolveLaunchSelectedDay({
+        eventDate: event.date,
+        numberOfDays: event.numberOfDays,
+        completedDays: [],
+      })
+    );
+    initialDayAppliedForEventRef.current = event.id;
+  }, [event?.id, event?.date, event?.numberOfDays]);
+
+  useEffect(() => {
+    if (!event?.id) return;
+    const stored = readStoredAutoRoll(event.id);
+    if (stored) setAutoRollArmed(stored);
     DatabaseService.getShowSettings(event.id).then(s => {
       setShowMode(s.showMode);
       setTrackWasDurations(s.trackWasDurations);
+      setShowCompletedHighlight(s.showCompletedHighlight !== false);
+      setLiveStartProjectionArmed(parseLiveStartProjectionArmed(s.liveStartProjection));
+      setRehearsalBaseline(parseRehearsalBaseline(s.rehearsalBaseline));
+      setPreshowShowDayArmed(parsePreshowShowDay(s.preshowShowDay));
+      setAutoRollArmed(resolveAutoRoll(s.autoRoll, event.id));
       if (s.lockedStartTimes && typeof s.lockedStartTimes === 'object') {
         const mapped: Record<number, string> = {};
         for (const [k, v] of Object.entries(s.lockedStartTimes)) {
@@ -842,6 +1885,11 @@ const RunOfShowPage: React.FC = () => {
       }
     });
   }, [event?.id]);
+
+  const showVsRehearsalDiffs = useMemo(
+    () => diffScheduleAgainstBaseline(schedule, rehearsalBaseline),
+    [schedule, rehearsalBaseline]
+  );
   
   const [secondaryTimer, setSecondaryTimer] = useState<{
     itemId: number;
@@ -854,45 +1902,162 @@ const RunOfShowPage: React.FC = () => {
   const [secondaryTimerInterval, setSecondaryTimerInterval] = useState<NodeJS.Timeout | null>(null);
   
   const [showGridHeaders, setShowGridHeaders] = useState(false);
+  const { collapsed: appHeaderCollapsed, toggleCollapsed: toggleAppHeaderCollapsed } = useAppHeaderCollapse();
+  const { setStatus: setLiveSyncStatus, clearStatus: clearLiveSyncStatus, setOpenAlert: setLiveSyncOpenAlert } =
+    useLiveSyncStatus();
+  const rosToolbarHeightPx = showGridHeaders ? 240 : 150;
+  const schedulePaddingTopPx = getAppHeaderOffsetPx(appHeaderCollapsed) + rosToolbarHeightPx + 8;
   const [activeRowMenu, setActiveRowMenu] = useState<number | null>(null);
   const [activeItemMenu, setActiveItemMenu] = useState<number | null>(null);
   const [activeJumpMenu, setActiveJumpMenu] = useState<number | null>(null);
   const [activeItemId, setActiveItemId] = useState<number | null>(null);
   const [timerProgress, setTimerProgress] = useState<Record<number, { elapsed: number; total: number; startedAt: Date | null }>>({});
+  useEffect(() => {
+    Object.entries(timerProgress).forEach(([id, row]) => {
+      if (row?.startedAt) {
+        noteCueActualStart({ item_id: id, started_at: row.startedAt });
+      }
+    });
+  }, [timerProgress, noteCueActualStart]);
   const [subCueTimerProgress, setSubCueTimerProgress] = useState<Record<number, { elapsed: number; total: number; startedAt: Date | null }>>({});
   const [serverSyncedTimers, setServerSyncedTimers] = useState<Set<number>>(new Set());
   
   // ClockPage-style hybrid timer data for real-time updates
   const [hybridTimerData, setHybridTimerData] = useState<any>({ activeTimer: null });
+  const hybridTimerDataRef = useRef<any>({ activeTimer: null });
+  const activeCueForPreshow =
+    schedule.find(
+      (s) =>
+        s.id ===
+        Number(
+          hybridTimerData?.activeTimer?.item_id ?? activeItemId ?? NaN
+        )
+    ) || null;
+  const rosPreshowRainbow = shouldUsePreshowRainbow(hybridTimerData?.timerMessage, {
+    timer: hybridTimerData?.activeTimer,
+    programType: activeCueForPreshow?.programType,
+    itemId: activeCueForPreshow?.id ?? hybridTimerData?.activeTimer?.item_id,
+    topPreshowItemId: resolveSessionPreshowCue(selectedDay)?.id ?? null,
+  });
+  const rosClockTimerMode = resolveRosTimerDisplayMode(activeCueForPreshow);
+  const showTodOnClock = rosClockTimerMode === 'timeOfDay' || rosClockTimerMode === 'todOnly';
+  const rosClockTodBadge = showTodOnClock
+    ? rosClockTimerMode === 'todOnly'
+      ? {
+          label: 'TOD ONLY',
+          title: 'Clock page is Time of Day only — displays show wall clock, no countdown or progress bar',
+        }
+      : {
+          label: 'TOD',
+          title: 'Clock page is Time of Day — displays show wall clock plus remaining time and progress bar',
+        }
+    : null;
+
+  // Admin/Crew: ~1 min after PreShow is running while still Rehearsal → In-Show overlay
+  useEffect(() => {
+    if (showMode !== 'rehearsal') {
+      setInShowNudgeEligible(false);
+      if (showMode === 'in-show') {
+        setInShowNudgeDismissed(false);
+        inShowNudgeRunKeyRef.current = null;
+        inShowNudgeFirstSeenMsRef.current = null;
+      }
+      return;
+    }
+
+    const timer = hybridTimerData?.activeTimer;
+    const itemId = Number(
+      timer?.item_id ?? timer?.itemId ?? activeItemId ?? activeCueForPreshow?.id ?? NaN
+    );
+    const cue =
+      (Number.isFinite(itemId) ? schedule.find((s) => s.id === itemId) : null) ||
+      activeCueForPreshow;
+    const isPreshowCue =
+      isPreshowProgramType(cue?.programType) ||
+      isPreshowTimerMessage(hybridTimerData?.timerMessage) ||
+      rosPreshowRainbow;
+    const hybridRunning =
+      isActiveTimerRunning(timer) ||
+      timer?.timer_state === 'running' ||
+      timer?.is_running === true;
+    const localRunning = Number.isFinite(itemId) && !!activeTimers[itemId];
+    const running = !!(isPreshowCue && (hybridRunning || localRunning));
+
+    if (!running) {
+      setInShowNudgeEligible(false);
+      return;
+    }
+
+    const startedRaw =
+      timer?.started_at ||
+      timer?.timer_started_at ||
+      timer?.startedAt ||
+      null;
+    const runKey = `${Number.isFinite(itemId) ? itemId : 'x'}:${String(startedRaw || 'running')}`;
+    if (inShowNudgeRunKeyRef.current !== runKey) {
+      inShowNudgeRunKeyRef.current = runKey;
+      inShowNudgeFirstSeenMsRef.current = Date.now();
+      setInShowNudgeDismissed(false);
+      setInShowNudgeEligible(false);
+    }
+    const parsedStart = startedRaw ? Date.parse(String(startedRaw)) : NaN;
+    const startedMs = Number.isFinite(parsedStart)
+      ? parsedStart
+      : inShowNudgeFirstSeenMsRef.current ?? Date.now();
+    const delayMs = 60_000;
+    const check = () => {
+      if (showModeRef.current !== 'rehearsal') {
+        setInShowNudgeEligible(false);
+        return;
+      }
+      setInShowNudgeEligible(Date.now() - startedMs >= delayMs);
+    };
+    check();
+    const id = window.setInterval(check, 1000);
+    return () => window.clearInterval(id);
+  }, [
+    hybridTimerData?.activeTimer?.item_id,
+    hybridTimerData?.activeTimer?.is_running,
+    hybridTimerData?.activeTimer?.timer_state,
+    hybridTimerData?.activeTimer?.started_at,
+    hybridTimerData?.timerMessage,
+    rosPreshowRainbow,
+    showMode,
+    activeCueForPreshow?.id,
+    activeCueForPreshow?.programType,
+    activeItemId,
+    activeTimers,
+    schedule,
+  ]);
+
+  useEffect(() => {
+    activeTimersRef.current = activeTimers;
+  }, [activeTimers]);
+  useEffect(() => {
+    hybridTimerDataRef.current = hybridTimerData;
+  }, [hybridTimerData]);
+  useEffect(() => {
+    const fromHybrid =
+      hybridTimerData?.activeTimer?.item_id != null
+        ? Number(hybridTimerData.activeTimer.item_id)
+        : NaN;
+    const fromActive = activeItemId != null ? Number(activeItemId) : NaN;
+    activeLoadedItemIdRef.current = Number.isFinite(fromHybrid)
+      ? fromHybrid
+      : Number.isFinite(fromActive)
+        ? fromActive
+        : null;
+  }, [hybridTimerData?.activeTimer?.item_id, activeItemId]);
   /** Brief yellow flash when Resolume align updates arrive via WebSocket */
   const [resolumeSyncPulse, setResolumeSyncPulse] = useState(false);
   const resolumeSyncPulseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [hybridTimerProgress, setHybridTimerProgress] = useState<{ elapsed: number; total: number }>({ elapsed: 0, total: 0 });
   const [todClockTick, setTodClockTick] = useState(0);
   const [clockOffset, setClockOffset] = useState<number>(0); // Offset between client and server clocks in ms
-  const activeCueForTod =
-    schedule.find(
-      (s) =>
-        s.id ===
-        Number(hybridTimerData?.activeTimer?.item_id ?? activeItemId ?? NaN)
-    ) || null;
-  const rosClockTimerMode = resolveRosTimerDisplayMode(activeCueForTod);
-  const showTodOnClock = rosClockTimerMode === 'timeOfDay' || rosClockTimerMode === 'todOnly';
-  const rosClockTodBadge = showTodOnClock
-    ? rosClockTimerMode === 'todOnly'
-      ? {
-          label: 'TOD ONLY',
-          title: 'Timer page is Time of Day only — displays show wall clock, no countdown or progress bar',
-        }
-      : {
-          label: 'TOD',
-          title: 'Timer page is Time of Day — displays show wall clock plus remaining time and progress bar',
-        }
-    : null;
   const rosClockWallTime = useMemo(() => {
     if (!showTodOnClock) return '';
     return getSyncedNow(clockOffset).toLocaleTimeString('en-US', {
-      timeZone: resolveShowTimezone(eventTimezone),
+      timeZone: resolveShowTimezone(calendarTimezoneRef.current, eventTimezone),
       hour12: true,
       hour: 'numeric',
       minute: '2-digit',
@@ -912,24 +2077,67 @@ const RunOfShowPage: React.FC = () => {
     activeItemId: null as number | null,
     activeTimers: {} as Record<number, boolean>,
     loadedItems: {} as Record<number, boolean>,
-    completedCues: {} as Record<number, boolean>,
     timerProgress: {} as Record<number, { elapsed: number; total: number; startedAt: Date | null }>,
-    schedule: [] as typeof schedule,
+    schedule: [] as any[],
     eventId: null as string | undefined,
     userId: null as string | undefined,
     userName: '',
     userRole: 'OPERATOR' as string,
+    completedCues: {} as Record<number, boolean>,
     clockOffset: 0,
   });
   const [showMenuDropdown, setShowMenuDropdown] = useState(false);
   const [showImportExportSubmenu, setShowImportExportSubmenu] = useState(false);
+  const [importExportGroup, setImportExportGroup] = useState<'export' | 'import' | null>(null);
   const [showOperatorActionsSubmenu, setShowOperatorActionsSubmenu] = useState(false);
+  const [showPowerPointSubmenu, setShowPowerPointSubmenu] = useState(false);
+  const [showReportsSubmenu, setShowReportsSubmenu] = useState(false);
   const [fullScreenTimerWindow, setFullScreenTimerWindow] = useState<Window | null>(null);
   const [clockWindow, setClockWindow] = useState<Window | null>(null);
+  const [dsmClockWindow, setDsmClockWindow] = useState<Window | null>(null);
   const [pinNotesWindow, setPinNotesWindow] = useState<Window | null>(null);
   const [pinNotesColumns, setPinNotesColumns] = useState<{ type: 'notes' | 'custom' | 'cue'; id: string; name: string }[]>([]);
   const [showPinNotesColumnModal, setShowPinNotesColumnModal] = useState(false);
+  const [showComplaintLineModal, setShowComplaintLineModal] = useState(false);
+  const [showPreFlightChecklistModal, setShowPreFlightChecklistModal] = useState(false);
+  const [preflightProgress, setPreflightProgress] = useState<{
+    total: number;
+    checked: number;
+    complete: boolean;
+  } | null>(null);
   const [showMessagesModal, setShowMessagesModal] = useState(false);
+  const [showOperatorCountdownModal, setShowOperatorCountdownModal] = useState(false);
+  const [operatorCountdownLive, setOperatorCountdownLive] = useState(false);
+  const [, setOperatorCountdownTick] = useState(0);
+  const operatorTimerWindowRef = useRef<Window | null>(null);
+
+  const openOperatorTimerPopout = () => {
+    if (!event?.id) return;
+    if (currentUserRole === 'VIEWER') {
+      alert('Viewers cannot send operator timers. Change role to EDITOR or OPERATOR.');
+      return;
+    }
+    const params = new URLSearchParams({
+      eventId: event.id,
+    });
+    if (user?.id) params.set('userId', user.id);
+    if (user?.full_name || user?.email) {
+      params.set('userName', user.full_name || user.email || '');
+    }
+    if (currentUserRole) params.set('userRole', currentUserRole);
+    const url = `${window.location.origin}/operator-timer?${params.toString()}`;
+    const existing = operatorTimerWindowRef.current;
+    if (existing && !existing.closed) {
+      existing.focus();
+      return;
+    }
+    const win = window.open(
+      url,
+      'rosOperatorTimer',
+      'width=440,height=720,menubar=no,toolbar=no,location=no,status=no,scrollbars=yes,resizable=yes'
+    );
+    operatorTimerWindowRef.current = win;
+  };
   const [messageText, setMessageText] = useState('');
   const [messageFlashing, setMessageFlashing] = useState(false);
   const [messageEnabled, setMessageEnabled] = useState(false);
@@ -938,7 +2146,19 @@ const RunOfShowPage: React.FC = () => {
   const [showDisplayModal, setShowDisplayModal] = useState(false);
   const [showViewersModal, setShowViewersModal] = useState(false);
   const [showDisconnectedByAdminModal, setShowDisconnectedByAdminModal] = useState(false);
+  /** null = still connecting / unknown */
+  const [socketLiveConnected, setSocketLiveConnected] = useState<boolean | null>(null);
+  const [showSocketPresenceAlert, setShowSocketPresenceAlert] = useState(false);
+  const [socketPresenceAlertDismissed, setSocketPresenceAlertDismissed] = useState(false);
+  /** Admin-only: force-show alert UI without dropping the real socket */
+  const [socketPresenceAlertTestPreview, setSocketPresenceAlertTestPreview] = useState(false);
+  const [socketReconnectNonce, setSocketReconnectNonce] = useState(0);
+  const socketConnectedAtRef = useRef<number | null>(null);
+  const socketWatchStartedAtRef = useRef<number>(Date.now());
   const [showBackupModal, setShowBackupModal] = useState(false);
+  const [showNameBackupModal, setShowNameBackupModal] = useState(false);
+  const [manualBackupName, setManualBackupName] = useState('');
+  const [manualBackupSaving, setManualBackupSaving] = useState(false);
   const [showExcelImportModal, setShowExcelImportModal] = useState(false);
   const [showAgendaImportModal, setShowAgendaImportModal] = useState(false);
   const [showCSVImportModal, setShowCSVImportModal] = useState(false);
@@ -948,43 +2168,222 @@ const RunOfShowPage: React.FC = () => {
   const [publicBulkSelectedIds, setPublicBulkSelectedIds] = useState<number[]>([]);
   const [showMoveRowsModal, setShowMoveRowsModal] = useState(false);
   const [showCueReorderModal, setShowCueReorderModal] = useState(false);
-  const [tempNotesHtml, setTempNotesHtml] = useState('');
-  const [tempNotesVoCues, setTempNotesVoCues] = useState<VoCue[]>([]);
-  const tempNotesVoCuesRef = useRef<VoCue[]>([]);
-  tempNotesVoCuesRef.current = tempNotesVoCues;
   const [moveRowsStep, setMoveRowsStep] = useState<1 | 2>(1);
   const [moveRowsSelectedIds, setMoveRowsSelectedIds] = useState<Set<number>>(new Set());
   const [moveRowsTargetPosition, setMoveRowsTargetPosition] = useState(0); // 0-based index in movable parent list (insert after this index)
   const [backups, setBackups] = useState<BackupData[]>([]);
+  const [backupSearchTerm, setBackupSearchTerm] = useState('');
+  const [backupDateFilter, setBackupDateFilter] = useState('');
+  const [backupSortOrder, setBackupSortOrder] = useState<'newest' | 'oldest' | 'event' | 'type'>('newest');
   const [backupStats, setBackupStats] = useState({
     totalBackups: 0,
     lastBackup: null as string | null,
     autoBackups: 0,
     manualBackups: 0
   });
+  const AUTO_BACKUP_INTERVALS = [5, 10, 15, 30] as const;
+  const [autoBackupEnabled, setAutoBackupEnabled] = useState(false);
+  const [autoBackupIntervalMinutes, setAutoBackupIntervalMinutes] = useState<number>(10);
+  const [lastAutoBackupAt, setLastAutoBackupAt] = useState<string | null>(null);
+  const [autoBackupStatus, setAutoBackupStatus] = useState<string>('');
+  const [autoBackupHeldByOther, setAutoBackupHeldByOther] = useState<{
+    userId: string;
+    userName: string;
+    intervalMinutes: number;
+  } | null>(null);
+  const autoBackupInFlightRef = useRef(false);
+  const autoBackupEnabledRef = useRef(false);
+  useEffect(() => {
+    autoBackupEnabledRef.current = autoBackupEnabled;
+  }, [autoBackupEnabled]);
+
+  const applyAutoBackupLease = useCallback(
+    (lease: AutoBackupLease | null) => {
+      if (!user?.id) return;
+      if (lease?.active && String(lease.userId) !== String(user.id)) {
+        setAutoBackupHeldByOther({
+          userId: lease.userId,
+          userName: lease.userName || 'Someone',
+          intervalMinutes: lease.intervalMinutes || 10,
+        });
+        setAutoBackupEnabled(false);
+        return;
+      }
+      setAutoBackupHeldByOther(null);
+      if (lease?.active && String(lease.userId) === String(user.id)) {
+        if (
+          AUTO_BACKUP_INTERVALS.includes(
+            lease.intervalMinutes as (typeof AUTO_BACKUP_INTERVALS)[number]
+          )
+        ) {
+          setAutoBackupIntervalMinutes(lease.intervalMinutes);
+        }
+        setAutoBackupEnabled(true);
+      }
+    },
+    [user?.id]
+  );
+
+  const enableAutoBackup = useCallback(async () => {
+    if (!event?.id || !user?.id || currentUserRole === 'VIEWER') return;
+    const result = await NeonBackupService.claimAutoBackupLease(
+      event.id,
+      user.id,
+      user.full_name || user.email || 'Someone',
+      autoBackupIntervalMinutes
+    );
+    if (result.ok) {
+      applyAutoBackupLease(result.lease);
+      setAutoBackupStatus(`Auto every ${autoBackupIntervalMinutes} min`);
+    } else {
+      applyAutoBackupLease(result.lease);
+      setAutoBackupStatus(result.error || 'Auto already enabled by someone else');
+    }
+  }, [
+    event?.id,
+    user?.id,
+    user?.full_name,
+    user?.email,
+    currentUserRole,
+    autoBackupIntervalMinutes,
+    applyAutoBackupLease,
+  ]);
+
+  const disableAutoBackup = useCallback(async () => {
+    if (!event?.id || !user?.id) {
+      setAutoBackupEnabled(false);
+      return;
+    }
+    setAutoBackupEnabled(false);
+    try {
+      await NeonBackupService.releaseAutoBackupLease(event.id, user.id);
+      setAutoBackupHeldByOther(null);
+      setAutoBackupStatus('');
+    } catch (err) {
+      console.warn('Failed to release auto-backup lease:', err);
+    }
+  }, [event?.id, user?.id]);
+
   const [showRestorePreview, setShowRestorePreview] = useState(false);
   const [selectedBackup, setSelectedBackup] = useState<BackupData | null>(null);
   const [isPageVisible, setIsPageVisible] = useState(true);
   const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
   const [isForcingClockSync, setIsForcingClockSync] = useState(false);
-  const [visibleColumns, setVisibleColumns] = useState({
-    start: true,
-    programType: true,
-    duration: true,
-    segmentName: true,
-    shotType: true,
-    pptQA: true,
-    recording: true,
-    notes: true,
-    assets: true,
-    participants: false, // 👈 hidden now,
-    speakers: true,
-    public: true,
-    timer: true,
-    custom: true
+  const [visibleColumns, setVisibleColumns] = useState<RosVisibleColumns>(() => loadRosVisibleColumns());
+  const [accountPrefsReady, setAccountPrefsReady] = useState(false);
+  /** When true, Filter View syncs to Neon for this user across events/devices. */
+  const [filterViewSyncToAccount, setFilterViewSyncToAccount] = useState(
+    () => loadFilterViewAccountSync() === true
+  );
+  const skipAccountPrefsSaveRef = useRef(false);
+  const portableColumnOrderRef = useRef<string[] | null>(null);
+  useEffect(() => {
+    saveRosVisibleColumns(visibleColumns);
+  }, [visibleColumns]);
+  /** When true, Start sits fixed beside CUE (outside horizontal scroll). */
+  const [stickyStartColumn, setStickyStartColumn] = useState(() => {
+    try {
+      const raw = localStorage.getItem('rosStickyStartColumn');
+      if (raw === null) return true;
+      return raw === 'true';
+    } catch {
+      return true;
+    }
   });
+  useEffect(() => {
+    try {
+      localStorage.setItem('rosStickyStartColumn', stickyStartColumn ? 'true' : 'false');
+    } catch {
+      /* ignore */
+    }
+  }, [stickyStartColumn]);
+  const startPinnedBesideCue = stickyStartColumn && visibleColumns.start;
+  /** Columns passed into the scrollable ScheduleRow (Start omitted when pinned). */
+  const scrollVisibleColumnsBase = useMemo(
+    () => (startPinnedBesideCue ? { ...visibleColumns, start: false } : visibleColumns),
+    [startPinnedBesideCue, visibleColumns]
+  );
+
+  const [columnOrder, setColumnOrder] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem(ROS_COLUMN_ORDER_STORAGE_KEY);
+      return normalizeColumnOrder(raw ? JSON.parse(raw) : null);
+    } catch {
+      return normalizeColumnOrder(null);
+    }
+  });
+  const [columnDragKey, setColumnDragKey] = useState<string | null>(null);
+
+  // Keep order in sync when custom columns are added/removed; persist preference.
+  useEffect(() => {
+    const customIds = customColumns.map((c) => c.id);
+    setColumnOrder((prev) => {
+      const next = normalizeColumnOrder(prev, customIds);
+      if (next.length === prev.length && next.every((k, i) => k === prev[i])) {
+        return prev;
+      }
+      return next;
+    });
+  }, [customColumns]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(ROS_COLUMN_ORDER_STORAGE_KEY, JSON.stringify(columnOrder));
+    } catch {
+      /* ignore */
+    }
+  }, [columnOrder]);
+
+  const scrollColumnFlexOrder = useMemo(() => columnFlexOrderMap(columnOrder), [columnOrder]);
+  const colFlex = useCallback(
+    (key: string) => scrollColumnFlexOrder[key] ?? 999,
+    [scrollColumnFlexOrder]
+  );
+  const colBox = useCallback(
+    (width: number, key: string) => scrollColumnBoxStyle(width, colFlex(key)),
+    [colFlex]
+  );
+
+  const moveScrollColumn = useCallback((fromIndex: number, toIndex: number) => {
+    setColumnOrder((prev) => moveColumnInOrder(prev, fromIndex, toIndex));
+  }, []);
+
+  const resetScrollColumnOrder = useCallback(() => {
+    setColumnOrder(normalizeColumnOrder(null, customColumns.map((c) => c.id)));
+  }, [customColumns]);
+
   const [visibleCustomColumns, setVisibleCustomColumns] = useState<Record<string, boolean>>({});
-  
+
+  // Apply saved custom-column visibility (by name) when columns load; persist toggles for all events.
+  useEffect(() => {
+    if (!customColumns.length) return;
+    setVisibleCustomColumns((prev) => {
+      const fromPrefs = visibleCustomColumnsFromNames(customColumns);
+      const next: Record<string, boolean> = {};
+      let changed = false;
+      for (const col of customColumns) {
+        if (Object.prototype.hasOwnProperty.call(prev, col.id)) {
+          next[col.id] = prev[col.id] !== false;
+        } else {
+          next[col.id] = fromPrefs[col.id] !== false;
+          changed = true;
+        }
+        if (prev[col.id] !== next[col.id]) changed = true;
+      }
+      for (const id of Object.keys(prev)) {
+        if (!customColumns.some((c) => c.id === id)) changed = true;
+      }
+      return changed || Object.keys(prev).length !== Object.keys(next).length ? next : prev;
+    });
+  }, [customColumns]);
+
+  useEffect(() => {
+    if (!customColumns.length) return;
+    saveRosVisibleCustomByName(
+      customColumnVisibilityToNames(customColumns, visibleCustomColumns)
+    );
+  }, [visibleCustomColumns, customColumns]);
+
   // Column widths state
   const [columnWidths, setColumnWidths] = useState({
     start: 128, // w-32 = 128px
@@ -993,8 +2392,9 @@ const RunOfShowPage: React.FC = () => {
     segmentName: 320, // w-80 = 320px
     shotType: 192, // w-48 = 192px
     pptQA: 192, // w-48 = 192px
-    recording: 88,
+    recording: 100,
     notes: 384, // w-96 = 384px
+    vog: 100,
     assets: 192, // w-48 = 192px
     participants: 256, // w-64 = 256px
     speakers: 384, // w-96 = 384px (same as notes)
@@ -1015,6 +2415,48 @@ const RunOfShowPage: React.FC = () => {
       const next = prev === 'normal' ? 'small' : prev === 'small' ? 'hidden' : 'normal';
       const key = `rowNumberDisplayMode_${event?.id || 'default'}`;
       if (typeof localStorage !== 'undefined') localStorage.setItem(key, next);
+      return next;
+    });
+  };
+
+  // Start column: click header to toggle h:mm vs h:mm:ss
+  const [startTimeDisplayMode, setStartTimeDisplayMode] = useState<StartTimeDisplayMode>(() => {
+    try {
+      const saved = localStorage.getItem('rosStartTimeDisplayMode');
+      return saved === 'hms' ? 'hms' : 'hm';
+    } catch {
+      return 'hm';
+    }
+  });
+  const toggleStartTimeDisplayMode = () => {
+    setStartTimeDisplayMode((prev) => {
+      const next = cycleStartTimeDisplayMode(prev);
+      try {
+        localStorage.setItem('rosStartTimeDisplayMode', next);
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  };
+
+  // Segment Name: click header to toggle single-line truncate vs multi-line wrap
+  const [segmentNameDisplayMode, setSegmentNameDisplayMode] = useState<SegmentNameDisplayMode>(() => {
+    try {
+      const saved = localStorage.getItem('rosSegmentNameDisplayMode');
+      return saved === 'wrap' ? 'wrap' : 'single';
+    } catch {
+      return 'single';
+    }
+  });
+  const toggleSegmentNameDisplayMode = () => {
+    setSegmentNameDisplayMode((prev) => {
+      const next = cycleSegmentNameDisplayMode(prev);
+      try {
+        localStorage.setItem('rosSegmentNameDisplayMode', next);
+      } catch {
+        /* ignore */
+      }
       return next;
     });
   };
@@ -1053,44 +2495,6 @@ const RunOfShowPage: React.FC = () => {
 
   const { viewers, setViewers } = useActiveViewers();
 
-  // Scroll to active item when activeItemId changes and follow is enabled
-  useEffect(() => {
-    if (isFollowEnabled && activeItemId) {
-      // Small delay to ensure DOM is updated
-      setTimeout(() => {
-        // Find the active row element
-        const activeRow = document.querySelector(`[data-item-id="${activeItemId}"]`);
-        if (activeRow) {
-          // Calculate the row's position relative to the document
-          const rowRect = activeRow.getBoundingClientRect();
-          const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
-          const rowTop = rowRect.top + scrollTop;
-          
-          // Find the column headers to calculate offset
-          const columnHeaders = document.querySelector('#main-scroll-container .h-24');
-          let headerHeight = 100; // Default fallback
-          
-          if (columnHeaders) {
-            const headerRect = columnHeaders.getBoundingClientRect();
-            headerHeight = headerRect.height + 20; // Add small gap
-          }
-          
-          // Calculate scroll position to keep row visible below headers
-          const extraOffset = 230; // Position the row nicely on screen
-          const targetScrollPosition = rowTop - headerHeight - extraOffset;
-          
-          // Scroll to the calculated position
-          window.scrollTo({
-            top: Math.max(0, targetScrollPosition), // Don't scroll above the top
-            behavior: 'smooth'
-          });
-          
-          console.log('📜 Follow: Scrolled to active item:', activeItemId, 'position:', targetScrollPosition);
-        }
-      }, 150); // Slightly longer delay to ensure DOM is fully updated
-    }
-  }, [activeItemId, isFollowEnabled]);
-  
   // Track stopped items for inactive styling
   const [stoppedItems, setStoppedItems] = useState<Set<number>>(new Set());
   
@@ -1203,6 +2607,24 @@ const RunOfShowPage: React.FC = () => {
   const RESOLUME_RUNNING_ROW_NUM_CLASS = 'bg-yellow-400/35 border-2 border-yellow-300';
 
   const hybridSecondaryTimer = enrichSubCueTimer(hybridTimerData?.secondaryTimer);
+  const hybridActiveTimer = enrichExternalSyncTimer(hybridTimerData?.activeTimer);
+  const liveOperatorCountdown =
+    hybridTimerData?.operatorCountdown?.is_active && hybridTimerData?.operatorCountdown?.is_running
+      ? hybridTimerData.operatorCountdown
+      : null;
+  /** Same top-right secondary line style as indented sub-timers (violet). */
+  const renderOperatorCountdownTopLine = () => {
+    if (!liveOperatorCountdown) return null;
+    const label = liveOperatorCountdown.cue_display || 'Operator Timer';
+    const time = formatOperatorCountdownTime(
+      operatorCountdownRemaining(liveOperatorCountdown, clockOffset)
+    );
+    return (
+      <div className="mt-0.5 text-lg font-bold whitespace-nowrap text-violet-400">
+        {`${label} - ${time}`}
+      </div>
+    );
+  };
 
   const itemMatchesTimerRow = (itemId: number, timer: { item_id?: unknown } | null | undefined) => {
     const tid = timer?.item_id;
@@ -1214,10 +2636,85 @@ const RunOfShowPage: React.FC = () => {
     );
   };
 
+  /** Fields that change schedule row colors (not per-second elapsed). */
+  const timerRowHighlightSignature = (timer: any) => {
+    if (!timer) return '';
+    return [
+      timer.item_id,
+      timer.is_running ? 1 : 0,
+      timer.timer_state ?? '',
+      timer.is_active === false ? 0 : 1,
+      timer.resolume_state ?? '',
+      timer.mitti_state ?? '',
+      timer.avplayout_state ?? '',
+      timer.time_source ?? '',
+      timer.user_id ?? '',
+      timer.user_name ?? '',
+    ].join('|');
+  };
+
+  /**
+   * True when hybrid activeTimer/secondaryTimer must update for load/run/stop/align.
+   * Elapsed-only ticks return false — countdown reads timerProgress instead.
+   */
+  const timerNeedsHybridStateUpdate = (prev: any, next: any) => {
+    if (!prev && next) return true;
+    if (prev && !next) return true;
+    if (!prev || !next) return false;
+    if (timerRowHighlightSignature(prev) !== timerRowHighlightSignature(next)) return true;
+    if (prev.started_at !== next.started_at) return true;
+    if (prev.duration_seconds !== next.duration_seconds) return true;
+    if (
+      next.resolume_align_seq != null &&
+      next.resolume_align_seq !== prev.resolume_align_seq
+    ) {
+      return true;
+    }
+    if (
+      next.mitti_align_seq != null &&
+      next.mitti_align_seq !== prev.mitti_align_seq
+    ) {
+      return true;
+    }
+    return false;
+  };
+
   const normalizeScheduleItemId = (id: unknown): number | null => {
     if (id == null || id === '') return null;
     const n = typeof id === 'number' ? id : parseInt(String(id), 10);
     return Number.isFinite(n) ? n : null;
+  };
+
+  /** Drop currently running cues from a completed map (DB can still list them). */
+  const stripLiveCuesFromCompletedMap = (
+    map: Record<number, boolean>,
+    extraIds: Array<number | null | undefined> = []
+  ): Record<number, boolean> => {
+    const next = { ...map };
+    const liveIds = new Set<number>();
+    Object.entries(activeTimersRef.current).forEach(([key, on]) => {
+      if (!on) return;
+      const id = normalizeScheduleItemId(key);
+      if (id != null) liveIds.add(id);
+    });
+    // Only the actively running hybrid timer — not merely loaded (stopped cues stay completed)
+    const hybrid = hybridTimerData?.activeTimer;
+    if (
+      hybrid &&
+      hybrid.is_active !== false &&
+      (hybrid.is_running || hybrid.timer_state === 'running')
+    ) {
+      const id = normalizeScheduleItemId(hybrid.item_id);
+      if (id != null) liveIds.add(id);
+    }
+    extraIds.forEach((id) => {
+      const n = normalizeScheduleItemId(id);
+      if (n != null) liveIds.add(n);
+    });
+    liveIds.forEach((id) => {
+      delete next[id];
+    });
+    return next;
   };
 
   const isItemCompleted = (itemId: number) =>
@@ -1226,27 +2723,92 @@ const RunOfShowPage: React.FC = () => {
     );
 
   const COMPLETED_ROW_CLASS =
-    'bg-purple-950/90 ring-2 ring-inset ring-purple-400/45';
+    'bg-slate-950 text-slate-400 ring-1 ring-inset ring-slate-700/50';
   const DELAY_BLOCK_ROW_CLASS =
     'bg-violet-950/90 ring-2 ring-inset ring-violet-400';
+  const SHOW_BREAK_ROW_CLASS =
+    'bg-cyan-950/90 ring-2 ring-inset ring-cyan-400';
 
-  const isItemDimmed = (itemId: number) =>
-    showCompletedHighlight && (isItemCompleted(itemId) || stoppedItems.has(itemId));
+  /** True only while the cue timer is actually running (not merely loaded). */
+  const isCueRunningOnStage = (itemId: number) => {
+    if (activeTimers[itemId]) return true;
+    const t = hybridTimerData?.activeTimer;
+    const liveId = normalizeScheduleItemId(t?.item_id);
+    if (liveId !== itemId) return false;
+    if (t?.is_active === false) return false;
+    return Boolean(t?.is_running || t?.timer_state === 'running');
+  };
+
+  const isItemDimmed = (itemId: number) => {
+    if (!showCompletedHighlight) return false;
+    // Only skip dimming while RUNNING. A just-stopped cue can still be "loaded"
+    // and must go straight to dimmed-complete (not a bright purple last-loaded flash).
+    if (isCueRunningOnStage(itemId)) return false;
+    return isItemCompleted(itemId) || stoppedItems.has(itemId);
+  };
   const isDelayBlock = (itemId: number) =>
     schedule.some(item => item.id === itemId && item.programType === 'Delay Block');
+  const isShowBreakRow = (itemId: number) =>
+    schedule.some((item) => item.id === itemId && isShowBreakProgramType(item.programType));
+  const isScheduleOnlyRow = (itemId: number) => isDelayBlock(itemId) || isShowBreakRow(itemId);
 
-  const getRowDimStyle = (item: { id: number; programType?: string }): React.CSSProperties => {
-    if (item.programType === 'KILLED') return { opacity: 0.7 };
-    if (isItemDimmed(item.id)) {
-      return { opacity: 0.68, filter: 'brightness(0.59) saturate(0.33)' };
+  const isHybridTimerRunning = (timer: any) =>
+    Boolean(
+      timer &&
+        timer.is_active !== false &&
+        (timer.is_running || timer.timer_state === 'running')
+    );
+
+  /** Running cue wins over a leftover loaded Delay / earlier LOAD. */
+  const followTargetId = useMemo(() => {
+    const hybrid = hybridTimerData?.activeTimer;
+    const hybridId = normalizeScheduleItemId(hybrid?.item_id);
+    const hybridRunning = isHybridTimerRunning(hybrid);
+    const runningIds = Object.keys(activeTimers)
+      .map((key) => Number(key))
+      .filter((id) => Number.isFinite(id) && activeTimers[id] && !isScheduleOnlyRow(id));
+
+    if (hybridRunning && hybridId != null && !isScheduleOnlyRow(hybridId)) {
+      return hybridId;
     }
-    return { opacity: 1 };
+    if (runningIds.length > 0) {
+      if (hybridId != null && runningIds.includes(hybridId)) return hybridId;
+      return runningIds[runningIds.length - 1];
+    }
+    if (hybridRunning && hybridId != null) return hybridId;
+    if (activeItemId != null && !isScheduleOnlyRow(activeItemId)) return activeItemId;
+    return null;
+  }, [
+    hybridTimerData?.activeTimer,
+    activeTimers,
+    activeItemId,
+    schedule,
+  ]);
+
+  const loadedUpdateWouldStealRunning = (incomingItemId: number | null) => {
+    if (incomingItemId == null) return false;
+    const hybrid = hybridTimerDataRef.current?.activeTimer;
+    const hybridId = normalizeScheduleItemId(hybrid?.item_id);
+    if (isHybridTimerRunning(hybrid) && hybridId != null && hybridId !== incomingItemId) {
+      return true;
+    }
+    return Object.entries(activeTimersRef.current).some(
+      ([key, on]) => on && Number(key) !== incomingItemId
+    );
   };
+
+  /**
+   * Completed/killed look is class + cell colors only.
+   * Never use opacity/filter here — those promote per-row compositor layers and
+   * cause horizontal scroll “jello” (some rows lag behind others under scale/zoom).
+   */
+  const getRowDimStyle = (_item: { id: number; programType?: string }): React.CSSProperties => ({});
 
   const getRowContainerStyle = (
     item: {
       id: number;
       programType?: string;
+      segmentName?: string;
       notes?: string;
       speakersText?: string;
       speakers?: unknown;
@@ -1261,7 +2823,8 @@ const RunOfShowPage: React.FC = () => {
       item.speakers as string | undefined,
       item.customFields,
       customColumns,
-      item.voCues?.length ?? 0
+      item.voCues?.length ?? 0,
+      item.segmentName
     ),
     ...getRowDimStyle(item),
     ...(item.programType === 'Delay Block'
@@ -1270,35 +2833,50 @@ const RunOfShowPage: React.FC = () => {
           backgroundImage:
             'repeating-linear-gradient(135deg, rgba(167,139,250,0.14) 0, rgba(167,139,250,0.14) 10px, rgba(46,16,101,0.12) 10px, rgba(46,16,101,0.12) 20px)',
         }
-      : {}),
+      : isShowBreakProgramType(item.programType)
+        ? {
+            backgroundColor: '#083344',
+            backgroundImage:
+              'repeating-linear-gradient(135deg, rgba(34,211,238,0.14) 0, rgba(34,211,238,0.14) 10px, rgba(8,51,68,0.12) 10px, rgba(8,51,68,0.12) 20px)',
+          }
+        : {}),
     ...extra,
   });
 
   const getRowContainerClass = (itemId: number, index: number) =>
-    isDelayBlock(itemId) && !isItemDimmed(itemId)
+    isShowBreakRow(itemId) && !isItemDimmed(itemId)
+      ? SHOW_BREAK_ROW_CLASS
+      : isDelayBlock(itemId) && !isItemDimmed(itemId)
       ? DELAY_BLOCK_ROW_CLASS
       : rowClassNames.get(itemId) || (index % 2 === 0 ? 'bg-slate-800' : 'bg-slate-900');
 
-  /** CUE + Timer columns: neutral unless the row is completed/stopped. */
-  const getSideColumnRowClass = (itemId: number, index: number) =>
-    isItemDimmed(itemId)
-      ? COMPLETED_ROW_CLASS
-      : isDelayBlock(itemId)
-        ? DELAY_BLOCK_ROW_CLASS
-      : index % 2 === 0
-        ? 'bg-slate-800'
-        : 'bg-slate-900';
+  /** CUE + Timer columns: neutral unless completed/stopped, or timed marker linked to loaded parent. */
+  const getSideColumnRowClass = (itemId: number, index: number) => {
+    if (isItemDimmed(itemId)) return COMPLETED_ROW_CLASS;
+    if (isShowBreakRow(itemId)) return SHOW_BREAK_ROW_CLASS;
+    if (isDelayBlock(itemId)) return DELAY_BLOCK_ROW_CLASS;
+    const row = schedule.find((s) => s.id === itemId);
+    if (row?.isTimedMarker) {
+      if (loadedCueDependents.has(itemId)) return 'bg-amber-950 border-amber-600';
+      return 'bg-sky-950/50';
+    }
+    return index % 2 === 0 ? 'bg-slate-800' : 'bg-slate-900';
+  };
+
+  const sideLockClass = (itemId: number) =>
+    isRowLockedByOther(itemId) ? ' bg-amber-950/40 ring-2 ring-inset ring-amber-400' : '';
 
   const getSideColumnRowStyle = (item: {
     id: number;
     programType?: string;
+    segmentName?: string;
     notes?: string;
     speakersText?: string;
     speakers?: unknown;
     customFields?: Record<string, unknown>;
     voCues?: VoCue[];
   }): React.CSSProperties =>
-    isItemDimmed(item.id) || item.programType === 'Delay Block'
+    isItemDimmed(item.id) || isScheduleOnlyProgramType(item.programType)
       ? getRowContainerStyle(item)
       : {
           height: getRowHeight(
@@ -1307,7 +2885,8 @@ const RunOfShowPage: React.FC = () => {
             item.speakers as string | undefined,
             item.customFields,
             customColumns,
-            item.voCues?.length ?? 0
+            item.voCues?.length ?? 0,
+            item.segmentName
           ),
         };
 
@@ -1380,26 +2959,22 @@ const RunOfShowPage: React.FC = () => {
       duration_seconds?: number;
       resolume_state?: string;
       mitti_state?: string;
-      avplayout_state?: string;
       time_source?: string;
       is_running?: boolean;
       is_active?: boolean;
       resolume_align_seq?: number;
       mitti_align_seq?: number;
-      avplayout_align_seq?: number;
     } | null | undefined,
     next: {
       started_at?: string;
       duration_seconds?: number;
       resolume_state?: string;
       mitti_state?: string;
-      avplayout_state?: string;
       time_source?: string;
       is_running?: boolean;
       is_active?: boolean;
       resolume_align_seq?: number;
       mitti_align_seq?: number;
-      avplayout_align_seq?: number;
     }
   ) => {
     if (!isResolumeSynced(next) || !next.is_running || !next.is_active) return false;
@@ -1414,12 +2989,6 @@ const RunOfShowPage: React.FC = () => {
     if (
       next.mitti_align_seq != null &&
       next.mitti_align_seq !== prev.mitti_align_seq
-    ) {
-      return true;
-    }
-    if (
-      next.avplayout_align_seq != null &&
-      next.avplayout_align_seq !== prev.avplayout_align_seq
     ) {
       return true;
     }
@@ -1442,21 +3011,11 @@ const RunOfShowPage: React.FC = () => {
 
   const isResolumeSyncPulseActive = Boolean(
     resolumeSyncPulse &&
-      isResolumeSynced(hybridTimerData?.activeTimer) &&
-      hybridTimerData?.activeTimer?.is_running
+      isResolumeSynced(hybridActiveTimer) &&
+      hybridActiveTimer?.is_running
   );
 
-  const formatCueDisplay = (cue: string | number | undefined) => {
-    if (!cue && cue !== 0) return 'CUE';
-    // Convert to string if it's a number
-    const cueStr = String(cue);
-    // If cue already has proper spacing, return as is
-    if (cueStr.includes('CUE ')) return cueStr;
-    // If cue is like "CUE2", convert to "CUE 2"
-    if (cueStr.match(/^CUE\d+$/)) return cueStr.replace(/^CUE(\d+)$/, 'CUE $1');
-    // For plain numbers or other formats, add "CUE " prefix
-    return `CUE ${cueStr}`;
-  };
+  const formatCueDisplay = (cue: string | number | undefined) => formatCueNumber(cue);
   // Helper function to convert HTML to plain text with basic markdown-style formatting
   const cleanNotesForCSV = (htmlString: string): string => {
     if (!htmlString) return '';
@@ -1610,7 +3169,29 @@ const RunOfShowPage: React.FC = () => {
   
   // Toast notification state
   const [showTimeToast, setShowTimeToast] = useState(false);
-  const [timeToastEnabled, setTimeToastEnabled] = useState(true); // New state to track if toast is enabled
+  const [timeToastEnabled, setTimeToastEnabled] = useState(false); // Off by default; toggle in Operator Actions
+  /** Event-wide VO/BGM popups. Default on; switch lives in the VO/BGM editor. */
+  const [voAlertsEnabled, setVoAlertsEnabled] = useState(true);
+  const voAlertsEnabledRef = useRef(true);
+  /** Per event. Hidden until Operator Actions turns the Mitti column on. */
+  const [mittiWatchColumnEnabled, setMittiWatchColumnEnabled] = useState(false);
+  /** Per event. Hidden until Operator Actions turns the AV column on. */
+  const [avWatchColumnEnabled, setAvWatchColumnEnabled] = useState(false);
+  /** Per event. Hidden until Operator Actions turns the DSM column on. */
+  const [dsmColumnEnabled, setDsmColumnEnabled] = useState(false);
+  const showMittiWatchColumn = mittiWatchColumnEnabled && visibleColumns.mittiWatch !== false;
+  const showAvWatchColumn = avWatchColumnEnabled && visibleColumns.avWatch !== false;
+  // Operator Actions is source of truth; force-show even if Filter Columns hid DSM.
+  const showDsmColumn = dsmColumnEnabled;
+  const scrollVisibleColumns = useMemo(
+    () => ({
+      ...scrollVisibleColumnsBase,
+      mittiWatch: showMittiWatchColumn,
+      avWatch: showAvWatchColumn,
+      dsm: showDsmColumn,
+    }),
+    [scrollVisibleColumnsBase, showMittiWatchColumn, showAvWatchColumn, showDsmColumn]
+  );
   const [unsyncedCount, setUnsyncedCount] = useState(0);
   const [timeStatus, setTimeStatus] = useState<'early' | 'late' | 'on-time' | null>(null);
   const [timeDifference, setTimeDifference] = useState(0);
@@ -1633,27 +3214,92 @@ const RunOfShowPage: React.FC = () => {
   const localEditingRowIdRef = useRef<number | null>(null);
   const rowLockHeartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const modalLockRowIdRef = useRef<number | null>(null);
+  /** Row + fields owned by an open Notes/Speakers/Assets/VO/Participants editor. */
+  const openFieldEditorRef = useRef<{ rowId: number; fields: string[] } | null>(null);
   const releaseRowEditLockRef = useRef<(rowId: number) => void>(() => {});
   const finishEditingSessionRef = useRef<() => void>(() => {});
   const startCountdownTimerRef = useRef<() => void>(() => {});
   const blurFocusedScheduleCellRef = useRef<(rowId?: number | null) => void>(() => {});
-  /** Last schedule snapshot accepted from server (used to preserve rows locked by others on save). */
+  /** Last schedule + document version accepted from server (for safe saves / OCC). */
   const lastSyncedScheduleRef = useRef<any[]>([]);
   const scheduleVersionRef = useRef<number | null>(null);
-  const lastAcceptedUpdatedAtRef = useRef<number>(0);
-  const cloudConnectedRef = useRef(false);
-  const lastCloudSaveErrorAlertAtRef = useRef(0);
+  /** One-shot: next save may persist [] over a non-empty DB (intentional Delete All). */
+  const allowEmptyScheduleOnceRef = useRef(false);
   const isUserEditingRef = useRef(false);
   const scheduleRef = useRef(schedule);
   const customColumnsRef = useRef(customColumns);
   const eventNameRef = useRef(eventName);
   const masterStartTimeRef = useRef(masterStartTime);
   const dayStartTimesRef = useRef(dayStartTimes);
+  const completedDaysRef = useRef(completedDays);
   const indentedCuesRef = useRef(indentedCues);
+
+  /** Grey-out a stopped cue + its indented children (local Stop and Companion/WS Stop). */
+  const markCueGroupCompleted = (itemId: number | null | undefined) => {
+    const id = normalizeScheduleItemId(itemId);
+    if (id == null) return;
+    const ids = [id];
+    const list = scheduleRef.current || schedule;
+    const idx = list.findIndex((s: { id: number }) => s.id === id);
+    if (idx !== -1) {
+      for (let i = idx + 1; i < list.length; i++) {
+        if (isIndentedScheduleItem(list[i], indentedCuesRef.current)) ids.push(list[i].id);
+        else break;
+      }
+    }
+    setCompletedCues((prev) => {
+      const next = { ...prev };
+      ids.forEach((cueId) => { next[cueId] = true; });
+      return next;
+    });
+    setStoppedItems((prev) => {
+      const next = new Set(prev);
+      ids.forEach((cueId) => next.add(cueId));
+      return next;
+    });
+    setLastLoadedCueId((prev) => (prev != null && ids.includes(prev) ? null : prev));
+    if (event?.id && user?.id) {
+      ids.forEach((cueId) => {
+        const item = list.find((s: { id: number }) => s.id === cueId);
+        void DatabaseService.markCueCompleted(
+          event.id,
+          cueId,
+          item?.customFields?.cue || 'CUE',
+          user.id,
+          user.full_name || user.email || 'Unknown User',
+          currentUserRole || 'VIEWER'
+        ).catch((err) => console.warn('⚠️ Failed to persist completed cue:', cueId, err));
+      });
+    }
+  };
+
+  /** When a cue starts running, every earlier same-day cue is done — not only the one we Stopped. */
+  const completePriorCuesOnDay = (liveItemId: number | null | undefined) => {
+    const liveId = normalizeScheduleItemId(liveItemId);
+    if (liveId == null) return;
+    const list = scheduleRef.current || schedule;
+    const liveIdx = list.findIndex((s: { id: number }) => s.id === liveId);
+    if (liveIdx <= 0) return;
+    const liveDay = Number(list[liveIdx].day || 1);
+    for (let i = 0; i < liveIdx; i++) {
+      if (Number(list[i].day || 1) !== liveDay) continue;
+      markCueGroupCompleted(list[i].id);
+    }
+  };
   const trackWasDurationsRef = useRef(trackWasDurations);
   const originalDurationsRef = useRef(originalDurations);
   const eventTimezoneRef = useRef(eventTimezone);
   const flushSaveToAPIRef = useRef<(() => Promise<void>) | null>(null);
+  /** Remote schedule/settings applies must not autosave the whole rundown. */
+  const applyingRemoteRunOfShowRef = useRef(false);
+  /** One automatic retry after a version conflict so a finished row is not dropped. */
+  const saveRetryRef = useRef(false);
+  /** Settings/column edits must still save when no cue row changed. */
+  const settingsSaveRequestedRef = useRef(false);
+  /** Rows this browser changed, kept even if a sync snapshot arrives before the save lands. */
+  const dirtyRowSnapshotsRef = useRef<Map<number, any>>(new Map());
+  /** Add, delete, or reorder — those still save the cue list. */
+  const structureDirtyRef = useRef(false);
 
   useEffect(() => {
     rowLocksRef.current = rowLocks;
@@ -1663,11 +3309,150 @@ const RunOfShowPage: React.FC = () => {
     isUserEditingRef.current = isUserEditing;
   }, [isUserEditing]);
 
-  useEffect(() => { scheduleRef.current = schedule; }, [schedule]);
+  useEffect(() => {
+    voAlertsEnabledRef.current = voAlertsEnabled;
+  }, [voAlertsEnabled]);
+
+  useEffect(() => {
+    const prev = scheduleRef.current || [];
+    if (applyingRemoteRunOfShowRef.current || prev.length === 0) {
+      scheduleRef.current = schedule;
+      return;
+    }
+    const prevIds = prev.map((item: any) => Number(item.id)).join(',');
+    const nextIds = (schedule || []).map((item: any) => Number(item.id)).join(',');
+    if (prevIds !== nextIds) {
+      structureDirtyRef.current = true;
+    } else {
+      const prevById = new Map(prev.map((item: any) => [Number(item.id), item]));
+      for (const item of schedule || []) {
+        const id = Number(item.id);
+        const old = prevById.get(id);
+        if (!old || scheduleItemSignature(old) !== scheduleItemSignature(item)) {
+          const prevSnap = dirtyRowSnapshotsRef.current.get(id);
+          dirtyRowSnapshotsRef.current.set(
+            id,
+            prevSnap ? mergeNewerCheckboxFields(item, prevSnap) : item
+          );
+        }
+      }
+    }
+    scheduleRef.current = schedule;
+  }, [schedule]);
   useEffect(() => { customColumnsRef.current = customColumns; }, [customColumns]);
+
+  // Load account-level filter prefs from Neon only when account sync is on
+  // (or first visit that already has Neon prefs). Otherwise keep browser-local.
+  useEffect(() => {
+    const userId = user?.id;
+    if (!userId) {
+      setAccountPrefsReady(true);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const localSync = loadFilterViewAccountSync();
+        // Explicitly browser-only: do not pull Neon over localStorage.
+        if (localSync === false) {
+          if (!cancelled) {
+            setFilterViewSyncToAccount(false);
+            setAccountPrefsReady(true);
+          }
+          return;
+        }
+
+        const prefs = await fetchUserUiPreferences(userId);
+        if (cancelled) return;
+
+        const hasAccountPrefs = rosUiPreferencesHasContent(prefs);
+        // Sync on if user opted in locally, or first visit with existing account prefs.
+        const shouldApplyAccount = localSync === true || (localSync === null && hasAccountPrefs);
+
+        if (shouldApplyAccount && hasAccountPrefs && prefs) {
+          skipAccountPrefsSaveRef.current = true;
+          setFilterViewSyncToAccount(true);
+          saveFilterViewAccountSync(true);
+          applyRosUiPreferencesToLocal(prefs);
+          if (prefs.visibleColumns) {
+            setVisibleColumns({ ...DEFAULT_ROS_VISIBLE_COLUMNS, ...prefs.visibleColumns });
+          }
+          if (typeof prefs.stickyStartColumn === 'boolean') {
+            setStickyStartColumn(prefs.stickyStartColumn);
+          }
+          if (Array.isArray(prefs.columnOrder)) {
+            portableColumnOrderRef.current = prefs.columnOrder;
+            setColumnOrder(
+              fromPortableColumnOrder(prefs.columnOrder, customColumnsRef.current || [])
+            );
+          }
+          if (prefs.visibleCustomByName) {
+            saveRosVisibleCustomByName(prefs.visibleCustomByName);
+            setVisibleCustomColumns(
+              visibleCustomColumnsFromNames(customColumnsRef.current || [], prefs.visibleCustomByName)
+            );
+          }
+        } else if (localSync === true) {
+          setFilterViewSyncToAccount(true);
+        } else {
+          setFilterViewSyncToAccount(false);
+          saveFilterViewAccountSync(false);
+        }
+      } catch (err) {
+        console.warn('Could not load account UI preferences from Neon:', err);
+      } finally {
+        if (!cancelled) setAccountPrefsReady(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id]);
+
+  // When custom columns arrive, re-apply portable order from account prefs.
+  useEffect(() => {
+    const portable = portableColumnOrderRef.current;
+    if (portable?.length) {
+      setColumnOrder(fromPortableColumnOrder(portable, customColumns));
+    }
+  }, [customColumns]);
+
+  // Debounced save of filter prefs to Neon only when account sync is enabled.
+  // Browser-local mirror always happens via the other localStorage effects.
+  useEffect(() => {
+    if (!accountPrefsReady || !user?.id || !filterViewSyncToAccount) return;
+    if (skipAccountPrefsSaveRef.current) {
+      skipAccountPrefsSaveRef.current = false;
+      return;
+    }
+    const timer = setTimeout(() => {
+      const prefs: RosUiPreferences = {
+        ...readLocalRosUiPreferences(columnOrder, customColumns, stickyStartColumn),
+        visibleColumns,
+        visibleCustomByName: customColumnVisibilityToNames(customColumns, visibleCustomColumns),
+        stickyStartColumn,
+        columnOrder: toPortableColumnOrder(columnOrder, customColumns),
+      };
+      portableColumnOrderRef.current = prefs.columnOrder || null;
+      void saveUserUiPreferences(user.id, prefs).catch((err) => {
+        console.warn('Could not save account UI preferences to Neon:', err);
+      });
+    }, 800);
+    return () => clearTimeout(timer);
+  }, [
+    accountPrefsReady,
+    user?.id,
+    filterViewSyncToAccount,
+    visibleColumns,
+    visibleCustomColumns,
+    stickyStartColumn,
+    columnOrder,
+    customColumns,
+  ]);
   useEffect(() => { eventNameRef.current = eventName; }, [eventName]);
   useEffect(() => { masterStartTimeRef.current = masterStartTime; }, [masterStartTime]);
   useEffect(() => { dayStartTimesRef.current = dayStartTimes; }, [dayStartTimes]);
+  useEffect(() => { completedDaysRef.current = completedDays; }, [completedDays]);
   useEffect(() => { indentedCuesRef.current = indentedCues; }, [indentedCues]);
   useEffect(() => { trackWasDurationsRef.current = trackWasDurations; }, [trackWasDurations]);
   useEffect(() => { originalDurationsRef.current = originalDurations; }, [originalDurations]);
@@ -1684,47 +3469,20 @@ const RunOfShowPage: React.FC = () => {
       }
     }
     if (Array.isArray(items)) {
-      lastSyncedScheduleRef.current = items;
+      lastSyncedScheduleRef.current = applyNewerCheckboxFields(items, lastSyncedScheduleRef.current);
     }
     if (data.version != null && !Number.isNaN(Number(data.version))) {
       scheduleVersionRef.current = Number(data.version);
     }
-    if (data.updated_at) {
-      const ts = new Date(data.updated_at).getTime();
-      if (Number.isFinite(ts) && ts >= lastAcceptedUpdatedAtRef.current) {
-        lastAcceptedUpdatedAtRef.current = ts;
-      }
-    }
   }, []);
 
-  /** Reject older cloud snapshots that would clobber a newer local save. */
-  const shouldRejectStaleRemoteSchedule = useCallback((data: any) => {
-    if (!data?.updated_at) return false;
-    const remoteTs = new Date(data.updated_at).getTime();
-    if (!Number.isFinite(remoteTs)) return false;
-    if (lastAcceptedUpdatedAtRef.current <= 0) return false;
-    if (remoteTs < lastAcceptedUpdatedAtRef.current) {
-      console.log('⏭️ Skipping stale remote schedule', {
-        remote: data.updated_at,
-        accepted: new Date(lastAcceptedUpdatedAtRef.current).toISOString(),
-      });
-      return true;
-    }
-    return false;
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    void fetch('/api/connectivity-status', { cache: 'no-store' })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (cancelled || !data) return;
-        cloudConnectedRef.current =
-          data.cloudConnected === true || data.cloudMode === 'cloud-connected';
-      })
-      .catch(() => {});
-    return onCloudModeChange((payload) => {
-      cloudConnectedRef.current = payload.cloudConnected === true || payload.mode === 'cloud-connected';
+  const overlayDirtyRows = useCallback((items: any[]) => {
+    const dirty = dirtyRowSnapshotsRef.current;
+    if (!dirty || dirty.size === 0 || !Array.isArray(items)) return items;
+    return items.map((item) => {
+      const snap = dirty.get(Number(item.id));
+      if (!snap) return item;
+      return mergeNewerCheckboxFields({ ...item, ...snap }, item);
     });
   }, []);
 
@@ -1740,18 +3498,75 @@ const RunOfShowPage: React.FC = () => {
         if (lock?.userId === myId) protectIds.add(Number(rowId));
       }
     }
-    if (protectIds.size === 0) return remoteItems;
     const localById = new Map((localItems || []).map((item: any) => [Number(item.id), item]));
-    console.log('🔒 Sync merge: preserving local rows', Array.from(protectIds));
-    return remoteItems.map((remote: any) => {
+    const remoteById = new Map((remoteItems || []).map((item: any) => [Number(item.id), item]));
+    // Keep brand-new local rows (e.g. timed markers) that remote has not caught up with yet
+    for (const [id, local] of localById.entries()) {
+      if (!remoteById.has(id) && (local?.isTimedMarker || protectIds.has(id))) {
+        protectIds.add(id);
+      }
+    }
+    if (protectIds.size === 0 && localById.size === 0) return remoteItems;
+    if (protectIds.size > 0) {
+      console.log('🔒 Sync merge: preserving local rows', Array.from(protectIds));
+    }
+    const merged = (remoteItems || []).map((remote: any) => {
       const id = Number(remote.id);
       if (protectIds.has(id) && localById.has(id)) {
         return localById.get(id);
       }
+      // Keep a local timerId when remote still has none (backfill in flight)
+      const local = localById.get(id);
+      const remoteTid = typeof remote?.timerId === 'string' ? remote.timerId.trim() : '';
+      const localTid = typeof local?.timerId === 'string' ? local.timerId.trim() : '';
+      if (!remoteTid && localTid) {
+        return { ...remote, timerId: localTid };
+      }
+      // Prefer local timed-marker fields if remote is stale/missing them
+      if (local?.isTimedMarker && !remote?.isTimedMarker) {
+        return local;
+      }
+      if (local?.isTimedMarker && remote?.isTimedMarker) {
+        return {
+          ...remote,
+          ...timedMarkerPersistFields({
+            isTimedMarker: true,
+            markerTimeMode: local.markerTimeMode ?? remote.markerTimeMode,
+            markerOffsetSeconds: local.markerOffsetSeconds ?? remote.markerOffsetSeconds,
+            markerAbsoluteSeconds: local.markerAbsoluteSeconds ?? remote.markerAbsoluteSeconds,
+          }),
+          isIndented: true,
+          durationHours: 0,
+          durationMinutes: 0,
+          durationSeconds: 0,
+        };
+      }
       return remote;
     });
+    // Append local-only markers / protected rows in their local order
+    const remoteIds = new Set(merged.map((item: any) => Number(item.id)));
+    const localOnly = (localItems || []).filter(
+      (item: any) => !remoteIds.has(Number(item.id)) && protectIds.has(Number(item.id))
+    );
+    if (!localOnly.length) return merged;
+    // Insert each local-only row after its nearest prior local neighbor that exists in merged
+    let next = [...merged];
+    for (const local of localOnly) {
+      const localIdx = (localItems || []).findIndex((i: any) => Number(i.id) === Number(local.id));
+      let insertAt = next.length;
+      for (let i = localIdx - 1; i >= 0; i--) {
+        const prevId = Number(localItems[i].id);
+        const at = next.findIndex((row: any) => Number(row.id) === prevId);
+        if (at >= 0) {
+          insertAt = at + 1;
+          break;
+        }
+      }
+      next.splice(insertAt, 0, local);
+    }
+    return next;
   }, [user?.id]);
-
+  
   // Countdown timer for sync check
   const [countdown, setCountdown] = useState(20);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -1771,6 +3586,8 @@ const RunOfShowPage: React.FC = () => {
   // Function to handle user editing state
   const handleUserEditing = () => {
     console.log('✏️ User started editing - pausing sync');
+    // Sync ref immediately so unmount flush / save effects see editing even before React re-renders
+    isUserEditingRef.current = true;
     setIsUserEditing(true);
     
     // Clear existing timeout
@@ -1864,29 +3681,30 @@ const RunOfShowPage: React.FC = () => {
 
   /**
    * End of an edit session (idle timeout / modal settle):
-   * 1) flush pending save first (so cloud does not pull stale Neon)
-   * 2) brief ignore window for Railway echo race
-   * 3) unlock / blur
-   * 4) resume the sync countdown
+   * 1) unlock so other browsers clear the badge
+   * 2) blur so focus does not block the upcoming sync
+   * 3) resume the normal sync countdown
    */
-  const finishEditingSession = useCallback(() => {
-    void (async () => {
-      try {
-        await flushSaveToAPIRef.current?.();
-        markLocalMutationGuard(5000);
-      } catch (e) {
-        console.warn('⚠️ Finish edit: flush save failed', e);
-      }
-      const rowId = localEditingRowIdRef.current;
-      if (rowId != null && modalLockRowIdRef.current !== rowId) {
-        releaseRowEditLock(rowId);
-        blurFocusedScheduleCell(rowId);
-      } else {
-        blurFocusedScheduleCell(rowId ?? null);
-      }
-      setIsUserEditing(false);
-      startCountdownTimerRef.current();
-    })();
+  const finishEditingSession = useCallback(async () => {
+    try {
+      if (flushSaveToAPIRef.current) await flushSaveToAPIRef.current();
+    } catch (err) {
+      console.warn('Could not publish the row before unlocking', err);
+    }
+    if (openFieldEditorRef.current || modalLockRowIdRef.current != null) {
+      console.log('✏️ Field editor still open — keeping edit loop and row lock');
+      setIsUserEditing(true);
+      return;
+    }
+    const rowId = localEditingRowIdRef.current;
+    if (rowId != null && modalLockRowIdRef.current !== rowId) {
+      releaseRowEditLock(rowId);
+      blurFocusedScheduleCell(rowId);
+    } else {
+      blurFocusedScheduleCell(rowId ?? null);
+    }
+    setIsUserEditing(false);
+    startCountdownTimerRef.current();
   }, [releaseRowEditLock, blurFocusedScheduleCell]);
 
   finishEditingSessionRef.current = finishEditingSession;
@@ -1900,6 +3718,9 @@ const RunOfShowPage: React.FC = () => {
     setTimeout(() => {
       if (modalLockRowIdRef.current === rowId) return;
       if (localEditingRowIdRef.current !== rowId) return;
+      // Checkbox / short edits: keep the lock while "Editing - Sync Paused" is active
+      // so other browsers still show "{name} is editing" until the idle timeout.
+      if (isUserEditingRef.current) return;
       const active = document.activeElement as HTMLElement | null;
       const rowEl = document.querySelector(`[data-item-id="${rowId}"]`);
       if (rowEl && active && rowEl.contains(active)) return;
@@ -1912,18 +3733,36 @@ const RunOfShowPage: React.FC = () => {
     let activeModalRow: number | null = null;
     if (showNotesModal && editingNotesItem != null && editingNotesItem > 0) {
       activeModalRow = editingNotesItem;
-    } else if (showAssetsModal && editingAssetsItem != null && editingAssetsItem > 0) {
+    } else if (
+      showAssetsModal &&
+      editingAssetsItem != null &&
+      editingAssetsItem > 0 &&
+      !showAddModal
+    ) {
       activeModalRow = editingAssetsItem;
     } else if (showSpeakersModal && editingSpeakersItem != null && editingSpeakersItem > 0) {
       activeModalRow = editingSpeakersItem;
     } else if (showParticipantsModal && editingParticipantsItem != null && editingParticipantsItem > 0) {
       activeModalRow = editingParticipantsItem;
+    } else if (showVogModal && editingVogItemId != null && editingVogItemId > 0) {
+      activeModalRow = editingVogItemId;
     } else if (showVoModal && editingVoItemId != null && editingVoItemId > 0) {
       activeModalRow = editingVoItemId;
     }
 
     if (activeModalRow != null) {
       modalLockRowIdRef.current = activeModalRow;
+      const fields =
+        showNotesModal
+          ? ['notes', 'voCues']
+          : showVoModal
+            ? ['voCues', 'notes']
+            : showVogModal
+              ? ['vogText', 'vogVoiceId', 'vogVoiceName']
+              : showAssetsModal
+                ? ['assets']
+                : ['speakers', 'speakersText'];
+      openFieldEditorRef.current = { rowId: activeModalRow, fields };
       claimRowEditLock(activeModalRow);
       return;
     }
@@ -1931,6 +3770,7 @@ const RunOfShowPage: React.FC = () => {
     if (modalLockRowIdRef.current != null) {
       const rowId = modalLockRowIdRef.current;
       modalLockRowIdRef.current = null;
+      openFieldEditorRef.current = null;
       releaseRowEditLock(rowId);
     }
   }, [
@@ -1938,27 +3778,46 @@ const RunOfShowPage: React.FC = () => {
     editingNotesItem,
     showAssetsModal,
     editingAssetsItem,
+    showAddModal,
     showSpeakersModal,
     editingSpeakersItem,
     showParticipantsModal,
     editingParticipantsItem,
     showVoModal,
     editingVoItemId,
+    showVogModal,
+    editingVogItemId,
     claimRowEditLock,
     releaseRowEditLock,
   ]);
 
   // VO/MUSIC alert: venue wall-clock → absolute UTC instant (same moment for every client).
+  // Only on a calendar show day (and that cue's day). Sticky until dismiss; 10m catch-up
+  // so background-tab throttling does not miss it forever. Independent of Time Toast.
   useEffect(() => {
     const tick = () => {
+      if (!voAlertsEnabled) {
+        setActiveVoAlert(null);
+        return;
+      }
       const synced = getSyncedNow(clockOffset);
-      const fallbackTz = resolveShowTimezone(eventTimezone);
+      const showDay = getEventDayNumberForDate(event?.date, event?.numberOfDays, synced);
+      if (showDay == null) {
+        setActiveVoAlert(null);
+        return;
+      }
+      const fallbackTz = resolveShowTimezone(
+        calendarTimezoneRef.current,
+        eventTimezone
+      );
       let found: { itemId: number; segmentName: string; vo: VoCue } | null = null;
       for (const item of schedule) {
+        if ((item.day || 1) !== showDay) continue;
         const vos = item.voCues;
         if (!vos?.length) continue;
         for (const vo of vos) {
-          const tz = resolveShowTimezone((vo as any).timeZone, fallbackTz);
+          if (!voCueAppearsInNotes(item.notes || '', vo)) continue;
+          const tz = resolveShowTimezone(vo.timeZone, fallbackTz);
           if (!isCalloutDue(vo.time, synced, tz, 10)) continue;
           const key = `${item.id}:${vo.id}`;
           if (dismissedVoAlerts.has(key)) continue;
@@ -1969,6 +3828,7 @@ const RunOfShowPage: React.FC = () => {
       }
       setActiveVoAlert((prev) => {
         if (found) return found;
+        // Keep showing until dismiss even after the due minute window ends
         if (prev) {
           const key = `${prev.itemId}:${prev.vo.id}`;
           if (!dismissedVoAlerts.has(key)) return prev;
@@ -1979,7 +3839,340 @@ const RunOfShowPage: React.FC = () => {
     tick();
     const id = window.setInterval(tick, 1000);
     return () => window.clearInterval(id);
-  }, [schedule, dismissedVoAlerts, eventTimezone, clockOffset]);
+  }, [schedule, dismissedVoAlerts, eventTimezone, clockOffset, event?.date, event?.numberOfDays, voAlertsEnabled]);
+
+  // Top PreShow/End cue: 5-min warning popup + auto load/start at scheduled start.
+  // Popup: all roles (so anyone can confirm show day). Auto-start: Operator always,
+  // or any role once show day is armed globally for this cue/start.
+  useEffect(() => {
+    if (!event?.id || !user) return;
+
+    const getPreshowStartInfo = (): {
+      cue: (typeof schedule)[number];
+      startHHMM: string;
+      startLabel: string;
+      key: string;
+    } | null => {
+      const workingDay = resolvePreshowWorkingDay(
+        event.date,
+        event.numberOfDays,
+        selectedDay
+      );
+      const cue = resolveSessionPreshowCue(workingDay);
+      if (!cue) return null;
+      const startHHMM = resolvePreshowStartHHMM({
+        cue,
+        lockedStartTimes,
+        dayStartTimes,
+        masterStartTime,
+      });
+      if (!startHHMM) return null;
+      const idx = schedule.findIndex((s) => s.id === cue.id);
+      const startLabel =
+        (idx >= 0 ? calculateStartTime(idx) : '') || startHHMM;
+      return {
+        cue,
+        startHHMM,
+        startLabel,
+        key: `${event.id}:${cue.id}:${startHHMM}`,
+      };
+    };
+
+    const tick = () => {
+      const top = schedule.find((s) => !isIndentedScheduleItem(s, indentedCues));
+      const info = getPreshowStartInfo();
+      if (!info) {
+        setActivePreshowWarn(null);
+        return;
+      }
+      const { cue, startHHMM, startLabel, key } = info;
+      const synced = getSyncedNow(clockOffset);
+      const tz = resolveShowTimezone(calendarTimezoneRef.current, eventTimezone);
+      const startMs = wallClockStartUtcMs(startHHMM, synced, tz);
+      if (startMs == null) {
+        console.warn('⚠️ Pre-show: could not resolve start UTC', { startHHMM, tz });
+        setActivePreshowWarn(null);
+        return;
+      }
+      const nowMs = synced.getTime();
+      const warnMs = startMs - PRESHOW_WARN_MINUTES_BEFORE * 60_000;
+      const alreadyRunning =
+        !!(activeTimers[cue.id] ||
+          (hybridTimerData?.activeTimer &&
+            Number(hybridTimerData.activeTimer.item_id) === cue.id &&
+            hybridTimerData.activeTimer.is_running));
+      const showDayArmed = isPreshowArmedForKey(preshowShowDayArmedRef.current, key);
+
+      const minsToStart = Math.round((startMs - nowMs) / 60000);
+      if (minsToStart <= PRESHOW_WARN_MINUTES_BEFORE + 1 && minsToStart >= -2) {
+        console.log('🎬 Pre-show tick', {
+          role: currentUserRole,
+          topCueType: top?.programType,
+          startHHMM,
+          startLabel,
+          tz,
+          minsToStart,
+          inWarnWindow: nowMs >= warnMs && nowMs < startMs,
+          alreadyRunning,
+          showDayArmed,
+        });
+      }
+
+      // Warning: from T-5m until start (or dismiss / already running) — all roles
+      const inWarnWindow = nowMs >= warnMs && nowMs < startMs && !alreadyRunning;
+      if (inWarnWindow && !dismissedPreshowWarnKeys.has(key)) {
+        setActivePreshowWarn({
+          itemId: cue.id,
+          segmentName: cue.segmentName || 'Pre Show',
+          startLabel,
+          startHHMM,
+        });
+      } else if (!inWarnWindow) {
+        setActivePreshowWarn((prev) => (prev?.itemId === cue.id ? null : prev));
+      }
+
+      // Auto load+start: Operator always, or any role once show day is armed for this key
+      const canAutoStart = currentUserRole === 'OPERATOR' || showDayArmed;
+      if (!canAutoStart) return;
+
+      const graceMs = 2 * 60_000;
+      const dueToStart = nowMs >= startMs && nowMs <= startMs + graceMs;
+      if (
+        !dueToStart ||
+        alreadyRunning ||
+        preshowAutoStartedKeyRef.current === key ||
+        preshowAutoStartInFlightRef.current
+      ) {
+        return;
+      }
+      const otherRunning =
+        Object.keys(activeTimers).some((id) =>
+          Number(id) === cue.id ? false : !!activeTimers[Number(id)]
+        ) ||
+        (hybridTimerData?.activeTimer?.is_running &&
+          Number(hybridTimerData.activeTimer.item_id) !== cue.id);
+      if (otherRunning) return;
+
+      preshowAutoStartInFlightRef.current = true;
+      preshowAutoStartedKeyRef.current = key;
+      setActivePreshowWarn(null);
+      void (async () => {
+        try {
+          console.log('🎬 Pre-show auto load+start for cue', cue.id, 'at', startHHMM, {
+            role: currentUserRole,
+            showDayArmed,
+          });
+          await loadCueRef.current(cue.id);
+          await toggleTimerRef.current(cue.id);
+        } catch (err) {
+          console.error('❌ Pre-show auto start failed:', err);
+          if (preshowAutoStartedKeyRef.current === key) {
+            preshowAutoStartedKeyRef.current = null;
+          }
+        } finally {
+          preshowAutoStartInFlightRef.current = false;
+        }
+      })();
+    };
+
+    tick();
+    const id = window.setInterval(tick, 1000);
+    return () => window.clearInterval(id);
+    // calculateStartTime is stable enough via masterStartTime/dayStartTimes deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    schedule,
+    indentedCues,
+    lockedStartTimes,
+    masterStartTime,
+    dayStartTimes,
+    dismissedPreshowWarnKeys,
+    eventTimezone,
+    clockOffset,
+    currentUserRole,
+    event?.id,
+    event?.date,
+    event?.numberOfDays,
+    selectedDay,
+    user,
+    activeTimers,
+    hybridTimerData?.activeTimer?.item_id,
+    hybridTimerData?.activeTimer?.is_running,
+    preshowShowDayArmed,
+  ]);
+
+  // Live tick while pre-show standing-by callout is visible (T− countdown)
+  useEffect(() => {
+    if (!activePreshowWarn) return;
+    const id = window.setInterval(() => setPreshowWarnTick((n) => n + 1), 1000);
+    return () => window.clearInterval(id);
+  }, [activePreshowWarn]);
+
+  // Auto Roll: load+start each playable cue at its Start-column time of day.
+  // Fires only from an Operator Run of Show tab. Pre-Show keeps its own auto-start.
+  useEffect(() => {
+    if (!event?.id || !autoRollArmed) {
+      setAutoRollHud('');
+      return;
+    }
+
+    const cueLabel = (item: { id: number; customFields?: { cue?: string } }) => {
+      const raw = item.customFields?.cue;
+      const formatted = formatCueDisplay(raw);
+      return formatted || `CUE ${item.id}`;
+    };
+
+    const tick = () => {
+      const armed = autoRollArmedRef.current;
+      if (!armed) {
+        setAutoRollHud('');
+        return;
+      }
+      const workingDay = resolvePreshowWorkingDay(
+        event.date,
+        event.numberOfDays,
+        selectedDay
+      );
+      const topPreshow = resolveSessionPreshowCue(workingDay);
+      const synced = getSyncedNow(clockOffset);
+      const tz = resolveShowTimezone(calendarTimezoneRef.current, eventTimezone);
+      const nowMs = synced.getTime();
+      const armedAtMs = Date.parse(armed.armedAt);
+      const useOvertime = showModeRef.current === 'in-show';
+
+      const slots = buildAutoRollSlots({
+        schedule,
+        indentedLookup: indentedCues,
+        day: workingDay,
+        skipItemId: topPreshow?.id ?? null,
+        resolveStart: (_item, index) => {
+          const startLabel = useOvertime
+            ? calculatePlannedStartTimeWithOvertime(index)
+            : calculateStartTime(index);
+          const startHHMM = normalizeCalloutTimeToHHMM(startLabel);
+          if (!startHHMM) return null;
+          const startMs = wallClockStartUtcMs(startHHMM, synced, tz);
+          if (startMs == null) return null;
+          return { startHHMM, startLabel, startMs };
+        },
+      });
+
+      const current = pickCurrentAutoRollSlot(slots, nowMs);
+      const next = pickNextAutoRollSlot(slots, nowMs);
+      const allowedCurrent =
+        current && slotAllowedAfterArm(current, Number.isFinite(armedAtMs) ? armedAtMs : null, nowMs)
+          ? current
+          : null;
+      const runningThisCue = !!(
+        allowedCurrent &&
+        (activeTimers[allowedCurrent.item.id] ||
+          (hybridTimerData?.activeTimer &&
+            Number(hybridTimerData.activeTimer.item_id) === allowedCurrent.item.id &&
+            (hybridTimerData.activeTimer.is_running ||
+              hybridTimerData.activeTimer.timer_state === 'running')))
+      );
+      const hudTarget = runningThisCue ? next : allowedCurrent || next;
+      setAutoRollHud(
+        hudTarget
+          ? `${runningThisCue && next ? 'next ' : ''}${cueLabel(hudTarget.item)} at ${hudTarget.startLabel}`
+          : 'waiting for a Start time'
+      );
+
+      if (currentUserRole !== 'OPERATOR' || !user) return;
+      if (!allowedCurrent) return;
+      if (runningThisCue) return;
+
+      const loadedId = activeItemId != null ? Number(activeItemId) : null;
+      if (loadedId != null) {
+        const currentIdx = slots.findIndex((s) => s.item.id === allowedCurrent.item.id);
+        const loadedIdx = slots.findIndex((s) => Number(s.item.id) === loadedId);
+        if (loadedIdx > currentIdx) return;
+      }
+
+      const key = `${event.id}:${allowedCurrent.item.id}:${allowedCurrent.startHHMM}`;
+      if (autoRollStartedKeyRef.current === key || autoRollInFlightRef.current) return;
+
+      autoRollInFlightRef.current = true;
+      autoRollStartedKeyRef.current = key;
+      void (async () => {
+        try {
+          console.log('🎬 Auto Roll load+start for cue', allowedCurrent.item.id, 'at', allowedCurrent.startHHMM);
+          await loadCueRef.current(allowedCurrent.item.id);
+          await toggleTimerRef.current(allowedCurrent.item.id, { ignoreOtherRunning: true });
+        } catch (err) {
+          console.error('❌ Auto Roll start failed:', err);
+          if (autoRollStartedKeyRef.current === key) autoRollStartedKeyRef.current = null;
+        } finally {
+          autoRollInFlightRef.current = false;
+        }
+      })();
+    };
+
+    tick();
+    const id = window.setInterval(tick, 1000);
+    return () => window.clearInterval(id);
+    // calculateStartTime* close over overtime/start times; listed deps keep the tick current.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    autoRollArmed,
+    schedule,
+    indentedCues,
+    masterStartTime,
+    dayStartTimes,
+    overtimeMinutes,
+    showStartOvertime,
+    startCueId,
+    showMode,
+    eventTimezone,
+    clockOffset,
+    currentUserRole,
+    event?.id,
+    event?.date,
+    event?.numberOfDays,
+    selectedDay,
+    user,
+    activeTimers,
+    activeItemId,
+    hybridTimerData?.activeTimer?.item_id,
+    hybridTimerData?.activeTimer?.is_running,
+    hybridTimerData?.activeTimer?.timer_state,
+  ]);
+
+  const toggleAutoRoll = async () => {
+    if (!event?.id || !user) return;
+    if (currentUserRole !== 'OPERATOR') {
+      alert('Only Operators can turn Auto Roll on or off.');
+      return;
+    }
+    if (autoRollBusy) return;
+    const turningOn = !autoRollArmed;
+    setAutoRollBusy(true);
+    const payload: AutoRollArmed | null = turningOn
+      ? {
+          armed: true,
+          armedAt: new Date().toISOString(),
+          armedBy: user.id,
+          armedByName: user.full_name || user.email || 'Operator',
+        }
+      : null;
+    setAutoRollArmed(payload);
+    autoRollArmedRef.current = payload;
+    writeStoredAutoRoll(event.id, payload);
+    autoRollStartedKeyRef.current = null;
+    autoRollInFlightRef.current = false;
+    try {
+      const ok = await DatabaseService.saveShowModeWithBaseline(event.id, turningOn
+        ? { autoRoll: payload }
+        : { clearAutoRoll: true });
+      if (!ok) {
+        console.warn('Auto Roll saved locally; server persist failed.');
+      }
+    } catch (err) {
+      console.warn('Auto Roll persist failed:', err);
+    } finally {
+      setAutoRollBusy(false);
+    }
+  };
 
   // Reset draft fields when opening the VO/BGM modal
   useEffect(() => {
@@ -1989,7 +4182,12 @@ const RunOfShowPage: React.FC = () => {
     setVoDraftUseCuePrefix(false);
     const parent = schedule.find((s) => s.id === editingVoItemId);
     const rowCue = parent?.customFields?.cue ? String(parent.customFields.cue).trim() : '';
+    // Prefill for when user opts into CUE prefix; do not force it on
     setVoDraftCuePrefix(rowCue);
+    // Default time picker to event-local now (not the laptop zone)
+    setVoDraftTime(
+      getEventLocalHHMM(getSyncedNow(clockOffset), resolveShowTimezone(eventTimezone))
+    );
     // only reset on open
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showVoModal, editingVoItemId]);
@@ -2029,7 +4227,7 @@ const RunOfShowPage: React.FC = () => {
     // Use a local counter so sync/unlock/blur side effects are NOT inside setState
     // (React may skip or double-invoke state updaters).
     let remaining = 20;
-
+    
     const interval = setInterval(() => {
       remaining -= 1;
       if (remaining > 0) {
@@ -2044,32 +4242,17 @@ const RunOfShowPage: React.FC = () => {
 
       console.log('🔄 Countdown sync: unlocking/blurring if needed, then sync request');
 
-      void (async () => {
-        try {
-          await flushSaveToAPIRef.current?.();
-          markLocalMutationGuard(5000);
-        } catch (e) {
-          console.warn('⚠️ Countdown sync: flush save failed before requestSync', e);
-        }
+      // Safety net: clear leftover focus/lock before applying remote sync
+      const rowId = localEditingRowIdRef.current;
+      if (rowId != null && modalLockRowIdRef.current !== rowId) {
+        releaseRowEditLockRef.current(rowId);
+      }
+      blurFocusedScheduleCellRef.current(rowId ?? null);
 
-        // Safety net: clear leftover focus/lock after flush (not before).
-        const rowId = localEditingRowIdRef.current;
-        if (rowId != null && modalLockRowIdRef.current !== rowId) {
-          releaseRowEditLockRef.current(rowId);
-        }
-        blurFocusedScheduleCellRef.current(rowId ?? null);
-
-        // Cloud mode: LAN already gets mutations via proxy + Railway bridge.
-        // requestSync pulls a full Neon snapshot and can overwrite in-progress saves.
-        if (cloudConnectedRef.current) {
-          console.log('📡 Countdown sync: cloud connected — skip requestSync (local flush only)');
-          return;
-        }
-        if (socketClient && event?.id) {
-          socketClient.emitSyncRequest();
-          console.log('📡 Countdown sync: Emitted sync request via WebSocket');
-        }
-      })();
+      if (socketClient && event?.id) {
+        socketClient.emitSyncRequest();
+        console.log('📡 Countdown sync: Emitted sync request via WebSocket');
+      }
 
       setTimeout(() => {
         setIsSyncing(false);
@@ -2093,6 +4276,10 @@ const RunOfShowPage: React.FC = () => {
 
   // Function to resume editing when modal closes
   const handleModalClosed = useCallback(() => {
+    if (openFieldEditorRef.current || modalLockRowIdRef.current != null) {
+      console.log('✏️ Transient action closed — field editor still owns the edit loop');
+      return;
+    }
     console.log('✏️ Modal closed - unlocking/blurring and resuming sync in 5 seconds');
     
     // Set timeout to resume syncing after 5 seconds
@@ -2104,9 +4291,60 @@ const RunOfShowPage: React.FC = () => {
     setEditingTimeout(timeout);
   }, []);
 
+  /** Notes / speakers / assets / VO actually closed — allow the 5s unlock. */
+  const resumeAfterFieldEditorClose = useCallback(() => {
+    openFieldEditorRef.current = null;
+    modalLockRowIdRef.current = null;
+    handleModalClosed();
+  }, [handleModalClosed]);
+
+  const rowEditorLabel = (rowId: number) => {
+    const lock = rowLocksRef.current[rowId];
+    return lock?.userName ? `${lock.userName} is editing` : 'Someone is editing';
+  };
+
+  const isRowLockedByOther = (rowId: number) => {
+    const lock = rowLocksRef.current[rowId];
+    return Boolean(lock && user?.id && lock.userId !== user.id);
+  };
+
+  /** Pause sync, take the row lock, and tell other users who is editing. */
+  const beginRowAction = (rowId: number, mode: 'idle' | 'modal' = 'idle'): boolean => {
+    if (currentUserRole === 'VIEWER') return false;
+    if (isRowLockedByOther(rowId)) {
+      alert(rowEditorLabel(rowId));
+      return false;
+    }
+    claimRowEditLock(rowId);
+    if (mode === 'modal') handleModalEditing();
+    else handleUserEditing();
+    return true;
+  };
+
   // Pause/resume countdown timer based on modal states and editing
   useEffect(() => {
-    const anyModalOpen = showSpeakersModal || showNotesModal || showVoModal || showAssetsModal || showParticipantsModal || showBackupModal || showExcelImportModal || showAgendaImportModal || showCSVImportModal || showGoogleSheetExportModal || showImportEventModal || showSpeakerManagerModal || showBreakoutRoomModal || showOtherRoomModal || showDelayBlockModal || showAddModal;
+    const anyModalOpen =
+      showSpeakersModal ||
+      showNotesModal ||
+      showVoModal ||
+      showVogModal ||
+      showAssetsModal ||
+      showParticipantsModal ||
+      showBackupModal ||
+      showExcelImportModal ||
+      showAgendaImportModal ||
+      showCSVImportModal ||
+      showGoogleSheetExportModal ||
+      showImportEventModal ||
+      showSpeakerManagerModal ||
+      showAddModal ||
+      showBreakoutRoomModal ||
+      showOtherRoomModal ||
+      showDelayBlockModal ||
+      showShowBreakModal ||
+      !!timedMarkerModal ||
+      showCustomColumnModal ||
+      showPublicBulkModal;
     const shouldPause = isUserEditing || anyModalOpen || scheduleSyncState !== 'ready';
 
     if (shouldPause) {
@@ -2123,7 +4361,7 @@ const RunOfShowPage: React.FC = () => {
         startCountdownTimer();
       }
     }
-  }, [isUserEditing, showSpeakersModal, showNotesModal, showVoModal, showAssetsModal, showParticipantsModal, showBackupModal, showExcelImportModal, showAgendaImportModal, showCSVImportModal, showGoogleSheetExportModal, showImportEventModal, showSpeakerManagerModal, showBreakoutRoomModal, showOtherRoomModal, showDelayBlockModal, showAddModal, event?.id, startCountdownTimer, scheduleSyncState]);
+  }, [isUserEditing, showSpeakersModal, showNotesModal, showVoModal, showVogModal, showAssetsModal, showParticipantsModal, showBackupModal, showExcelImportModal, showAgendaImportModal, showCSVImportModal, showGoogleSheetExportModal, showImportEventModal, showSpeakerManagerModal, showAddModal, showBreakoutRoomModal, showOtherRoomModal, showDelayBlockModal, showShowBreakModal, timedMarkerModal, showCustomColumnModal, showPublicBulkModal, event?.id, startCountdownTimer, scheduleSyncState]);
   
   
   // Load user role from navigation state or localStorage
@@ -2135,11 +4373,52 @@ const RunOfShowPage: React.FC = () => {
     }
 
     if (user && event?.id) {
+      const applyResolvedRole = (rawRole: string, source: string, persist: boolean) => {
+        const resolved = resolveSessionRole(rawRole, user);
+        if (rawRole === 'OPERATOR' && resolved !== 'OPERATOR') {
+          console.log('⛔ Operator role blocked for non–Event Manager/Admin; using', resolved);
+        }
+        setCurrentUserRole(resolved);
+        currentUserRoleRef.current = resolved;
+        roleHydratedRef.current = true;
+        // Only write storage when persist=true. Immediate nav must not clobber a saved Viewer
+        // with a stale Editor/Operator still sitting in history.state.
+        if (persist) {
+          localStorage.setItem(`userRole_${event.id}`, resolved);
+          if (user.id) {
+            localStorage.setItem(`user_role_${event.id}_${user.id}`, resolved);
+          }
+          DatabaseService.saveUserSession(
+            event.id,
+            user.id,
+            user.full_name || user.email || 'Unknown',
+            resolved
+          ).then((success) => {
+            if (success) {
+              console.log(`✅ Role saved (${source}):`, resolved);
+            } else {
+              console.log(`⚠️ Failed to save role to API (${source}), localStorage only`);
+            }
+          });
+        }
+        console.log(`✅ Using role from ${source}:`, resolved);
+        return resolved;
+      };
+
+      // Prefer last saved role for this event over stale launch history (Viewer/Editor/Operator all stick)
+      const savedRole =
+        (user.id && localStorage.getItem(`user_role_${event.id}_${user.id}`)) ||
+        localStorage.getItem(`userRole_${event.id}`);
+      if (savedRole && ['VIEWER', 'EDITOR', 'OPERATOR'].includes(savedRole)) {
+        applyResolvedRole(savedRole, 'localStorage (preferred)', true);
+        return;
+      }
+
       // Set role immediately from navigation state when launching from EventListPage (role modal).
       // Ensures presence sends correct role on socket connect before async API resolves.
       if (userRole && ['VIEWER', 'EDITOR', 'OPERATOR'].includes(userRole)) {
-        setCurrentUserRole(userRole as 'VIEWER' | 'EDITOR' | 'OPERATOR');
-        console.log('✅ Using role from navigation state (immediate):', userRole);
+        applyResolvedRole(userRole, 'navigation state (immediate)', true);
+        return;
       }
 
       // First priority: check API for the most recent role (this will have the latest changes)
@@ -2150,12 +4429,7 @@ const RunOfShowPage: React.FC = () => {
           console.log('📋 User session from API:', userSession);
           
           if (userSession && userSession.event_id === event.id && userSession.role) {
-            setCurrentUserRole(userSession.role as 'VIEWER' | 'EDITOR' | 'OPERATOR');
-            console.log('✅ Loaded role from localStorage:', userSession.role);
-            
-            // Also update localStorage to keep it in sync
-            localStorage.setItem(`userRole_${event.id}`, userSession.role);
-            console.log('💾 Updated localStorage with role:', userSession.role);
+            applyResolvedRole(userSession.role, 'API/localStorage', true);
             return true;
           } else {
             console.log('❌ No valid role found in localStorage:', { 
@@ -2173,60 +4447,10 @@ const RunOfShowPage: React.FC = () => {
         return false;
       };
       
-      // First priority: check API for the most recent role (for persistence)
+      // Session / any-event fallback only when this event has no saved role and no nav role
       loadRoleFromAPI().then(apiSuccess => {
         if (apiSuccess) {
-          // Found role in API, use it
           console.log('✅ Using role from API');
-          return;
-        }
-        
-        // Second priority: role from navigation state (from Graphics page or other navigation)
-        if (userRole && ['VIEWER', 'EDITOR', 'OPERATOR'].includes(userRole)) {
-          setCurrentUserRole(userRole as 'VIEWER' | 'EDITOR' | 'OPERATOR');
-          
-          // Save user session to database
-          DatabaseService.saveUserSession(
-            event.id,
-            user.id,
-            user.full_name || user.email || 'Unknown',
-            userRole
-          ).then(success => {
-            if (success) {
-              console.log('✅ Role saved to API from navigation state:', userRole);
-            } else {
-              console.log('⚠️ Failed to save role to API, using localStorage only');
-            }
-          });
-          
-          // Also save to localStorage for immediate access
-          localStorage.setItem(`userRole_${event.id}`, userRole);
-          console.log('💾 Saved role to localStorage:', userRole);
-          
-          console.log('✅ Using role from navigation state (no API role found):', userRole);
-          return;
-        }
-        
-        // Third priority: check localStorage as final fallback
-        const savedRole = localStorage.getItem(`userRole_${event.id}`);
-        console.log('🔍 Checking localStorage for role:', { eventId: event.id, savedRole });
-        if (savedRole && ['VIEWER', 'EDITOR', 'OPERATOR'].includes(savedRole)) {
-          setCurrentUserRole(savedRole as 'VIEWER' | 'EDITOR' | 'OPERATOR');
-          console.log('✅ Using role from localStorage fallback:', savedRole);
-          
-          // Try to save this role to API for future use
-          DatabaseService.saveUserSession(
-            event.id,
-            user.id,
-            user.full_name || user.email || 'Unknown',
-            savedRole
-          ).then(success => {
-            if (success) {
-              console.log('✅ Role synced to API from localStorage:', savedRole);
-            } else {
-              console.log('⚠️ Failed to sync role to API, keeping localStorage only');
-            }
-          });
           return;
         }
         
@@ -2235,7 +4459,6 @@ const RunOfShowPage: React.FC = () => {
         const roleKeys = allKeys.filter(key => key.startsWith('userRole_'));
         console.log('🔍 Checking all localStorage role keys:', roleKeys);
         console.log('🔍 Current event ID:', event.id);
-        console.log('🔍 All localStorage keys:', allKeys);
         
         if (roleKeys.length > 0) {
           const latestRoleKey = roleKeys[roleKeys.length - 1];
@@ -2243,37 +4466,73 @@ const RunOfShowPage: React.FC = () => {
           console.log('🔍 Found latest role in localStorage:', { key: latestRoleKey, role: latestRole });
           
           if (latestRole && ['VIEWER', 'EDITOR', 'OPERATOR'].includes(latestRole)) {
-            setCurrentUserRole(latestRole as 'VIEWER' | 'EDITOR' | 'OPERATOR');
-            console.log('✅ Using latest role from localStorage:', latestRole);
-            
-            // Save this role for the current event
-            localStorage.setItem(`userRole_${event.id}`, latestRole);
-            DatabaseService.saveUserSession(
-              event.id,
-              user.id,
-              user.full_name || user.email || 'Unknown',
-              latestRole
-            ).then(success => {
-              if (success) {
-                console.log('✅ Role synced to API from latest localStorage:', latestRole);
-              } else {
-                console.log('⚠️ Failed to sync role to API, keeping localStorage only');
-              }
-            });
+            applyResolvedRole(latestRole, 'latest localStorage', true);
             return;
           }
         }
         
-        // No role found anywhere, show role selection modal instead of redirecting
         console.log('❌ No role found, showing role selection modal');
+        roleHydratedRef.current = true;
         setShowRoleChangeModal(true);
       });
     } else if (!user && event?.id) {
       // If no user is authenticated, default to VIEWER role
       console.log('❌ No user authenticated, defaulting to VIEWER role');
       setCurrentUserRole('VIEWER');
+      roleHydratedRef.current = true;
     }
   }, [user, event?.id, authLoading, userRole, navigate]);
+
+  // If a non–Event Manager/Admin somehow has OPERATOR, demote immediately
+  useEffect(() => {
+    if (!user || currentUserRole !== 'OPERATOR') return;
+    if (canSelectOperatorRole(user)) return;
+    setCurrentUserRole('VIEWER');
+    if (event?.id) {
+      localStorage.setItem(`userRole_${event.id}`, 'VIEWER');
+      DatabaseService.saveUserSession(
+        event.id,
+        user.id,
+        user.full_name || user.email || 'Unknown',
+        'VIEWER'
+      );
+    }
+  }, [user, currentUserRole, event?.id]);
+
+  // Complaint Line: Ctrl/Cmd+Shift+X (Event Managers / Admins)
+  useEffect(() => {
+    if (!event?.id || !user || !canAccessAccessManager(user)) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || !e.shiftKey) return;
+      if (e.key.toLowerCase() !== 'x') return;
+      e.preventDefault();
+      setShowComplaintLineModal(true);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [event?.id, user]);
+
+  // Pre-Flight progress for BTS Crew / Admin (menu badge for selected day + takeoff hold for today's day)
+  useEffect(() => {
+    if (!event?.id || !user || !canAccessPreFlightChecklist(user)) {
+      setPreflightProgress(null);
+      return;
+    }
+    let cancelled = false;
+    const dayForProgress = selectedDay || 1;
+    void (async () => {
+      try {
+        const res = await apiClient.getPreflightChecklist(event.id, dayForProgress);
+        if (!cancelled && res?.progress) setPreflightProgress(res.progress);
+      } catch (err) {
+        console.warn('Pre-Flight checklist progress unavailable:', err);
+        if (!cancelled) setPreflightProgress(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [event?.id, event?.date, event?.numberOfDays, user, showMode, selectedDay]);
 
   // Load change log data and sync status
   useEffect(() => {
@@ -2286,7 +4545,423 @@ const RunOfShowPage: React.FC = () => {
       setChangeLog(localChanges);
       console.log('📝 Loaded local changes:', localChanges.length);
       
-      // Load master change log from API
+        const buildActiveTimerForReconnect = useCallback(async (): Promise<Record<string, unknown> | null> => {
+    const ui = reconnectTimerStateRef.current;
+    const eventId = ui.eventId ?? event?.id;
+    const userId = ui.userId ?? user?.id;
+    if (!eventId || !userId) return null;
+
+    const hybrid = ui.hybridTimerData?.activeTimer;
+    const fromDb = await DatabaseService.getActiveTimer(eventId);
+
+    const dbLive =
+      fromDb &&
+      (fromDb.timer_state === 'running' ||
+        fromDb.timer_state === 'loaded' ||
+        fromDb.is_running === true ||
+        fromDb.is_active === true);
+
+    const toNum = (v: unknown): number | null => {
+      if (v == null || v === '') return null;
+      const n = typeof v === 'string' ? parseInt(v, 10) : Number(v);
+      return Number.isNaN(n) ? null : n;
+    };
+
+    let itemId: number | null = null;
+
+    if (hybrid?.item_id != null) {
+      itemId = toNum(hybrid.item_id);
+    } else if (ui.activeItemId != null && (ui.loadedItems[ui.activeItemId] || ui.activeTimers[ui.activeItemId])) {
+      itemId = ui.activeItemId;
+    } else {
+      const runningKey = Object.keys(ui.activeTimers).find((k) => ui.activeTimers[parseInt(k, 10)]);
+      if (runningKey) {
+        itemId = parseInt(runningKey, 10);
+      } else {
+        const loadedKey = Object.keys(ui.loadedItems).find((k) => ui.loadedItems[parseInt(k, 10)]);
+        if (loadedKey) itemId = parseInt(loadedKey, 10);
+        else if (ui.activeItemId != null) itemId = ui.activeItemId;
+        else if (dbLive && fromDb?.item_id != null) itemId = toNum(fromDb.item_id);
+      }
+    }
+
+    if (itemId == null) return null;
+
+    const isRunning =
+      hybrid?.is_running === true ||
+      Boolean(ui.activeTimers[itemId]) ||
+      (dbLive &&
+        fromDb?.item_id === itemId &&
+        (fromDb?.is_running === true || fromDb?.timer_state === 'running'));
+
+    const isLoaded =
+      isRunning ||
+      hybrid?.is_active === true ||
+      Boolean(ui.loadedItems[itemId]) ||
+      ui.activeItemId === itemId ||
+      (dbLive &&
+        fromDb?.item_id === itemId &&
+        (fromDb?.is_active === true || fromDb?.timer_state === 'loaded'));
+
+    if (!isLoaded && !isRunning) return null;
+
+    const timerState = isRunning ? 'running' : 'loaded';
+    const progress = ui.timerProgress[itemId];
+    const scheduleItems = ui.schedule.length > 0 ? ui.schedule : schedule;
+    const scheduleItem = scheduleItems.find((s) => s.id === itemId);
+    const totalSeconds =
+      hybrid?.duration_seconds ??
+      (fromDb?.item_id === itemId ? fromDb?.duration_seconds : null) ??
+      progress?.total ??
+      (scheduleItem
+        ? scheduleItem.durationHours * 3600 +
+          scheduleItem.durationMinutes * 60 +
+          scheduleItem.durationSeconds
+        : 300);
+
+    let startedAt: string | null =
+      (hybrid?.started_at as string | null | undefined) ??
+      (fromDb?.item_id === itemId ? (fromDb?.started_at as string | null) : null) ??
+      null;
+    if (isRunning && progress?.startedAt) {
+      startedAt =
+        progress.startedAt instanceof Date
+          ? progress.startedAt.toISOString()
+          : typeof progress.startedAt === 'string'
+            ? progress.startedAt
+            : startedAt;
+    }
+
+    // Far-future placeholder means "loaded / not started" — never use it for a running handoff.
+    const startedMs = startedAt ? new Date(startedAt).getTime() : NaN;
+    const startedAtIsPlausible =
+      Number.isFinite(startedMs) && startedMs < Date.now() + 60_000;
+    if (isRunning && !startedAtIsPlausible) {
+      startedAt = null;
+    }
+
+    const cueIs =
+      (hybrid?.cue_is as string | undefined) ??
+      (fromDb?.item_id === itemId ? (fromDb?.cue_is as string | undefined) : undefined) ??
+      (scheduleItem ? formatCueDisplay(scheduleItem.customFields?.cue) : null);
+
+    // Screen remaining (with clockOffset) so cloud handoff matches what operators see.
+    let remainingSeconds: number | null = null;
+    if (isRunning) {
+      if (startedAt && typeof totalSeconds === 'number' && startedAtIsPlausible) {
+        const elapsed = (Date.now() + (ui.clockOffset || 0) - startedMs) / 1000;
+        remainingSeconds = Number(totalSeconds) - elapsed;
+      } else if (
+        progress &&
+        typeof progress.total === 'number' &&
+        typeof progress.elapsed === 'number'
+      ) {
+        remainingSeconds = Number(progress.total) - Number(progress.elapsed);
+      }
+    }
+
+    return {
+      event_id: eventId,
+      item_id: itemId,
+      user_id: (hybrid?.user_id as string | undefined) ?? (fromDb?.user_id as string | undefined) ?? userId,
+      user_name: ui.userName || user?.full_name || user?.email || 'Unknown',
+      user_role: ui.userRole || currentUserRole || 'OPERATOR',
+      timer_state: timerState,
+      is_active: true,
+      is_running: isRunning,
+      started_at: startedAt,
+      last_loaded_cue_id:
+        toNum(hybrid?.last_loaded_cue_id) ??
+        (fromDb?.item_id === itemId ? toNum(fromDb?.last_loaded_cue_id) : null) ??
+        itemId,
+      cue_is: cueIs,
+      duration_seconds: totalSeconds,
+      ...(remainingSeconds != null && Number.isFinite(remainingSeconds)
+        ? { remaining_seconds: remainingSeconds }
+        : {}),
+    };
+  }, [event?.id, user?.id, user?.full_name, user?.email, schedule, currentUserRole]);
+
+  useEffect(() => {
+    reconnectTimerStateRef.current = {
+      hybridTimerData,
+      activeItemId,
+      activeTimers,
+      loadedItems,
+      completedCues,
+      timerProgress,
+      schedule,
+      eventId: event?.id,
+      userId: user?.id,
+      userName: user?.full_name || user?.email || 'Unknown',
+      userRole: currentUserRole || 'OPERATOR',
+      clockOffset,
+    };
+  }, [
+    hybridTimerData,
+    activeItemId,
+    activeTimers,
+    loadedItems,
+    completedCues,
+    timerProgress,
+    schedule,
+    event?.id,
+    user?.id,
+    user?.full_name,
+    user?.email,
+    currentUserRole,
+    clockOffset,
+  ]);
+
+
+
+useEffect(() => {
+    registerRunOfShowLocalFlush(async () => {
+      if (!event?.id || !user?.id) return;
+      await backupScheduleData();
+      await finalizeAllPendingChanges();
+
+      const timer = await buildActiveTimerForReconnect();
+      if (!timer) return;
+
+      const itemId = timer.item_id as number;
+      const duration = (timer.duration_seconds as number) ?? 300;
+      const cueDisplay = timer.cue_is as string | undefined;
+      const isRunning = timer.is_running === true || timer.timer_state === 'running';
+      let startedAt: Date;
+      if (
+        isRunning &&
+        timer.remaining_seconds != null &&
+        Number.isFinite(Number(timer.remaining_seconds))
+      ) {
+        const rem = Number(timer.remaining_seconds);
+        const elapsed = duration - rem;
+        startedAt = new Date(Date.now() - elapsed * 1000);
+      } else if (timer.started_at) {
+        const ms = new Date(String(timer.started_at)).getTime();
+        startedAt =
+          Number.isFinite(ms) && ms < Date.now() + 60_000
+            ? new Date(ms)
+            : new Date(Date.now() + clockOffset);
+      } else {
+        startedAt = new Date(Date.now() + clockOffset);
+      }
+
+      if (isRunning) {
+        await DatabaseService.startTimer(
+          event.id,
+          itemId,
+          user.id,
+          duration,
+          startedAt,
+          undefined,
+          cueDisplay,
+          undefined
+        );
+      } else {
+        await DatabaseService.loadCue(
+          event.id,
+          itemId,
+          user.id,
+          duration,
+          undefined,
+          cueDisplay,
+          undefined
+        );
+      }
+    });
+    registerRunOfShowSnapshotBuilder(async (): Promise<{ ok: boolean; snapshot?: ReconnectSnapshot }> => {
+      if (!event?.id || !user?.id || schedule.length === 0) {
+        return { ok: false };
+      }
+
+      const [completed, indented, subCueResult, activeTimer] = await Promise.all([
+        DatabaseService.getCompletedCues(event.id),
+        DatabaseService.getIndentedCues(event.id),
+        DatabaseService.getActiveSubCueTimer(event.id),
+        buildActiveTimerForReconnect(),
+      ]);
+
+      const completedFromApi = Array.isArray(completed) ? completed : [];
+      const completedIds = new Set(
+        completedFromApi
+          .map((c: { item_id?: unknown }) =>
+            typeof c.item_id === 'number' ? c.item_id : parseInt(String(c.item_id), 10)
+          )
+          .filter((id: number) => Number.isFinite(id))
+      );
+      // Always merge live UI completed flags (ref) — same purple rows on screen.
+      const liveCompleted = reconnectTimerStateRef.current.completedCues || {};
+      const completedFromUi = Object.entries(liveCompleted)
+        .filter(([, done]) => done)
+        .map(([idStr]) => {
+          const itemId = parseInt(idStr, 10);
+          if (!Number.isFinite(itemId) || completedIds.has(itemId)) return null;
+          const row = schedule.find((s) => s.id === itemId);
+          return {
+            event_id: event.id,
+            item_id: itemId,
+            cue_id: row ? formatCueDisplay(row.customFields?.cue) : `CUE ${itemId}`,
+            user_id: user.id,
+            user_name: user.full_name || user.email || 'Unknown',
+            user_role: currentUserRole || 'OPERATOR',
+          };
+        })
+        .filter(Boolean) as Record<string, unknown>[];
+
+      const mergedCompleted = [...completedFromApi, ...completedFromUi];
+      // Ensure every UI-completed row is present even if API row used a string id mismatch.
+      for (const [idStr, done] of Object.entries(liveCompleted)) {
+        if (!done) continue;
+        const itemId = parseInt(idStr, 10);
+        if (!Number.isFinite(itemId)) continue;
+        const already = mergedCompleted.some((c) => {
+          const cid =
+            typeof (c as { item_id?: unknown }).item_id === 'number'
+              ? (c as { item_id: number }).item_id
+              : parseInt(String((c as { item_id?: unknown }).item_id), 10);
+          return cid === itemId;
+        });
+        if (already) continue;
+        const row = schedule.find((s) => s.id === itemId);
+        mergedCompleted.push({
+          event_id: event.id,
+          item_id: itemId,
+          cue_id: row ? formatCueDisplay(row.customFields?.cue) : `CUE ${itemId}`,
+          user_id: user.id,
+          user_name: user.full_name || user.email || 'Unknown',
+          user_role: currentUserRole || 'OPERATOR',
+        });
+      }
+
+      return {
+        ok: true,
+        snapshot: {
+          event_id: event.id,
+          run_of_show: {
+            event_id: event.id,
+            event_name: event.name,
+            event_date: event.date,
+            schedule_items: schedule,
+            custom_columns: customColumns,
+            settings: {
+              eventName,
+              masterStartTime,
+              dayStartTimes,
+              numberOfDays: event?.numberOfDays,
+              show_mode: showMode,
+              track_was_durations: trackWasDurations,
+              ...(Object.keys(originalDurations).length > 0 && {
+                original_durations: originalDurations,
+              }),
+            },
+            last_modified_by: user.id,
+            last_modified_by_name: user.full_name || user.email || 'Unknown',
+            last_modified_by_role: currentUserRole || 'OPERATOR',
+          },
+          active_timer: activeTimer,
+          completed_cues: mergedCompleted,
+          indented_cues: Array.isArray(indented) ? indented : [],
+          sub_cue_timer: subCueResult?.data ?? null,
+        },
+      };
+    });
+
+    registerPostCloudReconnectHandler((stats) => {
+      const itemId = stats?.activeTimerItemId != null ? Number(stats.activeTimerItemId) : null;
+      if (itemId == null || Number.isNaN(itemId)) return;
+      const timerState = String(stats.activeTimerState || 'loaded');
+      const isRunning = timerState === 'running';
+      const duration =
+        stats.activeTimerDurationSeconds != null
+          ? Number(stats.activeTimerDurationSeconds)
+          : 300;
+      const remaining =
+        stats.activeTimerRemainingSeconds != null
+          ? Number(stats.activeTimerRemainingSeconds)
+          : null;
+      const startedAt =
+        typeof stats.activeTimerStartedAt === 'string'
+          ? stats.activeTimerStartedAt
+          : isRunning && remaining != null && Number.isFinite(remaining)
+            ? new Date(Date.now() - (duration - remaining) * 1000).toISOString()
+            : '2099-12-31T23:59:59.999Z';
+
+      console.log('☁️ Applying reconnect timer handoff to local UI', {
+        itemId,
+        timerState,
+        remaining,
+        duration,
+        startedAt,
+      });
+
+      setHybridTimerData((prev: any) => ({
+        ...prev,
+        activeTimer: {
+          ...(prev?.activeTimer || {}),
+          event_id: event?.id,
+          item_id: itemId,
+          timer_state: timerState,
+          is_active: true,
+          is_running: isRunning,
+          duration_seconds: duration,
+          started_at: startedAt,
+          last_loaded_cue_id: itemId,
+        },
+      }));
+      setActiveItemId(itemId);
+      setLoadedItems((prev) => ({ ...prev, [itemId]: true }));
+      if (isRunning) {
+        setActiveTimers((prev) => ({ ...prev, [itemId]: true }));
+        setTimerProgress((prev) => ({
+          ...prev,
+          [itemId]: {
+            elapsed:
+              remaining != null && Number.isFinite(remaining)
+                ? Math.max(0, duration - remaining)
+                : prev[itemId]?.elapsed || 0,
+            total: duration,
+            startedAt: new Date(startedAt),
+          },
+        }));
+      } else {
+        setActiveTimers((prev) => {
+          const next = { ...prev };
+          delete next[itemId];
+          return next;
+        });
+        setTimerProgress((prev) => ({
+          ...prev,
+          [itemId]: { elapsed: 0, total: duration, startedAt: null },
+        }));
+      }
+      markLocalMutationGuard(5000);
+    });
+
+    return () => clearRunOfShowReconnectHandlers();
+  }, [
+    buildActiveTimerForReconnect,
+    event?.id,
+    event?.name,
+    event?.date,
+    event?.numberOfDays,
+    user?.id,
+    user?.full_name,
+    user?.email,
+    schedule,
+    customColumns,
+    completedCues,
+    showMode,
+    trackWasDurations,
+    originalDurations,
+    eventName,
+    masterStartTime,
+    dayStartTimes,
+    currentUserRole,
+    clockOffset,
+  ]);
+
+  // Load master change log from API
       loadMasterChangeLog();
       
       // Load completed cues from API
@@ -2301,6 +4976,7 @@ const RunOfShowPage: React.FC = () => {
       
       // Load active sub-cue timer from API
       loadActiveSubCueTimerFromAPI();
+      loadOperatorCountdownFromAPI();
       
       // Test database connection
       testDatabaseConnection();
@@ -2371,8 +5047,8 @@ const RunOfShowPage: React.FC = () => {
           const id = normalizeScheduleItemId(cue.item_id);
           if (id != null) completedCuesMap[id] = true;
         });
-        setCompletedCues(completedCuesMap);
-        console.log('🟣 Synced completed cues:', completedCuesMap);
+        setCompletedCues((prev) => stripLiveCuesFromCompletedMap({ ...prev, ...completedCuesMap }));
+        console.log('🟣 Synced completed cues:', stripLiveCuesFromCompletedMap(completedCuesMap));
       }
     } catch (error) {
       console.warn('⚠️ Error syncing completed cues:', error);
@@ -2457,13 +5133,13 @@ const RunOfShowPage: React.FC = () => {
           if (actualState === 'running') {
             setActiveItemId(itemId);
             setLoadedItems(prev => ({ ...prev, [itemId]: true }));
-            setActiveTimers(prev => ({ ...prev, [itemId]: true }));
+            setActiveTimers({ [itemId]: true });
             // Set dependent rows for orange highlighting
             const currentIndex = schedule.findIndex(item => item.id === itemId);
             const dependentIds = new Set<number>();
             if (currentIndex !== -1) {
               for (let i = currentIndex + 1; i < schedule.length; i++) {
-                if (schedule[i].isIndented) {
+                if (isIndentedScheduleItem(schedule[i], indentedCuesRef.current)) {
                   dependentIds.add(schedule[i].id);
                 } else {
                   break;
@@ -2473,15 +5149,23 @@ const RunOfShowPage: React.FC = () => {
             setLoadedCueDependents(dependentIds);
             setLastLoadedCueId(itemId);
           } else if (actualState === 'loaded') {
-            setActiveItemId(itemId);
+            const stealRunning = loadedUpdateWouldStealRunning(itemId);
+            const loadedDelay = isDelayProgramType(
+              scheduleRef.current?.find((item) => item.id === itemId)?.programType
+            );
+            if (!stealRunning && !loadedDelay) {
+              setActiveItemId(itemId);
+            }
             setLoadedItems(prev => ({ ...prev, [itemId]: true }));
-            setActiveTimers({});
+            if (!stealRunning) {
+              setActiveTimers({});
+            }
             // Set dependent rows for orange highlighting
             const currentIndex = schedule.findIndex(item => item.id === itemId);
             const dependentIds = new Set<number>();
             if (currentIndex !== -1) {
               for (let i = currentIndex + 1; i < schedule.length; i++) {
-                if (schedule[i].isIndented) {
+                if (isIndentedScheduleItem(schedule[i], indentedCuesRef.current)) {
                   dependentIds.add(schedule[i].id);
                 } else {
                   break;
@@ -2548,12 +5232,15 @@ const RunOfShowPage: React.FC = () => {
     };
   }, []);
 
-  // Save current role to API whenever it changes (but not for initial VIEWER state)
+  // Save current role whenever it changes — Viewer, Editor, and Operator all persist
   useEffect(() => {
-    if (event?.id && user?.id && currentUserRole && currentUserRole !== 'VIEWER') {
+    if (!roleHydratedRef.current) return;
+    if (event?.id && user?.id && currentUserRole) {
       console.log('💾 Saving current role to API:', currentUserRole);
       try {
         const username = user.full_name || user.email || 'Unknown';
+        localStorage.setItem(`userRole_${event.id}`, currentUserRole);
+        localStorage.setItem(`user_role_${event.id}_${user.id}`, currentUserRole);
         DatabaseService.saveUserSession(event.id, user.id, username, currentUserRole);
         console.log('✅ Role saved to API:', currentUserRole);
       } catch (error) {
@@ -2562,21 +5249,27 @@ const RunOfShowPage: React.FC = () => {
     }
   }, [event?.id, user?.id, currentUserRole]);
 
-  // Also save role when component unmounts (navigating away) as backup (but not for VIEWER)
+  // Backup on unmount only — use ref so switching to Viewer cannot re-save stale Editor/Operator
   useEffect(() => {
+    const eventId = event?.id;
+    const userId = user?.id;
+    const userName = user?.full_name || user?.email || 'Unknown';
     return () => {
-      if (event?.id && user?.id && currentUserRole && currentUserRole !== 'VIEWER') {
-        console.log('💾 Saving current role to API before navigating away:', currentUserRole);
+      if (!roleHydratedRef.current) return;
+      const role = currentUserRoleRef.current;
+      if (eventId && userId && role) {
+        console.log('💾 Saving current role to API before navigating away:', role);
         try {
-          const username = user.full_name || user.email || 'Unknown';
-          DatabaseService.saveUserSession(event.id, user.id, username, currentUserRole);
-          console.log('✅ Role saved to API on navigation away:', currentUserRole);
+          localStorage.setItem(`userRole_${eventId}`, role);
+          localStorage.setItem(`user_role_${eventId}_${userId}`, role);
+          DatabaseService.saveUserSession(eventId, userId, userName, role);
+          console.log('✅ Role saved to API on navigation away:', role);
         } catch (error) {
           console.error('❌ Failed to save role to API on navigation away:', error);
         }
       }
     };
-  }, [event?.id, user?.id, currentUserRole]);
+  }, [event?.id, user?.id, user?.full_name, user?.email]);
 
   // Load completed cues from API
   const loadCompletedCuesFromAPI = async () => {
@@ -2595,16 +5288,11 @@ const RunOfShowPage: React.FC = () => {
         completedCuesData.forEach((cue: any) => {
           const id = normalizeScheduleItemId(cue.item_id);
           if (id == null) return;
-          const loadedId = normalizeScheduleItemId(hybridTimerData?.activeTimer?.item_id ?? activeItemId);
-          if (loadedId != null && loadedId === id && hybridTimerData?.activeTimer?.is_active) {
-            console.log('🟣 Skipping currently active cue from completed cues:', id);
-            return;
-          }
           completedCuesMap[id] = true;
         });
-        
-        setCompletedCues(completedCuesMap);
-        console.log('🟣 Set completedCues state:', completedCuesMap);
+        const filtered = stripLiveCuesFromCompletedMap(completedCuesMap);
+        setCompletedCues((prev) => stripLiveCuesFromCompletedMap({ ...prev, ...filtered }));
+        console.log('🟣 Set completedCues state:', filtered);
       } else {
         console.log('🟣 No completed cues found');
       }
@@ -2615,35 +5303,44 @@ const RunOfShowPage: React.FC = () => {
     }
   };
 
-  // Load indented cues from API
+  // Load indented cues from API (merge — never wipe local timed-marker groups still saving)
   const loadIndentedCuesFromAPI = async () => {
     if (!event?.id) return;
 
     try {
       console.log('🟠 Loading indented cues from API for event:', event.id);
       const indentedCuesData = await DatabaseService.getIndentedCues(event.id);
-      
+
+      const indentedCuesMap: Record<number, { parentId: number; userId: string; userName: string }> = {};
       if (indentedCuesData && indentedCuesData.length > 0) {
         console.log('🟠 Found indented cues:', indentedCuesData);
-        
-        // Convert the database data to indentedCues state format
-        const indentedCuesMap: Record<number, { parentId: number; userId: string; userName: string }> = {};
         indentedCuesData.forEach((cue: any) => {
           if (cue.item_id && cue.parent_item_id) {
             indentedCuesMap[cue.item_id] = {
               parentId: cue.parent_item_id,
               userId: cue.user_id || '',
-              userName: cue.user_name || ''
+              userName: cue.user_name || '',
             };
           }
         });
-        
-        setIndentedCues(indentedCuesMap);
-        console.log('🟠 Set indentedCues state:', indentedCuesMap);
       } else {
         console.log('🟠 No indented cues found');
-        setIndentedCues({});
       }
+
+      setIndentedCues((prev) => {
+        const merged = { ...indentedCuesMap };
+        // Keep local timed-marker / brand-new indent entries not yet in API
+        for (const [idStr, entry] of Object.entries(prev)) {
+          const id = Number(idStr);
+          if (merged[id]) continue;
+          const row = scheduleRef.current?.find((s) => s.id === id);
+          if (row?.isTimedMarker || entry) {
+            merged[id] = entry;
+          }
+        }
+        return merged;
+      });
+      console.log('🟠 Set indentedCues state (merged):', indentedCuesMap);
     } catch (error) {
       console.error('❌ Error loading indented cues from API:', error);
       console.log('💡 This means the indented_cues table or functions need to be created first');
@@ -2666,6 +5363,188 @@ const RunOfShowPage: React.FC = () => {
     
     return null; // No parent found
   };
+  /**
+   * Open modal to add a timed marker under a parent cue.
+   * Pass either the parent cue id, or an existing marker/indented child —
+   * we resolve the parent and insert after that row (or after the last child).
+   */
+  const addTimedMarkerAfter = (fromItemId: number) => {
+    if (currentUserRole === 'VIEWER') {
+      alert('Viewers cannot add timed markers.');
+      return;
+    }
+    const fromIndex = schedule.findIndex((item) => item.id === fromItemId);
+    if (fromIndex < 0) return;
+    const fromItem = schedule[fromIndex];
+
+    let parentId = fromItemId;
+    let insertAfterId: number | undefined;
+    if (isTimedMarkerItem(fromItem) || isIndentedScheduleItem(fromItem, indentedCues)) {
+      const parentIndex = findParentScheduleIndex(schedule, fromIndex, indentedCues);
+      if (parentIndex < 0) {
+        alert('Could not find the parent cue for this timed marker.');
+        return;
+      }
+      parentId = schedule[parentIndex].id;
+      insertAfterId = fromItemId;
+    }
+
+    handleModalEditing();
+    setTimedMarkerModal({ mode: 'add', parentId, insertAfterId });
+  };
+
+  const editTimedMarkerTime = (itemId: number) => {
+    if (currentUserRole === 'VIEWER') return;
+    if (!beginRowAction(itemId, 'modal')) return;
+    const index = schedule.findIndex((item) => item.id === itemId);
+    if (index < 0) return;
+    const item = schedule[index];
+    if (!isTimedMarkerItem(item)) return;
+    const parentIndex = findParentScheduleIndex(schedule, index, indentedCues);
+    if (parentIndex < 0) return;
+    handleModalEditing();
+    setTimedMarkerModal({
+      mode: 'edit',
+      parentId: schedule[parentIndex].id,
+      itemId,
+    });
+  };
+
+  const applyTimedMarkerModal = async (result: TimedMarkerModalResult) => {
+    if (!timedMarkerModal) return;
+    const { parentId, mode, itemId, insertAfterId } = timedMarkerModal;
+    const parentIndex = schedule.findIndex((item) => item.id === parentId);
+    if (parentIndex < 0) return;
+    const parent = schedule[parentIndex];
+    const markerFields = timedMarkerPersistFields({
+      isTimedMarker: true,
+      markerTimeMode: result.mode,
+      markerOffsetSeconds: result.markerOffsetSeconds,
+      markerAbsoluteSeconds: result.markerAbsoluteSeconds,
+    });
+    const userId = user?.id || 'local';
+    const userName = user?.full_name || user?.email || 'Local User';
+
+    if (mode === 'edit' && itemId != null) {
+      handleUserEditing();
+      setSchedule((prev) =>
+        prev.map((row) =>
+          row.id === itemId
+            ? {
+                ...row,
+                segmentName: result.label || row.segmentName,
+                isIndented: true,
+                durationHours: 0,
+                durationMinutes: 0,
+                durationSeconds: 0,
+                ...markerFields,
+              }
+            : row
+        )
+      );
+      setIndentedCues((prev) => ({
+        ...prev,
+        [itemId]: prev[itemId] || {
+          parentId,
+          userId,
+          userName,
+        },
+      }));
+      setTimedMarkerModal(null);
+      handleModalClosed();
+      return;
+    }
+
+    timedMarkerIdSeqRef.current += 1;
+    const newId = Date.now() * 1000 + (timedMarkerIdSeqRef.current % 1000);
+    const marker: ScheduleItem = {
+      id: newId,
+      day: parent.day || selectedDay || 1,
+      programType: '',
+      shotType: '',
+      segmentName: result.label || 'Timed marker',
+      durationHours: 0,
+      durationMinutes: 0,
+      durationSeconds: 0,
+      notes: '',
+      assets: '',
+      speakers: '',
+      speakersText: '',
+      hasPPT: false,
+      hasQA: false,
+      timerId: generateRandomTimerId(),
+      customFields: { cue: '' },
+      isPublic: false,
+      isIndented: true,
+      ...markerFields,
+    };
+
+    // Mark indented locally FIRST so save/sync cannot wipe grouping
+    setIndentedCues((prev) => ({
+      ...prev,
+      [newId]: {
+        parentId,
+        userId,
+        userName,
+      },
+    }));
+    // Insert using latest schedule: after a specific sibling, else after last child of parent
+    setSchedule((prev) => {
+      const pIdx = prev.findIndex((item) => item.id === parentId);
+      if (pIdx < 0) return prev;
+      let insertAt = pIdx;
+      if (insertAfterId != null) {
+        const afterIdx = prev.findIndex((item) => item.id === insertAfterId);
+        if (afterIdx >= 0) {
+          insertAt = afterIdx;
+        }
+      } else {
+        for (let i = pIdx + 1; i < prev.length; i++) {
+          if (
+            isTimedMarkerItem(prev[i]) ||
+            isIndentedScheduleItem(prev[i], indentedCuesRef.current)
+          ) {
+            insertAt = i;
+          } else {
+            break;
+          }
+        }
+      }
+      const next = [...prev];
+      next.splice(insertAt + 1, 0, marker);
+      return next;
+    });
+    handleUserEditing();
+    setTimedMarkerModal(null);
+    handleModalClosed();
+
+    if (event?.id && user?.id) {
+      try {
+        await DatabaseService.markCueIndented(
+          event.id,
+          newId,
+          parentId,
+          user.id,
+          userName,
+          currentUserRole || 'EDITOR'
+        );
+      } catch (e) {
+        console.warn('Timed marker indent mark failed (row still grouped locally):', e);
+      }
+    }
+
+    logChange('ADD_ITEM', `Added timed marker under "${parent.segmentName}"`, {
+      changeType: 'ADD',
+      itemId: newId,
+      itemName: marker.segmentName,
+      details: {
+        ...markerFields,
+        parentId,
+        parentName: parent.segmentName,
+      },
+    });
+  };
+
   // Toggle indented status for a cue
   const toggleIndentedCue = async (itemId: number) => {
     if (!event?.id || !user?.id) return;
@@ -2681,6 +5560,14 @@ const RunOfShowPage: React.FC = () => {
             delete newState[itemId];
             return newState;
           });
+          // Unindenting → main cue; default public on
+          setSchedule((prev) =>
+            prev.map((row) =>
+              row.id === itemId && !row.isTimedMarker
+                ? stampScheduleCheckboxes({ ...row, isIndented: false, isPublic: true }, ['isPublic'])
+                : row
+            )
+          );
           console.log('✅ Successfully removed indented status');
         }
       } else {
@@ -2710,6 +5597,14 @@ const RunOfShowPage: React.FC = () => {
               userName: user.full_name || user.email || 'Unknown User'
             }
           }));
+          // Indented cues are not public by default
+          setSchedule((prev) =>
+            prev.map((row) =>
+              row.id === itemId
+                ? stampScheduleCheckboxes({ ...row, isIndented: true, isPublic: false }, ['isPublic'])
+                : row
+            )
+          );
           console.log('✅ Successfully added indented status');
         }
       }
@@ -2841,7 +5736,22 @@ const RunOfShowPage: React.FC = () => {
       if (activeTimer) {
         console.log('🔄 Loading timer from API:', activeTimer);
 
-        setHybridTimerData(prev => {
+        const isRunningTimer =
+          activeTimer.timer_state === 'running' ||
+          (activeTimer.is_running === true && activeTimer.is_active !== false);
+        const startedAtRaw = activeTimer.started_at;
+        const hasRealStart =
+          startedAtRaw &&
+          !String(startedAtRaw).startsWith('2099') &&
+          new Date(startedAtRaw).getFullYear() < 2090;
+
+        // The top Run of Show counter reads hybridTimerData, so refresh it
+        // directly instead of only updating the legacy row timer state.
+        const apiItemIdEarly = normalizeScheduleItemId(activeTimer.item_id);
+        if (!isRunningTimer && loadedUpdateWouldStealRunning(apiItemIdEarly)) {
+          return;
+        }
+        setHybridTimerData((prev: any) => {
           let refreshedTimer = activeTimer;
           if (shouldRejectResolumeAlignReset(prev?.activeTimer, activeTimer, clockOffset)) {
             refreshedTimer = { ...activeTimer, started_at: prev.activeTimer.started_at };
@@ -2850,32 +5760,61 @@ const RunOfShowPage: React.FC = () => {
         });
         
         // Set the active item
-        setActiveItemId(activeTimer.item_id);
-        setLoadedItems(prev => ({ ...prev, [activeTimer.item_id]: true }));
+        const loadedFromApi = !isRunningTimer;
+        const apiItemId = normalizeScheduleItemId(activeTimer.item_id);
+        const stealRunning = loadedFromApi && loadedUpdateWouldStealRunning(apiItemId);
+        const loadedDelay = isDelayProgramType(
+          scheduleRef.current?.find((item) => item.id === apiItemId)?.programType
+        );
+        if (!stealRunning && !(loadedFromApi && loadedDelay) && apiItemId != null) {
+          setActiveItemId(apiItemId);
+        }
+        if (apiItemId != null) {
+          setLoadedItems(prev => ({ ...prev, [apiItemId]: true }));
+        }
         
-        if (activeTimer.timer_state === 'running') {
+        if (isRunningTimer && hasRealStart) {
+          noteCueActualStart(activeTimer);
           // Timer is running - set up with server timing
           console.log('🔄 Timer is running, setting up with server timing');
+          const startedAt = new Date(startedAtRaw);
+          let elapsed = Number(activeTimer.elapsed_seconds) || 0;
+          if (!elapsed && startedAt.getTime() <= Date.now()) {
+            elapsed = Math.max(0, Math.floor((Date.now() - startedAt.getTime()) / 1000));
+          }
           setTimerProgress(prev => ({
             ...prev,
             [activeTimer.item_id]: {
-              elapsed: activeTimer.elapsed_seconds,
+              elapsed,
               total: activeTimer.duration_seconds,
-              startedAt: new Date(activeTimer.started_at)
+              startedAt,
             }
           }));
+          setActiveTimers({ [activeTimer.item_id]: true });
 
           // Start local timer interval that recalculates from server time every second
           const timer = setInterval(async () => {
             try {
               const currentTimer = await DatabaseService.getActiveTimer(event.id);
-              if (currentTimer && currentTimer.item_id === activeTimer.item_id) {
+              const stillRunning =
+                currentTimer &&
+                currentTimer.item_id === activeTimer.item_id &&
+                (currentTimer.timer_state === 'running' ||
+                  (currentTimer.is_running === true && currentTimer.is_active !== false));
+              if (stillRunning) {
+                  const tickStart = currentTimer.started_at && !String(currentTimer.started_at).startsWith('2099')
+                    ? new Date(currentTimer.started_at)
+                    : startedAt;
+                  let tickElapsed = Number(currentTimer.elapsed_seconds) || 0;
+                  if (!tickElapsed && tickStart.getTime() <= Date.now()) {
+                    tickElapsed = Math.max(0, Math.floor((Date.now() - tickStart.getTime()) / 1000));
+                  }
                   setTimerProgress(prev => ({
                     ...prev,
                     [activeTimer.item_id]: {
-                      elapsed: currentTimer.elapsed_seconds,
+                      elapsed: tickElapsed,
                       total: currentTimer.duration_seconds,
-                      startedAt: new Date(currentTimer.started_at)
+                      startedAt: tickStart,
                     }
                   }));
               }
@@ -2885,7 +5824,7 @@ const RunOfShowPage: React.FC = () => {
           }, 1000);
           
           setActiveTimerIntervals(prev => ({ ...prev, [activeTimer.item_id]: timer }));
-        } else if (activeTimer.timer_state === 'loaded') {
+        } else if (activeTimer.timer_state === 'loaded' || isRunningTimer) {
           // Timer is loaded but not started
           console.log('🔄 Timer is loaded but not started');
           setTimerProgress(prev => ({
@@ -2913,7 +5852,7 @@ const RunOfShowPage: React.FC = () => {
           const dependentIds = new Set<number>();
           if (currentIndex !== -1) {
             for (let i = currentIndex + 1; i < schedule.length; i++) {
-              if (schedule[i].isIndented) {
+              if (isIndentedScheduleItem(schedule[i], indentedCuesRef.current)) {
                 dependentIds.add(schedule[i].id);
               } else {
                 break;
@@ -2922,11 +5861,31 @@ const RunOfShowPage: React.FC = () => {
           }
           setLoadedCueDependents(dependentIds);
         }
+
+        // Only a RUNNING restore should un-complete. A leftover loaded row after Stop
+        // must not strip the grey-out from the cue that just finished.
+        const restoredId = normalizeScheduleItemId(activeTimer.item_id);
+        if (restoredId != null && isRunningTimer) {
+          setCompletedCues((prev) => {
+            const next = { ...prev };
+            delete next[restoredId];
+            return next;
+          });
+          setStoppedItems((prev) => {
+            if (!prev.has(restoredId)) return prev;
+            const next = new Set(prev);
+            next.delete(restoredId);
+            return next;
+          });
+          activeLoadedItemIdRef.current = restoredId;
+        } else if (restoredId != null) {
+          activeLoadedItemIdRef.current = restoredId;
+        }
         
         console.log('✅ Active timer loaded from API with accurate timing');
       } else {
         console.log('ℹ️ No active timer found in API - checking for recently completed cues');
-        setHybridTimerData(prev => ({ ...prev, activeTimer: null }));
+        setHybridTimerData((prev: any) => ({ ...prev, activeTimer: null }));
         
         // When no active timer, check if there were recently completed cues
         // This helps Editor and Viewer roles see completed cues that were finished by other users
@@ -2972,7 +5931,7 @@ const RunOfShowPage: React.FC = () => {
                   if (currentIndex !== -1) {
                     // Find all indented items that follow this CUE until the next non-indented item
                     for (let i = currentIndex + 1; i < schedule.length; i++) {
-                      if (schedule[i].isIndented) {
+                      if (isIndentedScheduleItem(schedule[i], indentedCuesRef.current)) {
                         setCompletedCues(prev => ({ ...prev, [schedule[i].id]: true }));
                         setStoppedItems(prev => new Set([...prev, schedule[i].id]));
                       } else {
@@ -3013,6 +5972,30 @@ const RunOfShowPage: React.FC = () => {
       console.error('❌ Error loading active timer from API:', error);
     }
   };
+
+  const loadOperatorCountdownFromAPI = async () => {
+    if (!event?.id) return;
+    try {
+      const row = await DatabaseService.getOperatorCountdown(event.id);
+      const mapped = mapOperatorCountdownRow(row);
+      setHybridTimerData((prev) => ({ ...prev, operatorCountdown: mapped }));
+      setOperatorCountdownLive(!!mapped?.is_running);
+    } catch (error) {
+      console.warn('⚠️ Error loading operator countdown:', error);
+    }
+  };
+
+  // Keep Op Timer header countdown ticking like indented sub-timers
+  useEffect(() => {
+    const op = hybridTimerData?.operatorCountdown;
+    if (!op?.is_active || !op?.is_running) return;
+    const id = window.setInterval(() => setOperatorCountdownTick((n) => n + 1), 250);
+    return () => window.clearInterval(id);
+  }, [
+    hybridTimerData?.operatorCountdown?.is_active,
+    hybridTimerData?.operatorCountdown?.is_running,
+    hybridTimerData?.operatorCountdown?.started_at,
+  ]);
 
   // Load active sub-cue timer from API
   const loadActiveSubCueTimerFromAPI = async () => {
@@ -3473,7 +6456,10 @@ const RunOfShowPage: React.FC = () => {
           numberOfDays: event?.numberOfDays,
           show_mode: showMode,
           track_was_durations: trackWasDurations,
-          ...(Object.keys(originalDurations).length > 0 && { original_durations: originalDurations })
+          show_completed_highlight: showCompletedHighlight,
+          ...(Object.keys(originalDurations).length > 0 && { original_durations: originalDurations }),
+          ...autoRollSettingsPatch(autoRollArmedRef.current),
+          voAlertsEnabled: voAlertsEnabledRef.current !== false,
         }
       });
       console.log('✅ Schedule data backed up with settings');
@@ -3481,420 +6467,6 @@ const RunOfShowPage: React.FC = () => {
       console.error('❌ Error backing up schedule data:', error);
     }
   };
-
-  const buildActiveTimerForReconnect = useCallback(async (): Promise<Record<string, unknown> | null> => {
-    const ui = reconnectTimerStateRef.current;
-    const eventId = ui.eventId ?? event?.id;
-    const userId = ui.userId ?? user?.id;
-    if (!eventId || !userId) return null;
-
-    const hybrid = ui.hybridTimerData?.activeTimer;
-    const fromDb = await DatabaseService.getActiveTimer(eventId);
-
-    const dbLive =
-      fromDb &&
-      (fromDb.timer_state === 'running' ||
-        fromDb.timer_state === 'loaded' ||
-        fromDb.is_running === true ||
-        fromDb.is_active === true);
-
-    const toNum = (v: unknown): number | null => {
-      if (v == null || v === '') return null;
-      const n = typeof v === 'string' ? parseInt(v, 10) : Number(v);
-      return Number.isNaN(n) ? null : n;
-    };
-
-    let itemId: number | null = null;
-
-    if (hybrid?.item_id != null) {
-      itemId = toNum(hybrid.item_id);
-    } else if (ui.activeItemId != null && (ui.loadedItems[ui.activeItemId] || ui.activeTimers[ui.activeItemId])) {
-      itemId = ui.activeItemId;
-    } else {
-      const runningKey = Object.keys(ui.activeTimers).find((k) => ui.activeTimers[parseInt(k, 10)]);
-      if (runningKey) {
-        itemId = parseInt(runningKey, 10);
-      } else {
-        const loadedKey = Object.keys(ui.loadedItems).find((k) => ui.loadedItems[parseInt(k, 10)]);
-        if (loadedKey) itemId = parseInt(loadedKey, 10);
-        else if (ui.activeItemId != null) itemId = ui.activeItemId;
-        else if (dbLive && fromDb?.item_id != null) itemId = toNum(fromDb.item_id);
-      }
-    }
-
-    if (itemId == null) return null;
-
-    const isRunning =
-      hybrid?.is_running === true ||
-      Boolean(ui.activeTimers[itemId]) ||
-      (dbLive &&
-        fromDb?.item_id === itemId &&
-        (fromDb?.is_running === true || fromDb?.timer_state === 'running'));
-
-    const isLoaded =
-      isRunning ||
-      hybrid?.is_active === true ||
-      Boolean(ui.loadedItems[itemId]) ||
-      ui.activeItemId === itemId ||
-      (dbLive &&
-        fromDb?.item_id === itemId &&
-        (fromDb?.is_active === true || fromDb?.timer_state === 'loaded'));
-
-    if (!isLoaded && !isRunning) return null;
-
-    const timerState = isRunning ? 'running' : 'loaded';
-    const progress = ui.timerProgress[itemId];
-    const scheduleItems = ui.schedule.length > 0 ? ui.schedule : schedule;
-    const scheduleItem = scheduleItems.find((s) => s.id === itemId);
-    const totalSeconds =
-      hybrid?.duration_seconds ??
-      (fromDb?.item_id === itemId ? fromDb?.duration_seconds : null) ??
-      progress?.total ??
-      (scheduleItem
-        ? scheduleItem.durationHours * 3600 +
-          scheduleItem.durationMinutes * 60 +
-          scheduleItem.durationSeconds
-        : 300);
-
-    let startedAt: string | null =
-      (hybrid?.started_at as string | null | undefined) ??
-      (fromDb?.item_id === itemId ? (fromDb?.started_at as string | null) : null) ??
-      null;
-    if (isRunning && progress?.startedAt) {
-      startedAt =
-        progress.startedAt instanceof Date
-          ? progress.startedAt.toISOString()
-          : typeof progress.startedAt === 'string'
-            ? progress.startedAt
-            : startedAt;
-    }
-
-    // Far-future placeholder means "loaded / not started" — never use it for a running handoff.
-    const startedMs = startedAt ? new Date(startedAt).getTime() : NaN;
-    const startedAtIsPlausible =
-      Number.isFinite(startedMs) && startedMs < Date.now() + 60_000;
-    if (isRunning && !startedAtIsPlausible) {
-      startedAt = null;
-    }
-
-    const cueIs =
-      (hybrid?.cue_is as string | undefined) ??
-      (fromDb?.item_id === itemId ? (fromDb?.cue_is as string | undefined) : undefined) ??
-      (scheduleItem ? formatCueDisplay(scheduleItem.customFields?.cue) : null);
-
-    // Screen remaining (with clockOffset) so cloud handoff matches what operators see.
-    let remainingSeconds: number | null = null;
-    if (isRunning) {
-      if (startedAt && typeof totalSeconds === 'number' && startedAtIsPlausible) {
-        const elapsed = (Date.now() + (ui.clockOffset || 0) - startedMs) / 1000;
-        remainingSeconds = Number(totalSeconds) - elapsed;
-      } else if (
-        progress &&
-        typeof progress.total === 'number' &&
-        typeof progress.elapsed === 'number'
-      ) {
-        remainingSeconds = Number(progress.total) - Number(progress.elapsed);
-      }
-    }
-
-    return {
-      event_id: eventId,
-      item_id: itemId,
-      user_id: (hybrid?.user_id as string | undefined) ?? (fromDb?.user_id as string | undefined) ?? userId,
-      user_name: ui.userName || user?.full_name || user?.email || 'Unknown',
-      user_role: ui.userRole || currentUserRole || 'OPERATOR',
-      timer_state: timerState,
-      is_active: true,
-      is_running: isRunning,
-      started_at: startedAt,
-      last_loaded_cue_id:
-        toNum(hybrid?.last_loaded_cue_id) ??
-        (fromDb?.item_id === itemId ? toNum(fromDb?.last_loaded_cue_id) : null) ??
-        itemId,
-      cue_is: cueIs,
-      duration_seconds: totalSeconds,
-      ...(remainingSeconds != null && Number.isFinite(remainingSeconds)
-        ? { remaining_seconds: remainingSeconds }
-        : {}),
-    };
-  }, [event?.id, user?.id, user?.full_name, user?.email, schedule, currentUserRole]);
-
-  useEffect(() => {
-    reconnectTimerStateRef.current = {
-      hybridTimerData,
-      activeItemId,
-      activeTimers,
-      loadedItems,
-      completedCues,
-      timerProgress,
-      schedule,
-      eventId: event?.id,
-      userId: user?.id,
-      userName: user?.full_name || user?.email || 'Unknown',
-      userRole: currentUserRole || 'OPERATOR',
-      clockOffset,
-    };
-  }, [
-    hybridTimerData,
-    activeItemId,
-    activeTimers,
-    loadedItems,
-    completedCues,
-    timerProgress,
-    schedule,
-    event?.id,
-    user?.id,
-    user?.full_name,
-    user?.email,
-    currentUserRole,
-    clockOffset,
-  ]);
-
-  useEffect(() => {
-    registerRunOfShowLocalFlush(async () => {
-      if (!event?.id || !user?.id) return;
-      await backupScheduleData();
-      await finalizeAllPendingChanges();
-
-      const timer = await buildActiveTimerForReconnect();
-      if (!timer) return;
-
-      const itemId = timer.item_id as number;
-      const duration = (timer.duration_seconds as number) ?? 300;
-      const cueDisplay = timer.cue_is as string | undefined;
-      const isRunning = timer.is_running === true || timer.timer_state === 'running';
-      let startedAt: Date;
-      if (
-        isRunning &&
-        timer.remaining_seconds != null &&
-        Number.isFinite(Number(timer.remaining_seconds))
-      ) {
-        const rem = Number(timer.remaining_seconds);
-        const elapsed = duration - rem;
-        startedAt = new Date(Date.now() - elapsed * 1000);
-      } else if (timer.started_at) {
-        const ms = new Date(String(timer.started_at)).getTime();
-        startedAt =
-          Number.isFinite(ms) && ms < Date.now() + 60_000
-            ? new Date(ms)
-            : new Date(Date.now() + clockOffset);
-      } else {
-        startedAt = new Date(Date.now() + clockOffset);
-      }
-
-      if (isRunning) {
-        await DatabaseService.startTimer(
-          event.id,
-          itemId,
-          user.id,
-          duration,
-          startedAt,
-          undefined,
-          cueDisplay,
-          undefined
-        );
-      } else {
-        await DatabaseService.loadCue(
-          event.id,
-          itemId,
-          user.id,
-          duration,
-          undefined,
-          cueDisplay,
-          undefined
-        );
-      }
-    });
-    registerRunOfShowSnapshotBuilder(async (): Promise<{ ok: boolean; snapshot?: ReconnectSnapshot }> => {
-      if (!event?.id || !user?.id || schedule.length === 0) {
-        return { ok: false };
-      }
-
-      const [completed, indented, subCueResult, activeTimer] = await Promise.all([
-        DatabaseService.getCompletedCues(event.id),
-        DatabaseService.getIndentedCues(event.id),
-        DatabaseService.getActiveSubCueTimer(event.id),
-        buildActiveTimerForReconnect(),
-      ]);
-
-      const completedFromApi = Array.isArray(completed) ? completed : [];
-      const completedIds = new Set(
-        completedFromApi
-          .map((c: { item_id?: unknown }) =>
-            typeof c.item_id === 'number' ? c.item_id : parseInt(String(c.item_id), 10)
-          )
-          .filter((id: number) => Number.isFinite(id))
-      );
-      // Always merge live UI completed flags (ref) — same purple rows on screen.
-      const liveCompleted = reconnectTimerStateRef.current.completedCues || {};
-      const completedFromUi = Object.entries(liveCompleted)
-        .filter(([, done]) => done)
-        .map(([idStr]) => {
-          const itemId = parseInt(idStr, 10);
-          if (!Number.isFinite(itemId) || completedIds.has(itemId)) return null;
-          const row = schedule.find((s) => s.id === itemId);
-          return {
-            event_id: event.id,
-            item_id: itemId,
-            cue_id: row ? formatCueDisplay(row.customFields?.cue) : `CUE ${itemId}`,
-            user_id: user.id,
-            user_name: user.full_name || user.email || 'Unknown',
-            user_role: currentUserRole || 'OPERATOR',
-          };
-        })
-        .filter(Boolean) as Record<string, unknown>[];
-
-      const mergedCompleted = [...completedFromApi, ...completedFromUi];
-      // Ensure every UI-completed row is present even if API row used a string id mismatch.
-      for (const [idStr, done] of Object.entries(liveCompleted)) {
-        if (!done) continue;
-        const itemId = parseInt(idStr, 10);
-        if (!Number.isFinite(itemId)) continue;
-        const already = mergedCompleted.some((c) => {
-          const cid =
-            typeof (c as { item_id?: unknown }).item_id === 'number'
-              ? (c as { item_id: number }).item_id
-              : parseInt(String((c as { item_id?: unknown }).item_id), 10);
-          return cid === itemId;
-        });
-        if (already) continue;
-        const row = schedule.find((s) => s.id === itemId);
-        mergedCompleted.push({
-          event_id: event.id,
-          item_id: itemId,
-          cue_id: row ? formatCueDisplay(row.customFields?.cue) : `CUE ${itemId}`,
-          user_id: user.id,
-          user_name: user.full_name || user.email || 'Unknown',
-          user_role: currentUserRole || 'OPERATOR',
-        });
-      }
-
-      return {
-        ok: true,
-        snapshot: {
-          event_id: event.id,
-          run_of_show: {
-            event_id: event.id,
-            event_name: event.name,
-            event_date: event.date,
-            schedule_items: schedule,
-            custom_columns: customColumns,
-            settings: {
-              eventName,
-              masterStartTime,
-              dayStartTimes,
-              numberOfDays: event?.numberOfDays,
-              show_mode: showMode,
-              track_was_durations: trackWasDurations,
-              ...(Object.keys(originalDurations).length > 0 && {
-                original_durations: originalDurations,
-              }),
-            },
-            last_modified_by: user.id,
-            last_modified_by_name: user.full_name || user.email || 'Unknown',
-            last_modified_by_role: currentUserRole || 'OPERATOR',
-          },
-          active_timer: activeTimer,
-          completed_cues: mergedCompleted,
-          indented_cues: Array.isArray(indented) ? indented : [],
-          sub_cue_timer: subCueResult?.data ?? null,
-        },
-      };
-    });
-
-    registerPostCloudReconnectHandler((stats) => {
-      const itemId = stats?.activeTimerItemId != null ? Number(stats.activeTimerItemId) : null;
-      if (itemId == null || Number.isNaN(itemId)) return;
-      const timerState = String(stats.activeTimerState || 'loaded');
-      const isRunning = timerState === 'running';
-      const duration =
-        stats.activeTimerDurationSeconds != null
-          ? Number(stats.activeTimerDurationSeconds)
-          : 300;
-      const remaining =
-        stats.activeTimerRemainingSeconds != null
-          ? Number(stats.activeTimerRemainingSeconds)
-          : null;
-      const startedAt =
-        typeof stats.activeTimerStartedAt === 'string'
-          ? stats.activeTimerStartedAt
-          : isRunning && remaining != null && Number.isFinite(remaining)
-            ? new Date(Date.now() - (duration - remaining) * 1000).toISOString()
-            : '2099-12-31T23:59:59.999Z';
-
-      console.log('☁️ Applying reconnect timer handoff to local UI', {
-        itemId,
-        timerState,
-        remaining,
-        duration,
-        startedAt,
-      });
-
-      setHybridTimerData((prev: any) => ({
-        ...prev,
-        activeTimer: {
-          ...(prev?.activeTimer || {}),
-          event_id: event?.id,
-          item_id: itemId,
-          timer_state: timerState,
-          is_active: true,
-          is_running: isRunning,
-          duration_seconds: duration,
-          started_at: startedAt,
-          last_loaded_cue_id: itemId,
-        },
-      }));
-      setActiveItemId(itemId);
-      setLoadedItems((prev) => ({ ...prev, [itemId]: true }));
-      if (isRunning) {
-        setActiveTimers((prev) => ({ ...prev, [itemId]: true }));
-        setTimerProgress((prev) => ({
-          ...prev,
-          [itemId]: {
-            elapsed:
-              remaining != null && Number.isFinite(remaining)
-                ? Math.max(0, duration - remaining)
-                : prev[itemId]?.elapsed || 0,
-            total: duration,
-            startedAt: new Date(startedAt),
-          },
-        }));
-      } else {
-        setActiveTimers((prev) => {
-          const next = { ...prev };
-          delete next[itemId];
-          return next;
-        });
-        setTimerProgress((prev) => ({
-          ...prev,
-          [itemId]: { elapsed: 0, total: duration, startedAt: null },
-        }));
-      }
-      markLocalMutationGuard(5000);
-    });
-
-    return () => clearRunOfShowReconnectHandlers();
-  }, [
-    buildActiveTimerForReconnect,
-    event?.id,
-    event?.name,
-    event?.date,
-    event?.numberOfDays,
-    user?.id,
-    user?.full_name,
-    user?.email,
-    schedule,
-    customColumns,
-    completedCues,
-    showMode,
-    trackWasDurations,
-    originalDurations,
-    eventName,
-    masterStartTime,
-    dayStartTimes,
-    currentUserRole,
-    clockOffset,
-  ]);
 
   // Load master change log from API
   const loadMasterChangeLog = async () => {
@@ -3933,7 +6505,29 @@ const RunOfShowPage: React.FC = () => {
     }
 
     // Skip sync if any modal is open
-    if (showSpeakersModal || showNotesModal || showVoModal || showAssetsModal || showParticipantsModal || showBackupModal || showExcelImportModal || showAgendaImportModal || showCSVImportModal || showGoogleSheetExportModal || showImportEventModal || showSpeakerManagerModal || showBreakoutRoomModal || showOtherRoomModal || showDelayBlockModal || showAddModal) {
+    if (
+      showSpeakersModal ||
+      showNotesModal ||
+      showVoModal ||
+      showVogModal ||
+      showAssetsModal ||
+      showParticipantsModal ||
+      showBackupModal ||
+      showExcelImportModal ||
+      showAgendaImportModal ||
+      showCSVImportModal ||
+      showGoogleSheetExportModal ||
+      showImportEventModal ||
+      showSpeakerManagerModal ||
+      showAddModal ||
+      showBreakoutRoomModal ||
+      showOtherRoomModal ||
+      showDelayBlockModal ||
+      showShowBreakModal ||
+      timedMarkerModal ||
+      showCustomColumnModal ||
+      showPublicBulkModal
+    ) {
       console.log('🚫 Skipping sync - modal is open');
       return;
     }
@@ -3959,7 +6553,10 @@ const RunOfShowPage: React.FC = () => {
           numberOfDays: event?.numberOfDays,
           show_mode: showMode,
           track_was_durations: trackWasDurations,
-          ...(Object.keys(originalDurations).length > 0 && { original_durations: originalDurations })
+          show_completed_highlight: showCompletedHighlight,
+          ...(Object.keys(originalDurations).length > 0 && { original_durations: originalDurations }),
+          ...autoRollSettingsPatch(autoRollArmedRef.current),
+          voAlertsEnabled: voAlertsEnabledRef.current !== false,
         }
       };
 
@@ -3994,9 +6591,9 @@ const RunOfShowPage: React.FC = () => {
 
   // Password-protected clear function
   const clearAllChangeLogs = async () => {
-    const password = prompt('Enter password to clear all change logs:');
-    if (!password || !verifyClearLogPassword(password)) {
-      alert('Incorrect password. Change logs not cleared.');
+    const password = prompt('Enter the admin key to clear all change logs:');
+    if (!password || !(await verifyClearLogPassword(password))) {
+      alert('Incorrect admin key. Change logs not cleared.');
       return;
     }
 
@@ -4005,54 +6602,44 @@ const RunOfShowPage: React.FC = () => {
       return;
     }
 
+    if (!event?.id) {
+      alert('❌ Error: No event ID found. No change logs were cleared.');
+      return;
+    }
+    if (!user) {
+      console.error('❌ No user found');
+      alert('❌ Authentication error. Please refresh and try again. No change logs were cleared.');
+      return;
+    }
+
     try {
-      // Clear local changes
+      console.log('🔄 Attempting to clear master change log for event:', event.id);
+      console.log('🔄 Current user:', user.id, user.email);
+
+      const result = await changeLogService.clearMasterChangeLog(event.id, password);
+      console.log('🔄 Clear master result:', result);
+      if (!result.success) {
+        console.log('❌ Failed to clear master change log:', result.error);
+        alert(`❌ Change logs were not cleared.\n\nError: ${result.error}`);
+        return;
+      }
+
+      console.log('🔄 Verifying master change log is cleared...');
+      const reloadedMasterLog = await changeLogService.getMasterChangeLog(event.id);
+      console.log('🔄 Master change log after clearing:', reloadedMasterLog.length, 'records');
+      setMasterChangeLog(reloadedMasterLog);
+      if (reloadedMasterLog.length > 0) {
+        alert(`⚠️ Master clear could not be verified: ${reloadedMasterLog.length} records remain.\n\nLocal changes were not cleared.`);
+        return;
+      }
+
       changeLogService.clearLocalChanges();
       setChangeLog([]);
-      console.log('✅ Local changes cleared');
-      
-      // Clear master changes with detailed error handling
-      if (event?.id) {
-        console.log('🔄 Attempting to clear master change log for event:', event.id);
-        
-        // Get current user info for debugging
-        console.log('🔄 Current user:', user?.id, user?.email);
-        
-        if (!user) {
-          console.error('❌ No user found');
-          alert('❌ Authentication error. Please refresh and try again.');
-          return;
-        }
-        
-        const result = await changeLogService.clearMasterChangeLog(event.id);
-        console.log('🔄 Clear master result:', result);
-        
-        if (result.success) {
-          setMasterChangeLog([]);
-          console.log('✅ Master change log cleared successfully');
-          alert(`✅ Successfully cleared ${result.deletedCount} master change log entries`);
-          
-          // Force reload to verify
-          console.log('🔄 Verifying master change log is cleared...');
-          const reloadedMasterLog = await changeLogService.getMasterChangeLog(event.id);
-          console.log('🔄 Master change log after clearing:', reloadedMasterLog.length, 'records');
-          setMasterChangeLog(reloadedMasterLog);
-          
-          if (reloadedMasterLog.length === 0) {
-            alert(`✅ All change logs cleared successfully!\n\n- Local changes: ✅ Cleared\n- Master changes: ✅ Cleared (${result.deletedCount} records deleted)`);
-          } else {
-            alert(`⚠️ Partial success:\n\n- Local changes: ✅ Cleared\n- Master changes: ⚠️ ${result.deletedCount} deleted, but ${reloadedMasterLog.length} remain\n\nSome records may be protected by RLS policies.`);
-          }
-        } else {
-          console.log('❌ Failed to clear master change log:', result.error);
-          alert(`⚠️ Partial success:\n\n- Local changes: ✅ Cleared\n- Master changes: ❌ Failed\n\nError: ${result.error}\n\nThis might be due to database permissions. Check the console for details.`);
-        }
-      } else {
-        alert('❌ Error: No event ID found. Cannot clear master change log.');
-      }
+      console.log('✅ Local and master change logs cleared successfully');
+      alert(`✅ All change logs cleared successfully!\n\n- Local changes: ✅ Cleared\n- Master changes: ✅ Cleared (${result.deletedCount} records deleted)`);
     } catch (error) {
       console.error('Error clearing change logs:', error);
-      alert('❌ Error clearing change logs. Check the console for details.');
+      alert('❌ Error clearing change logs. No local changes were cleared.');
     }
   };
 
@@ -4096,6 +6683,7 @@ const RunOfShowPage: React.FC = () => {
     if (!Number.isFinite(activeTimerId)) return;
     console.log('🍞 Toast: Active timer ID:', activeTimerId);
 
+    // Prefer server started_at (or local progress) so refresh mid-cue does not compare "now" to schedule
     const hybrid = hybridTimerData?.activeTimer;
     const progressStarted = timerProgress[activeTimerId]?.startedAt ?? null;
     let startedAtDate: Date | null = null;
@@ -4119,12 +6707,14 @@ const RunOfShowPage: React.FC = () => {
       ? `${activeTimerId}|${startedAtDate.toISOString()}`
       : String(activeTimerId);
 
+    // Only show toast if this is a NEW timer start (not one we've already shown for)
     if (toastShownForTimerRef.current === toastKey) {
       console.log('🍞 Toast: Already shown for', toastKey, '- skipping (countdown should be running)');
-      return;
+      return; // Don't clear the interval - let it continue counting down
     }
 
     const syncedNow = getSyncedNow(clockOffset);
+    // Refresh / late hydrate: cue already running — do not re-popup (still mark shown)
     if (startedAtDate) {
       const ageSec = (syncedNow.getTime() - startedAtDate.getTime()) / 1000;
       if (ageSec > 90) {
@@ -4155,6 +6745,7 @@ const RunOfShowPage: React.FC = () => {
         const itemStartTimeStr = calculateStartTime(itemIndex);
         
         if (itemStartTimeStr && compareMinutes != null) {
+          // Store the scheduled time for display
           setScheduledTime(itemStartTimeStr);
 
           const scheduledMinutes = wallClockLabelToMinutes(itemStartTimeStr);
@@ -4164,13 +6755,16 @@ const RunOfShowPage: React.FC = () => {
           }
 
           let differenceMinutes = compareMinutes - scheduledMinutes;
+          // Near midnight wrap (rare for show days, but keep comparison sane)
           if (differenceMinutes > 12 * 60) differenceMinutes -= 24 * 60;
           if (differenceMinutes < -12 * 60) differenceMinutes += 24 * 60;
 
           setTimeDifference(Math.abs(differenceMinutes));
           
+          // Mark this timer start as having shown its toast
           toastShownForTimerRef.current = toastKey;
           
+          // Show toast when timer starts (vs scheduled Start — using started_at when available)
           if (differenceMinutes < -1) {
             console.log('🍞 Toast: Setting status to EARLY, difference:', differenceMinutes, startedAtDate ? '(from started_at)' : '(fallback now)');
             setTimeStatus('early');
@@ -4182,13 +6776,15 @@ const RunOfShowPage: React.FC = () => {
           } else {
             console.log('🍞 Toast: Setting status to ON-TIME, difference:', differenceMinutes, startedAtDate ? '(from started_at)' : '(fallback now)');
             setTimeStatus('on-time');
-            setShowTimeToast(true);
+            setShowTimeToast(true); // Show even if on-time when timer starts
           }
           
           console.log('🍞 Toast: Should be visible now - showTimeToast set to true');
           
+          // Reset countdown to 20 seconds
           setToastCountdown(20);
           
+          // Start countdown interval (updates every second)
           toastCountdownIntervalRef.current = setInterval(() => {
             setToastCountdown(prev => {
               if (prev <= 1) {
@@ -4202,10 +6798,11 @@ const RunOfShowPage: React.FC = () => {
             });
           }, 1000);
           
+          // Auto-close toast after 20 seconds
           toastTimeoutRef.current = setTimeout(() => {
             console.log('🍞 Toast: Auto-closing after 20 seconds');
             setShowTimeToast(false);
-            setToastCountdown(20);
+            setToastCountdown(20); // Reset countdown
             if (toastCountdownIntervalRef.current) {
               clearInterval(toastCountdownIntervalRef.current);
               toastCountdownIntervalRef.current = null;
@@ -4218,6 +6815,9 @@ const RunOfShowPage: React.FC = () => {
         setShowTimeToast(false);
       }
     }
+    
+    // No cleanup needed here - we'll clear intervals/timeouts explicitly when needed
+    // This prevents the cleanup from running and clearing the countdown when the effect re-runs
   }, [
     activeTimers,
     schedule,
@@ -4227,42 +6827,27 @@ const RunOfShowPage: React.FC = () => {
     timerProgress,
     clockOffset,
     eventTimezone,
-  ]);
-  
-  // Auto-scroll to active row function
-  const scrollToActiveRow = () => {
-    if (!isFollowEnabled) return;
-    
-    const activeRow = document.querySelector(`[data-item-id="${activeItemId}"]`);
-    if (activeRow) {
-      // Use a more consistent calculation method
-      // Calculate the row's position relative to the document, not the viewport
-      const rowRect = activeRow.getBoundingClientRect();
-      const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
-      const rowTop = rowRect.top + scrollTop;
-      
-      // Find the column headers to calculate offset
-      const columnHeaders = document.querySelector('#main-scroll-container .h-24');
-      let headerHeight = 100; // Default fallback
-      
-      if (columnHeaders) {
-        const headerRect = columnHeaders.getBoundingClientRect();
-        headerHeight = headerRect.height + 20; // Add small gap
-      }
-      
-      // Calculate consistent scroll position - bring it up more
-      // Add extra offset to position the row higher on screen
-      const extraOffset = 230; // Bring the end point down significantly (250 - 20)
-      const targetScrollPosition = rowTop - headerHeight - extraOffset;
-      
-      // Scroll to the calculated position
-      window.scrollTo({
-        top: Math.max(0, targetScrollPosition), // Don't scroll above the top
-        behavior: 'smooth'
-      });
-      
-      // Note: Follow feature now handles its own scrolling via useEffect
+  ]);  
+  const scrollToFollowTarget = (itemId: number | null) => {
+    if (!isFollowEnabled || itemId == null) return;
+
+    const activeRow = document.querySelector(`[data-item-id="${itemId}"]`);
+    if (!activeRow) return;
+
+    const rowRect = activeRow.getBoundingClientRect();
+    const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+    const rowTop = rowRect.top + scrollTop;
+    const columnHeaders = document.querySelector('#main-scroll-container .h-24');
+    let headerHeight = 100;
+    if (columnHeaders) {
+      headerHeight = columnHeaders.getBoundingClientRect().height + 20;
     }
+    const extraOffset = 230;
+    const targetScrollPosition = rowTop - headerHeight - extraOffset;
+    window.scrollTo({
+      top: Math.max(0, targetScrollPosition),
+      behavior: 'smooth'
+    });
   };
   
   const [modalForm, setModalForm] = useState({
@@ -4270,6 +6855,7 @@ const RunOfShowPage: React.FC = () => {
     day: 1,
     programType: 'PreShow',
     shotType: '',
+    shotTypeManualOverride: false,
     segmentName: '',
     durationHours: 0,
     durationMinutes: 0,
@@ -4280,8 +6866,9 @@ const RunOfShowPage: React.FC = () => {
     speakersText: '',
     hasPPT: false,
     hasQA: false,
+    needsRecording: false,
     timerId: '',
-    isPublic: false,
+    isPublic: true, // Main (non-indented) cues default to public
     isIndented: false,
     timerDisplay: 'countdown',
     customFields: {}
@@ -4329,11 +6916,67 @@ const RunOfShowPage: React.FC = () => {
     return `rgba(${r}, ${g}, ${b}, 0.3)`;
   };
 
+  // Cache row heights by content inputs so Notes DOM measure isn't repeated every paint.
+  // Key includes widths + display mode so resize/wrap still grow rows correctly.
+  const rowHeightCacheRef = useRef<Map<string, string>>(new Map());
+  const rowHeightCacheEpochRef = useRef('');
+
   // Enhanced function to calculate dynamic row height based on ALL content
-  const getRowHeight = (notes: string, speakersText?: string, participants?: string, customFields?: any, customColumns?: any[], voCueCount = 0) => {
+  const getRowHeight = useCallback((
+    notes: string,
+    speakersText?: string,
+    participants?: string,
+    customFields?: any,
+    customColumnsArg?: any[],
+    voCueCount = 0,
+    segmentName?: string
+  ) => {
+    const epoch = `${columnWidths.notes}|${columnWidths.segmentName}|${segmentNameDisplayMode}`;
+    if (rowHeightCacheEpochRef.current !== epoch) {
+      rowHeightCacheEpochRef.current = epoch;
+      rowHeightCacheRef.current.clear();
+    }
+
+    const cols = Array.isArray(customColumnsArg) ? customColumnsArg : [];
+    let customKey = '';
+    for (let c = 0; c < cols.length; c++) {
+      const name = cols[c]?.name;
+      if (!name) continue;
+      const raw = customFields?.[name];
+      if (raw == null) continue;
+      const text = String(raw);
+      if (!text.trim()) continue;
+      customKey += `\u0001${name}=${text}`;
+    }
+    const cacheKey = [
+      epoch,
+      voCueCount,
+      notes || '',
+      speakersText || '',
+      participants || '',
+      segmentName || '',
+      customKey,
+    ].join('\u0000');
+    const cached = rowHeightCacheRef.current.get(cacheKey);
+    if (cached) return cached;
+
     let maxHeight = 6.5; // Default minimum height in rem
     if (voCueCount > 0) {
+      // Notes grow when callout text is appended; slight bump if markers exist
       maxHeight = Math.max(maxHeight, 7);
+    }
+    if (segmentNameDisplayMode === 'wrap' && segmentName && String(segmentName).trim()) {
+      const colW = Math.max(80, Number(columnWidths.segmentName) || 320);
+      const availablePx = Math.max(60, colW - 36);
+      const charsPerLine = Math.max(12, Math.floor(availablePx / 7.8));
+      const raw = String(segmentName);
+      let lines = 0;
+      for (const part of raw.split(/\r\n|\r|\n/)) {
+        const len = part.length || 1;
+        lines += Math.max(1, Math.ceil(len / charsPerLine));
+      }
+      // Match notes-style growth: top padding + line height, capped
+      maxHeight = Math.max(maxHeight, Math.min(16, 1.75 + lines * 1.4));
     }
     
     // Calculate height based on notes content
@@ -4354,6 +6997,8 @@ const RunOfShowPage: React.FC = () => {
       tempDiv.style.fontFamily = 'system-ui, -apple-system, sans-serif';
       tempDiv.style.whiteSpace = 'pre-wrap';
       tempDiv.style.wordWrap = 'break-word';
+      tempDiv.style.overflowWrap = 'anywhere';
+      tempDiv.style.wordBreak = 'break-word';
       tempDiv.innerHTML = notes;
       
       document.body.appendChild(tempDiv);
@@ -4421,11 +7066,11 @@ const RunOfShowPage: React.FC = () => {
     }
     
     // Calculate height based on custom columns
-    if (customFields && customColumns && customColumns.length > 0) {
-      customColumns.forEach(column => {
-        const customValue = customFields[column.name];
-        if (customValue && customValue.trim() !== '') {
-          const lines = customValue.split('\n');
+    if (customFields && cols.length > 0) {
+      cols.forEach((column: { name?: string }) => {
+        const customValue = column.name ? customFields[column.name] : null;
+        if (customValue && String(customValue).trim() !== '') {
+          const lines = String(customValue).split('\n');
           const lineCount = Math.max(2, lines.length);
           
           const baseCustomHeight = 3; // Increased from 2.5
@@ -4438,8 +7083,12 @@ const RunOfShowPage: React.FC = () => {
       });
     }
     
-    return `${maxHeight}rem`;
-  };
+    const result = `${maxHeight}rem`;
+    const cache = rowHeightCacheRef.current;
+    if (cache.size > 400) cache.clear();
+    cache.set(cacheKey, result);
+    return result;
+  }, [columnWidths.notes, columnWidths.segmentName, segmentNameDisplayMode]);
 
   // Function to measure actual rendered notes content and position container 15px below last line
   const getCompactNotesHeight = (notes: string) => {
@@ -4462,6 +7111,8 @@ const RunOfShowPage: React.FC = () => {
     tempDiv.style.fontFamily = 'system-ui, -apple-system, sans-serif';
     tempDiv.style.whiteSpace = 'pre-wrap';
     tempDiv.style.wordWrap = 'break-word';
+    tempDiv.style.overflowWrap = 'anywhere';
+    tempDiv.style.wordBreak = 'break-word';
     tempDiv.style.overflow = 'hidden';
     tempDiv.innerHTML = notes;
     
@@ -4508,7 +7159,7 @@ const RunOfShowPage: React.FC = () => {
   };
 
   // Function to calculate speakers field height with better spacing
-  const getSpeakersHeight = (speakersText: string) => {
+  const getSpeakersHeight = useCallback((speakersText: string) => {
     if (!speakersText || speakersText.trim() === '') return '3.5rem';
     
     let lineCount = 1;
@@ -4530,7 +7181,7 @@ const RunOfShowPage: React.FC = () => {
     const totalHeight = baseHeight + ((lineCount - 1) * heightPerLine);
     
     return `${Math.max(3.5, totalHeight)}rem`; // Same minimum as participants
-  };
+  }, []);
 
   // Enhanced function to calculate custom field height with no scrollbars and full expansion
   const getCustomFieldHeight = (value: string) => {
@@ -4596,7 +7247,7 @@ const RunOfShowPage: React.FC = () => {
     
     schedule.forEach(item => {
       // Only count non-indented items (main items, not sub-items) for the selected day
-      if (!indentedCues[item.id] && (item.day || 1) === selectedDay) {
+      if (!indentedCues[item.id] && (item.day || 1) === selectedDay && !isKilledScheduleItem(item)) {
         totalSeconds += (item.durationHours || 0) * 3600 + (item.durationMinutes || 0) * 60 + (item.durationSeconds || 0);
       }
     });
@@ -4617,7 +7268,7 @@ const RunOfShowPage: React.FC = () => {
 
   // Insert list function using modern methods
   const insertList = (listType: 'ul' | 'ol') => {
-    const editor = document.getElementById('notes-editor');
+    const editor = notesEditorRef.current || document.getElementById('notes-editor');
     if (!editor) return;
     
     editor.focus();
@@ -4644,11 +7295,12 @@ const RunOfShowPage: React.FC = () => {
     newRange.collapse(true);
     selection.removeAllRanges();
     selection.addRange(newRange);
+    setTempNotesHtml(editor.innerHTML);
   };
 
   // Enhanced formatting function that works with contentEditable
   const applyFormatting = (format: string, value?: string) => {
-    const editor = document.getElementById('notes-editor');
+    const editor = notesEditorRef.current || document.getElementById('notes-editor');
     if (!editor) return;
     
     editor.focus();
@@ -4666,14 +7318,19 @@ const RunOfShowPage: React.FC = () => {
           break;
         case 'color':
           if (value) {
+            // Apply text color without clearing highlight so they can be mixed
             document.execCommand('foreColor', false, value);
           }
           break;
         case 'highlight':
-          if (value && value !== 'none') {
+          if (value && value !== 'none' && value !== 'transparent') {
             document.execCommand('backColor', false, value);
+            // Default to near-black on new highlights; user can change text color after
+            document.execCommand('foreColor', false, '#111111');
           } else {
-            document.execCommand('removeFormat', false);
+            document.execCommand('backColor', false, 'transparent');
+            document.execCommand('hiliteColor', false, 'transparent');
+            document.execCommand('foreColor', false, '#ffffff');
           }
           break;
         case 'fontSize':
@@ -4706,79 +7363,112 @@ const RunOfShowPage: React.FC = () => {
     } catch (error) {
       console.warn('Formatting command not supported:', format);
     }
+    if (format !== 'bullet' && format !== 'list') {
+      setTempNotesHtml(editor.innerHTML);
+    }
   };
   // Save function
   const saveNotes = () => {
-    const editor = document.getElementById('notes-editor');
-    if (editor && editingNotesItem !== null) {
-      const content = editor.innerHTML;
-      
-      if (editingNotesItem === -1) {
-        // Save to modal form
-        setModalForm(prev => ({
-          ...prev,
-          notes: content,
-          voCues: tempNotesVoCues.length ? tempNotesVoCues : undefined,
-        }));
-      } else {
-        // Save to existing schedule item
-        const oldValue = schedule.find(item => item.id === editingNotesItem)?.notes || '';
-        const item = schedule.find(item => item.id === editingNotesItem);
-        setSchedule(prev => prev.map(scheduleItem => 
-          scheduleItem.id === editingNotesItem 
+    if (editingNotesItem === null) return;
+    const editor = notesEditorRef.current || document.getElementById('notes-editor');
+    const live = editor?.innerHTML ?? '';
+    const liveEmpty = !live.replace(/<br\s*\/?>/gi, '').replace(/&nbsp;/gi, '').trim();
+    let content = liveEmpty && tempNotesHtml ? tempNotesHtml : live || tempNotesHtml;
+    content = withNotesTypingSpacer(content);
+    const nextVoCues = reconcileVoCuesWithNotes(content, tempNotesVoCues);
+
+    if (editingNotesItem === -1) {
+      // Save to modal form
+      setModalForm((prev) => ({
+        ...prev,
+        notes: content,
+        voCues: nextVoCues.length ? nextVoCues : undefined,
+      }));
+    } else {
+      // Save to existing schedule item
+      const oldValue = schedule.find((item) => item.id === editingNotesItem)?.notes || '';
+      const item = schedule.find((row) => row.id === editingNotesItem);
+      setSchedule((prev) =>
+        prev.map((scheduleItem) =>
+          scheduleItem.id === editingNotesItem
             ? {
                 ...scheduleItem,
                 notes: content,
-                voCues: tempNotesVoCues.length ? tempNotesVoCues : undefined,
+                voCues: nextVoCues.length ? nextVoCues : undefined,
               }
             : scheduleItem
-        ));
-        
-        // Log the change
-        if (item) {
-          logChange('FIELD_UPDATE', `Updated notes for "${item.segmentName}"`, {
-            changeType: 'FIELD_CHANGE',
-            itemId: item.id,
-            itemName: item.segmentName,
-            fieldName: 'notes',
-            oldValue: oldValue,
-            newValue: content,
-            details: {
-              fieldType: 'text',
-              characterChange: content.length - oldValue.length
-            }
-          });
-        }
-        
+        )
+      );
+
+      // Log the change
+      if (item) {
+        logChange('FIELD_UPDATE', `Updated notes for "${item.segmentName}"`, {
+          changeType: 'FIELD_CHANGE',
+          itemId: item.id,
+          itemName: item.segmentName,
+          fieldName: 'notes',
+          oldValue: oldValue,
+          newValue: content,
+          details: {
+            fieldType: 'text',
+            characterChange: content.length - oldValue.length,
+          },
+        });
       }
-      
-      setShowNotesModal(false);
-      setEditingNotesItem(null);
-      setTempNotesHtml('');
-      setTempNotesVoCues([]);
-      handleModalClosed();
     }
+
+    setShowNotesModal(false);
+    setEditingNotesItem(null);
+    setTempNotesHtml('');
+    setTempNotesVoCues([]);
+    resumeAfterFieldEditorClose();
   };
 
   // Save speakers function
-  const saveSpeakers = () => {
+  const finishSaveSpeakers = () => {
     if (editingSpeakersItem !== null) {
-      const speakersJson = JSON.stringify(tempSpeakersText);
-      
+      const speakersForSave = tempSpeakersText.map(({ speakerDbId: _dbId, ...rest }) => rest);
+      const speakersJson = JSON.stringify(speakersForSave);
+      const existingItem =
+        editingSpeakersItem === -1
+          ? null
+          : schedule.find((row) => row.id === editingSpeakersItem);
+      const autoShotPatch =
+        getAutoShotTypeFromSpeakers()
+          ? shotTypePatchFromSpeakers(speakersForSave, {
+              manualOverride:
+                editingSpeakersItem === -1
+                  ? !!modalForm.shotTypeManualOverride
+                  : !!existingItem?.shotTypeManualOverride,
+              programType:
+                editingSpeakersItem === -1
+                  ? modalForm.programType
+                  : existingItem?.programType,
+            })
+          : {};
+
       if (editingSpeakersItem === -1) {
-        // Save to modal form
-        setModalForm(prev => ({ ...prev, speakersText: speakersJson }));
+        setModalForm((prev) => ({
+          ...prev,
+          speakersText: speakersJson,
+          ...autoShotPatch,
+        }));
       } else {
-        // Save to existing schedule item
-        const oldValue = schedule.find(item => item.id === editingSpeakersItem)?.speakersText || '';
-        const item = schedule.find(item => item.id === editingSpeakersItem);
-        setSchedule(prev => prev.map(scheduleItem => 
-          scheduleItem.id === editingSpeakersItem 
-            ? { ...scheduleItem, speakersText: speakersJson }
-            : scheduleItem
-        ));
-        
-        // Log the change
+        const oldValue = existingItem?.speakersText || '';
+        const item = existingItem;
+        const oldShotType = item?.shotType || '';
+        setSchedule((prev) =>
+          prev.map((scheduleItem) =>
+            scheduleItem.id === editingSpeakersItem
+              ? {
+                  ...scheduleItem,
+                  speakersText: speakersJson,
+                  ...autoShotPatch,
+                }
+              : scheduleItem
+          )
+        );
+
         if (item) {
           logChange('FIELD_UPDATE', `Updated speakers for "${item.segmentName}"`, {
             changeType: 'FIELD_CHANGE',
@@ -4790,132 +7480,238 @@ const RunOfShowPage: React.FC = () => {
             details: {
               fieldType: 'speakers',
               speakerCount: tempSpeakersText.length,
-              characterChange: speakersJson.length - oldValue.length
-            }
+              characterChange: speakersJson.length - oldValue.length,
+            },
           });
+          if (
+            'shotType' in autoShotPatch &&
+            autoShotPatch.shotType &&
+            autoShotPatch.shotType !== oldShotType
+          ) {
+            logChange('FIELD_UPDATE', `Auto shot type → ${autoShotPatch.shotType} for "${item.segmentName}"`, {
+              changeType: 'FIELD_CHANGE',
+              itemId: item.id,
+              itemName: item.segmentName,
+              fieldName: 'shotType',
+              oldValue: oldShotType,
+              newValue: autoShotPatch.shotType,
+              details: {
+                fieldType: 'shotType',
+                autoFromSpeakers: true,
+              },
+            });
+          }
         }
       }
-      
+
       setShowSpeakersModal(false);
       setEditingSpeakersItem(null);
-      handleModalClosed();
+      setSpeakerDbSearchId(null);
+      setSpeakerDbQuery('');
+      setSpeakerDbHits([]);
+      setSpeakerSyncPending(null);
+      resumeAfterFieldEditorClose();
     }
+  };
+
+  const saveSpeakers = async () => {
+    if (editingSpeakersItem === null) return;
+    const named = tempSpeakersText.filter((s) => s.fullName && s.fullName.trim() !== '');
+    if (named.length === 0) {
+      finishSaveSpeakers();
+      return;
+    }
+    try {
+      const { speakers: existing } = await apiClient.lookupSpeakers(named.map((s) => s.fullName));
+      const byKey = new Map(
+        (existing || []).map((row) => [normalizeSpeakerNameKey(row.full_name), row])
+      );
+      const pending: SpeakerSyncAction[] = [];
+      for (const s of named) {
+        const key = normalizeSpeakerNameKey(s.fullName);
+        const match = byKey.get(key);
+        const title = (s.title || '').trim();
+        const org = (s.org || '').trim();
+        const photo = (s.photoLink || '').trim();
+        if (!match) {
+          pending.push({
+            type: 'add',
+            full_name: s.fullName.trim(),
+            title,
+            org,
+            photo_link: photo,
+            accepted: true,
+          });
+        } else {
+          const same =
+            (match.title || '').trim() === title &&
+            (match.org || '').trim() === org &&
+            (match.photo_link || '').trim() === photo;
+          if (!same) {
+            pending.push({
+              type: 'update',
+              id: match.id,
+              full_name: s.fullName.trim(),
+              title,
+              org,
+              photo_link: photo,
+              accepted: true,
+            });
+          }
+        }
+      }
+      if (pending.length === 0) {
+        finishSaveSpeakers();
+        return;
+      }
+      setSpeakerSyncPending(pending);
+    } catch (err) {
+      console.warn('Speaker DB lookup failed; saving cue only', err);
+      finishSaveSpeakers();
+    }
+  };
+
+  const confirmSpeakerSyncAndSave = async () => {
+    if (!speakerSyncPending) {
+      finishSaveSpeakers();
+      return;
+    }
+    const actions = speakerSyncPending
+      .filter((a) => a.accepted)
+      .map(({ accepted: _a, ...rest }) => rest);
+    setSpeakerSyncBusy(true);
+    try {
+      if (actions.length > 0) {
+        await apiClient.syncSpeakers(actions);
+      }
+    } catch (err) {
+      console.warn('Speaker DB sync failed; saving cue anyway', err);
+    } finally {
+      setSpeakerSyncBusy(false);
+      setSpeakerSyncPending(null);
+      finishSaveSpeakers();
+    }
+  };
+
+  const runSpeakerDbSearch = async (speakerId: string, query: string) => {
+    setSpeakerDbSearchId(speakerId);
+    setSpeakerDbQuery(query);
+    if (!query.trim()) {
+      setSpeakerDbHits([]);
+      return;
+    }
+    setSpeakerDbBusy(true);
+    try {
+      const res = await apiClient.listSpeakers(query.trim(), 20);
+      setSpeakerDbHits(res.speakers || []);
+    } catch {
+      setSpeakerDbHits([]);
+    } finally {
+      setSpeakerDbBusy(false);
+    }
+  };
+
+  const importSpeakerFromDb = (speakerId: string, row: SpeakerDirectoryRow) => {
+    setTempSpeakersText((prev) =>
+      prev.map((s) =>
+        s.id === speakerId
+          ? {
+              ...s,
+              fullName: row.full_name || '',
+              title: row.title || '',
+              org: row.org || '',
+              photoLink: row.photo_link || '',
+              speakerDbId: row.id,
+            }
+          : s
+      )
+    );
+    setSpeakerDbSearchId(null);
+    setSpeakerDbQuery('');
+    setSpeakerDbHits([]);
   };
 
   // Save assets function
   const saveAssets = () => {
-    if (editingAssetsItem !== null) {
-      const assetsContainer = document.getElementById('assets-list');
-      if (assetsContainer) {
-        const assetItems = assetsContainer.querySelectorAll('.asset-item');
-        const assetsArray: string[] = [];
-        
-        assetItems.forEach(item => {
-          const nameInput = item.querySelector('.asset-name') as HTMLInputElement;
-          const linkInput = item.querySelector('.asset-link') as HTMLInputElement;
-          
-          if (nameInput && linkInput) {
-            const name = nameInput.value.trim();
-            const link = linkInput.value.trim();
-            
-            if (name) {
-              // Store as "Name" or "Name|Link" if link exists
-              assetsArray.push(link ? `${name}|${link}` : name);
-            }
-          }
+    if (editingAssetsItem === null) return;
+
+    const assetsArray = tempAssets
+      .map((asset) => {
+        const name = asset.name.trim();
+        const link = asset.showLink ? asset.link.trim() : '';
+        if (!name) return null;
+        return link ? `${name}|${link}` : name;
+      })
+      .filter((entry): entry is string => Boolean(entry));
+
+    const assetsString = assetsArray.join('||');
+    const draftCue =
+      editingAssetsItem === -1 ||
+      (showAddModal && modalDraftItemId != null && editingAssetsItem === modalDraftItemId) ||
+      !schedule.some((row) => row.id === editingAssetsItem);
+
+    if (draftCue) {
+      setModalForm((prev) => ({ ...prev, assets: assetsString }));
+    } else {
+      const oldValue = schedule.find((item) => item.id === editingAssetsItem)?.assets || '';
+      const item = schedule.find((row) => row.id === editingAssetsItem);
+      setSchedule((prev) =>
+        prev.map((scheduleItem) =>
+          scheduleItem.id === editingAssetsItem
+            ? { ...scheduleItem, assets: assetsString }
+            : scheduleItem
+        )
+      );
+
+      if (item) {
+        logChange('FIELD_UPDATE', `Updated assets for "${item.segmentName}"`, {
+          changeType: 'FIELD_CHANGE',
+          itemId: item.id,
+          itemName: item.segmentName,
+          fieldName: 'assets',
+          oldValue: oldValue,
+          newValue: assetsString,
+          details: {
+            fieldType: 'assets',
+            assetCount: assetsArray.length,
+            characterChange: assetsString.length - oldValue.length,
+          },
         });
-        
-        const assetsString = assetsArray.join('||');
-        
-        if (editingAssetsItem === -1) {
-          // Save to modal form
-          setModalForm(prev => ({ ...prev, assets: assetsString }));
-        } else {
-          // Save to existing schedule item
-          const oldValue = schedule.find(item => item.id === editingAssetsItem)?.assets || '';
-          const item = schedule.find(item => item.id === editingAssetsItem);
-          setSchedule(prev => prev.map(scheduleItem => 
-            scheduleItem.id === editingAssetsItem 
-              ? { 
-                  ...scheduleItem, 
-                  assets: assetsString
-                }
-              : scheduleItem
-          ));
-          
-          // Log the change
-          if (item) {
-            logChange('FIELD_UPDATE', `Updated assets for "${item.segmentName}"`, {
-              changeType: 'FIELD_CHANGE',
-              itemId: item.id,
-              itemName: item.segmentName,
-              fieldName: 'assets',
-              oldValue: oldValue,
-              newValue: assetsString,
-              details: {
-                fieldType: 'assets',
-                assetCount: assetsArray.length,
-                characterChange: assetsString.length - oldValue.length
-              }
-            });
-          }
-        }
-        
-        setShowAssetsModal(false);
-        setEditingAssetsItem(null);
-        handleModalClosed();
       }
     }
+
+    setShowAssetsModal(false);
+    setEditingAssetsItem(null);
+    resumeAfterFieldEditorClose();
   };
 
-  // Add new asset row
   const addAssetRow = () => {
-    const assetsContainer = document.getElementById('assets-list');
-    if (assetsContainer) {
-      const assetItem = document.createElement('div');
-      assetItem.className = 'asset-item p-3 bg-slate-700 rounded-lg space-y-3';
-      assetItem.innerHTML = `
-        <div class="flex gap-3 items-center">
-          <input type="text" class="asset-name flex-1 px-3 py-2 bg-slate-600 border border-slate-500 rounded text-white placeholder-slate-400 focus:outline-none focus:border-blue-500" placeholder="Asset name..." />
-          <button type="button" class="toggle-link px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded transition-colors text-sm">
-            + Link
-          </button>
-          <button type="button" class="remove-asset px-3 py-2 bg-red-600 hover:bg-red-500 text-white rounded transition-colors">Remove</button>
-        </div>
-        <div class="asset-link-container hidden">
-          <input type="url" class="asset-link w-full px-3 py-2 bg-slate-600 border border-slate-500 rounded text-white placeholder-slate-400 focus:outline-none focus:border-blue-500" placeholder="Enter asset URL..." />
-        </div>
-      `;
-      
-      // Add toggle link functionality
-      const toggleBtn = assetItem.querySelector('.toggle-link');
-      const linkContainer = assetItem.querySelector('.asset-link-container');
-      const linkInput = assetItem.querySelector('.asset-link') as HTMLInputElement;
-      
-      toggleBtn?.addEventListener('click', () => {
-        if (linkContainer?.classList.contains('hidden')) {
-          linkContainer.classList.remove('hidden');
-          toggleBtn.textContent = '− Link';
-          toggleBtn.classList.remove('bg-blue-600', 'hover:bg-blue-500');
-          toggleBtn.classList.add('bg-slate-600', 'hover:bg-slate-500');
-          linkInput?.focus();
-        } else {
-          linkContainer?.classList.add('hidden');
-          toggleBtn.textContent = '+ Link';
-          toggleBtn.classList.remove('bg-slate-600', 'hover:bg-slate-500');
-          toggleBtn.classList.add('bg-blue-600', 'hover:bg-blue-500');
-          if (linkInput) linkInput.value = '';
+    setTempAssets((prev) => [
+      ...prev,
+      { id: `asset_${Date.now()}_${prev.length}`, name: '', link: '', showLink: false },
+    ]);
+  };
+
+  const removeAssetRow = (assetId: string) => {
+    setTempAssets((prev) => prev.filter((asset) => asset.id !== assetId));
+  };
+
+  const updateAssetField = (assetId: string, field: 'name' | 'link', value: string) => {
+    setTempAssets((prev) =>
+      prev.map((asset) => (asset.id === assetId ? { ...asset, [field]: value } : asset))
+    );
+  };
+
+  const toggleAssetLink = (assetId: string) => {
+    setTempAssets((prev) =>
+      prev.map((asset) => {
+        if (asset.id !== assetId) return asset;
+        if (asset.showLink) {
+          return { ...asset, showLink: false, link: '' };
         }
-      });
-      
-      // Add remove functionality
-      const removeBtn = assetItem.querySelector('.remove-asset');
-      removeBtn?.addEventListener('click', () => {
-        assetItem.remove();
-      });
-      
-      assetsContainer.appendChild(assetItem);
-    }
+        return { ...asset, showLink: true };
+      })
+    );
   };
 
   // Add new speaker
@@ -4977,6 +7773,7 @@ const RunOfShowPage: React.FC = () => {
       
       setShowParticipantsModal(false);
       setEditingParticipantsItem(null);
+      resumeAfterFieldEditorClose();
     }
   };
 
@@ -5088,9 +7885,7 @@ const RunOfShowPage: React.FC = () => {
       return speakers
         .sort((a, b) => a.slot - b.slot)
         .map(speaker => {
-          const location = speaker.location === 'Podium' ? 'P' : 
-                          speaker.location === 'Seat' ? 'S' : 
-                          speaker.location === 'Virtual' ? 'V' : 'M';
+          const location = speakerLocationPrefix(speaker.location);
           return `${location}${speaker.slot} - ${speaker.fullName || 'Unnamed'}`;
         })
         .join('\n');
@@ -5113,9 +7908,7 @@ const RunOfShowPage: React.FC = () => {
         .sort((a, b) => a.slot - b.slot)
         .filter(speaker => speaker.fullName && speaker.fullName.trim() !== '')
         .map(speaker => {
-          const location = speaker.location === 'Podium' ? 'P' : 
-                          speaker.location === 'Seat' ? 'S' : 
-                          speaker.location === 'Virtual' ? 'V' : 'M';
+          const location = speakerLocationPrefix(speaker.location);
           return `${location}${speaker.slot} - ${speaker.fullName || 'Unnamed'}`;
         })
         .join('\n');
@@ -5151,16 +7944,17 @@ const RunOfShowPage: React.FC = () => {
     // Handle NaN, undefined, or invalid values
     if (isNaN(seconds) || seconds === undefined || seconds === null) {
       console.warn('⚠️ formatTime received invalid value:', seconds);
-      return '00:00:00';
+      return '00:00';
     }
     
-    const isNegative = seconds < 0;
     const absSeconds = Math.abs(seconds);
     const hours = Math.floor(absSeconds / 3600);
     const minutes = Math.floor((absSeconds % 3600) / 60);
     const secs = Math.floor(absSeconds % 60);
-    const sign = isNegative ? '-' : '';
-    return `${sign}${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    if (hours === 0) {
+      return `${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    }
+    return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
   // Helper function to format time for sub-cue timers - HH:MM:SS format or MM:SS if hours are 00
@@ -5171,12 +7965,11 @@ const RunOfShowPage: React.FC = () => {
       return '00:00';
     }
     
-    const isNegative = seconds < 0;
     const absSeconds = Math.abs(seconds);
     const hours = Math.floor(absSeconds / 3600);
     const minutes = Math.floor((absSeconds % 3600) / 60);
     const secs = Math.floor(absSeconds % 60);
-    const sign = isNegative ? '-' : '';
+    const sign = overtimeSignPrefix(seconds, overtimeSign);
     
     // If hours are 0, show MM:SS format
     if (hours === 0) {
@@ -5202,14 +7995,8 @@ const RunOfShowPage: React.FC = () => {
 
   // Get remaining time for active timer, sub-cue timer, or loaded CUE - allow negative values
   const getRemainingTime = () => {
-    const hybrid = hybridTimerData?.activeTimer;
-    const hybridRunning =
-      hybrid &&
-      (hybrid.is_running === true || hybrid.timer_state === 'running');
-
-    // Prefer hybrid only when it is actually running — a loaded hybrid must not
-    // block local activeTimers countdown (start used to leave hybrid stuck on loaded).
-    if (hybridRunning) {
+    // Use hybrid timer data (ClockPage style) for real-time updates
+    if (hybridTimerData?.activeTimer) {
       const progress = hybridTimerProgress;
       return progress.total - progress.elapsed;
     }
@@ -5234,12 +8021,6 @@ const RunOfShowPage: React.FC = () => {
         const remaining = progress.total - progress.elapsed;
         return remaining;
       }
-    }
-
-    // Loaded (not running) hybrid — show full duration remaining
-    if (hybrid && !hybridRunning) {
-      const progress = hybridTimerProgress;
-      return progress.total - progress.elapsed;
     }
     
     // If no active timer, check for loaded CUE
@@ -5278,14 +8059,11 @@ const RunOfShowPage: React.FC = () => {
 
   // Get remaining percentage for progress bar
   const getRemainingPercentage = () => {
-    const hybrid = hybridTimerData?.activeTimer;
-    const hybridRunning =
-      hybrid &&
-      (hybrid.is_running === true || hybrid.timer_state === 'running');
-
-    if (hybridRunning) {
+    // Use hybrid timer data (ClockPage style) for real-time updates
+    if (hybridTimerData?.activeTimer) {
       const progress = hybridTimerProgress;
       const remainingSeconds = progress.total - progress.elapsed;
+      // Handle negative values (overrun) - show 0% when overrun
       if (remainingSeconds < 0) return 0;
       return progress.total > 0 ? (remainingSeconds / progress.total) * 100 : 0;
     }
@@ -5297,6 +8075,7 @@ const RunOfShowPage: React.FC = () => {
       if (timerProgress[activeTimerId]) {
         const progress = timerProgress[activeTimerId];
         const remainingSeconds = progress.total - progress.elapsed;
+        // Handle negative values (overrun) - show 0% when overrun
         if (remainingSeconds < 0) return 0;
         return progress.total > 0 ? (remainingSeconds / progress.total) * 100 : 0;
       }
@@ -5312,13 +8091,6 @@ const RunOfShowPage: React.FC = () => {
         return progress.total > 0 ? (remainingSeconds / progress.total) * 100 : 0;
       }
     }
-
-    if (hybrid && !hybridRunning) {
-      const progress = hybridTimerProgress;
-      const remainingSeconds = progress.total - progress.elapsed;
-      if (remainingSeconds < 0) return 0;
-      return progress.total > 0 ? (remainingSeconds / progress.total) * 100 : 0;
-    }
     
     // If no active timer, check for loaded CUE
     if (activeItemId && timerProgress[activeItemId]) {
@@ -5332,6 +8104,9 @@ const RunOfShowPage: React.FC = () => {
 
   // Get progress bar color based on remaining time
   const getProgressBarColor = () => {
+    if (rosPreshowRainbow) {
+      return RAINBOW_COUNTDOWN_GRADIENT;
+    }
     // Use hybrid timer data (ClockPage style) for real-time updates
     if (hybridTimerData?.activeTimer) {
       const progress = hybridTimerProgress;
@@ -5341,7 +8116,7 @@ const RunOfShowPage: React.FC = () => {
       if (remainingSeconds < 0) { // Overrun - red
         return 'bg-red-500';
       } else if (remainingSeconds > 120) { // More than 2 minutes
-        return '#10b981'; // Green
+        return getCountdownPrimaryHex(countdownColorMode);
       } else if (remainingSeconds > 30) { // Less than 2 minutes but more than 30 seconds
         return '#f59e0b'; // Yellow
       } else { // Less than 30 seconds
@@ -5361,7 +8136,7 @@ const RunOfShowPage: React.FC = () => {
         if (remainingSeconds < 0) { // Overrun - red
           return 'bg-red-500';
         } else if (remainingSeconds > 120) { // More than 2 minutes
-          return '#10b981'; // Green
+          return getCountdownPrimaryHex(countdownColorMode);
         } else if (remainingSeconds > 30) { // Less than 2 minutes but more than 30 seconds
           return '#f59e0b'; // Yellow
         } else { // Less than 30 seconds
@@ -5380,7 +8155,7 @@ const RunOfShowPage: React.FC = () => {
         
         // Color based on remaining time
         if (remainingSeconds > 120) { // More than 2 minutes
-          return '#10b981'; // Green
+          return getCountdownPrimaryHex(countdownColorMode);
         } else if (remainingSeconds > 30) { // Less than 2 minutes but more than 30 seconds
           return '#f59e0b'; // Yellow
         } else { // Less than 30 seconds
@@ -5396,7 +8171,7 @@ const RunOfShowPage: React.FC = () => {
       
       // Color based on remaining time
       if (remainingSeconds > 120) { // More than 2 minutes
-        return '#10b981'; // Green
+        return getCountdownPrimaryHex(countdownColorMode);
       } else if (remainingSeconds > 30) { // Less than 2 minutes but more than 30 seconds
         return '#f59e0b'; // Yellow
       } else { // Less than 30 seconds
@@ -5409,6 +8184,9 @@ const RunOfShowPage: React.FC = () => {
 
   // Get countdown color based on remaining time
   const getCountdownColor = () => {
+    if (rosPreshowRainbow) {
+      return RAINBOW_COUNTDOWN_GRADIENT;
+    }
     // Use hybrid timer data (ClockPage style) for real-time updates
     if (hybridTimerData?.activeTimer) {
       const progress = hybridTimerProgress;
@@ -5416,7 +8194,7 @@ const RunOfShowPage: React.FC = () => {
       
       // Color based on remaining time
       if (remainingSeconds > 120) { // More than 2 minutes
-        return '#10b981'; // Green
+        return getCountdownPrimaryHex(countdownColorMode);
       } else if (remainingSeconds > 30) { // Less than 2 minutes but more than 30 seconds
         return '#f59e0b'; // Yellow
       } else { // Less than 30 seconds
@@ -5434,7 +8212,7 @@ const RunOfShowPage: React.FC = () => {
         
         // Color based on remaining time
         if (remainingSeconds > 120) { // More than 2 minutes
-          return '#10b981'; // Green
+          return getCountdownPrimaryHex(countdownColorMode);
         } else if (remainingSeconds > 30) { // Less than 2 minutes but more than 30 seconds
           return '#f59e0b'; // Yellow
         } else { // Less than 30 seconds
@@ -5450,7 +8228,7 @@ const RunOfShowPage: React.FC = () => {
       
       // Color based on remaining time
       if (remainingSeconds > 120) { // More than 2 minutes
-        return '#10b981'; // Green
+        return getCountdownPrimaryHex(countdownColorMode);
       } else if (remainingSeconds > 30) { // Less than 2 minutes but more than 30 seconds
         return '#f59e0b'; // Yellow
       } else { // Less than 30 seconds
@@ -5492,7 +8270,8 @@ const RunOfShowPage: React.FC = () => {
     const newMinutes = Math.floor((newDurationSeconds % 3600) / 60);
     const newSecs = newDurationSeconds % 60;
 
-    // Mark editing BEFORE any await so the schedule effect auto-saves.
+    // Mark editing BEFORE any await so the schedule effect auto-saves (await used to
+    // flush setSchedule while isUserEditing was still false → save skipped).
     handleUserEditing();
 
     setSchedule(prev =>
@@ -5520,6 +8299,7 @@ const RunOfShowPage: React.FC = () => {
       };
     });
 
+    // Optimistic update for the main countdown clock (hybrid path)
     const hybridId = hybridTimerData?.activeTimer?.item_id;
     const hybridMatches =
       hybridId != null &&
@@ -5533,9 +8313,11 @@ const RunOfShowPage: React.FC = () => {
       setHybridTimerProgress(prev => ({ ...prev, total: newDurationSeconds }));
     }
 
+    // Always push via duration API: updates schedule row in DB immediately (and active_timers
+    // when loaded/running). Do not gate on activeTimers — loaded cues need this too, and the
+    // main countdown reads hybridTimerData which only refreshes from this path / sockets.
     console.log('🔄 Updating cue duration via API:', newDurationSeconds);
     try {
-      markLocalMutationGuard(5000);
       await DatabaseService.updateTimerDuration(event.id, numericActiveItemId, newDurationSeconds);
     } catch (err) {
       console.error('❌ Failed to update timer duration via API:', err);
@@ -5543,6 +8325,54 @@ const RunOfShowPage: React.FC = () => {
 
     console.log('✅ Timer duration adjusted to', newDurationSeconds, 's');
   };
+
+  const clearPreshowCountdownMessage = async () => {
+    if (!event?.id) return;
+    try {
+      const existing = await DatabaseService.getTimerMessagesForEvent(event.id);
+      for (const message of existing) {
+        if (!message.enabled || !message.id) continue;
+        if (!isPreshowTimerMessage(message) && message.message_type !== PRESHOW_MESSAGE_TYPE) {
+          continue;
+        }
+        await DatabaseService.disableTimerMessage(message.id);
+      }
+      setHybridTimerData((prev: any) =>
+        prev?.timerMessage && isPreshowTimerMessage(prev.timerMessage)
+          ? { ...prev, timerMessage: { ...prev.timerMessage, enabled: false } }
+          : prev
+      );
+    } catch (err) {
+      console.warn('⚠️ Failed to clear pre-show countdown message:', err);
+    }
+  };
+
+  const activatePreshowCountdownMessage = async () => {
+    if (!event?.id || !user) return;
+    try {
+      const existing = await DatabaseService.getTimerMessagesForEvent(event.id);
+      for (const message of existing.filter((m) => m.enabled && m.id)) {
+        await DatabaseService.disableTimerMessage(message.id!);
+      }
+      const saved = await DatabaseService.saveTimerMessage({
+        event_id: event.id,
+        message: PRESHOW_COUNTDOWN_MESSAGE,
+        enabled: true,
+        flashing: false,
+        sent_by: user.id,
+        sent_by_name: user.full_name || user.email || 'Unknown User',
+        sent_by_role: currentUserRole || 'VIEWER',
+        message_type: PRESHOW_MESSAGE_TYPE,
+        priority: 2,
+      });
+      if (saved) {
+        setHybridTimerData((prev: any) => ({ ...prev, timerMessage: saved }));
+      }
+    } catch (err) {
+      console.warn('⚠️ Failed to activate pre-show countdown message:', err);
+    }
+  };
+
   // Load a CUE (stop any active timer and select the CUE)
   const loadCue = async (itemId: number) => {
     console.log('🚀🚀🚀 loadCue function STARTED with itemId:', itemId);
@@ -5553,6 +8383,13 @@ const RunOfShowPage: React.FC = () => {
     if (!user || !event?.id) {
       console.log('❌ Missing user or event ID:', { user: !!user, eventId: event?.id });
       return;
+    }
+
+    const item = schedule.find((s) => s.id === itemId);
+    if (isScheduleOnlyProgramType(item?.programType)) return;
+    const topPreshow = resolveSessionPreshowCue(item?.day || selectedDay);
+    if (!topPreshow || topPreshow.id !== itemId) {
+      void clearPreshowCountdownMessage();
     }
     
     // Capture running timer data BEFORE stopping (for overtime calculation after UI update)
@@ -5568,6 +8405,10 @@ const RunOfShowPage: React.FC = () => {
           const elapsedSeconds = Math.floor((Date.now() - startTime) / 1000);
           const totalSeconds = timerData.total || 0;
           runningTimerData.push({ timerId, elapsedSeconds, totalSeconds });
+          noteCueActualStart({
+            item_id: timerId,
+            started_at: startTime,
+          });
         }
       }
     });
@@ -5601,12 +8442,9 @@ const RunOfShowPage: React.FC = () => {
       }
     });
     setActiveTimers({});
-    // Clear hybrid immediately so clocks don't keep the previous running cue (WS may be delayed).
-    setHybridTimerData((prev: any) => ({ ...prev, activeTimer: null }));
     
     // Stop all timers via API
     console.log('🔄 Stopping all timers in API for event:', event.id, 'user:', user.id);
-    markLocalMutationGuard(5000);
     const stopResult = await DatabaseService.stopAllTimersForEvent(
       event.id, 
       user.id, 
@@ -5621,6 +8459,11 @@ const RunOfShowPage: React.FC = () => {
       await stopSecondaryTimer();
     }
     
+    // Loading a later cue means everything above it on this day is done
+    if (activeItemId !== itemId) {
+      completePriorCuesOnDay(itemId);
+    }
+
     // Mark the previously active CUE as stopped (if there was one)
     if (activeItemId && activeItemId !== itemId) {
       setStoppedItems(prev => new Set([...prev, activeItemId]));
@@ -5653,7 +8496,7 @@ const RunOfShowPage: React.FC = () => {
       if (interruptedIndex !== -1) {
         // Find all indented items that follow the interrupted CUE until the next non-indented item
         for (let i = interruptedIndex + 1; i < schedule.length; i++) {
-          if (schedule[i].isIndented) {
+          if (isIndentedScheduleItem(schedule[i], indentedCuesRef.current)) {
             setCompletedCues(prev => ({ ...prev, [schedule[i].id]: true }));
             setStoppedItems(prev => new Set([...prev, schedule[i].id]));
             // Mark indented items as completed in database too
@@ -5682,7 +8525,7 @@ const RunOfShowPage: React.FC = () => {
       const currentIndex = schedule.findIndex(item => item.id === itemId);
       if (currentIndex !== -1) {
         for (let i = currentIndex + 1; i < schedule.length; i++) {
-          if (schedule[i].isIndented) {
+          if (isIndentedScheduleItem(schedule[i], indentedCuesRef.current)) {
             delete newCompleted[schedule[i].id];
           } else {
             // Stop when we hit a non-indented item (next CUE group)
@@ -5693,6 +8536,21 @@ const RunOfShowPage: React.FC = () => {
       
       return newCompleted;
     });
+
+    // Persist un-complete so refresh / reconnect don't revive completed styling while this cue is live
+    if (event?.id) {
+      const idsToUnmark = [itemId];
+      const currentIndex = schedule.findIndex(item => item.id === itemId);
+      if (currentIndex !== -1) {
+        for (let i = currentIndex + 1; i < schedule.length; i++) {
+          if (isIndentedScheduleItem(schedule[i], indentedCuesRef.current)) idsToUnmark.push(schedule[i].id);
+          else break;
+        }
+      }
+      void Promise.all(
+        idsToUnmark.map((id) => DatabaseService.unmarkCueCompleted(event.id, id))
+      ).catch((err) => console.warn('⚠️ Failed to unmark completed cues on load:', err));
+    }
     
     // Clear stopped status for the newly loaded CUE and its indented items
     setStoppedItems(prev => {
@@ -5703,7 +8561,7 @@ const RunOfShowPage: React.FC = () => {
       const currentIndex = schedule.findIndex(item => item.id === itemId);
       if (currentIndex !== -1) {
         for (let i = currentIndex + 1; i < schedule.length; i++) {
-          if (schedule[i].isIndented) {
+          if (isIndentedScheduleItem(schedule[i], indentedCuesRef.current)) {
             newStopped.delete(schedule[i].id);
           } else {
             // Stop when we hit a non-indented item (next CUE group)
@@ -5716,7 +8574,6 @@ const RunOfShowPage: React.FC = () => {
     });
     
     // Initialize timer progress for the loaded CUE
-    const item = schedule.find(s => s.id === itemId);
     if (item) {
       if (showModeRef.current === 'in-show' && trackWasDurations && !originalDurations[itemId]) {
         setOriginalDurations(prev => ({
@@ -5766,7 +8623,9 @@ const RunOfShowPage: React.FC = () => {
       // Calculate row number and cue display for database
       const currentIndex = schedule.findIndex(scheduleItem => scheduleItem.id === itemId);
       const rowNumber = currentIndex + 1; // 1-based row number
-      const cueDisplay = formatCueDisplay(item.customFields.cue);
+      const cueDisplay = isDelayProgramType(item.programType)
+        ? 'DELAY'
+        : formatCueDisplay(item.customFields.cue);
       
       // Use the existing 5-character timer ID from the schedule item
       const timerId = item.timerId;
@@ -5788,30 +8647,12 @@ const RunOfShowPage: React.FC = () => {
       
       try {
         console.log('🔄 Calling DatabaseService.loadCue now...');
-        markLocalMutationGuard(5000);
         const loadResult = await DatabaseService.loadCue(event.id, numericItemId, user.id, totalSeconds, rowNumber, cueDisplay, timerId);
         console.log('🔄 Load CUE result:', loadResult);
         if (!loadResult) {
           console.error('❌ Load CUE failed - check database connection and functions');
         } else {
           console.log('✅ Load CUE succeeded!');
-          // Optimistic hybrid update — do not wait for socket echo (critical after cloud reconnect).
-          setHybridTimerData((prev: any) => ({
-            ...prev,
-            activeTimer: {
-              ...(typeof loadResult === 'object' && loadResult ? loadResult : {}),
-              event_id: event.id,
-              item_id: numericItemId,
-              timer_state: 'loaded',
-              is_active: true,
-              is_running: false,
-              duration_seconds: totalSeconds,
-              cue_is: cueDisplay,
-              last_loaded_cue_id: numericItemId,
-              started_at:
-                (loadResult as any)?.started_at || '2099-12-31T23:59:59.999Z',
-            },
-          }));
         }
       } catch (error) {
         console.error('❌ Load CUE error:', error);
@@ -5844,7 +8685,7 @@ const RunOfShowPage: React.FC = () => {
     if (currentIndex !== -1) {
       // Find all indented items that follow this CUE until the next non-indented item
       for (let i = currentIndex + 1; i < schedule.length; i++) {
-        if (schedule[i].isIndented) {
+        if (isIndentedScheduleItem(schedule[i], indentedCuesRef.current)) {
           dependentIds.add(schedule[i].id);
         } else {
           // Stop when we hit a non-indented item (next CUE group)
@@ -5975,10 +8816,11 @@ const RunOfShowPage: React.FC = () => {
         const rowNumber = schedule.findIndex(s => s.id === itemId) + 1; // 1-based index
         const cueDisplay = item ? formatCueDisplay(item.customFields.cue) : `CUE ${itemId}`;
         const timerId = item?.timerId || `SUB${itemId}`;
+        const segmentName = item?.segmentName || '';
         
-        console.log('🔄 Starting sub-cue timer in database:', { eventId: event.id, itemId, userId: user.id, durationSeconds: totalSeconds, rowNumber, cueDisplay, timerId });
+        console.log('🔄 Starting sub-cue timer in database:', { eventId: event.id, itemId, userId: user.id, durationSeconds: totalSeconds, rowNumber, cueDisplay, timerId, segmentName });
         try {
-          const result = await DatabaseService.startSubCueTimer(event.id, itemId, user.id, totalSeconds, rowNumber, cueDisplay, timerId, user.full_name || user.email || 'Unknown User', currentUserRole || 'VIEWER');
+          const result = await DatabaseService.startSubCueTimer(event.id, itemId, user.id, totalSeconds, rowNumber, cueDisplay, timerId, user.full_name || user.email || 'Unknown User', currentUserRole || 'VIEWER', segmentName);
           console.log('✅ Sub-cue timer synced to database:', result);
           if (result?.error) {
             console.error('❌ Sub-cue timer database error:', result.error);
@@ -6036,8 +8878,10 @@ const RunOfShowPage: React.FC = () => {
     setStoppedItems(new Set());
     setLoadedCueDependents(new Set()); // Clear dependent row highlighting
     setLastLoadedCueId(null); // Clear purple highlight from last loaded cue
+    setHybridTimerData({ activeTimer: null });
     setOvertimeMinutes({}); // Clear all overtime indicators
     setShowStartOvertime(0); // Clear show start overtime
+    disarmLiveStartProjection();
     // Note: Do NOT clear startCueId - the star is just a marker, not overtime data
     
     // Clear show start overtime from database
@@ -6071,8 +8915,20 @@ const RunOfShowPage: React.FC = () => {
       if (event?.id && user?.id) {
         const scheduleWithDurationSeconds = restoredSchedule.map((item: ScheduleItem) => ({
           ...item,
-          duration_seconds: (item.durationHours || 0) * 3600 + (item.durationMinutes || 0) * 60 + (item.durationSeconds || 0),
-          isIndented: indentedCues[item.id] ? true : false
+          duration_seconds: isTimedMarkerItem(item)
+            ? 0
+            : (item.durationHours || 0) * 3600 + (item.durationMinutes || 0) * 60 + (item.durationSeconds || 0),
+          isIndented: Boolean(
+            indentedCues[item.id] || item.isTimedMarker || item.isIndented
+          ),
+          ...(isTimedMarkerItem(item)
+            ? {
+                ...timedMarkerPersistFields(item),
+                durationHours: 0,
+                durationMinutes: 0,
+                durationSeconds: 0,
+              }
+            : {}),
         }));
         DatabaseService.saveRunOfShowData({
           event_id: event.id,
@@ -6080,7 +8936,7 @@ const RunOfShowPage: React.FC = () => {
           event_date: event.date,
           schedule_items: scheduleWithDurationSeconds,
           custom_columns: customColumns,
-          settings: { eventName, masterStartTime, dayStartTimes, numberOfDays: event?.numberOfDays, timezone: eventTimezone, lastSaved: new Date().toISOString(), show_mode: showMode, track_was_durations: trackWasDurations, ...(Object.keys(originalDurations).length > 0 && { original_durations: originalDurations }) }
+          settings: { eventName, masterStartTime, dayStartTimes, completedDays, numberOfDays: event?.numberOfDays, timezone: eventTimezone, lastSaved: new Date().toISOString(), show_mode: showMode, track_was_durations: trackWasDurations, show_completed_highlight: showCompletedHighlight, ...(Object.keys(originalDurations).length > 0 && { original_durations: originalDurations }), ...(Object.keys(lockedStartTimes).length > 0 && { locked_start_times: Object.fromEntries(Object.entries(lockedStartTimes).map(([k, v]) => [String(k), v])) }), ...autoRollSettingsPatch(autoRollArmedRef.current), voAlertsEnabled: voAlertsEnabledRef.current !== false }
         }, { userId: user.id, userName: user.full_name || user.email || 'Unknown', userRole: currentUserRole || 'VIEWER' }).catch(err => console.error('Reset restore save failed:', err));
       }
     }
@@ -6094,17 +8950,42 @@ const RunOfShowPage: React.FC = () => {
   /** Manually nudge show-start offset (minutes). Positive = late / push later. Requires START cue. */
   const adjustShowStartOffset = async (deltaMinutes: number) => {
     if (!event?.id) return;
-    if (!startCueId) {
-      alert('Mark a START cue (star) first. The offset shifts Start times from that row onward.');
+    const sectionOn = activeShowSectionBreakIndex(schedule) >= 0;
+    const targetCueId = sectionOn ? sessionStartCueId : startCueId;
+    if (!targetCueId) {
+      alert(
+        sectionOn
+          ? 'Mark the cyan session START star first. It only applies below the Show Break.'
+          : 'Mark a START cue (star) first. The offset shifts Start times from that row onward.'
+      );
       return;
     }
-    const next = showStartOvertime + deltaMinutes;
-    const startIndex = schedule.findIndex(s => s.id === startCueId);
+    const startIndexForFreeze = schedule.findIndex((s) => s.id === targetCueId);
+    if (!sectionOn && isIndexFrozenByShowSection(schedule, startIndexForFreeze)) {
+      alert('Morning offsets are frozen. Turn Section On and use the cyan star for the next session.');
+      return;
+    }
+    const next = (sectionOn ? sessionShowStartOvertime : showStartOvertime) + deltaMinutes;
+    const startIndex = startIndexForFreeze;
     const scheduledTime = startIndex >= 0 ? (calculateStartTime(startIndex) || '') : '';
+    if (sectionOn) {
+      setSessionShowStartOvertime(next);
+      const updatedSchedule = schedule.map((row) =>
+        row.id === targetCueId ? { ...row, sessionStartOvertime: next } : row
+      );
+      setSchedule(updatedSchedule);
+      void persistScheduleNow(updatedSchedule);
+      logChange(
+        'SESSION_START_OFFSET_ADJUST',
+        `Session start offset set to ${next > 0 ? '+' : ''}${next} min (Δ ${deltaMinutes > 0 ? '+' : ''}${deltaMinutes})`,
+        { fieldName: 'sessionShowStartOvertime', oldValue: sessionShowStartOvertime, newValue: next, deltaMinutes }
+      );
+      return;
+    }
     const actualTime = new Date().toISOString();
     setShowStartOvertime(next);
     try {
-      await DatabaseService.saveShowStartOvertime(event.id, startCueId, next, scheduledTime, actualTime);
+      await DatabaseService.saveShowStartOvertime(event.id, targetCueId, next, scheduledTime, actualTime);
       logChange(
         'SHOW_START_OFFSET_ADJUST',
         `Show start offset set to ${next > 0 ? '+' : ''}${next} min (Δ ${deltaMinutes > 0 ? '+' : ''}${deltaMinutes})`,
@@ -6143,6 +9024,7 @@ const RunOfShowPage: React.FC = () => {
       }
     }
 
+    // Fallback: last parent that already has an overtime value
     for (let i = parents.length - 1; i >= 0; i--) {
       if ((overtimeMinutes[parents[i].id] || 0) !== 0) {
         return { id: parents[i].id, label: cueLabel(parents[i]) };
@@ -6158,6 +9040,11 @@ const RunOfShowPage: React.FC = () => {
     const target = resolvePreviousCueForOvertimeAdjust();
     if (!target) {
       alert('Load or complete a cue first so we know which previous cue to adjust.');
+      return;
+    }
+    const targetIndex = schedule.findIndex((row) => row.id === target.id);
+    if (isIndexFrozenByShowSection(schedule, targetIndex)) {
+      alert('Morning offsets are frozen. Turn Section Off to change them, or keep working in the new section.');
       return;
     }
     const prevValue = overtimeMinutes[target.id] || 0;
@@ -6198,32 +9085,289 @@ const RunOfShowPage: React.FC = () => {
     try {
       await DatabaseService.clearOvertimeMinutes(event.id);
       await DatabaseService.clearShowStartOvertime(event.id);
+      await DatabaseService.clearCueActualStarts(event.id);
       setOvertimeMinutes({});
       setShowStartOvertime(0);
+      setCueActualStarts({});
+      disarmLiveStartProjection();
       logChange('CLEAR_SHOW_OFFSETS', 'Cleared all schedule overtime offsets for this show', {
         fieldName: 'overtimeOffsets',
         oldValue: 'present',
         newValue: 'cleared',
       });
-      console.log('✅ Cleared show offsets (overtime minutes + show start overtime)');
+      console.log('✅ Cleared show offsets (overtime minutes + show start overtime + live est)');
     } catch (error) {
       console.error('❌ Failed to clear show offsets:', error);
       alert('Could not clear offsets. Please try again.');
     }
   };
 
+  const persistScheduleNow = async (updatedSchedule: ScheduleItem[]) => {
+    if (!event?.id) return;
+    try {
+      await DatabaseService.saveRunOfShowData(
+        {
+          event_id: event.id,
+          event_name: eventName,
+          event_date: event?.date || new Date().toISOString(),
+          schedule_items: updatedSchedule,
+          custom_columns: customColumns,
+          settings: {
+            eventName: eventName,
+            masterStartTime: masterStartTime,
+            dayStartTimes: dayStartTimes,
+            numberOfDays: event?.numberOfDays,
+            show_mode: showMode,
+            track_was_durations: trackWasDurations,
+            show_completed_highlight: showCompletedHighlight,
+            ...(Object.keys(originalDurations).length > 0 && { original_durations: originalDurations }),
+            ...(Object.keys(lockedStartTimes).length > 0 && {
+              locked_start_times: Object.fromEntries(
+                Object.entries(lockedStartTimes).map(([k, v]) => [String(k), v])
+              ),
+            }),
+            ...autoRollSettingsPatch(autoRollArmedRef.current),
+            voAlertsEnabled: voAlertsEnabledRef.current !== false,
+          },
+        },
+        {
+          userId: user?.id || 'unknown',
+          userName: user?.full_name || user?.email || 'Unknown User',
+          userRole: user?.role || currentUserRole || 'VIEWER',
+        }
+      );
+    } catch (error) {
+      console.error('❌ Failed to persist schedule after section/star change:', error);
+    }
+  };
 
-  // Open full-screen timer in new window (same Offline Timer Clock display as /timer)
-  const openFullScreenTimer = () => {
+  /** Start Section toggle: ON freezes offsets above and arms the next session. */
+  const toggleShowSection = async (breakItemId: number, turnOn: boolean) => {
+    if (currentUserRole !== 'OPERATOR') {
+      alert('Only OPERATORs can change the show section.');
+      return;
+    }
+    if (!event?.id || !user) return;
+    const breakIndex = schedule.findIndex((row) => row.id === breakItemId);
+    if (breakIndex < 0) return;
+    const breakItem = schedule[breakIndex];
+    const alreadyOn = !!breakItem.sectionStarted;
+    if (turnOn === alreadyOn) return;
+    const day = breakItem.day || 1;
+    const next = nextSessionCueOf(schedule, breakIndex, (row) =>
+      itemCountsTowardStartTime(row as ScheduleItem, indentedCues)
+    );
+    const nextLabel = next ? resolveScheduleCueLabel(next.item, next.item.id) : 'the next cues';
+
+    if (!turnOn) {
+      const ok = window.confirm(
+        'Turn this section Off?\n\nYou will be working with the cues above the Show Break again. Frozen offsets stay saved.'
+      );
+      if (!ok) return;
+      const updatedOff = schedule.map((row) =>
+        row.id === breakItemId ? { ...row, sectionStarted: false } : row
+      );
+      setSchedule(updatedOff);
+      void persistScheduleNow(updatedOff);
+      logChange('STOP_SHOW_SECTION', `Turned Show Section Off — working with cues above the break again`, {
+        fieldName: 'showSection',
+        itemId: breakItemId,
+        newValue: 'off',
+      });
+      return;
+    }
+
+    const ok = window.confirm(
+      `Turn this section On?\n\nOffsets above the Show Break will stay saved and freeze. Timers above will stop. You can go to Rehearsal without losing those offsets, then In-Show will track only ${nextLabel} and later.`
+    );
+    if (!ok) return;
+
+    const updatedOn = schedule.map((row) => ({
+      ...row,
+      sectionStarted: isShowBreakProgramType(row.programType)
+        ? row.id === breakItemId
+        : row.sectionStarted,
+      isSessionStartCue: next ? row.id === next.item.id : false,
+      sessionStartOvertime: next && row.id === next.item.id ? 0 : row.sessionStartOvertime,
+    }));
+    setSchedule(updatedOn);
+    void persistScheduleNow(updatedOn);
+    setSessionStartCueId(next?.item.id ?? null);
+    setSessionShowStartOvertime(0);
+    setInShowNudgeDismissed(false);
+    inShowNudgeRunKeyRef.current = null;
+    inShowNudgeFirstSeenMsRef.current = null;
+
+    await DatabaseService.saveShowModeWithBaseline(event.id, {
+      clearPreshowShowDay: true,
+      liveStartProjection: false,
+    });
+    setPreshowShowDayArmed(null);
+    disarmLiveStartProjection();
+
+    const timersToStop = new Set<number>();
+    Object.keys(activeTimers).forEach((id) => {
+      const itemId = Number(id);
+      const idx = schedule.findIndex((row) => row.id === itemId);
+      if (idx >= 0 && idx < breakIndex && (schedule[idx].day || 1) === day) {
+        timersToStop.add(itemId);
+      }
+    });
+    const hybridId = hybridTimerData?.activeTimer?.item_id;
+    if (hybridId != null) {
+      const hid = Number(hybridId);
+      const idx = schedule.findIndex((row) => row.id === hid);
+      if (idx >= 0 && idx < breakIndex) timersToStop.add(hid);
+    }
+    if (activeItemId != null) {
+      const idx = schedule.findIndex((row) => row.id === activeItemId);
+      if (idx >= 0 && idx < breakIndex) timersToStop.add(activeItemId);
+    }
+
+    for (const itemId of timersToStop) {
+      try {
+        await DatabaseService.stopTimer(
+          event.id,
+          itemId,
+          user.id,
+          user.full_name || user.email || 'Unknown User',
+          currentUserRole || 'VIEWER'
+        );
+      } catch (error) {
+        console.warn('Could not stop timer above Show Break:', itemId, error);
+      }
+    }
+    if (timersToStop.size) {
+      setActiveTimers((prev) => {
+        const nextTimers = { ...prev };
+        timersToStop.forEach((id) => {
+          delete nextTimers[id];
+        });
+        return nextTimers;
+      });
+      setTimerProgress((prev) => {
+        const nextProgress = { ...prev };
+        timersToStop.forEach((id) => {
+          delete nextProgress[id];
+        });
+        return nextProgress;
+      });
+    }
+    if (activeItemId != null && timersToStop.has(activeItemId)) {
+      setActiveItemId(null);
+    }
+    if (secondaryTimer) {
+      try {
+        await stopSecondaryTimer();
+      } catch (error) {
+        console.warn('Could not stop secondary timer:', error);
+      }
+    }
+
+    preshowAutoStartedKeyRef.current = null;
+    preshowAutoStartInFlightRef.current = false;
+    setDismissedPreshowWarnKeys(new Set());
+    setActivePreshowWarn(null);
+
+    logChange(
+      'START_SHOW_SECTION',
+      `Turned Show Section On — froze offsets above and armed ${nextLabel}`,
+      {
+        fieldName: 'showSection',
+        itemId: breakItemId,
+        nextCueId: next?.item.id ?? null,
+        nextCueLabel: nextLabel,
+        newValue: 'on',
+      }
+    );
+  };
+
+  /** Clear master + per-day start times (Neon settings + this browser’s local cache). Admin/Crew only. */
+  const clearMasterStartTimes = () => {
+    if (!event?.id) return;
+    if (!canAccessPreFlightChecklist(user)) {
+      alert('Only Admin or Crew can clear master start time.');
+      return;
+    }
+    const multiDay = Boolean(event?.numberOfDays && event.numberOfDays > 1);
+    const ok = window.confirm(
+      multiDay
+        ? 'Clear master and all day start times for this event?\n\nStart column will go blank until you set a new time. This saves to Neon.'
+        : 'Clear master start time for this event?\n\nStart column will go blank until you set a new time. This saves to Neon.'
+    );
+    if (!ok) return;
+
+    const previousMaster = masterStartTime;
+    const previousDays = { ...dayStartTimes };
+
+    handleUserEditing();
+    setMasterStartTime('');
+    setDayStartTimes({});
+    try {
+      localStorage.removeItem(`masterStartTime_${event.id}`);
+      localStorage.removeItem(`dayStartTimes_${event.id}`);
+    } catch {
+      /* ignore */
+    }
+
+    logChange('CLEAR_MASTER_START_TIMES', 'Cleared master/day start times for this event', {
+      fieldName: 'masterStartTime',
+      oldValue: { masterStartTime: previousMaster, dayStartTimes: previousDays },
+      newValue: { masterStartTime: '', dayStartTimes: {} },
+    });
+    console.log('✅ Cleared master/day start times for event', event.id);
+  };
+
+  // Open full-screen timer in new window, new tab, or this tab
+  const openFullScreenTimer = (mode: DisplayOpenMode = 'external') => {
     setShowMenuDropdown(false);
-
+    
+    // Close existing timer window if open
     if (fullScreenTimerWindow && !fullScreenTimerWindow.closed) {
       fullScreenTimerWindow.close();
     }
 
+    // Get current timer data
+    const activeTimerIds = Object.keys(activeTimers);
+    const currentItem = activeTimerIds.length > 0 
+      ? schedule.find(item => activeTimers[item.id])
+      : schedule.find(item => item.id === activeItemId);
+
+    const timerData = {
+      isRunning: activeTimerIds.length > 0,
+      elapsedTime: currentItem && timerProgress[currentItem.id] 
+        ? timerProgress[currentItem.id].elapsed 
+        : 0,
+      totalDuration: currentItem 
+        ? currentItem.durationHours * 3600 + currentItem.durationMinutes * 60 + currentItem.durationSeconds
+        : 0,
+      eventId: event?.id,
+      mainTimer: currentItem ? {
+        cue: currentItem.customFields.cue || 'CUE',
+        segmentName: currentItem.segmentName || ''
+      } : null,
+      secondaryTimer: secondaryTimer ? {
+        itemId: secondaryTimer.itemId,
+        remaining: secondaryTimer.remaining,
+        duration: secondaryTimer.duration,
+        cue: schedule.find(item => item.id === secondaryTimer.itemId)?.customFields.cue || 'CUE',
+        segmentName: schedule.find(item => item.id === secondaryTimer.itemId)?.segmentName || ''
+      } : null
+    };
+
     const timerUrl = event?.id
       ? `/fullscreen-timer?eventId=${encodeURIComponent(event.id)}`
       : '/fullscreen-timer';
+
+    if (mode === 'same') {
+      navigate(timerUrl, { state: timerData });
+      return;
+    }
+
+    if (mode === 'tab') {
+      window.open(timerUrl, '_blank', 'noopener,noreferrer');
+      return;
+    }
 
     const timerWindow = window.open(
       timerUrl,
@@ -6233,11 +9377,19 @@ const RunOfShowPage: React.FC = () => {
 
     if (timerWindow) {
       setFullScreenTimerWindow(timerWindow);
+      
+      // Send initial data to the timer window
+      timerWindow.addEventListener('load', () => {
+        timerWindow.postMessage({
+          type: 'TIMER_UPDATE',
+          ...timerData
+        }, '*');
+      });
     }
   };
 
-  // Open Offline Timer in new window or same-browser tab
-  const openTimerDisplay = (mode: 'external' | 'browser' = 'external') => {
+  // Open Clock in new window, new tab, or this tab
+  const openTimerDisplay = (mode: DisplayOpenMode = 'external') => {
     setShowMenuDropdown(false);
     
     // Close existing clock window if open
@@ -6275,8 +9427,13 @@ const RunOfShowPage: React.FC = () => {
 
     const clockUrl = event?.id ? `/timer?eventId=${encodeURIComponent(event.id)}` : '/timer';
 
-    if (mode === 'browser') {
+    if (mode === 'same') {
       navigate(clockUrl, { state: timerData });
+      return;
+    }
+
+    if (mode === 'tab') {
+      window.open(clockUrl, '_blank', 'noopener,noreferrer');
       return;
     }
 
@@ -6299,8 +9456,115 @@ const RunOfShowPage: React.FC = () => {
     }
   };
 
+  // Open DSM Clock (fork of Clock) — same open modes as Clock
+  const openDsmClock = (mode: DisplayOpenMode = 'external') => {
+    setShowMenuDropdown(false);
+
+    if (dsmClockWindow && !dsmClockWindow.closed) {
+      dsmClockWindow.close();
+    }
+
+    const activeTimerIds = Object.keys(activeTimers);
+    const currentItem = activeTimerIds.length > 0
+      ? schedule.find(item => activeTimers[item.id])
+      : schedule.find(item => item.id === activeItemId);
+
+    const timerData = {
+      isRunning: activeTimerIds.length > 0,
+      elapsedTime: currentItem && timerProgress[currentItem.id]
+        ? timerProgress[currentItem.id].elapsed
+        : 0,
+      totalDuration: currentItem
+        ? currentItem.durationHours * 3600 + currentItem.durationMinutes * 60 + currentItem.durationSeconds
+        : 0,
+      eventId: event?.id,
+      mainTimer: currentItem ? {
+        cue: currentItem.customFields.cue || 'CUE',
+        segmentName: currentItem.segmentName || ''
+      } : null,
+      secondaryTimer: secondaryTimer ? {
+        itemId: secondaryTimer.itemId,
+        remaining: secondaryTimer.remaining,
+        duration: secondaryTimer.duration,
+        cue: schedule.find(item => item.id === secondaryTimer.itemId)?.customFields.cue || 'CUE',
+        segmentName: schedule.find(item => item.id === secondaryTimer.itemId)?.segmentName || ''
+      } : null
+    };
+
+    const dsmUrl = event?.id ? `/dsm-clock?eventId=${encodeURIComponent(event.id)}` : '/dsm-clock';
+
+    if (mode === 'same') {
+      navigate(dsmUrl, { state: timerData });
+      return;
+    }
+
+    if (mode === 'tab') {
+      window.open(dsmUrl, '_blank', 'noopener,noreferrer');
+      return;
+    }
+
+    const newDsmWindow = window.open(
+      dsmUrl,
+      'dsm-clock',
+      'width=1920,height=1080,fullscreen=yes,menubar=no,toolbar=no,location=no,status=no,scrollbars=no,resizable=yes'
+    );
+
+    if (newDsmWindow) {
+      setDsmClockWindow(newDsmWindow);
+      newDsmWindow.addEventListener('load', () => {
+        newDsmWindow.postMessage({
+          type: 'TIMER_UPDATE',
+          ...timerData
+        }, '*');
+      });
+    }
+  };
+
   // Close menus when clicking outside (but not when clicking inside the menu dropdown)
   const menuDropdownContainerRef = useRef<HTMLDivElement>(null);
+  const menuMainPanelRef = useRef<HTMLDivElement>(null);
+  const operatorActionsFlyoutRef = useRef<HTMLDivElement>(null);
+  const powerPointFlyoutRef = useRef<HTMLDivElement>(null);
+  const importExportFlyoutRef = useRef<HTMLDivElement>(null);
+  const reportsFlyoutRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    if (!showMenuDropdown) return;
+
+    const clampAll = () => {
+      const panel = menuMainPanelRef.current;
+      clampMenuPanelToViewport(panel, 'dropdown');
+      if (showOperatorActionsSubmenu) {
+        clampMenuPanelToViewport(operatorActionsFlyoutRef.current, 'flyout', panel);
+      }
+      if (showPowerPointSubmenu) {
+        clampMenuPanelToViewport(powerPointFlyoutRef.current, 'flyout', panel);
+      }
+      if (showImportExportSubmenu) {
+        clampMenuPanelToViewport(importExportFlyoutRef.current, 'flyout', panel);
+      }
+      if (showReportsSubmenu) {
+        clampMenuPanelToViewport(reportsFlyoutRef.current, 'flyout', panel);
+      }
+    };
+
+    clampAll();
+    window.addEventListener('resize', clampAll);
+    const main = menuMainPanelRef.current;
+    main?.addEventListener('scroll', clampAll, { passive: true });
+    return () => {
+      window.removeEventListener('resize', clampAll);
+      main?.removeEventListener('scroll', clampAll);
+    };
+  }, [
+    showMenuDropdown,
+    showOperatorActionsSubmenu,
+    showPowerPointSubmenu,
+    showImportExportSubmenu,
+    importExportGroup,
+    showReportsSubmenu,
+  ]);
+
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       // Don't close if click was inside the menu dropdown container (allows Import & Export submenu to work)
@@ -6310,6 +9574,7 @@ const RunOfShowPage: React.FC = () => {
       setActiveJumpMenu(null);
       setShowMenuDropdown(false);
       setShowImportExportSubmenu(false);
+      setImportExportGroup(null);
     };
     document.addEventListener('click', handleClickOutside);
     return () => document.removeEventListener('click', handleClickOutside);
@@ -6318,35 +9583,32 @@ const RunOfShowPage: React.FC = () => {
   // Convert plain-text newlines to <br> for contenteditable (e.g. Excel-imported notes)
   const notesForEditor = (raw: string) => {
     if (!raw) return '';
-    return String(raw)
-      .replace(/\r\n/g, '<br>')
-      .replace(/\r/g, '<br>')
-      .replace(/\n/g, '<br>');
+    return boostNotesContrastHtml(
+      String(raw)
+        .replace(/\r\n/g, '<br>')
+        .replace(/\r/g, '<br>')
+        .replace(/\n/g, '<br>')
+    );
   };
 
-  // Initialize temp content when modal opens
-  useEffect(() => {
-    if (showNotesModal && editingNotesItem !== null) {
-      const editor = document.getElementById('notes-editor');
-      let initial = '';
-      let initialVos: VoCue[] = [];
-      if (editingNotesItem === -1) {
-        initial = notesForEditor(modalForm.notes || '');
-        initialVos = Array.isArray((modalForm as { voCues?: VoCue[] }).voCues)
-          ? (modalForm as { voCues: VoCue[] }).voCues.map((vo) => ({ ...vo }))
-          : [];
-      } else {
-        const item = schedule.find(item => item.id === editingNotesItem);
-        initial = notesForEditor(item?.notes || '');
-        initialVos = Array.isArray(item?.voCues) ? item.voCues.map((vo: VoCue) => ({ ...vo })) : [];
-      }
-      setTempNotesHtml(initial);
-      setTempNotesVoCues(initialVos);
-      if (editor) {
-        editor.innerHTML = initial;
-      }
-    }
-  }, [showNotesModal, editingNotesItem]);
+  /** After VO / Settle / Stage Direction chips: refresh open Notes modal + caret below chips. */
+  const applyNotesChipToOpenEditor = useCallback(
+    (itemId: number, notesHtml: string) => {
+      if (!showNotesModal || editingNotesItem !== itemId) return;
+      const html = notesForEditor(withNotesTypingSpacer(notesHtml));
+      setTempNotesHtml(html);
+      window.requestAnimationFrame(() => {
+        const editor =
+          (notesEditorRef.current as HTMLElement | null) ||
+          (document.getElementById('notes-editor') as HTMLElement | null);
+        if (!editor) return;
+        editor.innerHTML = html;
+        ensureNotesEditorTypingSpace(editor);
+        setTempNotesHtml(editor.innerHTML);
+      });
+    },
+    [showNotesModal, editingNotesItem]
+  );
 
   const notesFallbackCue = useMemo(() => {
     if (editingNotesItem == null || editingNotesItem === -1) return '';
@@ -6365,17 +9627,21 @@ const RunOfShowPage: React.FC = () => {
 
   const convertNotesLabelHint = useCallback(
     (hint: { type: 'vo' | 'settle'; line: string; kind?: 'vo' | 'bgm'; time?: string | null; label?: string; cuePrefix?: string }, time?: string) => {
-      const editor = document.getElementById('notes-editor');
+      const editor =
+        (notesEditorRef.current as HTMLElement | null) ||
+        (document.getElementById('notes-editor') as HTMLElement | null);
       let html = editor?.innerHTML || tempNotesHtml;
       html = removePlainLineFromNotesHtml(html, hint.line);
       if (hint.type === 'vo') {
         const nextTime = String(time || hint.time || '').trim();
         if (!nextTime) return;
+        const venueTz = resolveShowTimezone(calendarTimezoneRef.current, eventTimezone);
         const vo: VoCue = {
           id: `vo_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
           time: nextTime,
           label: String(hint.label || '').trim(),
           kind: hint.kind === 'bgm' ? 'bgm' : 'vo',
+          timeZone: venueTz,
           ...(hint.cuePrefix ? { cuePrefix: hint.cuePrefix } : {}),
         };
         const previous = tempNotesVoCuesRef.current;
@@ -6391,128 +9657,356 @@ const RunOfShowPage: React.FC = () => {
         }
         html = prependSettleCueNote(html, cue);
       }
-      if (editor) editor.innerHTML = html;
+      html = notesForEditor(withNotesTypingSpacer(html));
+      if (editor) {
+        editor.innerHTML = html;
+        ensureNotesEditorTypingSpace(editor);
+        html = editor.innerHTML;
+      }
       setTempNotesHtml(html);
     },
-    [notesFallbackCue, tempNotesHtml]
+    [eventTimezone, notesFallbackCue, tempNotesHtml, tempNotesVoCues]
   );
 
-  // Initialize speakers content when modal opens
+  // Load notes into temp state + editor once when the modal opens (not on schedule sync).
   useEffect(() => {
-    if (showSpeakersModal && editingSpeakersItem !== null) {
-      if (editingSpeakersItem === -1) {
-        // Editing modal form speakers
-        if (modalForm.speakersText) {
-          try {
-            const speakers = JSON.parse(modalForm.speakersText);
-            setTempSpeakersText(Array.isArray(speakers) ? speakers : []);
-          } catch {
-            setTempSpeakersText([]);
-          }
-        } else {
+    if (!showNotesModal || editingNotesItem === null) {
+      return;
+    }
+
+    let initial = '';
+    let initialVos: VoCue[] = [];
+    if (editingNotesItem === -1) {
+      initial = notesForEditor(modalForm.notes || '');
+      initialVos = Array.isArray(modalForm.voCues) ? modalForm.voCues.map((vo: VoCue) => ({ ...vo })) : [];
+    } else {
+      const item = schedule.find((row) => row.id === editingNotesItem);
+      initial = notesForEditor(item?.notes || '');
+      initialVos = Array.isArray(item?.voCues) ? item.voCues.map((vo) => ({ ...vo })) : [];
+    }
+    setTempNotesHtml(initial);
+    setTempNotesVoCues(reconcileVoCuesWithNotes(initial, initialVos));
+
+    // Wait for the contentEditable node to mount, then seed it once.
+    const frame = window.requestAnimationFrame(() => {
+      const editor = notesEditorRef.current || document.getElementById('notes-editor');
+      if (editor) {
+        editor.innerHTML = initial;
+        ensureNotesEditorTypingSpace(editor as HTMLElement);
+        setTempNotesHtml(editor.innerHTML);
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+    // Intentionally omit schedule / modalForm.notes so sync cannot wipe in-progress typing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showNotesModal, editingNotesItem]);
+
+  // If the tab was hidden and the browser cleared/reset the editor, restore from temp state.
+  useEffect(() => {
+    if (!showNotesModal || editingNotesItem === null) return;
+
+    const restoreIfNeeded = () => {
+      if (document.hidden) return;
+      const editor = notesEditorRef.current || document.getElementById('notes-editor');
+      if (!editor) return;
+      // Only restore when the live editor looks empty but we still have draft HTML.
+      const live = editor.innerHTML.replace(/<br\s*\/?>/gi, '').replace(/&nbsp;/gi, '').trim();
+      const draft = tempNotesHtml.replace(/<br\s*\/?>/gi, '').replace(/&nbsp;/gi, '').trim();
+      if (!live && draft) {
+        editor.innerHTML = tempNotesHtml;
+      }
+    };
+
+    document.addEventListener('visibilitychange', restoreIfNeeded);
+    window.addEventListener('focus', restoreIfNeeded);
+    return () => {
+      document.removeEventListener('visibilitychange', restoreIfNeeded);
+      window.removeEventListener('focus', restoreIfNeeded);
+    };
+  }, [showNotesModal, editingNotesItem, tempNotesHtml]);
+
+  // Load speakers into temp state once when the modal opens (not on schedule sync).
+  useEffect(() => {
+    if (!showSpeakersModal || editingSpeakersItem === null) return;
+
+    if (editingSpeakersItem === -1) {
+      if (modalForm.speakersText) {
+        try {
+          const speakers = JSON.parse(modalForm.speakersText);
+          setTempSpeakersText(Array.isArray(speakers) ? speakers : []);
+        } catch {
           setTempSpeakersText([]);
         }
       } else {
-        // Editing existing schedule item speakers
-        const item = schedule.find(item => item.id === editingSpeakersItem);
-        if (item?.speakersText) {
-          try {
-            // Try to parse existing speakers data
-            const speakers = JSON.parse(item.speakersText);
-            setTempSpeakersText(Array.isArray(speakers) ? speakers : []);
-          } catch {
-            // If parsing fails, start with empty array
-            setTempSpeakersText([]);
-          }
-        } else {
+        setTempSpeakersText([]);
+      }
+    } else {
+      const item = schedule.find((row) => row.id === editingSpeakersItem);
+      if (item?.speakersText) {
+        try {
+          const speakers = JSON.parse(item.speakersText);
+          setTempSpeakersText(Array.isArray(speakers) ? speakers : []);
+        } catch {
           setTempSpeakersText([]);
         }
+      } else {
+        setTempSpeakersText([]);
       }
     }
-  }, [showSpeakersModal, editingSpeakersItem, schedule, modalForm.speakersText]);
+    // Intentionally omit schedule / modalForm.speakersText so sync cannot wipe in-progress edits.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showSpeakersModal, editingSpeakersItem]);
 
-  // Initialize assets modal content when modal opens
+  // Load assets into temp state once when the modal opens (not on schedule sync).
   useEffect(() => {
-    if (showAssetsModal && editingAssetsItem !== null) {
-      const assetsContainer = document.getElementById('assets-list');
-      
-      if (assetsContainer) {
-        // Clear existing assets
-        assetsContainer.innerHTML = '';
-        
-        let assetsData = '';
-        if (editingAssetsItem === -1) {
-          // Editing modal form assets
-          assetsData = modalForm.assets || '';
-        } else {
-          // Editing existing schedule item assets
-          const item = schedule.find(item => item.id === editingAssetsItem);
-          assetsData = item?.assets || '';
-        }
-        
-        if (assetsData) {
-          // Parse multiple assets (format: "Name1||Name2|Link2||Name3")
-          const assetsArray = assetsData.split('||');
-          
-          assetsArray.forEach(assetString => {
-            if (assetString.trim()) {
-              const [name, link] = assetString.split('|');
-              const hasLink = link && link.trim() !== '';
-              
-              const assetItem = document.createElement('div');
-              assetItem.className = 'asset-item p-3 bg-slate-700 rounded-lg space-y-3';
-              assetItem.innerHTML = `
-                <div class="flex gap-3 items-center">
-                  <input type="text" class="asset-name flex-1 px-3 py-2 bg-slate-600 border border-slate-500 rounded text-white placeholder-slate-400 focus:outline-none focus:border-blue-500" placeholder="Asset name..." value="${name || ''}" />
-                  <button type="button" class="toggle-link px-3 py-2 text-white rounded transition-colors text-sm ${hasLink ? 'bg-slate-600 hover:bg-slate-500' : 'bg-blue-600 hover:bg-blue-500'}">
-                    ${hasLink ? '− Link' : '+ Link'}
-                  </button>
-                  <button type="button" class="remove-asset px-3 py-2 bg-red-600 hover:bg-red-500 text-white rounded transition-colors">Remove</button>
-                </div>
-                <div class="asset-link-container ${hasLink ? '' : 'hidden'}">
-                  <input type="url" class="asset-link w-full px-3 py-2 bg-slate-600 border border-slate-500 rounded text-white placeholder-slate-400 focus:outline-none focus:border-blue-500" placeholder="Enter asset URL..." value="${link || ''}" />
-                </div>
-              `;
-              
-              // Add toggle link functionality
-              const toggleBtn = assetItem.querySelector('.toggle-link');
-              const linkContainer = assetItem.querySelector('.asset-link-container');
-              const linkInput = assetItem.querySelector('.asset-link') as HTMLInputElement;
-              
-              toggleBtn?.addEventListener('click', () => {
-                if (linkContainer?.classList.contains('hidden')) {
-                  linkContainer.classList.remove('hidden');
-                  toggleBtn.textContent = '− Link';
-                  toggleBtn.classList.remove('bg-blue-600', 'hover:bg-blue-500');
-                  toggleBtn.classList.add('bg-slate-600', 'hover:bg-slate-500');
-                  linkInput?.focus();
-                } else {
-                  linkContainer?.classList.add('hidden');
-                  toggleBtn.textContent = '+ Link';
-                  toggleBtn.classList.remove('bg-slate-600', 'hover:bg-slate-500');
-                  toggleBtn.classList.add('bg-blue-600', 'hover:bg-blue-500');
-                  if (linkInput) linkInput.value = '';
-                }
-              });
-              
-              // Add remove functionality
-              const removeBtn = assetItem.querySelector('.remove-asset');
-              removeBtn?.addEventListener('click', () => {
-                assetItem.remove();
-              });
-              
-              assetsContainer.appendChild(assetItem);
-            }
-          });
-        }
-        
-        // Always add at least one empty row
-        if (assetsContainer.children.length === 0) {
-          addAssetRow();
+    if (!showAssetsModal || editingAssetsItem === null) return;
+
+    let assetsData = '';
+    const draftCue =
+      editingAssetsItem === -1 ||
+      (showAddModal && modalDraftItemId != null && editingAssetsItem === modalDraftItemId) ||
+      !schedule.some((row) => row.id === editingAssetsItem);
+    if (draftCue) {
+      assetsData = modalForm.assets || '';
+    } else {
+      const item = schedule.find((row) => row.id === editingAssetsItem);
+      assetsData = item?.assets || '';
+    }
+
+    const parsed: Array<{ id: string; name: string; link: string; showLink: boolean }> = [];
+    if (assetsData) {
+      assetsData.split('||').forEach((assetString, index) => {
+        if (!assetString.trim()) return;
+        const [name, link] = assetString.split('|');
+        const hasLink = Boolean(link && link.trim());
+        parsed.push({
+          id: `asset_${Date.now()}_${index}`,
+          name: name || '',
+          link: link || '',
+          showLink: hasLink,
+        });
+      });
+    }
+
+    setTempAssets(
+      parsed.length > 0
+        ? parsed
+        : [{ id: `asset_${Date.now()}`, name: '', link: '', showLink: false }]
+    );
+    // Intentionally omit schedule / modalForm.assets so sync cannot wipe in-progress edits.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showAssetsModal, editingAssetsItem]);
+
+  const refreshPlatformCueFiles = useCallback(async (eventId?: string) => {
+    const id = eventId || event?.id;
+    if (!id) {
+      setPlatformCueFiles([]);
+      return;
+    }
+    try {
+      const result = await apiClient.listEventCueFiles(id);
+      setPlatformCueFiles(Array.isArray(result?.files) ? result.files : []);
+    } catch (err) {
+      console.warn('Could not load platform cue files:', err);
+    }
+  }, [event?.id]);
+
+  useEffect(() => {
+    if (!event?.id) {
+      setPlatformCueFiles([]);
+      setPlatformUploadConfigured(false);
+      return;
+    }
+    apiClient
+      .getEventCueFilesStatus()
+      .then((s) => setPlatformUploadConfigured(!!s?.configured))
+      .catch(() => setPlatformUploadConfigured(false));
+    void refreshPlatformCueFiles(event.id);
+  }, [event?.id, showAssetsModal, showViewAssetsModal, refreshPlatformCueFiles]);
+
+  useEffect(() => {
+    if (!showAssetsModal) {
+      setPlatformUploadDragOver(false);
+      setPdfConvertPrompt(null);
+      setPdfConvertQueue([]);
+    }
+  }, [showAssetsModal]);
+
+  const platformFileCountByItem = useMemo(() => {
+    const counts = new Map<number, number>();
+    for (const file of platformCueFiles) {
+      counts.set(file.itemId, (counts.get(file.itemId) || 0) + 1);
+    }
+    return counts;
+  }, [platformCueFiles]);
+
+  const modalPlatformFiles = useMemo(() => {
+    const itemId = showAssetsModal ? editingAssetsItem : showViewAssetsModal ? viewingAssetsItem : null;
+    if (itemId == null || itemId <= 0) return [];
+    return platformCueFiles.filter((f) => f.itemId === itemId);
+  }, [platformCueFiles, showAssetsModal, editingAssetsItem, showViewAssetsModal, viewingAssetsItem]);
+
+  const openPlatformCueFile = async (fileId: string) => {
+    try {
+      const result = await apiClient.getEventCueFileDownloadUrl(fileId);
+      if (result?.url) window.open(result.url, '_blank', 'noopener,noreferrer');
+    } catch (err: any) {
+      alert(err?.message || 'Could not open file.');
+    }
+  };
+
+  const downloadPlatformCueFile = async (file: EventCueFile) => {
+    try {
+      const result = await apiClient.getEventCueFileDownloadUrl(file.id);
+      if (!result?.url) throw new Error('Download link was not available.');
+      const response = await fetch(result.url);
+      if (!response.ok) throw new Error('Could not download file.');
+      const blob = await response.blob();
+      const suggestedName = cueFileDisplayName(file);
+      const picker = (window as any).showSaveFilePicker as
+        | undefined
+        | ((opts: {
+            suggestedName?: string;
+            types?: { description: string; accept: Record<string, string[]> }[];
+          }) => Promise<{ createWritable: () => Promise<{ write: (data: Blob) => Promise<void>; close: () => Promise<void> }> }>);
+      if (typeof picker === 'function') {
+        try {
+          const handle = await picker({ suggestedName });
+          const writable = await handle.createWritable();
+          await writable.write(blob);
+          await writable.close();
+          return;
+        } catch (err: any) {
+          if (err?.name === 'AbortError') return;
         }
       }
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = suggestedName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+    } catch (err: any) {
+      alert(err?.message || 'Could not download file.');
     }
-  }, [showAssetsModal, editingAssetsItem, schedule, modalForm.assets]);
+  };
+
+  const isPdfCueUpload = (file: { name?: string; originalName?: string; type?: string; mimeType?: string | null }) => {
+    const name = String(file.originalName || file.name || '').toLowerCase();
+    const mime = String(file.mimeType || file.type || '').toLowerCase();
+    return name.endsWith('.pdf') || mime === 'application/pdf';
+  };
+
+  const advancePdfConvertPrompt = (queue: EventCueFile[]) => {
+    setPdfConvertPrompt(queue[0] || null);
+    setPdfConvertQueue(queue.slice(1));
+  };
+
+  const handleConvertPdfCueFile = async (file: EventCueFile, force = false) => {
+    if (!event?.id) return;
+    setPdfConvertBusyId(file.id);
+    setPlatformUploadError(null);
+    try {
+      const result = await apiClient.convertPdfCueFileToPptx(file.id, event.id, force);
+      if (result?.file) {
+        setPlatformCueFiles((prev) => {
+          if (prev.some((row) => row.id === result.file.id)) return prev;
+          return [...prev, result.file];
+        });
+        await refreshPlatformCueFiles(event.id);
+        const pageBit =
+          result.pages != null
+            ? `${result.pages} slide${result.pages === 1 ? '' : 's'}`
+            : 'slides';
+        const extra = result.truncated ? ` (first ${result.pages} of ${result.totalPages} PDF pages)` : '';
+        setPlatformUploadNote(
+          result.reused
+            ? `PowerPoint already exists for ${cueFileDisplayName(file)}.`
+            : `Added ${cueFileDisplayName(result.file)} (${pageBit}${extra}). PDF kept.`
+        );
+      }
+    } catch (err: any) {
+      setPlatformUploadError(err?.message || 'Could not create PowerPoint from this PDF.');
+    } finally {
+      setPdfConvertBusyId(null);
+    }
+  };
+
+  const handlePlatformCueFileUpload = async (fileList: FileList | File[] | null) => {
+    if (!event?.id || editingAssetsItem == null || editingAssetsItem <= 0) {
+      alert('Save the cue first, then upload files.');
+      return;
+    }
+    const files = fileList ? Array.from(fileList).filter((f) => f && f.size > 0) : [];
+    if (!files.length) return;
+    const maxBytes = 200 * 1024 * 1024;
+    const tooLarge = files.find((f) => f.size > maxBytes);
+    if (tooLarge) {
+      setPlatformUploadError(`"${tooLarge.name}" is too large. Max size is 200 MB.`);
+      return;
+    }
+    setPlatformUploadBusy(true);
+    setPlatformUploadError(null);
+    setPlatformUploadNote(null);
+    try {
+      const notes: string[] = [];
+      const uploadedPdfs: EventCueFile[] = [];
+      for (const file of files) {
+        const result = await apiClient.uploadEventCueFile(event.id, editingAssetsItem, file);
+        if (result?.file) {
+          setPlatformCueFiles((prev) => [...prev, result.file]);
+          if ((result.file.versionCount || 1) > 1) {
+            notes.push(`Saved as ${cueFileDisplayName(result.file)} (now current).`);
+          }
+          if (isPdfCueUpload(file) || isPdfCueUpload(result.file)) {
+            uploadedPdfs.push(result.file);
+          }
+        }
+      }
+      await refreshPlatformCueFiles(event.id);
+      if (notes.length) setPlatformUploadNote(notes.join(' '));
+      if (uploadedPdfs.length) advancePdfConvertPrompt(uploadedPdfs);
+    } catch (err: any) {
+      setPlatformUploadError(err?.message || 'Upload failed.');
+    } finally {
+      setPlatformUploadBusy(false);
+    }
+  };
+
+  const handleUsePlatformCueFileVersion = async (file: EventCueFile) => {
+    if (!event?.id) return;
+    setPlatformUsingVersionId(file.id);
+    setPlatformUploadError(null);
+    try {
+      const result = await apiClient.preferEventCueFile(file.id, event.id);
+      if (Array.isArray(result?.files) && result.files.length) {
+        setPlatformCueFiles((prev) => {
+          const others = prev.filter((row) => row.itemId !== file.itemId);
+          return [...others, ...result.files];
+        });
+      } else {
+        await refreshPlatformCueFiles(event.id);
+      }
+      setPlatformUploadNote(`Now using ${cueFileDisplayName(result?.file || file)}.`);
+    } catch (err: any) {
+      setPlatformUploadError(err?.message || 'Could not switch version.');
+    } finally {
+      setPlatformUsingVersionId(null);
+    }
+  };
+
+  const handleDeletePlatformCueFile = async (fileId: string) => {
+    if (!event?.id) return;
+    if (!window.confirm('Delete this uploaded file from ROS? This cannot be undone.')) return;
+    try {
+      await apiClient.deleteEventCueFile(fileId, event.id);
+      setPlatformCueFiles((prev) => prev.filter((f) => f.id !== fileId));
+    } catch (err: any) {
+      alert(err?.message || 'Could not delete file.');
+    }
+  };
 
   // Initialize modal when opened
   useEffect(() => {
@@ -6555,12 +10049,23 @@ const RunOfShowPage: React.FC = () => {
     try {
       const scheduleNow = scheduleRef.current;
       const indentedNow = indentedCuesRef.current;
-      // Convert duration fields to duration_seconds for database storage
-      // Also set isIndented property based on indentedCues state
       let scheduleWithDurationSeconds = scheduleNow.map(item => ({
         ...item,
-        duration_seconds: (item.durationHours || 0) * 3600 + (item.durationMinutes || 0) * 60 + (item.durationSeconds || 0),
-        isIndented: indentedNow[item.id] ? true : false
+        duration_seconds: isTimedMarkerItem(item)
+          ? 0
+          : (item.durationHours || 0) * 3600 + (item.durationMinutes || 0) * 60 + (item.durationSeconds || 0),
+        // Timed markers always stay indented; don't wipe isIndented if indented_cues hasn't caught up yet
+        isIndented: Boolean(
+          indentedNow[item.id] || item.isTimedMarker || item.isIndented
+        ),
+        ...(isTimedMarkerItem(item)
+          ? {
+              ...timedMarkerPersistFields(item),
+              durationHours: 0,
+              durationMinutes: 0,
+              durationSeconds: 0,
+            }
+          : {}),
       }));
 
       // Skip overwriting rows currently locked by someone else — keep last synced copy
@@ -6596,20 +10101,81 @@ const RunOfShowPage: React.FC = () => {
         console.log(`🔒 Save: preserved ${preservedLockCount} row(s) locked by others`);
       }
 
-      // Debug logging for duration conversion
-      if (scheduleNow.length > 0) {
-        console.log('🔄 RunOfShow: Converting duration fields to duration_seconds:', {
-          firstItem: {
-            durationHours: scheduleNow[0].durationHours,
-            durationMinutes: scheduleNow[0].durationMinutes,
-            durationSeconds: scheduleNow[0].durationSeconds,
-            calculatedDurationSeconds: scheduleWithDurationSeconds[0].duration_seconds
-          }
-        });
+      // Guard 2: never autosave [] over a known non-empty schedule (Delete All sets allowEmpty).
+      const allowEmpty = allowEmptyScheduleOnceRef.current;
+      const lastSynced = lastSyncedScheduleRef.current || [];
+      if (
+        scheduleWithDurationSeconds.length === 0 &&
+        lastSynced.length > 0 &&
+        !allowEmpty
+      ) {
+        console.warn(
+          `🛑 Skipping empty schedule save for event ${event.id}: last synced had ${lastSynced.length} row(s); restoring local schedule`
+        );
+        scheduleRef.current = lastSynced;
+        setSchedule(lastSynced);
+        return;
       }
+      if (allowEmpty) allowEmptyScheduleOnceRef.current = false;
 
       const originals = originalDurationsRef.current || {};
-      const locked = lockedStartTimesRef.current || {};
+      const structureChange = allowEmpty || structureDirtyRef.current || lastSynced.length === 0;
+      const dirty = dirtyRowSnapshotsRef.current;
+      const localNow = scheduleRef.current || [];
+      const checkboxEditedIds = structureChange
+        ? []
+        : idsWithCheckboxChanges(localNow, lastSynced);
+      const editedItemIds = structureChange
+        ? []
+        : Array.from(new Set([...Array.from(dirty.keys()), ...checkboxEditedIds]));
+      const localById = new Map(localNow.map((item: any) => [Number(item.id), item]));
+      const dirtyById = new Map(
+        editedItemIds.map((id) => {
+          const snap = dirty.get(id) || localById.get(id);
+          return [id, snap];
+        })
+      );
+      if (!structureChange && dirtyById.size > 0) {
+        const base = lastSynced.length > 0 ? lastSynced : scheduleWithDurationSeconds;
+        const seen = new Set<number>();
+        scheduleWithDurationSeconds = base.map((item: any) => {
+          const id = Number(item.id);
+          seen.add(id);
+          return dirtyById.get(id) || item;
+        });
+        for (const [id, snap] of dirtyById) {
+          if (!seen.has(id) && snap) scheduleWithDurationSeconds.push(snap);
+        }
+      }
+      const openField = openFieldEditorRef.current;
+      if (openField) {
+        const syncedById = new Map(
+          (lastSyncedScheduleRef.current || []).map((item: any) => [Number(item.id), item])
+        );
+        const synced = syncedById.get(Number(openField.rowId));
+        if (synced) {
+          scheduleWithDurationSeconds = scheduleWithDurationSeconds.map((item) => {
+            if (Number(item.id) !== Number(openField.rowId)) return item;
+            const next = { ...item };
+            for (const field of openField.fields) {
+              next[field] = synced[field];
+            }
+            return next;
+          });
+          console.log('🔒 Save: holding open field-editor row', openField.rowId, openField.fields);
+        }
+      }
+      const rowPatch = !structureChange;
+      const settingsSave = settingsSaveRequestedRef.current;
+      settingsSaveRequestedRef.current = false;
+      scheduleWithDurationSeconds = applyNewerCheckboxFields(
+        applyNewerCheckboxFields(scheduleWithDurationSeconds, scheduleRef.current),
+        lastSyncedScheduleRef.current
+      );
+      if (rowPatch && editedItemIds.length === 0 && !settingsSave) {
+        console.log('⏭️ Schedule save skipped — no finished row changes to publish');
+        return;
+      }
       const dataToSave = {
         event_id: event.id,
         event_name: event.name,
@@ -6620,37 +10186,42 @@ const RunOfShowPage: React.FC = () => {
           eventName: eventNameRef.current,
           masterStartTime: masterStartTimeRef.current,
           dayStartTimes: dayStartTimesRef.current,
+          completedDays: completedDaysRef.current,
           numberOfDays: event?.numberOfDays,
           timezone: eventTimezoneRef.current,
           lastSaved: new Date().toISOString(),
           show_mode: showModeRef.current,
           track_was_durations: trackWasDurationsRef.current,
+          show_completed_highlight: showCompletedHighlightRef.current,
           ...(Object.keys(originals).length > 0 && { original_durations: originals }),
-          ...(Object.keys(locked).length > 0 && {
+          ...(Object.keys(lockedStartTimesRef.current || {}).length > 0 && {
             locked_start_times: Object.fromEntries(
-              Object.entries(locked).map(([k, v]) => [String(k), v])
+              Object.entries(lockedStartTimesRef.current).map(([k, v]) => [String(k), v])
             ),
           }),
-        }
+          ...autoRollSettingsPatch(autoRollArmedRef.current),
+          voAlertsEnabled: voAlertsEnabledRef.current !== false,
+        },
+        version: scheduleVersionRef.current,
+        ...(allowEmpty ? { allow_empty_schedule: true } : {}),
+        ...(rowPatch
+          ? {
+              schedule_row_patch: true,
+              edited_item_ids: editedItemIds,
+              ...(settingsSave ? { include_settings: true } : {}),
+            }
+          : {}),
       };
 
-      // Reduce logging frequency
-      if (Math.random() < 0.05) { // Only log 5% of the time
-        console.log('🔄 Auto-saving to API:', {
-          eventId: event.id,
-          scheduleItemsCount: scheduleNow.length,
-          customColumnsCount: customColumnsRef.current.length,
-          eventName: eventNameRef.current,
-          masterStartTime: masterStartTimeRef.current,
-          preservedLockCount,
-          sampleScheduleItem: scheduleNow[0] ? {
-            id: scheduleNow[0].id,
-            segmentName: scheduleNow[0].segmentName,
-            speakersText: scheduleNow[0].speakersText ? 'Has speakers data' : 'No speakers data',
-            speakers: scheduleNow[0].speakers ? 'Has speakers data' : 'No speakers data'
-          } : 'No schedule items'
-        });
-      }
+      console.log('🔄 Saving schedule', {
+        eventId: event.id,
+        items: scheduleWithDurationSeconds.length,
+        version: scheduleVersionRef.current,
+        preservedLockCount,
+        allowEmpty,
+        rowPatch,
+        editedItemIds,
+      });
 
       const result = await DatabaseService.saveRunOfShowData(dataToSave, {
         userId: user?.id || 'unknown',
@@ -6660,40 +10231,285 @@ const RunOfShowPage: React.FC = () => {
 
       if (result) {
         rememberSyncedSchedule(result);
-        markLocalMutationGuard(5000);
-        lastCloudSaveErrorAlertAtRef.current = 0;
-      }
-
-      // Auto-save logging reduced - only log occasionally
-      if (Math.random() < 0.1) { // Only log 10% of the time
-        console.log('✅ Auto-saved to API successfully');
-      }
-    } catch (error) {
-      console.error('❌ Error auto-saving to API:', error);
-      if (cloudConnectedRef.current) {
-        const now = Date.now();
-        if (now - (lastCloudSaveErrorAlertAtRef.current || 0) > 15000) {
-          lastCloudSaveErrorAlertAtRef.current = now;
-          const msg =
-            error instanceof Error
-              ? error.message
-              : 'Schedule save to cloud failed';
-          alert(
-            `Cloud save failed — your change is only on this screen until this is fixed.\n\n${msg}\n\nUsually the Railway API token is missing the write scope. Open the offline API button and paste a token with read + control + write.`
-          );
+        if (structureChange) structureDirtyRef.current = false;
+        let savedItems = result.schedule_items;
+        if (typeof savedItems === 'string') {
+          try {
+            savedItems = JSON.parse(savedItems);
+          } catch {
+            savedItems = [];
+          }
         }
+        const savedById = new Map(
+          (Array.isArray(savedItems) ? savedItems : []).map((item: any) => [Number(item.id), item])
+        );
+        for (const id of editedItemIds) {
+          const snap = dirty.get(id);
+          const saved = savedById.get(id);
+          const current = dirtyRowSnapshotsRef.current.get(id);
+          const landed = snap && saved && scheduleItemSignature(saved) === scheduleItemSignature(snap);
+          if (landed && (!current || scheduleItemSignature(current) === scheduleItemSignature(snap))) {
+            dirtyRowSnapshotsRef.current.delete(id);
+          }
+        }
+        console.log('✅ Schedule saved', result?.version != null ? `(version ${result.version})` : '');
       }
+    } catch (error: any) {
+      if (error?.status === 409 && error?.data?.current) {
+        const current = error.data.current;
+        const rejectedEmpty = error?.data?.error === 'empty_schedule_rejected';
+        console.warn(
+          rejectedEmpty
+            ? '🛑 Save rejected — empty schedule wipe blocked; restoring server rows'
+            : '⚠️ Save rejected (stale version) — merging server state',
+          {
+            clientVersion: scheduleVersionRef.current,
+            serverVersion: current.version,
+            error: error?.data?.error,
+          }
+        );
+        let items = current.schedule_items;
+        if (typeof items === 'string') {
+          try {
+            items = JSON.parse(items);
+          } catch {
+            items = null;
+          }
+        }
+        if (Array.isArray(items)) {
+          const localItems = scheduleRef.current || [];
+          const localIdsNow = localItems.map((item: any) => Number(item.id));
+          const serverIds = items.map((item: any) => Number(item.id));
+          const structureNow =
+            localIdsNow.length !== serverIds.length ||
+            localIdsNow.some((id: number, index: number) => id !== serverIds[index]);
+          const syncedBefore = new Map(
+            (lastSyncedScheduleRef.current || []).map((item: any) => [Number(item.id), item])
+          );
+          const editedNow = structureNow
+            ? []
+            : localItems
+                .filter((item: any) => {
+                  const prev = syncedBefore.get(Number(item.id));
+                  if (!prev) return false;
+                  return scheduleItemSignature(prev) !== scheduleItemSignature(item);
+                })
+                .map((item: any) => Number(item.id));
+          lastSyncedScheduleRef.current = applyNewerCheckboxFields(items, lastSyncedScheduleRef.current);
+          if (current.version != null) {
+            scheduleVersionRef.current = Number(current.version);
+          }
+          const serverItems = lastSyncedScheduleRef.current;
+          const serverById = new Map(serverItems.map((item: any) => [Number(item.id), item]));
+          const localById = new Map(localItems.map((item: any) => [Number(item.id), item]));
+          const merged = overlayDirtyRows(
+            !structureNow
+              ? serverItems.map((item: any) => {
+                  const id = Number(item.id);
+                  if (editedNow.includes(id) && localById.has(id)) return localById.get(id);
+                  return serverById.get(id) || item;
+                })
+              : mergeSchedulePreservingLocalEdits(
+                  normalizeScheduleVoCues(serverItems, localItems, false),
+                  localItems
+                )
+          );
+          applyingRemoteRunOfShowRef.current = true;
+          setTimeout(() => {
+            applyingRemoteRunOfShowRef.current = false;
+          }, 0);
+          scheduleRef.current = merged;
+          setSchedule(merged);
+          if (Array.isArray(current.custom_columns) && !isUserEditingRef.current) {
+            setCustomColumns(current.custom_columns);
+          }
+          if (current.updated_at) setLastChangeAt(current.updated_at);
+          if (!rejectedEmpty && !structureNow && editedNow.length > 0 && !saveRetryRef.current) {
+            saveRetryRef.current = true;
+            try {
+              await performSaveToAPI();
+            } finally {
+              saveRetryRef.current = false;
+            }
+          }
+        } else if (!isUserEditingRef.current) {
+          rememberSyncedSchedule(current);
+        }
+        return;
+      }
+      console.error('❌ Error auto-saving to API:', error);
     }
-  }, [event?.id, event?.name, event?.date, event?.numberOfDays, user, currentUserRole, rememberSyncedSchedule]);
+  }, [event?.id, event?.name, event?.date, event?.numberOfDays, user, currentUserRole, rememberSyncedSchedule, mergeSchedulePreservingLocalEdits]);
 
   flushSaveToAPIRef.current = performSaveToAPI;
 
-  // API functions with debouncing
+  const rememberCheckboxRows = useCallback((rows: any[]) => {
+    // Only mark the row dirty. lastSynced stays the last confirmed Neon snapshot
+    // so a checkbox click cannot look "already saved" and skip the pause-end flush.
+    for (const row of rows || []) {
+      const id = Number(row.id);
+      if (!Number.isFinite(id)) continue;
+      const prev = dirtyRowSnapshotsRef.current.get(id);
+      dirtyRowSnapshotsRef.current.set(id, prev ? mergeNewerCheckboxFields(row, prev) : row);
+    }
+  }, []);
+
+  /** Persist a single cue's REC flag immediately (same path as Comms) so leaving the event does not lose it. */
+  const persistAvWatch = useCallback(
+    async (itemId: number, enabled: boolean) => {
+      if (!event?.id) return;
+      const at = Date.now();
+      const nextRows = overlayExclusiveWatch(scheduleRef.current || [], itemId, 'avWatch', enabled, at);
+      rememberCheckboxRows(nextRows.filter((row, index) => row !== (scheduleRef.current || [])[index]));
+      setSchedule(nextRows);
+      try {
+        const result = await apiClient.setAvWatch(event.id, itemId, enabled);
+        rememberSyncedSchedule(result);
+      } catch (err) {
+        console.warn('AV watch update failed', err);
+      }
+    },
+    [event?.id, rememberCheckboxRows, rememberSyncedSchedule]
+  );
+
+  const persistMittiWatch = useCallback(
+    async (itemId: number, enabled: boolean) => {
+      if (!event?.id) return;
+      const at = Date.now();
+      const nextRows = overlayExclusiveWatch(scheduleRef.current || [], itemId, 'mittiWatch', enabled, at);
+      rememberCheckboxRows(nextRows.filter((row, index) => row !== (scheduleRef.current || [])[index]));
+      setSchedule(nextRows);
+      try {
+        const result = await apiClient.setMittiWatch(event.id, itemId, enabled);
+        rememberSyncedSchedule(result);
+      } catch (err) {
+        console.warn('Mitti watch update failed', err);
+      }
+    },
+    [event?.id, rememberCheckboxRows, rememberSyncedSchedule]
+  );
+
+  const persistDsmCue = useCallback(
+    async (
+      itemId: number,
+      patch: { enabled?: boolean; mode?: string; modeManual?: boolean }
+    ) => {
+      if (!event?.id) return;
+      const at = Date.now();
+      const nextRows = (scheduleRef.current || []).map((row) => {
+        if (Number(row.id) !== Number(itemId)) return row;
+        const next: ScheduleItem = { ...row };
+        const stampFields: string[] = [];
+        if (patch.enabled !== undefined) {
+          next.dsmEnabled = patch.enabled;
+          stampFields.push('dsmEnabled');
+        }
+        if (patch.mode !== undefined) next.dsmMode = patch.mode;
+        if (patch.modeManual !== undefined) next.dsmModeManual = patch.modeManual;
+        return stampFields.length
+          ? stampScheduleCheckboxes(next, stampFields, at)
+          : next;
+      });
+      rememberCheckboxRows(nextRows.filter((row, index) => row !== (scheduleRef.current || [])[index]));
+      setSchedule(nextRows);
+      try {
+        const result = await apiClient.setDsmCue(event.id, itemId, patch);
+        rememberSyncedSchedule(result);
+      } catch (err) {
+        console.warn('DSM cue update failed', err);
+      }
+    },
+    [event?.id, rememberCheckboxRows, rememberSyncedSchedule]
+  );
+
+  const persistScheduleCheckboxes = useCallback(
+    async (
+      itemId: number,
+      fields: {
+        hasPPT?: boolean;
+        hasQA?: boolean;
+        needsRecording?: boolean;
+        isPublic?: boolean;
+        source?: 'comms' | 'ros';
+      }
+    ) => {
+      if (!event?.id) return;
+      const id = Number(itemId);
+      const at = Date.now();
+      const { source, ...flagFields } = fields;
+      const stampFields = Object.keys(flagFields);
+      if (typeof flagFields.needsRecording === 'boolean') {
+        if (!stampFields.includes('recordingSource')) stampFields.push('recordingSource');
+      }
+      const stamp = (row: any) =>
+        row && Number(row.id) === id
+          ? stampScheduleCheckboxes(
+              {
+                ...row,
+                ...flagFields,
+                ...(typeof flagFields.needsRecording === 'boolean'
+                  ? { recordingSource: flagFields.needsRecording ? (source || 'ros') : null }
+                  : {}),
+              },
+              stampFields,
+              at
+            )
+          : row;
+      const current = (scheduleRef.current || []).find((row: any) => Number(row.id) === id);
+      if (current) rememberCheckboxRows([stamp(current)]);
+      try {
+        const result = await apiClient.patchScheduleCheckboxes(event.id, itemId, fields);
+        rememberSyncedSchedule(result);
+      } catch (err) {
+        console.warn('Checkbox PATCH failed — falling back to row save', err);
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, 50));
+      await flushSaveToAPIRef.current?.();
+    },
+    [event?.id, rememberCheckboxRows, rememberSyncedSchedule]
+  );
+
+  const persistCueRecording = useCallback(
+    async (itemId: number, needsRecording: boolean, source: 'comms' | 'ros' = 'ros') => {
+      if (!event?.id) return;
+      const id = Number(itemId);
+      const at = Date.now();
+      const recordingSource = needsRecording ? source : null;
+      const stamp = (row: any) =>
+        row && Number(row.id) === id
+          ? stampScheduleCheckboxes(
+              { ...row, needsRecording, recordingSource },
+              ['needsRecording', 'recordingSource'],
+              at
+            )
+          : row;
+      const current = (scheduleRef.current || []).find((row: any) => Number(row.id) === id);
+      if (current) rememberCheckboxRows([stamp(current)]);
+      try {
+        const result = await apiClient.setCueRecording(event.id, itemId, needsRecording, source);
+        rememberSyncedSchedule(result);
+      } catch (err) {
+        console.warn('Recording PATCH failed — falling back to checkbox PATCH / row save', err);
+        try {
+          await persistScheduleCheckboxes(itemId, { needsRecording, source });
+          return;
+        } catch {
+          /* persistScheduleCheckboxes already flushes */
+        }
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, 50));
+      await flushSaveToAPIRef.current?.();
+    },
+    [event?.id, persistScheduleCheckboxes, rememberCheckboxRows, rememberSyncedSchedule]
+  );
+
+  // Stable debounce — recreating this on every save callback identity change
+  // cancelled the 2s timer, so checkbox-only edits never reached Neon.
   const saveToAPI = React.useCallback(
     debounce(() => {
-      void performSaveToAPI();
+      void flushSaveToAPIRef.current?.();
     }, 2000),
-    [performSaveToAPI]
+    []
   );
 
   // Debounce utility function
@@ -6711,6 +10527,7 @@ const RunOfShowPage: React.FC = () => {
     const syncStartedAt = Date.now();
     let scheduleReady = false;
     const finishScheduleSync = async () => {
+      // Let the schedule render, then refresh the Run of Show timer counters.
       await new Promise(resolve => setTimeout(resolve, 100));
       await loadActiveTimerFromAPI();
       const remainingAnimationMs = Math.max(0, 2500 - (Date.now() - syncStartedAt));
@@ -6724,7 +10541,7 @@ const RunOfShowPage: React.FC = () => {
       console.log('🔄 Loading from API for event:', event.id);
       
       // Add timeout to prevent hanging
-      const dataPromise = DatabaseService.getRunOfShowData(event.id);
+      const dataPromise = DatabaseService.getRunOfShowData(event.id, { bypassCache: true });
       const timeoutPromise = new Promise((_, reject) => 
         setTimeout(() => reject(new Error('Database query timeout after 10 seconds')), 10000)
       );
@@ -6738,15 +10555,6 @@ const RunOfShowPage: React.FC = () => {
       
       
       if (data) {
-        if (isUserEditingRef.current || isCloudReconnecting()) {
-          console.log('⏭️ loadFromAPI skipped — editing or local mutation guard');
-          setScheduleSyncState('ready');
-          return;
-        }
-        if (shouldRejectStaleRemoteSchedule(data)) {
-          setScheduleSyncState('ready');
-          return;
-        }
         console.log('📥 Data loaded from API:', {
           scheduleItemsCount: data.schedule_items?.length || 0,
           customColumnsCount: data.custom_columns?.length || 0,
@@ -6761,22 +10569,68 @@ const RunOfShowPage: React.FC = () => {
         });
         
         // Force a new array reference to ensure React detects the change
-        const newSchedule = data.schedule_items ? [...data.schedule_items] : [];
-        const mergedSchedule = mergeSchedulePreservingLocalEdits(newSchedule, scheduleRef.current);
-        setSchedule(mergedSchedule);
-        rememberSyncedSchedule(data);
+        const { items: newSchedule, changed: timerIdsBackfilled } = normalizeScheduleWithTimerIds(
+          data.schedule_items
+        );
+        setSchedule(newSchedule);
         setCustomColumns(data.custom_columns || []);
+        rememberSyncedSchedule(data);
+        // Persist backfilled timerIds so the Timer column stays unique after reload
+        if (timerIdsBackfilled && currentUserRoleRef.current !== 'VIEWER') {
+          console.log('🆔 Backfilled missing timerIds — scheduling save');
+          handleUserEditing();
+        }
         
+        setMittiWatchColumnEnabled(data.settings?.mittiWatchColumn === true);
+        setAvWatchColumnEnabled(data.settings?.avWatchColumn === true);
+        setDsmColumnEnabled(data.settings?.dsmColumn === true);
+        setVoAlertsEnabled(voAlertsEnabledFromSettings(data.settings));
         if (data.settings?.eventName) setEventName(data.settings.eventName);
         if (data.settings?.masterStartTime) setMasterStartTime(data.settings.masterStartTime);
         if (data.settings?.dayStartTimes) setDayStartTimes(data.settings.dayStartTimes);
-        if (data.settings?.timezone) {
-          setEventTimezone(data.settings.timezone);
+        const loadedCompleted = parseCompletedDays(
+          data.settings?.completedDays ?? data.settings?.completed_days,
+          event?.numberOfDays || 1
+        );
+        setCompletedDays(loadedCompleted);
+        if (
+          event?.id &&
+          event.numberOfDays &&
+          event.numberOfDays > 1 &&
+          !userChangedDayRef.current
+        ) {
+          setSelectedDay(
+            resolveLaunchSelectedDay({
+              eventDate: event.date,
+              numberOfDays: event.numberOfDays,
+              completedDays: loadedCompleted,
+            })
+          );
+        }
+        // Prefer calendar venue timezone; fall back to ROS settings (never laptop zone).
+        setEventTimezone(
+          resolveShowTimezone(
+            calendarTimezoneRef.current,
+            event?.timezone,
+            data.settings?.timezone,
+            eventTimezoneRef.current
+          )
+        );
+        if (data.settings && 'live_start_projection' in data.settings) {
+          setLiveStartProjectionArmed(parseLiveStartProjectionArmed((data.settings as any).live_start_projection));
+        }
+        if (data.settings?.locked_start_times && typeof data.settings.locked_start_times === 'object') {
+          const mapped: Record<number, string> = {};
+          for (const [k, v] of Object.entries(data.settings.locked_start_times as Record<string, unknown>)) {
+            const id = Number(k);
+            if (Number.isFinite(id) && typeof v === 'string' && v.trim()) mapped[id] = v;
+          }
+          setLockedStartTimes(mapped);
         }
         console.log('🔍 Full settings object:', data.settings);
         
         // FIRST: Always load star selection from main schedule (this is the source of truth)
-        const startCueItem = mergedSchedule.find(item => item.isStartCue === true);
+        const startCueItem = newSchedule.find(item => item.isStartCue === true);
         if (startCueItem) {
           setStartCueId(startCueItem.id);
           console.log('⭐ START cue marker restored from schedule:', startCueItem.id);
@@ -6784,12 +10638,21 @@ const RunOfShowPage: React.FC = () => {
           setStartCueId(null);
           console.log('⭐ No START cue marker found in schedule');
         }
+        const sessionCueItem = newSchedule.find((item) => item.isSessionStartCue === true);
+        if (sessionCueItem) {
+          setSessionStartCueId(sessionCueItem.id);
+          setSessionShowStartOvertime(Number(sessionCueItem.sessionStartOvertime) || 0);
+        } else {
+          setSessionStartCueId(null);
+          setSessionShowStartOvertime(0);
+        }
         
         // Load overtime minutes from dedicated table (like completed_cues)
         const overtimeData = await DatabaseService.getOvertimeMinutes(event.id);
         setOvertimeMinutes(overtimeData);
         console.log('✅ Loaded overtime minutes from dedicated table:', overtimeData);
-        setCueActualStarts(await DatabaseService.getCueActualStarts(event.id));
+        const loadedActualStarts = await DatabaseService.getCueActualStarts(event.id);
+        setCueActualStarts((prev) => ({ ...prev, ...(loadedActualStarts || {}) }));
         
         // SECOND: Load show start overtime from separate table (if it exists)
         const showStartOvertimeData = await DatabaseService.getShowStartOvertime(event.id);
@@ -6848,14 +10711,20 @@ const RunOfShowPage: React.FC = () => {
           try {
           const parsedSchedule = JSON.parse(savedSchedule);
             console.log('🔍 Parsed schedule from localStorage:', parsedSchedule);
-          // Migrate existing items to include day property
+          // Migrate existing items to include day property + backfill timerIds
           const migratedSchedule = parsedSchedule.map((item: any) => ({
             ...item,
             day: item.day || 1
           }));
-          setSchedule(migratedSchedule);
-          console.log('📥 Loaded schedule from localStorage:', migratedSchedule.length, 'items');
-            console.log('🔍 First few items:', migratedSchedule.slice(0, 3));
+          const { items: ensuredSchedule, changed: timerIdsBackfilled } =
+            normalizeScheduleWithTimerIds(migratedSchedule);
+          setSchedule(ensuredSchedule);
+          if (timerIdsBackfilled && currentUserRoleRef.current !== 'VIEWER') {
+            console.log('🆔 Backfilled missing timerIds from localStorage — scheduling save');
+            handleUserEditing();
+          }
+          console.log('📥 Loaded schedule from localStorage:', ensuredSchedule.length, 'items');
+            console.log('🔍 First few items:', ensuredSchedule.slice(0, 3));
           } catch (error) {
             console.error('❌ Error parsing schedule from localStorage:', error);
             console.log('🔍 Raw localStorage data:', savedSchedule);
@@ -6898,9 +10767,14 @@ const RunOfShowPage: React.FC = () => {
           ...item,
           day: item.day || 1
         }));
-        setSchedule(migratedSchedule);
-        console.log('📥 Loaded schedule from localStorage after error:', migratedSchedule.length, 'items');
-          console.log('🔍 First few items after error:', migratedSchedule.slice(0, 3));
+        const { items: ensuredSchedule, changed: timerIdsBackfilled } =
+          normalizeScheduleWithTimerIds(migratedSchedule);
+        setSchedule(ensuredSchedule);
+        if (timerIdsBackfilled && currentUserRoleRef.current !== 'VIEWER') {
+          handleUserEditing();
+        }
+        console.log('📥 Loaded schedule from localStorage after error:', ensuredSchedule.length, 'items');
+          console.log('🔍 First few items after error:', ensuredSchedule.slice(0, 3));
         } catch (parseError) {
           console.error('❌ Error parsing schedule from localStorage after error:', parseError);
           console.log('🔍 Raw localStorage data after error:', savedSchedule);
@@ -6912,7 +10786,7 @@ const RunOfShowPage: React.FC = () => {
         setScheduleSyncState('error');
       }
     }
-  }, [event?.id, shouldRejectStaleRemoteSchedule, mergeSchedulePreservingLocalEdits, rememberSyncedSchedule]);
+  }, [event?.id, rememberSyncedSchedule]);
 
   // Dynamic loading function that preserves timers and state
   const loadChangesDynamically = useCallback(async () => {
@@ -6931,12 +10805,39 @@ const RunOfShowPage: React.FC = () => {
         
         // Update data without affecting timers
         // Force a new array reference to ensure React detects the change
-        const newSchedule = data.schedule_items ? [...data.schedule_items] : [];
+        // Prefer local timerIds; do not invent new ones on poll (avoids ID churn)
+        applyingRemoteRunOfShowRef.current = true;
+        setTimeout(() => {
+          applyingRemoteRunOfShowRef.current = false;
+        }, 0);
+        const newSchedule = overlayDirtyRows(
+          applyNewerCheckboxFields(
+            normalizeScheduleVoCues(
+              data.schedule_items,
+              scheduleRef.current,
+              false
+            ),
+            lastSyncedScheduleRef.current
+          )
+        );
         setSchedule(newSchedule);
         setCustomColumns(data.custom_columns || []);
+        rememberSyncedSchedule(data);
+        setMittiWatchColumnEnabled(data.settings?.mittiWatchColumn === true);
+        setAvWatchColumnEnabled(data.settings?.avWatchColumn === true);
+        setDsmColumnEnabled(data.settings?.dsmColumn === true);
+        setVoAlertsEnabled(voAlertsEnabledFromSettings(data.settings));
         if (data.settings?.eventName) setEventName(data.settings.eventName);
         if (data.settings?.masterStartTime) setMasterStartTime(data.settings.masterStartTime);
         if (data.settings?.dayStartTimes) setDayStartTimes(data.settings.dayStartTimes);
+        if (data.settings?.completedDays != null || data.settings?.completed_days != null) {
+          setCompletedDays(
+            parseCompletedDays(
+              data.settings?.completedDays ?? data.settings?.completed_days,
+              event?.numberOfDays || 1
+            )
+          );
+        }
         
         // Update change tracking - store updated_at for comparison
         setLastChangeAt(data.updated_at || null);
@@ -6948,18 +10849,34 @@ const RunOfShowPage: React.FC = () => {
     } catch (error) {
       console.error('❌ Error loading changes dynamically:', error);
     }
-  }, [event?.id]);
+  }, [event?.id, rememberSyncedSchedule]);
 
   // Load data from API when component mounts
   useEffect(() => {
     console.log('🔄 useEffect triggered for event ID:', event?.id);
     if (event?.id) {
       console.log('🔄 Calling loadFromAPI for event:', event.id);
-      loadFromAPI();
+      void loadFromAPI();
     } else {
       console.log('❌ No event ID available for loading data');
     }
   }, [event?.id]);
+
+  const handleBackToEvents = async () => {
+    setScheduleSyncState('syncing');
+    try {
+      if (pendingChanges.size > 0) {
+        await finalizeAllPendingChanges();
+      }
+      if (currentUserRole !== 'VIEWER' && (isUserEditingRef.current || pendingChanges.size > 0)) {
+        await flushSaveToAPIRef.current?.();
+      }
+    } catch (error) {
+      console.warn('Could not finish syncing before leaving Run of Show:', error);
+    } finally {
+      navigate('/');
+    }
+  };
 
   const handleForceClockSync = () => {
     if (currentUserRole !== 'OPERATOR') return;
@@ -6971,13 +10888,54 @@ const RunOfShowPage: React.FC = () => {
     setTimeout(() => setIsForcingClockSync(false), 2500);
   };
 
-  // Set timezone from event data when component loads
+  // Venue timezone: prefer calendar event, then fetch calendar if location.state omitted it.
   useEffect(() => {
+    let cancelled = false;
+    const applyCalendarTz = (tz?: string | null) => {
+      if (cancelled || !tz) return;
+      const resolved = resolveShowTimezone(tz);
+      calendarTimezoneRef.current = resolved;
+      setEventTimezone(resolved);
+    };
+
     if (event?.timezone) {
       console.log('🌍 Setting event timezone from location.state:', event.timezone);
-      setEventTimezone(event.timezone);
+      applyCalendarTz(event.timezone);
     }
-  }, [event?.timezone]);
+
+    if (!event?.id) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    (async () => {
+      try {
+        const cal = await DatabaseService.getCalendarEvent(event.id);
+        if (cancelled) return;
+        const tz = cal?.schedule_data?.timezone;
+        if (tz && !event?.timezone) {
+          console.log('🌍 Setting event timezone from calendar:', tz);
+          applyCalendarTz(tz);
+        }
+        const fromCal =
+          (cal as { extendEventControlsEnabled?: boolean } | null)?.extendEventControlsEnabled ===
+            true || parseExtendEventControls(cal?.schedule_data).enabled;
+        if (fromCal) {
+          setExtendEventControlsEnabled(true);
+        } else {
+          const ext = await DatabaseService.getExtendEventControls(event.id);
+          if (!cancelled) setExtendEventControlsEnabled(ext.enabled);
+        }
+      } catch (e) {
+        console.warn('🌍 Could not load calendar event metadata:', e);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [event?.id, event?.timezone]);
 
 
   // Setup WebSocket-only real-time connections (no SSE, no polling)
@@ -6985,29 +10943,58 @@ const RunOfShowPage: React.FC = () => {
     if (!event?.id) return;
 
     console.log('🔌 Setting up WebSocket-only real-time connections for event:', event.id);
-    
+
+    const applyExternalWatchFromRemote = (data: any) => {
+      let items = data?.schedule_items;
+      if (typeof items === 'string') {
+        try {
+          items = JSON.parse(items);
+        } catch {
+          items = null;
+        }
+      }
+      if (Array.isArray(items)) {
+        const byId = new Map(items.map((item: any) => [Number(item.id), item]));
+        setSchedule((prev) =>
+          prev.map((row) => {
+            const remote = byId.get(Number(row.id));
+            if (!remote) return row;
+            return mergeNewerCheckboxFields(
+              {
+                ...row,
+                mittiWatch: remote.mittiWatch === true,
+                avWatch: remote.avWatch === true,
+                dsmEnabled: remote.dsmEnabled === true,
+                dsmMode: remote.dsmMode != null ? String(remote.dsmMode) : row.dsmMode,
+                dsmModeManual: remote.dsmModeManual === true,
+              },
+              mergeNewerCheckboxFields(row, remote)
+            );
+          })
+        );
+      }
+      if (data?.settings?.mittiWatchColumn !== undefined) {
+        setMittiWatchColumnEnabled(data.settings.mittiWatchColumn === true);
+      }
+      if (data?.settings?.avWatchColumn !== undefined) {
+        setAvWatchColumnEnabled(data.settings.avWatchColumn === true);
+      }
+      if (data?.settings?.dsmColumn !== undefined) {
+        setDsmColumnEnabled(data.settings.dsmColumn === true);
+      }
+      if (data?.settings?.voAlertsEnabled !== undefined) {
+        setVoAlertsEnabled(voAlertsEnabledFromSettings(data.settings));
+      }
+    };
+
     const callbacks = {
       onRunOfShowDataUpdated: (data: any) => {
         
         // Skip if this update was made by the current user (prevent save loops)
-        if (data && String(data.last_modified_by) === String(user?.id)) {
-          console.log('⏭️ Skipping WebSocket update - change made by current user');
+        if (data && data.last_modified_by === user?.id) {
+          console.log('⏭️ Skipping WebSocket schedule apply - change made by current user');
           rememberSyncedSchedule(data);
-          return;
-        }
-        
-        // Skip if user is actively editing (prevent conflicts)
-        if (isUserEditingRef.current) {
-          console.log('⏭️ Skipping WebSocket update - user is actively editing');
-          return;
-        }
-
-        if (isCloudReconnecting()) {
-          console.log('⏭️ Skipping WebSocket schedule update - local mutation / reconnect guard');
-          return;
-        }
-
-        if (shouldRejectStaleRemoteSchedule(data)) {
+          applyExternalWatchFromRemote(data);
           return;
         }
         
@@ -7015,13 +11002,10 @@ const RunOfShowPage: React.FC = () => {
         
         // Add small delay to ensure WebSocket updates are processed consistently
         setTimeout(() => {
-          if (isUserEditingRef.current || isCloudReconnecting()) {
-            console.log('⏭️ Delayed schedule apply skipped — editing or local guard active');
-            return;
-          }
-          if (shouldRejectStaleRemoteSchedule(data)) {
-            return;
-          }
+          applyingRemoteRunOfShowRef.current = true;
+          setTimeout(() => {
+            applyingRemoteRunOfShowRef.current = false;
+          }, 0);
           // Update schedule items (parse if string, e.g. from timer duration update from Companion)
           let scheduleItems = data.schedule_items;
           if (typeof scheduleItems === 'string') {
@@ -7032,14 +11016,23 @@ const RunOfShowPage: React.FC = () => {
             }
           }
           if (scheduleItems && Array.isArray(scheduleItems)) {
-            console.log('🔍 Raw schedule data from API:', scheduleItems.map((item: any) => ({
-              id: item.id,
-              cue: item.customFields?.cue,
-              isIndented: item.isIndented
-            })));
-            const merged = mergeSchedulePreservingLocalEdits(scheduleItems, scheduleRef.current);
+            const merged = overlayDirtyRows(
+              mergeSchedulePreservingLocalEdits(
+                applyNewerCheckboxFields(
+                  normalizeScheduleVoCues(scheduleItems, scheduleRef.current, false),
+                  lastSyncedScheduleRef.current
+                ),
+                scheduleRef.current
+              )
+            );
             setSchedule(merged);
             rememberSyncedSchedule(data);
+            // Star marker lives in startCueId state (not only item.isStartCue) — sync from schedule.
+            const startCueItem = merged.find((item: any) => item.isStartCue === true);
+            setStartCueId(startCueItem ? startCueItem.id : null);
+            const sessionCueItem = merged.find((item: any) => item.isSessionStartCue === true);
+            setSessionStartCueId(sessionCueItem ? sessionCueItem.id : null);
+            setSessionShowStartOvertime(sessionCueItem ? Number(sessionCueItem.sessionStartOvertime) || 0 : 0);
             console.log('✅ Real-time: Schedule items updated (merge-safe)');
           }
         
@@ -7051,6 +11044,18 @@ const RunOfShowPage: React.FC = () => {
           
           // Update settings
           if (data.settings) {
+            if (data.settings.mittiWatchColumn !== undefined) {
+              setMittiWatchColumnEnabled(data.settings.mittiWatchColumn === true);
+            }
+            if (data.settings.avWatchColumn !== undefined) {
+              setAvWatchColumnEnabled(data.settings.avWatchColumn === true);
+            }
+            if (data.settings.dsmColumn !== undefined) {
+              setDsmColumnEnabled(data.settings.dsmColumn === true);
+            }
+            if (data.settings.voAlertsEnabled !== undefined) {
+              setVoAlertsEnabled(voAlertsEnabledFromSettings(data.settings));
+            }
             if (data.settings.eventName !== undefined) {
               setEventName(data.settings.eventName);
               console.log('✅ Real-time: Event name updated');
@@ -7062,6 +11067,24 @@ const RunOfShowPage: React.FC = () => {
             if (data.settings.dayStartTimes !== undefined) {
               setDayStartTimes(data.settings.dayStartTimes);
               console.log('✅ Real-time: Day start times updated');
+            }
+            if (data.settings.completedDays !== undefined || data.settings.completed_days !== undefined) {
+              setCompletedDays(
+                parseCompletedDays(
+                  data.settings.completedDays ?? data.settings.completed_days,
+                  event?.numberOfDays || 1
+                )
+              );
+            }
+            if (data.settings.timezone) {
+              setEventTimezone(
+                resolveShowTimezone(
+                  calendarTimezoneRef.current,
+                  event?.timezone,
+                  data.settings.timezone,
+                  eventTimezoneRef.current
+                )
+              );
             }
           }
           
@@ -7098,13 +11121,75 @@ const RunOfShowPage: React.FC = () => {
             if (id != null) acc[id] = true;
             return acc;
           }, {});
-          setCompletedCues(completedObject);
+          setCompletedCues((prev) => stripLiveCuesFromCompletedMap({ ...prev, ...completedObject }));
         } else if (data && data.item_id != null) {
           const id = normalizeScheduleItemId(data.item_id);
           if (id != null) {
+            // Never re-complete a cue that is currently RUNNING
+            if (isCueRunningOnStage(id) || activeTimersRef.current[id]) {
+              return;
+            }
             setCompletedCues((prev) => ({
               ...prev,
               [id]: true,
+            }));
+          }
+        }
+      },
+      onIndentedCuesUpdated: (data: any) => {
+        // Mirror completed-cues pattern: table changes broadcast indentedCuesUpdated.
+        if (data && data.cleared) {
+          setIndentedCues({});
+          return;
+        }
+        const removedId = data?.item_id ?? data?.itemId;
+        if (data && data.removed && removedId != null) {
+          const id = normalizeScheduleItemId(removedId);
+          if (id != null) {
+            setIndentedCues((prev) => {
+              const next = { ...prev };
+              delete next[id];
+              return next;
+            });
+          }
+          return;
+        }
+        if (Array.isArray(data)) {
+          const map: Record<number, { parentId: number; userId: string; userName: string }> = {};
+          data.forEach((cue: any) => {
+            const id = normalizeScheduleItemId(cue.item_id);
+            const parentId = normalizeScheduleItemId(cue.parent_item_id);
+            if (id != null && parentId != null) {
+              map[id] = {
+                parentId,
+                userId: cue.user_id || '',
+                userName: cue.user_name || '',
+              };
+            }
+          });
+          setIndentedCues((prev) => {
+            const merged = { ...map };
+            for (const [idStr, entry] of Object.entries(prev)) {
+              const id = Number(idStr);
+              if (merged[id]) continue;
+              const row = scheduleRef.current?.find((s) => s.id === id);
+              if (row?.isTimedMarker || entry) merged[id] = entry;
+            }
+            return merged;
+          });
+          return;
+        }
+        if (data && data.item_id != null && data.parent_item_id != null) {
+          const id = normalizeScheduleItemId(data.item_id);
+          const parentId = normalizeScheduleItemId(data.parent_item_id);
+          if (id != null && parentId != null) {
+            setIndentedCues((prev) => ({
+              ...prev,
+              [id]: {
+                parentId,
+                userId: data.user_id || '',
+                userName: data.user_name || '',
+              },
             }));
           }
         }
@@ -7131,30 +11216,69 @@ const RunOfShowPage: React.FC = () => {
         console.log('✅ RunOfShow: All states reset via WebSocket (including show start overtime)');
       },
       onOvertimeReset: (data: any) => {
-        if (data && data.event_id === event?.id) {
+        if (data && eventIdsMatch(data.event_id, event?.id)) {
           setOvertimeMinutes({});
           console.log('✅ Overtime data cleared from WebSocket reset');
         }
       },
       onTimerUpdated: (data: any) => {
-        // Only block during the upload itself — never during the post-connect settle window
-        // (that was leaving the last offline cue running on screen).
-        if (isCloudReconnectUploadActive()) {
-          console.log('⏭️ Skipping timer WebSocket update during cloud reconnect upload');
+        if (isCloudReconnecting()) {
+          console.log('⏭️ Skipping timer WebSocket update during cloud reconnect');
           return;
         }
-        console.log('📡 RunOfShow: Event ID check:', { received: data?.event_id, expected: event?.id, match: eventIdsMatch(data?.event_id, event?.id) });
+        console.log('📡 RunOfShow: Event ID check:', { received: data?.event_id, expected: event?.id, match: data?.event_id === event?.id });
         if (data && eventIdsMatch(data.event_id, event?.id)) {
+          const numericItemId = typeof data.item_id === 'string' ? parseInt(data.item_id, 10) : data.item_id;
+          const isCleared = data.timer_state === 'stopped' || data.is_active === false;
+          if (isCleared) {
+            setHybridTimerData((prev) => (prev?.activeTimer == null ? prev : { ...prev, activeTimer: null }));
+            setActiveItemId((prev) => (prev === numericItemId ? null : prev));
+            setLastLoadedCueId((prev) => (prev === numericItemId ? null : prev));
+            if (numericItemId != null) {
+              setTimerProgress((prev) => {
+                if (!(numericItemId in prev)) return prev;
+                const next = { ...prev };
+                delete next[numericItemId];
+                return next;
+              });
+              setActiveTimers((prev) => {
+                if (!(numericItemId in prev)) return prev;
+                const next = { ...prev };
+                delete next[numericItemId];
+                return next;
+              });
+              setLoadedItems((prev) => {
+                if (!(numericItemId in prev)) return prev;
+                const next = { ...prev };
+                delete next[numericItemId];
+                return next;
+              });
+            }
+            markCueGroupCompleted(numericItemId);
+            console.log('✅ RunOfShow: Timer cleared from timerUpdated:', numericItemId);
+            return;
+          }
           noteCueActualStart(data);
-          // Update hybrid timer data directly from WebSocket (ClockPage style)
+          // Hybrid state (row colors / load-run-stop): skip elapsed-only ticks.
+          // Countdown uses timerProgress below so it stays live.
           setHybridTimerData(prev => {
-            if (shouldTriggerResolumeSyncPulse(prev?.activeTimer, data)) {
-              queueMicrotask(() => triggerResolumeSyncPulse());
+            const incomingId = normalizeScheduleItemId(data.item_id);
+            const incomingLoaded =
+              data.timer_state === 'loaded' ||
+              (data.is_running !== true && data.timer_state !== 'running');
+            if (incomingLoaded && incomingId != null && loadedUpdateWouldStealRunning(incomingId)) {
+              return prev;
             }
             let activeTimer = data;
             if (shouldRejectResolumeAlignReset(prev?.activeTimer, data, clockOffset)) {
               activeTimer = { ...data, started_at: prev!.activeTimer!.started_at };
               console.log('🎬 Ignoring Resolume sync that reset countdown to full clip time');
+            }
+            if (!timerNeedsHybridStateUpdate(prev?.activeTimer, activeTimer)) {
+              return prev;
+            }
+            if (shouldTriggerResolumeSyncPulse(prev?.activeTimer, activeTimer)) {
+              queueMicrotask(() => triggerResolumeSyncPulse());
             }
             return {
               ...prev,
@@ -7164,47 +11288,73 @@ const RunOfShowPage: React.FC = () => {
           
           // Update timer progress for smooth UI updates
           if (data.item_id) {
-            setTimerProgress(prev => ({
-              ...prev,
-              [data.item_id]: {
-                elapsed: data.elapsed_seconds || 0,
-                total: data.duration_seconds ?? 300,
-                startedAt: data.started_at ? new Date(data.started_at) : null
+            const nextElapsed = data.elapsed_seconds || 0;
+            const nextTotal = data.duration_seconds ?? 300;
+            const nextStartedMs = data.started_at ? new Date(data.started_at).getTime() : null;
+            setTimerProgress(prev => {
+              const cur = prev[data.item_id];
+              const curStartedMs = cur?.startedAt ? new Date(cur.startedAt).getTime() : null;
+              if (
+                cur &&
+                cur.elapsed === nextElapsed &&
+                cur.total === nextTotal &&
+                curStartedMs === nextStartedMs
+              ) {
+                return prev;
               }
-            }));
+              return {
+                ...prev,
+                [data.item_id]: {
+                  elapsed: nextElapsed,
+                  total: nextTotal,
+                  startedAt: data.started_at ? new Date(data.started_at) : null
+                }
+              };
+            });
             
             // Update button states based on timer_state (like PhotoViewPage and GreenRoomPage)
             // Convert item_id to number to ensure proper comparison with schedule item IDs
             const numericItemId = typeof data.item_id === 'string' ? parseInt(data.item_id) : data.item_id;
             
             if (data.timer_state === 'running') {
-              setActiveTimers(prev => ({ ...prev, [numericItemId]: true }));
-              setActiveItemId(numericItemId);
-              setLoadedItems(prev => ({ ...prev, [numericItemId]: true }));
+              setActiveTimers({ [numericItemId]: true });
+              setActiveItemId((prev) => (prev === numericItemId ? prev : numericItemId));
+              setLoadedItems(prev => (prev[numericItemId] ? prev : { ...prev, [numericItemId]: true }));
+              completePriorCuesOnDay(numericItemId);
               console.log('✅ RunOfShow: Timer RUNNING - button states updated:', numericItemId);
             } else if (data.timer_state === 'loaded') {
               setActiveTimers(prev => {
+                if (!(numericItemId in prev)) return prev;
                 const newTimers = { ...prev };
                 delete newTimers[numericItemId]; // Remove from running timers
                 return newTimers;
               });
-              setActiveItemId(numericItemId);
-              setLoadedItems(prev => ({ ...prev, [numericItemId]: true }));
+              const stealRunning = loadedUpdateWouldStealRunning(numericItemId);
+              const loadedDelay = isDelayProgramType(
+                scheduleRef.current?.find((item) => item.id === numericItemId)?.programType
+              );
+              if (!stealRunning && !loadedDelay) {
+                setActiveItemId((prev) => (prev === numericItemId ? prev : numericItemId));
+              }
+              setLoadedItems(prev => (prev[numericItemId] ? prev : { ...prev, [numericItemId]: true }));
+              if (!stealRunning) {
+                completePriorCuesOnDay(numericItemId);
+              }
               console.log('✅ RunOfShow: Timer LOADED - button states updated:', numericItemId);
             } else if (data.timer_state === 'stopped') {
               setActiveTimers(prev => {
+                if (!(numericItemId in prev)) return prev;
                 const newTimers = { ...prev };
                 delete newTimers[numericItemId];
                 return newTimers;
               });
               setLoadedItems(prev => {
+                if (!(numericItemId in prev)) return prev;
                 const newLoaded = { ...prev };
                 delete newLoaded[numericItemId];
                 return newLoaded;
               });
-              if (activeItemId === numericItemId) {
-                setActiveItemId(null);
-              }
+              setActiveItemId((prev) => (prev === numericItemId ? null : prev));
               console.log('✅ RunOfShow: Timer STOPPED - button states updated:', numericItemId);
             }
           }
@@ -7215,12 +11365,23 @@ const RunOfShowPage: React.FC = () => {
         }
       },
       onTimerStopped: (data: any) => {
-        if (data && data.event_id === event?.id) {
-          // Clear hybrid timer data when stopped (ClockPage style)
+        if (data && eventIdsMatch(data.event_id, event?.id)) {
+          const numericItemId = typeof data.item_id === 'string' ? parseInt(data.item_id, 10) : data.item_id;
           setHybridTimerData(prev => ({
             ...prev,
             activeTimer: null
           }));
+          setActiveItemId((prev) => (numericItemId != null && prev === numericItemId ? null : prev));
+          setLastLoadedCueId((prev) => (numericItemId != null && prev === numericItemId ? null : prev));
+          if (numericItemId != null) {
+            setTimerProgress((prev) => {
+              if (!(numericItemId in prev)) return prev;
+              const next = { ...prev };
+              delete next[numericItemId];
+              return next;
+            });
+          }
+          markCueGroupCompleted(numericItemId);
           console.log('✅ RunOfShow: Timer cleared via WebSocket');
         }
       },
@@ -7240,23 +11401,40 @@ const RunOfShowPage: React.FC = () => {
       onTimerStarted: (data: any) => {
         // Update timer state when started
         if (data && data.item_id) {
+          noteCueActualStart(data);
           setActiveTimers(prev => ({
             ...prev,
             [data.item_id]: true
           }));
         }
       },
+      onOperatorCountdownUpdated: (data: any) => {
+        if (data && eventIdsMatch(data.event_id, event?.id)) {
+          const mapped = mapOperatorCountdownRow(data);
+          setHybridTimerData((prev) => ({ ...prev, operatorCountdown: mapped }));
+          setOperatorCountdownLive(!!mapped?.is_running);
+        }
+      },
+      onOperatorCountdownCleared: (data: any) => {
+        if (data && eventIdsMatch(data.event_id, event?.id)) {
+          setHybridTimerData((prev) => ({ ...prev, operatorCountdown: null }));
+          setOperatorCountdownLive(false);
+        }
+      },
       onSubCueTimerStarted: (data: any) => {
-        if (data && data.event_id === event?.id) {
+        if (data && eventIdsMatch(data.event_id, event?.id)) {
           setHybridTimerData(prev => {
             const enrichedIncoming = enrichSubCueTimer(data);
-            if (shouldTriggerResolumeSyncPulse(prev?.secondaryTimer, enrichedIncoming)) {
-              queueMicrotask(() => triggerResolumeSyncPulse());
-            }
             let secondaryTimer = enrichedIncoming;
             if (shouldRejectResolumeAlignReset(prev?.secondaryTimer, enrichedIncoming, clockOffset)) {
               secondaryTimer = { ...enrichedIncoming, started_at: prev!.secondaryTimer!.started_at };
               console.log('🎬 Ignoring Resolume sub-cue align that reset countdown to full clip');
+            }
+            if (!timerNeedsHybridStateUpdate(prev?.secondaryTimer, secondaryTimer)) {
+              return prev;
+            }
+            if (shouldTriggerResolumeSyncPulse(prev?.secondaryTimer, secondaryTimer)) {
+              queueMicrotask(() => triggerResolumeSyncPulse());
             }
             return {
               ...prev,
@@ -7266,24 +11444,39 @@ const RunOfShowPage: React.FC = () => {
           const numericItemId =
             typeof data.item_id === 'string' ? parseInt(data.item_id, 10) : data.item_id;
           if (numericItemId != null) {
-            setSecondaryTimer({
-              itemId: numericItemId,
-              remaining: Math.max(0, (data.duration_seconds || 0) - (data.elapsed_seconds || 0)),
-              duration: data.duration_seconds || 0,
-              isActive: true,
-              isRunning: true,
-              startedAt: data.started_at ? new Date(data.started_at) : new Date(),
-              timerState: 'running',
-              rowNumber: data.row_number,
-              cueDisplay: data.cue_display,
-              timerId: data.timer_id,
+            const nextRemaining = Math.max(0, (data.duration_seconds || 0) - (data.elapsed_seconds || 0));
+            const nextDuration = data.duration_seconds || 0;
+            setSecondaryTimer((prev) => {
+              if (
+                prev &&
+                prev.itemId === numericItemId &&
+                prev.isRunning &&
+                prev.isActive &&
+                prev.duration === nextDuration &&
+                prev.remaining === nextRemaining &&
+                prev.timerState === 'running'
+              ) {
+                return prev;
+              }
+              return {
+                itemId: numericItemId,
+                remaining: nextRemaining,
+                duration: nextDuration,
+                isActive: true,
+                isRunning: true,
+                startedAt: data.started_at ? new Date(data.started_at) : new Date(),
+                timerState: 'running',
+                rowNumber: data.row_number,
+                cueDisplay: data.cue_display,
+                timerId: data.timer_id,
+              };
             });
           }
           console.log('✅ RunOfShow: Sub-cue timer started via WebSocket:', data);
         }
       },
       onSubCueTimerStopped: (data: any) => {
-        if (data && data.event_id === event?.id) {
+        if (data && eventIdsMatch(data.event_id, event?.id)) {
           Object.keys(subCueTimers).forEach((timerId) => {
             if (subCueTimers[parseInt(timerId, 10)]) {
               clearInterval(subCueTimers[parseInt(timerId, 10)]);
@@ -7313,56 +11506,56 @@ const RunOfShowPage: React.FC = () => {
         });
       },
       onActiveTimersUpdated: (data: any) => {
-        if (isCloudReconnectUploadActive()) {
-          console.log('⏭️ Skipping activeTimers WebSocket update during cloud reconnect upload');
-          return;
-        }
-
+        
         // Handle array format (from server broadcast) - ClockPage style
         let timerData = data;
         if (Array.isArray(data) && data.length > 0) {
-          timerData = data[0]; // Take first timer from array
-          console.log('📡 RunOfShow: Processing first timer from array:', timerData);
+          timerData =
+            data.find((t: any) => t?.timer_state === 'running' || t?.is_running === true) ||
+            data[0];
+          console.log('📡 RunOfShow: Processing timer from array:', timerData);
         }
         
-        console.log('📡 RunOfShow: Event ID check:', { received: timerData?.event_id, expected: event?.id, match: eventIdsMatch(timerData?.event_id, event?.id) });
+        console.log('📡 RunOfShow: Event ID check:', { received: timerData?.event_id, expected: event?.id, match: timerData?.event_id === event?.id });
         if (timerData && eventIdsMatch(timerData.event_id, event?.id)) {
-          noteCueActualStart(timerData);
-          // Debounce: Only update if timer data has actually changed
-          const currentTimer = hybridTimerData?.activeTimer;
-          if (currentTimer && currentTimer.id === timerData.id && 
-              currentTimer.timer_state === timerData.timer_state &&
-              currentTimer.is_active === timerData.is_active &&
-              currentTimer.is_running === timerData.is_running) {
-            console.log('⏭️ RunOfShow: Ignoring duplicate timer update:', timerData.id);
-            return;
-          }
-          
           // Clear only when truly stopped — loaded cues are is_active + !is_running
           const isStopped =
             timerData.timer_state === 'stopped' || timerData.is_active === false;
           if (isStopped) {
-            setHybridTimerData(prev => ({
-              ...prev,
-              activeTimer: null
-            }));
+            setHybridTimerData(prev => (
+              prev?.activeTimer == null ? prev : { ...prev, activeTimer: null }
+            ));
             setActiveItemId(null);
             setActiveTimers({});
+            markCueGroupCompleted(timerData.item_id);
             console.log('✅ RunOfShow: Timer stopped via WebSocket - cleared timer data and old state');
           } else if (timerData.is_active === true) {
-            // Additional check: if this is the same timer that was previously stopped, ignore it
-            const currentHybridTimer = hybridTimerData?.activeTimer;
-            if (currentHybridTimer && currentHybridTimer.id === timerData.id && 
-                (currentHybridTimer.timer_state === 'stopped' || !currentHybridTimer.is_active)) {
-              console.log('⏭️ RunOfShow: Ignoring stale timer data for stopped timer:', timerData.id);
-              return;
+            if (timerData.timer_state === 'running' || timerData.is_running === true) {
+              completePriorCuesOnDay(timerData.item_id);
             }
-            
-            // Update timer data directly from WebSocket
-            setHybridTimerData(prev => ({
-              ...prev,
-              activeTimer: timerData
-            }));
+            noteCueActualStart(timerData);
+            setHybridTimerData(prev => {
+              const currentHybridTimer = prev?.activeTimer;
+              const incomingId = normalizeScheduleItemId(timerData.item_id);
+              const incomingLoaded =
+                timerData.timer_state === 'loaded' ||
+                (timerData.is_running !== true && timerData.timer_state !== 'running');
+              if (incomingLoaded && incomingId != null && loadedUpdateWouldStealRunning(incomingId)) {
+                return prev;
+              }
+              if (currentHybridTimer && currentHybridTimer.id === timerData.id &&
+                  (currentHybridTimer.timer_state === 'stopped' || !currentHybridTimer.is_active)) {
+                console.log('⏭️ RunOfShow: Ignoring stale timer data for stopped timer:', timerData.id);
+                return prev;
+              }
+              if (!timerNeedsHybridStateUpdate(currentHybridTimer, timerData)) {
+                return prev;
+              }
+              return {
+                ...prev,
+                activeTimer: timerData
+              };
+            });
             console.log('✅ RunOfShow: Active timer updated via WebSocket:', timerData);
           }
         } else {
@@ -7371,7 +11564,10 @@ const RunOfShowPage: React.FC = () => {
       },
       onConnectionChange: (connected: boolean) => {
         console.log(`🔌 WebSocket connection ${connected ? 'established' : 'lost'} for event: ${event.id}`);
+        setSocketLiveConnected(connected);
         if (connected) {
+          socketConnectedAtRef.current = Date.now();
+          setSocketPresenceAlertDismissed(false);
           if (user && event?.id) {
             const role = currentUserRoleRef.current || 'VIEWER';
             const { userName, userEmail } = getPresenceUserFields(user);
@@ -7392,6 +11588,7 @@ const RunOfShowPage: React.FC = () => {
             console.log(`👁️ Presence: skipped (no user or event: user=${!!user}, eventId=${event?.id})`);
           }
         } else {
+          socketConnectedAtRef.current = null;
           setViewers([]);
           setRowLocks({});
           stopRowLockHeartbeat();
@@ -7406,6 +11603,10 @@ const RunOfShowPage: React.FC = () => {
         }));
         console.log(`👁️ Presence: received presenceUpdated, viewers=${normalized.length}`, normalized);
         setViewers(normalized);
+      },
+      onAutoBackupLeaseUpdate: (data) => {
+        if (!data || String(data.event_id) !== String(event.id)) return;
+        applyAutoBackupLease(data.lease || null);
       },
       onRowLocked: (data) => {
         if (!data || String(data.eventId) !== String(event.id)) return;
@@ -7445,8 +11646,19 @@ const RunOfShowPage: React.FC = () => {
         }
         setRowLocks(next);
       },
-      onForceDisconnect: () => {
+      onForceDisconnect: (data) => {
+        if (data?.reason === 'logout') return;
         setShowDisconnectedByAdminModal(true);
+      },
+      onTimerMessageUpdated: (data: any) => {
+        if (!data || String(data.event_id) !== String(event?.id)) return;
+        // enabled:false must clear — otherwise a stale hybrid message keeps rainbow on
+        const next = data.enabled ? data : null;
+        setHybridTimerData((prev: any) => ({
+          ...prev,
+          timerMessage: next,
+        }));
+        console.log('✅ RunOfShow: Timer message updated via WebSocket:', next);
       },
       onInitialSync: async () => {
         console.log('🔄 WebSocket initial sync triggered - loading current state');
@@ -7454,27 +11666,18 @@ const RunOfShowPage: React.FC = () => {
         // NOTE: loadActiveTimerFromAPI() is now called AFTER schedule is loaded
         // in loadFromAPI() to prevent race condition where cue display text is missing
         
-        // Load current completed cues
+        // Load current completed cues (authenticated — bare fetch 401s under REQUIRE_API_AUTH)
         try {
-          const completedCuesResponse = await fetch(`${getApiBaseUrl()}/api/completed-cues/${event?.id}`, {
-            headers: apiJsonHeaders(),
-          });
-          if (completedCuesResponse.ok) {
-            const completedCuesArray = await completedCuesResponse.json();
-            console.log('🔄 Initial sync: Loaded completed cues:', completedCuesArray);
-            
-            // Convert array to object format for consistency
-            const completedCuesObject = completedCuesArray.reduce((acc: Record<number, boolean>, cue: { item_id?: unknown }) => {
-              const id = normalizeScheduleItemId(cue.item_id);
-              if (id != null) acc[id] = true;
-              return acc;
-            }, {});
-            
-            setCompletedCues(completedCuesObject);
-            console.log('✅ Initial sync: Converted completed cues to object format:', completedCuesObject);
-          }
+          await syncCompletedCues();
         } catch (error) {
           console.error('❌ Initial sync failed to load completed cues:', error);
+        }
+
+        // Indentation arrows live in indented_cues (separate from schedule JSON)
+        try {
+          await loadIndentedCuesFromAPI();
+        } catch (error) {
+          console.error('❌ Initial sync failed to load indented cues:', error);
         }
         
         // NEW: Reload overtime data when WebSocket reconnects (e.g., returning to page)
@@ -7487,7 +11690,8 @@ const RunOfShowPage: React.FC = () => {
             const overtimeData = await DatabaseService.getOvertimeMinutes(event.id);
             setOvertimeMinutes(overtimeData);
             console.log('✅ Initial sync: Overtime minutes reloaded on page return:', overtimeData);
-            setCueActualStarts(await DatabaseService.getCueActualStarts(event.id));
+            const loadedActualStarts = await DatabaseService.getCueActualStarts(event.id);
+            setCueActualStarts((prev) => ({ ...prev, ...(loadedActualStarts || {}) }));
             
             // Load START cue overtime from separate table (same as initial load)
             const showStartOvertimeData = await DatabaseService.getShowStartOvertime(event.id);
@@ -7509,15 +11713,31 @@ const RunOfShowPage: React.FC = () => {
             const s = await DatabaseService.getShowSettings(event.id);
             setShowMode(s.showMode);
             setTrackWasDurations(s.trackWasDurations);
+            setShowCompletedHighlight(s.showCompletedHighlight !== false);
+            setRehearsalBaseline(parseRehearsalBaseline(s.rehearsalBaseline));
+            setPreshowShowDayArmed(parsePreshowShowDay(s.preshowShowDay));
+            setAutoRollArmed(resolveAutoRoll(s.autoRoll, event.id));
           } catch (e) {
             console.warn('Initial sync: could not refetch show mode', e);
+          }
+
+          // Pre Show rainbow + stage message — other tabs need this (not only the starter)
+          try {
+            const timerMessage = await DatabaseService.getTimerMessage(event.id);
+            setHybridTimerData((prev: any) => ({
+              ...prev,
+              timerMessage: timerMessage || null,
+            }));
+            console.log('✅ Initial sync: Timer message loaded:', timerMessage);
+          } catch (e) {
+            console.warn('Initial sync: could not load timer message', e);
           }
         }
         
       },
       onOvertimeUpdate: (data: any) => {
         if (showModeRef.current !== 'in-show') return;
-        if (data && data.event_id === event?.id && data.item_id && typeof data.overtimeMinutes === 'number') {
+        if (data && eventIdsMatch(data.event_id, event?.id) && data.item_id && typeof data.overtimeMinutes === 'number') {
           console.log(`✅ Overtime update validation passed - updating item ${data.item_id} to ${data.overtimeMinutes} minutes`);
           
           // Update local overtime state
@@ -7555,15 +11775,38 @@ const RunOfShowPage: React.FC = () => {
           console.log(`✅ Show start overtime updated: ${data.showStartOvertime} minutes`);
         }
       },
+      onMittiWatchColumnUpdate: (data: { event_id: string; enabled: boolean }) => {
+        if (data?.event_id === event?.id) setMittiWatchColumnEnabled(data.enabled === true);
+      },
+      onAvWatchColumnUpdate: (data: { event_id: string; enabled: boolean }) => {
+        if (data?.event_id === event?.id) setAvWatchColumnEnabled(data.enabled === true);
+      },
+      onDsmColumnUpdate: (data: { event_id: string; enabled: boolean }) => {
+        if (data?.event_id === event?.id) setDsmColumnEnabled(data.enabled === true);
+      },
       onShowModeUpdate: (data: {
         event_id: string;
         showMode?: 'rehearsal' | 'in-show';
         trackWasDurations?: boolean;
+        showCompletedHighlight?: boolean;
+        rehearsalBaseline?: any;
         lockedStartTimes?: Record<string, string> | null;
+        preshowShowDay?: unknown;
+        autoRoll?: unknown;
+        liveStartProjection?: boolean;
       }) => {
         if (data.event_id === event?.id) {
           if (data.showMode === 'rehearsal' || data.showMode === 'in-show') setShowMode(data.showMode);
           if (typeof data.trackWasDurations === 'boolean') setTrackWasDurations(data.trackWasDurations);
+          if (typeof data.showCompletedHighlight === 'boolean') {
+            setShowCompletedHighlight(data.showCompletedHighlight);
+          }
+          if (typeof data.liveStartProjection === 'boolean') {
+            setLiveStartProjectionArmed(parseLiveStartProjectionArmed(data.liveStartProjection));
+          }
+          if (data.rehearsalBaseline !== undefined) {
+            setRehearsalBaseline(parseRehearsalBaseline(data.rehearsalBaseline));
+          }
           if (data.lockedStartTimes !== undefined) {
             if (data.lockedStartTimes && typeof data.lockedStartTimes === 'object') {
               const mapped: Record<number, string> = {};
@@ -7576,10 +11819,17 @@ const RunOfShowPage: React.FC = () => {
               setLockedStartTimes({});
             }
           }
+          if (data.preshowShowDay !== undefined) {
+            setPreshowShowDayArmed(parsePreshowShowDay(data.preshowShowDay));
+          }
+          if (data.autoRoll !== undefined) {
+            const parsed = parseAutoRoll(data.autoRoll);
+            writeStoredAutoRoll(event.id, parsed);
+            setAutoRollArmed(parsed);
+          }
         }
       },
       onShowStartOvertimeReset: (data: { event_id: string }) => {
-        if (showModeRef.current !== 'in-show') return;
         if (data.event_id === event?.id) {
           setShowStartOvertime(0);
           console.log('✅ Show start overtime reset to 0');
@@ -7598,11 +11848,10 @@ const RunOfShowPage: React.FC = () => {
     // sseClient.connect(event.id, callbacks); // DISABLED: SSE causes excessive API calls
     socketClient.connect(event.id, callbacks);
 
-    // Handle tab visibility changes - resync when user returns to tab
+    // Handle tab visibility changes - flush save before disconnect so edits aren't lost
     const handleVisibilityChange = () => {
       if (document.hidden) {
-        // Tab hidden - flush save, then disconnect WebSocket to allow server to sleep
-        console.log('👁️ Tab hidden - flushing save, then disconnecting WebSocket to save costs');
+        console.log('👁️ Tab hidden - flushing save, then disconnecting WebSocket');
         const flush = flushSaveToAPIRef.current;
         Promise.resolve(flush ? flush() : undefined)
           .catch((err) => console.warn('Flush save on tab hide failed:', err))
@@ -7610,14 +11859,10 @@ const RunOfShowPage: React.FC = () => {
             socketClient.disconnect(event.id);
           });
       } else {
+        // Always refresh the schedule on return; reconnect first when needed.
         if (!socketClient.isConnected()) {
           console.log('👁️ Tab visible - reconnecting WebSocket');
           socketClient.connect(event.id, callbacks);
-        }
-        // Avoid hard cloud reload while editing or shortly after a local save (prevents reverts).
-        if (isUserEditingRef.current || isCloudReconnecting()) {
-          console.log('👁️ Tab visible — skip loadFromAPI (editing or local mutation guard)');
-          return;
         }
         void loadFromAPI();
       }
@@ -7628,17 +11873,18 @@ const RunOfShowPage: React.FC = () => {
     // Cleanup on unmount
     return () => {
       console.log('🔌 Disconnecting WebSocket connections for event:', event.id);
-      if (isUserEditingRef.current) {
-        void flushSaveToAPIRef.current?.().catch((err) => {
-          console.warn('Flush save during page cleanup failed:', err);
-        });
-      }
+      // Always attempt flush — REC/other edits may have set schedule before isUserEditingRef synced
+      void flushSaveToAPIRef.current?.().catch((err) => {
+        console.warn('Flush save during page cleanup failed:', err);
+      });
       // sseClient.disconnect(event.id); // DISABLED: SSE causes excessive API calls
       socketClient.disconnect(event.id);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       setViewers([]);
+      setSocketLiveConnected(null);
+      socketConnectedAtRef.current = null;
     };
-  }, [event?.id, user, loadFromAPI]);
+  }, [event?.id, user, loadFromAPI, applyAutoBackupLease, socketReconnectNonce]);
 
   // Re-send presence when currentUserRole changes (so Viewers modal shows correct role)
   useEffect(() => {
@@ -7653,6 +11899,103 @@ const RunOfShowPage: React.FC = () => {
       userRole: role,
     });
   }, [currentUserRole, event?.id, user]);
+
+  // Reset watch clock when event/user/reconnect changes
+  useEffect(() => {
+    socketWatchStartedAtRef.current = Date.now();
+    setSocketLiveConnected(null);
+    setShowSocketPresenceAlert(false);
+    setSocketPresenceAlertDismissed(false);
+    setSocketPresenceAlertTestPreview(false);
+  }, [event?.id, user?.id, socketReconnectNonce]);
+
+  // Warn when Socket.IO / presence is not healthy (e.g. firewall blocking websockets).
+  useEffect(() => {
+    if (!event?.id || !user?.id || showDisconnectedByAdminModal) {
+      setShowSocketPresenceAlert(false);
+      return;
+    }
+
+    const tick = () => {
+      if (socketPresenceAlertTestPreview) return;
+
+      if (typeof document !== 'undefined' && document.hidden) {
+        setShowSocketPresenceAlert(false);
+        return;
+      }
+
+      const connected = socketClient.isConnected();
+      setSocketLiveConnected(connected);
+
+      const selfInPresence = viewers.some(
+        (v) => String(v.userId) === String(user.id)
+      );
+      const watchMs = Date.now() - socketWatchStartedAtRef.current;
+      const connectedForMs = socketConnectedAtRef.current
+        ? Date.now() - socketConnectedAtRef.current
+        : 0;
+
+      // Give the first connect attempt time before alarming
+      if (watchMs < 10_000) return;
+
+      const socketBad = !connected;
+      // Connected but never appeared in Admin presence after a grace period
+      const presenceBad = connected && connectedForMs > 12_000 && !selfInPresence;
+
+      if (socketBad || presenceBad) {
+        if (!socketPresenceAlertDismissed) {
+          setShowSocketPresenceAlert(true);
+        }
+      } else if (connected && selfInPresence) {
+        setShowSocketPresenceAlert(false);
+        setSocketPresenceAlertDismissed(false);
+      }
+    };
+
+    tick();
+    const id = window.setInterval(tick, 3000);
+    return () => window.clearInterval(id);
+  }, [
+    event?.id,
+    user?.id,
+    viewers,
+    socketPresenceAlertDismissed,
+    showDisconnectedByAdminModal,
+    socketPresenceAlertTestPreview,
+  ]);
+
+  // Publish live sync status to the top AppHeader badge (admin-toggleable).
+  useEffect(() => {
+    if (!event?.id || !user?.id) {
+      clearLiveSyncStatus();
+      return;
+    }
+    const selfInPresence = viewers.some((v) => String(v.userId) === String(user.id));
+    setLiveSyncStatus({
+      active: true,
+      connected: socketLiveConnected,
+      selfInPresence,
+    });
+  }, [
+    event?.id,
+    user?.id,
+    viewers,
+    socketLiveConnected,
+    setLiveSyncStatus,
+    clearLiveSyncStatus,
+  ]);
+
+  useEffect(() => {
+    const openAlert = () => {
+      setSocketPresenceAlertDismissed(false);
+      setShowSocketPresenceAlert(true);
+    };
+    setLiveSyncOpenAlert(openAlert);
+    return () => {
+      setLiveSyncOpenAlert(null);
+      clearLiveSyncStatus();
+    };
+  }, [setLiveSyncOpenAlert, clearLiveSyncStatus]);
 
   // Real-time countdown timer for running timers (ClockPage style)
   // Uses clock offset to sync with server time
@@ -7815,24 +12158,32 @@ const RunOfShowPage: React.FC = () => {
     }
   };
 
+  const openNameBackupModal = () => {
+    if (!event?.id) return;
+    const timestamp = new Date().toLocaleString('en-US', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
+    });
+    setManualBackupName(`${event.name} • ${timestamp}`);
+    setShowNameBackupModal(true);
+  };
+
   const createManualBackup = async () => {
     if (!event?.id) return;
-    
+    const backupName = manualBackupName.trim();
+    if (!backupName) {
+      alert('Please enter a backup name.');
+      return;
+    }
+
+    setManualBackupSaving(true);
     try {
-      console.log('🔄 Creating manual backup for event:', event.id);
-      
-      const timestamp = new Date().toLocaleString('en-US', {
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-        hour12: true
-      });
-      
-      const backupName = `${event.name} • ${timestamp}`;
-      
+      console.log('🔄 Creating manual backup for event:', event.id, backupName);
+
       await NeonBackupService.createBackup(
         event.id,
         schedule,
@@ -7842,21 +12193,28 @@ const RunOfShowPage: React.FC = () => {
         backupName,
         user?.id,
         user?.full_name || user?.email,
-        user?.role
+        currentUserRole || user?.role
       );
-      
+
       console.log('✅ Manual backup created:', backupName);
-      
-      // Refresh backup stats
+
       const stats = await NeonBackupService.getBackupStats(event.id);
       setBackupStats(stats);
-      
-      // Show success message
-      alert(`✅ Manual backup created successfully!\n\nBackup: ${backupName}\nSchedule Items: ${schedule.length}\nCustom Columns: ${customColumns.length}`);
-      
+      if (showBackupModal) {
+        await loadBackups();
+      }
+
+      setShowNameBackupModal(false);
+      const preview = getBackupPreviewStats(schedule);
+      alert(
+        `✅ Backup saved: ${backupName}\n\n` +
+          `${preview.itemCount} items · ${preview.rowsWithNotes} with notes · ${preview.rowsWithSpeakers} with speakers`
+      );
     } catch (error) {
       console.error('❌ Error creating manual backup:', error);
       alert(`❌ Error creating manual backup: ${error.message}`);
+    } finally {
+      setManualBackupSaving(false);
     }
   };
 
@@ -7897,7 +12255,10 @@ const RunOfShowPage: React.FC = () => {
         settings: {
           ...((restoredData as any).settings || {}),
           show_mode: showMode,
-          track_was_durations: trackWasDurations
+          track_was_durations: trackWasDurations,
+          show_completed_highlight: showCompletedHighlight,
+          ...autoRollSettingsPatch(autoRollArmedRef.current),
+          voAlertsEnabled: voAlertsEnabledRef.current !== false,
         },
         schedule_items: restoredData.scheduleData,
         custom_columns: restoredData.customColumnsData,
@@ -7948,9 +12309,21 @@ const RunOfShowPage: React.FC = () => {
     }
   };
 
-  const handleImportFromEvent = useCallback((result: { scheduleItems: any[]; customColumns: any[] }) => {
+  const handleImportFromEvent = useCallback((result: {
+    scheduleItems: any[];
+    customColumns: any[];
+    popoutNotesCopied?: number;
+    popoutNotesSkipped?: number;
+    popoutNotesError?: string | null;
+  }) => {
     if (!event?.id) return;
-    const { scheduleItems: importedSchedule, customColumns: importedCustomCols } = result;
+    const {
+      scheduleItems: importedSchedule,
+      customColumns: importedCustomCols,
+      popoutNotesCopied = 0,
+      popoutNotesSkipped = 0,
+      popoutNotesError = null,
+    } = result;
     setSchedule(prev => importedSchedule.length > 0 ? importedSchedule : prev);
     setCustomColumns(prev => importedCustomCols.length > 0 ? importedCustomCols : prev);
     if (importedSchedule.length > 0) {
@@ -7959,17 +12332,23 @@ const RunOfShowPage: React.FC = () => {
     if (importedCustomCols.length > 0) {
       localStorage.setItem(`customColumns_${event.id}`, JSON.stringify(importedCustomCols));
     }
-    logChange('IMPORT_EVENT', `Imported from another event: ${importedSchedule.length} schedule items, ${importedCustomCols.length} custom columns`, {
-      changeType: 'IMPORT',
-      itemCount: importedSchedule.length,
-      customColumnsCount: importedCustomCols.length
-    });
+    logChange(
+      'IMPORT_EVENT',
+      `Imported from another event: ${importedSchedule.length} schedule items, ${importedCustomCols.length} custom columns, ${popoutNotesCopied} popout notes`,
+      {
+        changeType: 'IMPORT',
+        itemCount: importedSchedule.length,
+        customColumnsCount: importedCustomCols.length,
+        popoutNotesCopied,
+        popoutNotesSkipped,
+      }
+    );
     const scheduleToSave = importedSchedule.length > 0 ? importedSchedule : schedule;
     const customColsToSave = importedCustomCols.length > 0 ? importedCustomCols : customColumns;
     DatabaseService.saveRunOfShowData({
       event_id: event.id,
       event_name: event?.name || 'Event',
-      settings: { show_mode: showMode, track_was_durations: trackWasDurations, numberOfDays: event?.numberOfDays },
+      settings: { show_mode: showMode, track_was_durations: trackWasDurations, show_completed_highlight: showCompletedHighlight, numberOfDays: event?.numberOfDays, ...autoRollSettingsPatch(autoRollArmedRef.current), voAlertsEnabled: voAlertsEnabledRef.current !== false },
       schedule_items: scheduleToSave,
       custom_columns: customColsToSave,
       event_date: event?.date ?? undefined
@@ -7979,8 +12358,16 @@ const RunOfShowPage: React.FC = () => {
       userRole: currentUserRole || 'VIEWER'
     }).catch(err => console.error('Save after import failed:', err));
     handleUserEditing();
-    alert(`✅ Import complete!\n\nSchedule: ${importedSchedule.length} items\nCustom columns: ${importedCustomCols.length}`);
-  }, [event?.id, event?.name, event?.date, showMode, trackWasDurations, user, currentUserRole, schedule, customColumns]);
+    const notesLine =
+      popoutNotesError
+        ? `\nPopout notes: ${popoutNotesError}`
+        : popoutNotesCopied > 0 || popoutNotesSkipped > 0
+          ? `\nPopout notes: ${popoutNotesCopied} copied${popoutNotesSkipped > 0 ? ` (${popoutNotesSkipped} skipped)` : ''}`
+          : '';
+    alert(
+      `✅ Import complete!\n\nSchedule: ${importedSchedule.length} items\nCustom columns: ${importedCustomCols.length}${notesLine}`
+    );
+  }, [event?.id, event?.name, event?.date, event?.numberOfDays, showMode, trackWasDurations, showCompletedHighlight, user, currentUserRole, schedule, customColumns]);
 
   // Check for changes periodically (every 10 seconds) - only when page is visible
   useEffect(() => {
@@ -8059,57 +12446,283 @@ const RunOfShowPage: React.FC = () => {
     }
   }, [isPageVisible, hasChanges]);
 
-  // DISABLED: Automatic backup every 5 minutes
-  // This was causing interference with the main run of show
-  // Manual backup only to prevent accidental data loss
-  /*
+  // Load / persist per-event auto-backup preferences + sync exclusive lease
   useEffect(() => {
     if (!event?.id) return;
-
-    console.log('🔄 Starting automatic backup for event:', event.id);
-
-    const createAutoBackup = async () => {
-      try {
-        // Skip if user is actively editing
-        if (isUserEditing) {
-          console.log('✏️ Skipping auto backup - user is actively editing');
-          return;
+    let cancelled = false;
+    let preferredInterval = autoBackupIntervalMinutes;
+    try {
+      const raw = localStorage.getItem(`autoBackupConfig_${event.id}`);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        const mins = Number(parsed.intervalMinutes);
+        if (AUTO_BACKUP_INTERVALS.includes(mins as (typeof AUTO_BACKUP_INTERVALS)[number])) {
+          preferredInterval = mins;
+          setAutoBackupIntervalMinutes(mins);
         }
+        setLastAutoBackupAt(typeof parsed.lastAutoBackupAt === 'string' ? parsed.lastAutoBackupAt : null);
+      } else {
+        setLastAutoBackupAt(null);
+      }
+    } catch {
+      /* ignore */
+    }
 
-        console.log('🔄 Creating automatic backup...');
-        
-        await NeonBackupService.createBackup(
+    (async () => {
+      try {
+        const lease = await NeonBackupService.getAutoBackupLease(event.id);
+        if (cancelled) return;
+        applyAutoBackupLease(lease);
+
+        // Re-claim if this browser had Auto on and nobody else holds it
+        let wantEnabled = false;
+        try {
+          const raw = localStorage.getItem(`autoBackupConfig_${event.id}`);
+          wantEnabled = raw ? JSON.parse(raw).enabled === true : false;
+        } catch {
+          wantEnabled = false;
+        }
+        if (
+          wantEnabled &&
+          !lease &&
+          user?.id &&
+          currentUserRole !== 'VIEWER'
+        ) {
+          const result = await NeonBackupService.claimAutoBackupLease(
+            event.id,
+            user.id,
+            user.full_name || user.email || 'Someone',
+            preferredInterval
+          );
+          if (cancelled) return;
+          if (result.ok) {
+            applyAutoBackupLease(result.lease);
+          } else {
+            applyAutoBackupLease(result.lease);
+            setAutoBackupEnabled(false);
+          }
+        } else if (!lease || String(lease.userId) !== String(user?.id)) {
+          setAutoBackupEnabled(false);
+        }
+      } catch (err) {
+        console.warn('Auto-backup lease sync failed:', err);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [event?.id, user?.id, currentUserRole, applyAutoBackupLease]);
+
+  useEffect(() => {
+    if (!event?.id) return;
+    localStorage.setItem(
+      `autoBackupConfig_${event.id}`,
+      JSON.stringify({
+        enabled: autoBackupEnabled,
+        intervalMinutes: autoBackupIntervalMinutes,
+        lastAutoBackupAt,
+      })
+    );
+  }, [event?.id, autoBackupEnabled, autoBackupIntervalMinutes, lastAutoBackupAt]);
+
+  // Heartbeat while we own Auto (lease expires after ~12 min without it)
+  useEffect(() => {
+    if (!event?.id || !user?.id || !autoBackupEnabled || currentUserRole === 'VIEWER') {
+      return;
+    }
+    const beat = () => {
+      // Don't keep the lease forever if this tab is hidden / user walked away
+      if (document.hidden) return;
+      void NeonBackupService.heartbeatAutoBackupLease(
+        event.id,
+        user.id,
+        autoBackupIntervalMinutes
+      ).then((result) => {
+        if (!result.ok) {
+          applyAutoBackupLease(result.lease);
+          setAutoBackupEnabled(false);
+          setAutoBackupStatus(result.error || 'Lost auto-backup ownership');
+        }
+      });
+    };
+    beat();
+    const id = window.setInterval(beat, 60_000);
+    const onVis = () => {
+      if (!document.hidden) beat();
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+  }, [
+    event?.id,
+    user?.id,
+    autoBackupEnabled,
+    autoBackupIntervalMinutes,
+    currentUserRole,
+    applyAutoBackupLease,
+  ]);
+
+  // Poll lease so yellow → grey after inactivity even if socket misses
+  useEffect(() => {
+    if (!event?.id || !user?.id) return;
+    const poll = () => {
+      // Don't poll from background tabs — avoids ghost Railway traffic from forgotten ROS sessions
+      if (document.hidden) return;
+      void NeonBackupService.getAutoBackupLease(event.id)
+        .then((lease) => {
+          if (autoBackupEnabledRef.current && lease && String(lease.userId) === String(user.id)) {
+            return; // we own it; heartbeat handles freshness
+          }
+          if (!autoBackupEnabledRef.current) {
+            applyAutoBackupLease(lease);
+          } else if (lease && String(lease.userId) !== String(user.id)) {
+            applyAutoBackupLease(lease);
+          } else if (!lease && autoBackupEnabledRef.current) {
+            setAutoBackupEnabled(false);
+            setAutoBackupHeldByOther(null);
+          }
+        })
+        .catch(() => {});
+    };
+    poll();
+    const id = window.setInterval(poll, 45_000);
+    const onVis = () => {
+      if (!document.hidden) poll();
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+  }, [event?.id, user?.id, applyAutoBackupLease]);
+
+  // Best-effort release if the tab closes while we own the lease
+  useEffect(() => {
+    if (!event?.id || !user?.id) return;
+    const onUnload = () => {
+      if (!autoBackupEnabledRef.current) return;
+      const url = `${getApiBaseUrl()}/api/auto-backup-lease/${event.id}?userId=${encodeURIComponent(user.id)}`;
+      try {
+        fetch(url, { method: 'DELETE', headers: apiJsonHeaders(), keepalive: true });
+      } catch {
+        /* ignore */
+      }
+    };
+    window.addEventListener('pagehide', onUnload);
+    return () => window.removeEventListener('pagehide', onUnload);
+  }, [event?.id, user?.id]);
+
+  // Configurable auto backups (API skips duplicate saves if another tab already wrote this interval)
+  useEffect(() => {
+    if (!event?.id || !autoBackupEnabled) {
+      setAutoBackupStatus('');
+      return;
+    }
+    if (currentUserRole === 'VIEWER') {
+      setAutoBackupStatus('Auto backup is on, but Viewers do not create backups');
+      return;
+    }
+
+    const intervalMs = Math.max(1, autoBackupIntervalMinutes) * 60 * 1000;
+    setAutoBackupStatus(
+      lastAutoBackupAt
+        ? `Every ${autoBackupIntervalMinutes} min · last ${new Date(lastAutoBackupAt).toLocaleTimeString()}`
+        : `Auto backup every ${autoBackupIntervalMinutes} min`
+    );
+
+    const createAutoBackup = async (reason: string) => {
+      if (autoBackupInFlightRef.current) return;
+      if (document.hidden) {
+        console.log('⏸️ Skipping auto backup — tab hidden');
+        return;
+      }
+      if (isUserEditingRef.current) {
+        console.log('✏️ Skipping auto backup — user is editing');
+        setAutoBackupStatus(`Skipped while editing — next try in ${autoBackupIntervalMinutes} min`);
+        return;
+      }
+      const scheduleNow = scheduleRef.current;
+      if (!scheduleNow?.length) {
+        console.log('⏸️ Skipping auto backup — empty schedule');
+        return;
+      }
+
+      autoBackupInFlightRef.current = true;
+      try {
+        console.log(`🔄 Auto backup (${reason}) for event:`, event.id);
+        const timestamp = new Date().toLocaleString('en-US', {
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: true,
+        });
+        const result = await NeonBackupService.createBackup(
           event.id,
-          schedule,
-          customColumns,
+          scheduleNow,
+          customColumnsRef.current,
           event,
           'auto',
-          undefined,
+          `Auto • ${event.name} • ${timestamp}`,
           user?.id,
           user?.full_name || user?.email,
-          user?.role
+          currentUserRole || user?.role,
+          { minIntervalMinutes: autoBackupIntervalMinutes }
         );
-        
-        console.log('✅ Automatic backup created');
-        
-        // Refresh backup stats
+        if (result?.skipped) {
+          const lastAt = result.last_backup_at
+            ? new Date(result.last_backup_at).toISOString()
+            : new Date().toISOString();
+          setLastAutoBackupAt(lastAt);
+          const by = result.last_backup_by ? ` by ${result.last_backup_by}` : '';
+          setAutoBackupStatus(
+            `Every ${autoBackupIntervalMinutes} min · already saved${by}`
+          );
+          console.log('⏭️ Auto backup skipped — another open session already saved in this interval');
+          return;
+        }
+        const at = new Date().toISOString();
+        setLastAutoBackupAt(at);
+        setAutoBackupStatus(`Every ${autoBackupIntervalMinutes} min · last ${new Date(at).toLocaleTimeString()}`);
         const stats = await NeonBackupService.getBackupStats(event.id);
         setBackupStats(stats);
-        
+        console.log('✅ Automatic backup created');
       } catch (error) {
         console.error('❌ Error creating automatic backup:', error);
+        setAutoBackupStatus('Auto backup failed — will retry on next interval');
+      } finally {
+        autoBackupInFlightRef.current = false;
       }
     };
 
-    // Create backup immediately
-    createAutoBackup();
-    
-    // Then create backup every 5 minutes (300,000 ms)
-    const backupInterval = setInterval(createAutoBackup, 300000);
-    
-    return () => clearInterval(backupInterval);
-  }, [event?.id, schedule, customColumns, isUserEditing]);
-  */
+    const initialTimer = setTimeout(() => {
+      void createAutoBackup('initial');
+    }, 15_000);
+
+    const backupInterval = setInterval(() => {
+      void createAutoBackup('interval');
+    }, intervalMs);
+
+    return () => {
+      clearTimeout(initialTimer);
+      clearInterval(backupInterval);
+    };
+  }, [
+    event?.id,
+    event?.name,
+    autoBackupEnabled,
+    autoBackupIntervalMinutes,
+    currentUserRole,
+    user?.id,
+    user?.full_name,
+    user?.email,
+    user?.role,
+  ]);
 
   // Load backups when backup modal opens
   useEffect(() => {
@@ -8117,6 +12730,66 @@ const RunOfShowPage: React.FC = () => {
       loadBackups();
     }
   }, [showBackupModal, event?.id]);
+
+  useEffect(() => {
+    if (!showBackupModal) {
+      setBackupSearchTerm('');
+      setBackupDateFilter('');
+      setBackupSortOrder('newest');
+    }
+  }, [showBackupModal]);
+
+  const filteredBackups = useMemo(() => {
+    const toLocalDateKey = (iso: string): string => {
+      const d = new Date(iso);
+      if (Number.isNaN(d.getTime())) return '';
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    };
+
+    const term = backupSearchTerm.trim().toLowerCase();
+    let list = backups.filter((backup) => {
+      if (term) {
+        const haystack = [
+          backup.backup_name,
+          backup.event_name,
+          backup.backup_type,
+          backup.created_by_name,
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+        if (!haystack.includes(term)) return false;
+      }
+      if (backupDateFilter) {
+        const created = backup.created_at || backup.backup_timestamp;
+        if (!created || toLocalDateKey(created) !== backupDateFilter) return false;
+      }
+      return true;
+    });
+
+    list = [...list].sort((a, b) => {
+      switch (backupSortOrder) {
+        case 'oldest':
+          return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+        case 'event':
+          return (a.event_name || a.backup_name || '').localeCompare(
+            b.event_name || b.backup_name || '',
+            undefined,
+            { sensitivity: 'base' }
+          );
+        case 'type':
+          return (a.backup_type || '').localeCompare(b.backup_type || '');
+        case 'newest':
+        default:
+          return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      }
+    });
+
+    return list;
+  }, [backups, backupSearchTerm, backupDateFilter, backupSortOrder]);
 
   // Page Visibility API - Pause syncing when tab is not active
   useEffect(() => {
@@ -8143,7 +12816,7 @@ const RunOfShowPage: React.FC = () => {
       console.log('📝 Schedule saved and event dispatched for event:', event.id);
       
       // Auto-save to API only if this is a user-initiated change
-      if (isUserEditing) {
+      if (isUserEditing && !applyingRemoteRunOfShowRef.current) {
         console.log('💾 User-initiated schedule change detected - auto-saving');
         saveToAPI();
       } else {
@@ -8185,8 +12858,9 @@ const RunOfShowPage: React.FC = () => {
     if (event?.id) {
       localStorage.setItem(`customColumns_${event.id}`, JSON.stringify(customColumns));
       // Auto-save to API only if this is a user-initiated change
-      if (isUserEditing) {
+      if (isUserEditing && !applyingRemoteRunOfShowRef.current) {
         console.log('💾 User-initiated custom columns change detected - auto-saving');
+        settingsSaveRequestedRef.current = true;
         saveToAPI();
       } else {
         console.log('📥 Custom columns change from API/sync - skipping auto-save');
@@ -8198,8 +12872,9 @@ const RunOfShowPage: React.FC = () => {
     if (event?.id) {
       localStorage.setItem(`eventName_${event.id}`, eventName);
       // Auto-save to API when event name changes (only if user-initiated)
-      if (isUserEditing) {
+      if (isUserEditing && !applyingRemoteRunOfShowRef.current) {
         console.log('💾 User-initiated event name change detected - auto-saving');
+        settingsSaveRequestedRef.current = true;
         saveToAPI();
       } else {
         console.log('📥 Event name change from API/sync - skipping auto-save');
@@ -8217,8 +12892,9 @@ const RunOfShowPage: React.FC = () => {
       });
       localStorage.setItem(`masterStartTime_${event.id}`, masterStartTime);
       // Auto-save to API when master start time changes (only if user-initiated)
-      if (isUserEditing) {
+      if (isUserEditing && !applyingRemoteRunOfShowRef.current) {
         console.log('💾 User-initiated master start time change detected - auto-saving to API with value:', masterStartTime);
+        settingsSaveRequestedRef.current = true;
         saveToAPI();
       } else {
         console.log('📥 Master start time change from API/sync - skipping auto-save (value:', masterStartTime, ')');
@@ -8235,8 +12911,9 @@ const RunOfShowPage: React.FC = () => {
       });
       localStorage.setItem(`dayStartTimes_${event.id}`, JSON.stringify(dayStartTimes));
       // Auto-save to API when day start times change (only if user-initiated)
-      if (isUserEditing) {
+      if (isUserEditing && !applyingRemoteRunOfShowRef.current) {
         console.log('💾 User-initiated day start times change detected - auto-saving to API');
+        settingsSaveRequestedRef.current = true;
         saveToAPI();
       } else {
         console.log('📥 Day start times change from API/sync - skipping auto-save');
@@ -8286,22 +12963,15 @@ const RunOfShowPage: React.FC = () => {
 
 
 
-  const addScheduleItem = (newItem: Omit<ScheduleItem, 'id'> & { cue?: string }) => {
-    // Generate random Timer ID
-    const generateRandomTimerId = () => {
-      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-      let result = '';
-      for (let i = 0; i < 5; i++) {
-        result += chars.charAt(Math.floor(Math.random() * chars.length));
-      }
-      return result;
-    };
-    
+  const addScheduleItem = (newItem: Omit<ScheduleItem, 'id'> & { cue?: string; id?: number }) => {
+    const isIndentedItem = !!(newItem.isIndented || newItem.isTimedMarker);
     const item: ScheduleItem = {
       ...newItem,
-      id: Date.now(),
-      timerId: generateRandomTimerId(),
-      isIndented: newItem.isIndented || false,
+      id: newItem.id && newItem.id > 0 ? newItem.id : modalDraftItemId && modalDraftItemId > 0 ? modalDraftItemId : Date.now(),
+      timerId: isScheduleOnlyProgramType(newItem.programType) ? '' : generateRandomTimerId(),
+      isIndented: isIndentedItem,
+      // Main cues default public; indented / timed markers stay private unless explicitly set
+      isPublic: isIndentedItem ? false : newItem.isPublic !== false,
       customFields: {
         cue: newItem.cue || ''
       }
@@ -8359,6 +13029,7 @@ const RunOfShowPage: React.FC = () => {
     });
     
     setShowAddModal(false);
+    setModalDraftItemId(null);
     handleModalClosed();
     // Reset form
     setModalForm({
@@ -8376,8 +13047,9 @@ const RunOfShowPage: React.FC = () => {
       speakersText: '',
       hasPPT: false,
       hasQA: false,
+      needsRecording: false,
       timerId: '',
-      isPublic: false,
+      isPublic: true,
       isIndented: false,
       timerDisplay: 'countdown',
       customFields: {}
@@ -8408,6 +13080,7 @@ const RunOfShowPage: React.FC = () => {
       speakersText: '',
       hasPPT: false,
       hasQA: false,
+      needsRecording: false,
       timerId: '',
       isPublic: false,
       isIndented: false,
@@ -8417,21 +13090,64 @@ const RunOfShowPage: React.FC = () => {
     setShowDelayBlockModal(false);
   };
 
+  const addShowBreak = () => {
+    const label = String(showBreakLabel || '').trim() || 'Show Break';
+    const afterIndex = insertRowPosition != null ? insertRowPosition + 1 : -1;
+    const nextCue =
+      afterIndex >= 0
+        ? schedule.slice(afterIndex).find(
+            (row) =>
+              (row.day || 1) === delayBlockDay &&
+              !isShowBreakProgramType(row.programType) &&
+              itemCountsTowardStartTime(row, indentedCues)
+          )
+        : null;
+    const nextCueIndex = nextCue ? schedule.findIndex((row) => row.id === nextCue.id) : -1;
+    const pin =
+      nextCueIndex >= 0
+        ? normalizeBreakStartTime(
+            lockedStartTimes[nextCue.id] || calculateStartTime(nextCueIndex)
+          )
+        : '';
+    addScheduleItem({
+      cue: '',
+      day: delayBlockDay,
+      programType: SHOW_BREAK_PROGRAM_TYPE,
+      shotType: '',
+      segmentName: label,
+      durationHours: 0,
+      durationMinutes: 0,
+      durationSeconds: 0,
+      notes: '',
+      assets: '',
+      speakers: '',
+      speakersText: '',
+      hasPPT: false,
+      hasQA: false,
+      needsRecording: false,
+      timerId: '',
+      isPublic: false,
+      isIndented: false,
+      timerDisplay: 'countdown',
+      customFields: {},
+    });
+    if (nextCue && pin) {
+      setSchedule((prev) =>
+        prev.map((row) =>
+          row.id === nextCue.id && !sessionStartTimeOf(row)
+            ? { ...row, sessionStartTime: pin }
+            : row
+        )
+      );
+    }
+    setShowShowBreakModal(false);
+  };
+
   // Add a breakout room (sub-indented cue) for a Breakout Session
   const addBreakoutRoom = async (parentBreakoutId: number, location: string, breakoutTitle: string, roomIndex: number = 0) => {
     if (!event?.id || !user?.id) return false;
     
     try {
-      // Generate random Timer ID
-      const generateRandomTimerId = () => {
-        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-        let result = '';
-        for (let i = 0; i < 5; i++) {
-          result += chars.charAt(Math.floor(Math.random() * chars.length));
-        }
-        return result;
-      };
-      
       // Format segment name as "Location - Breakout Title"
       const segmentName = `${location} - ${breakoutTitle}`;
       
@@ -8452,16 +13168,6 @@ const RunOfShowPage: React.FC = () => {
         // Format the new CUE number (e.g., "CUE 2A", "CUE 2B")
         const newCueNumber = baseCueNumber ? `CUE ${baseCueNumber}${letterSuffix}` : `CUE ${letterSuffix}`;
         
-        // Generate random Timer ID
-        const generateRandomTimerId = () => {
-          const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-          let result = '';
-          for (let i = 0; i < 5; i++) {
-            result += chars.charAt(Math.floor(Math.random() * chars.length));
-          }
-          return result;
-        };
-        
         return {
           id: Date.now() + Math.floor(Math.random() * 10000), // Ensure unique IDs
           day: parentBreakout.day || selectedDay,
@@ -8477,8 +13183,9 @@ const RunOfShowPage: React.FC = () => {
           speakersText: '',
           hasPPT: false,
           hasQA: false,
+          needsRecording: false,
           timerId: generateRandomTimerId(),
-          isPublic: parentBreakout.isPublic || false,
+          isPublic: false, // Indented breakout rooms stay private
           isIndented: true,
           customFields: {
             cue: newCueNumber
@@ -8718,7 +13425,7 @@ const RunOfShowPage: React.FC = () => {
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
   };
-  const toggleTimer = async (itemId: number) => {
+  const toggleTimer = async (itemId: number, options?: { ignoreOtherRunning?: boolean }) => {
     if (!user || !event?.id) return;
 
     if (activeTimers[itemId]) {
@@ -8761,9 +13468,12 @@ const RunOfShowPage: React.FC = () => {
       });
       // Add to stopped items for inactive styling
       setStoppedItems(prev => new Set([...prev, itemId]));
+      setLastLoadedCueId((prev) => (prev === itemId ? null : prev));
+      logChange('TIMER_STOPPED', `Cue stopped`, { itemId });
       
       // Calculate automatic overtime from hybrid timer (positive or negative) - only when timer stops
       const currentProgress = timerProgress[itemId];
+      let autoOvertimeMinutes: number | null = null;
       if (currentProgress && currentProgress.elapsed > 0) {
         const scheduledDuration = (currentProgress.total || 0) / 60; // Convert to minutes
         const actualDuration = (currentProgress.elapsed || 0) / 60; // Convert to minutes
@@ -8771,6 +13481,7 @@ const RunOfShowPage: React.FC = () => {
         
         // Only calculate overtime if there's a meaningful difference (at least 1 minute)
         if (Math.abs(overtimeMinutes) >= 1 && showModeRef.current === 'in-show') {
+          autoOvertimeMinutes = overtimeMinutes;
           const overtimeType = overtimeMinutes > 0 ? 'over' : 'under';
           console.log(`⏰ Automatic overtime detected: ${Math.abs(overtimeMinutes)} minutes ${overtimeType} for cue ${itemId}`);
           
@@ -8844,8 +13555,8 @@ const RunOfShowPage: React.FC = () => {
         console.log('🔄 ToggleTimer: Looking for indented items after index', currentIndex);
         // Find all indented items that follow this CUE until the next non-indented item
         for (let i = currentIndex + 1; i < schedule.length; i++) {
-          console.log('🔄 ToggleTimer: Checking item at index', i, ':', schedule[i].segmentName, 'isIndented:', schedule[i].isIndented);
-          if (schedule[i].isIndented) {
+          console.log('🔄 ToggleTimer: Checking item at index', i, ':', schedule[i].segmentName, 'isIndented:', isIndentedScheduleItem(schedule[i], indentedCuesRef.current));
+          if (isIndentedScheduleItem(schedule[i], indentedCuesRef.current)) {
             console.log('🔄 ToggleTimer: Marking indented item as completed:', schedule[i].id, schedule[i].segmentName);
             setCompletedCues(prev => {
               const newCompleted = { ...prev, [schedule[i].id]: true };
@@ -8890,6 +13601,14 @@ const RunOfShowPage: React.FC = () => {
       if (activeItemId === itemId) {
         setActiveItemId(null);
       }
+
+      const stoppedProgress = timerProgress[itemId];
+      if (stoppedProgress?.startedAt) {
+        noteCueActualStart({
+          item_id: itemId,
+          started_at: stoppedProgress.startedAt,
+        });
+      }
       
       setTimerProgress(prev => {
         const newProgress = { ...prev };
@@ -8913,6 +13632,63 @@ const RunOfShowPage: React.FC = () => {
         currentUserRole || 'VIEWER'
       );
       console.log('✅ Timer stopped in API');
+
+      const stoppedItem = schedule.find((s) => s.id === itemId);
+      const topPreshowOnStop = resolveSessionPreshowCue(stoppedItem?.day || selectedDay);
+      if (topPreshowOnStop && topPreshowOnStop.id === itemId) {
+        void clearPreshowCountdownMessage();
+
+        // PreShow above ★ does not cascade via per-cue OT — fold overrun into show-start delay
+        if (
+          autoOvertimeMinutes != null &&
+          startCueId != null &&
+          event?.id &&
+          showModeRef.current === 'in-show' &&
+          shouldFoldPreshowOvertimeIntoShowStart({
+            schedule,
+            preshowItemId: itemId,
+            startCueId,
+          })
+        ) {
+          const next = showStartOvertime + autoOvertimeMinutes;
+          const startIndex = schedule.findIndex((s) => s.id === startCueId);
+          const scheduledTime = startIndex >= 0 ? calculateStartTime(startIndex) || '' : '';
+          const actualTime = new Date().toISOString();
+          setShowStartOvertime(next);
+          try {
+            await DatabaseService.saveShowStartOvertime(
+              event.id,
+              startCueId,
+              next,
+              scheduledTime,
+              actualTime
+            );
+            const socket = socketClient.getSocket();
+            if (socket) {
+              socket.emit('showStartOvertimeUpdate', {
+                event_id: event.id,
+                item_id: startCueId,
+                showStartOvertime: next,
+                scheduledTime,
+                actualTime,
+              });
+            }
+            logChange(
+              'SHOW_START_OFFSET_ADJUST',
+              `Pre Show overrun folded into show start: ${autoOvertimeMinutes > 0 ? '+' : ''}${autoOvertimeMinutes} → ${next > 0 ? '+' : ''}${next} min`,
+              {
+                fieldName: 'showStartOvertime',
+                oldValue: showStartOvertime,
+                newValue: next,
+                deltaMinutes: autoOvertimeMinutes,
+                source: 'preshow_overrun',
+              }
+            );
+          } catch (error) {
+            console.error('❌ Failed to fold Pre Show overrun into show start offset:', error);
+          }
+        }
+      }
       
       // Try to save last loaded CUE as stopped (will fail gracefully if migration not run)
       try {
@@ -8928,7 +13704,7 @@ const RunOfShowPage: React.FC = () => {
       // Timer stopped - no broadcast needed, real-time sync will handle it
     } else {
       // Don't allow starting a new timer if any timer is already running
-      if (Object.keys(activeTimers).length > 0) {
+      if (!options?.ignoreOtherRunning && Object.keys(activeTimers).length > 0) {
         return; // Exit early if any timer is running
       }
 
@@ -9015,6 +13791,19 @@ const RunOfShowPage: React.FC = () => {
             startedAt: now
           }
         }));
+        noteCueActualStart({
+          item_id: itemId,
+          timer_state: 'running',
+          is_running: true,
+          is_active: true,
+          started_at: now.toISOString(),
+        });
+        armLiveStartProjection();
+        completePriorCuesOnDay(itemId);
+        logChange('TIMER_STARTED', `Cue started running`, {
+          itemId,
+          startedAt: now.toISOString(),
+        });
         
         // Start local timer immediately for UI updates (1 second intervals)
         const timer = setInterval(() => {
@@ -9061,24 +13850,6 @@ const RunOfShowPage: React.FC = () => {
         
         setActiveTimerIntervals(prev => ({ ...prev, [itemId]: timer }));
         setActiveTimers(prev => ({ ...prev, [itemId]: true }));
-        // Optimistic hybrid — countdown UI reads hybridTimerData, not only activeTimers/timerProgress.
-        setHybridTimerData((prev: any) => ({
-          ...prev,
-          activeTimer: {
-            ...(prev?.activeTimer && Number(prev.activeTimer.item_id) === Number(itemId)
-              ? prev.activeTimer
-              : {}),
-            event_id: event.id,
-            item_id: itemId,
-            timer_state: 'running',
-            is_active: true,
-            is_running: true,
-            duration_seconds: totalSeconds,
-            started_at: now.toISOString(),
-            last_loaded_cue_id: itemId,
-            cue_is: formatCueDisplay(item.customFields?.cue),
-          },
-        }));
         // Don't clear completed state when starting a timer - let it persist
         
         // Start drift detection for long-running timers
@@ -9091,7 +13862,9 @@ const RunOfShowPage: React.FC = () => {
         // Calculate row number and cue display for database
         const currentIndex = schedule.findIndex(scheduleItem => scheduleItem.id === itemId);
         const rowNumber = currentIndex + 1; // 1-based row number
-        const cueDisplay = formatCueDisplay(item.customFields.cue);
+        const cueDisplay = isDelayProgramType(item.programType)
+          ? 'DELAY'
+          : formatCueDisplay(item.customFields.cue);
         
         // Use the existing 5-character timer ID from the schedule item
         const timerId = item.timerId;
@@ -9102,32 +13875,21 @@ const RunOfShowPage: React.FC = () => {
         // Update active_timers table in API
         console.log('🔄 Starting timer in API for item:', itemId, 'at:', serverTime.toISOString(), 'row:', rowNumber, 'cue:', cueDisplay, 'timerId:', timerId);
         try {
-          markLocalMutationGuard(5000);
           const startResult = await DatabaseService.startTimer(event.id, itemId, user.id, totalSeconds, serverTime, rowNumber, cueDisplay, timerId);
           console.log('✅ Timer started in API:', startResult);
           if (!startResult) {
             console.error('❌ Start timer failed - check database connection and functions');
-          } else {
-            setHybridTimerData((prev: any) => ({
-              ...prev,
-              activeTimer: {
-                ...(typeof startResult === 'object' && startResult ? startResult : {}),
-                event_id: event.id,
-                item_id: itemId,
-                timer_state: 'running',
-                is_active: true,
-                is_running: true,
-                duration_seconds:
-                  (startResult as any)?.duration_seconds ?? totalSeconds,
-                started_at:
-                  (startResult as any)?.started_at || serverTime.toISOString(),
-                last_loaded_cue_id: itemId,
-                cue_is: cueDisplay,
-              },
-            }));
           }
         } catch (error) {
           console.error('❌ Start timer error:', error);
+        }
+
+        const topPreshowOnStart = resolveSessionPreshowCue(item.day || selectedDay);
+        if (topPreshowOnStart && topPreshowOnStart.id === itemId) {
+          void activatePreshowCountdownMessage();
+        } else {
+          // Leaving PreShow (or never on it) — do not leave sticky PRE SHOW COUNTDOWN on later cues
+          void clearPreshowCountdownMessage();
         }
         
         // Try to save last loaded CUE as running (will fail gracefully if migration not run)
@@ -9156,7 +13918,7 @@ const RunOfShowPage: React.FC = () => {
           const currentIndex = schedule.findIndex(item => item.id === itemId);
           if (currentIndex !== -1) {
             for (let i = currentIndex + 1; i < schedule.length; i++) {
-              if (schedule[i].isIndented) {
+              if (isIndentedScheduleItem(schedule[i], indentedCuesRef.current)) {
                 newStopped.delete(schedule[i].id);
               } else {
                 // Stop when we hit a non-indented item (next CUE group)
@@ -9170,6 +13932,8 @@ const RunOfShowPage: React.FC = () => {
       }
     }
   };
+  loadCueRef.current = loadCue;
+  toggleTimerRef.current = toggleTimer;
 
   // Reset timer - stop and clear currently running timer
   const resetTimer = async (itemId: number) => {
@@ -9270,13 +14034,13 @@ const RunOfShowPage: React.FC = () => {
       }));
       
       // Start local timer interval
+      let hasAutoStopped = false;
       const timer = setInterval(() => {
         setSubCueTimerProgress(prev => {
           const progress = prev[itemId];
           if (!progress) return prev;
           
           const elapsed = Math.floor((Date.now() - (progress.startedAt?.getTime() || Date.now())) / 1000);
-          const remaining = Math.max(0, progress.total - elapsed);
           
           return {
             ...prev,
@@ -9301,48 +14065,43 @@ const RunOfShowPage: React.FC = () => {
           const elapsed = Math.floor((Date.now() - startTime) / 1000);
           const remaining = Math.max(0, prev.duration - elapsed);
           
-          // Auto-stop when timer reaches 0, but hold for a beat
-          if (remaining === 0) {
-            console.log('⏰ Sub-cue timer reached 0 - holding for a beat');
-            // Capture current event ID to avoid stale closure
+          // Auto-stop when timer reaches 0 (once)
+          if (remaining === 0 && !hasAutoStopped) {
+            hasAutoStopped = true;
+            console.log('⏰ Sub-cue timer reached 0 - holding briefly then clearing');
             const currentEventId = event?.id;
-            console.log('⏰ Current event ID for database call:', currentEventId);
             
-            // Hold at 0 for 1 second before clearing local state
+            // Hold at 0 for 1 second, then clear local + DB
             setTimeout(() => {
-              console.log('⏰ Sub-cue timer auto-stopping after hold - clearing local state');
-              // Clear the interval
-              if (secondaryTimerInterval) {
-                clearInterval(secondaryTimerInterval);
-                setSecondaryTimerInterval(null);
-              }
-              // Clear sub-cue timer state
-              Object.keys(subCueTimers).forEach(timerId => {
-                if (subCueTimers[parseInt(timerId)]) {
-                  clearInterval(subCueTimers[parseInt(timerId)]);
-                }
+              console.log('⏰ Sub-cue timer auto-stopping after hold');
+              clearInterval(timer);
+              setSubCueTimers(prevTimers => {
+                const next = { ...prevTimers };
+                delete next[itemId];
+                return next;
               });
-              setSubCueTimers({});
               setSubCueTimerProgress({});
               setSecondaryTimer(null);
+              setHybridTimerData(prevHybrid => ({
+                ...prevHybrid,
+                secondaryTimer: null,
+              }));
               
-              // Wait 3 more seconds before clearing from Supabase database
+              // Clear from database so Clock / other clients drop it too
               setTimeout(async () => {
                 try {
                   if (currentEventId) {
-                    console.log('⏰ Clearing sub-cue timer from database after 3s delay with event ID:', currentEventId);
+                    console.log('⏰ Clearing sub-cue timer from database with event ID:', currentEventId);
                     const result = await DatabaseService.stopSubCueTimer(currentEventId);
                     console.log('⏰ Database stop result:', result);
-                    console.log('⏰ Sub-cue timer stopped in database (is_active = false)');
                   } else {
                     console.error('❌ No event ID available for database call');
                   }
                 } catch (error) {
                   console.error('❌ Error stopping sub-cue timer in database:', error);
-                  console.error('❌ Error details:', error);
                 }
-              }, 3000); // 3 second delay before database clear
-            }, 1000); // 1 second hold at 0
+              }, 500);
+            }, 1000);
           }
           
           return {
@@ -9372,11 +14131,12 @@ const RunOfShowPage: React.FC = () => {
         const rowNumber = schedule.findIndex(s => s.id === itemId) + 1; // 1-based index
         const cueDisplay = item ? formatCueDisplay(item.customFields.cue) : `CUE ${itemId}`;
         const timerId = item?.timerId || `SUB${itemId}`;
+        const segmentName = item?.segmentName || '';
         
         // Start sub-cue timer (SQL function will handle stopping existing ones)
         try {
           console.log('🔄 Starting sub-cue timer for item:', itemId, '(will auto-stop any existing timers)');
-          const result = await DatabaseService.startSubCueTimer(event.id, itemId, user.id, totalSeconds, rowNumber, cueDisplay, timerId, user.full_name || user.email || 'Unknown User', currentUserRole || 'VIEWER');
+          const result = await DatabaseService.startSubCueTimer(event.id, itemId, user.id, totalSeconds, rowNumber, cueDisplay, timerId, user.full_name || user.email || 'Unknown User', currentUserRole || 'VIEWER', segmentName);
           console.log('✅ Secondary timer started in Supabase for item:', itemId, 'Result:', result);
           if (result?.error) {
             console.error('❌ Secondary timer database error:', result.error);
@@ -9485,6 +14245,11 @@ const RunOfShowPage: React.FC = () => {
   // Handle Excel/CSV import (source: 'Excel' | 'CSV' for logging)
   const handleExcelImport = async (importedData: any[], source: 'Excel' | 'CSV' = 'Excel') => {
     try {
+      const usedTimerIds = new Set(
+        schedule
+          .map((item) => (typeof item.timerId === 'string' ? item.timerId.trim().toUpperCase() : ''))
+          .filter(Boolean)
+      );
       console.log(`📊 Processing ${source} import:`, importedData);
       
       // Confirm with user before adding data
@@ -9537,8 +14302,21 @@ const RunOfShowPage: React.FC = () => {
           speakersText: transformedSpeakersData,
           hasPPT: row.hasPPT || false,
           hasQA: row.hasQA || false,
-          timerId: row.timerId || '',
-          isPublic: row.isPublic || false,
+          needsRecording: !!(row.needsRecording || row.recording),
+          recordingSource:
+            row.recordingSource === 'comms' || row.recording_source === 'comms'
+              ? 'comms'
+              : row.recordingSource === 'ros' || row.recording_source === 'ros'
+                ? 'ros'
+                : null,
+          timerId: (typeof row.timerId === 'string' && row.timerId.trim())
+            ? (() => {
+                const tid = row.timerId.trim();
+                usedTimerIds.add(tid.toUpperCase());
+                return tid;
+              })()
+            : generateRandomTimerId(usedTimerIds),
+          isPublic: row.isIndented ? false : row.isPublic !== false,
           isIndented: row.isIndented || false,
           day: row.day ?? selectedDay,
           customFields: (() => {
@@ -9587,13 +14365,15 @@ const RunOfShowPage: React.FC = () => {
     }
   };
 
-  // Handle delete all schedule items
+  // Handle delete all schedule items (intentional wipe — must pass allow_empty_schedule)
   const handleDeleteAllScheduleItems = () => {
     try {
       const itemCount = schedule.length;
       
       // Clear all schedule items
       setSchedule([]);
+      allowEmptyScheduleOnceRef.current = true;
+      handleUserEditing();
       
       // Log the change
       logChange('DELETE_ALL', `Deleted all ${itemCount} schedule items`, {
@@ -9602,7 +14382,7 @@ const RunOfShowPage: React.FC = () => {
         source: 'Excel Import Modal'
       });
       
-      console.log(`✅ Deleted all ${itemCount} schedule items`);
+      console.log(`✅ Deleted all ${itemCount} schedule items (allow_empty_schedule armed for next save)`);
       
     } catch (error) {
       console.error('❌ Error deleting all schedule items:', error);
@@ -9702,10 +14482,13 @@ const RunOfShowPage: React.FC = () => {
     setActiveRowMenu(null);
   };
 
-  // Move-rows modal: boundary = index of current loaded or running row (in filtered schedule). Only rows BELOW that can be reordered.
-  // movable = all rows below boundary; movableParents = only top-level (non-indented) rows for selection; indented move with parent.
+  // Move-rows modal: boundary = current loaded/running cue; freeze that cue's consecutive indented
+  // children with it. Only rows BELOW the frozen block can be reordered. Selection lists main cues
+  // only; indented sub-cues move with their parent (via isIndentedScheduleItem + indentedCues).
   const moveRowsBoundaryAndMovable = useMemo(() => {
     const filtered = schedule.filter(item => (item.day || 1) === selectedDay);
+    const itemIsIndented = (item: ScheduleItem) => isIndentedScheduleItem(item, indentedCues);
+
     let boundaryIndex = -1;
     if (activeItemId != null) {
       const idx = filtered.findIndex(item => item.id === activeItemId);
@@ -9717,19 +14500,53 @@ const RunOfShowPage: React.FC = () => {
         if (idx !== -1) boundaryIndex = Math.max(boundaryIndex, idx);
       }
     });
-    const movable = boundaryIndex >= 0 ? filtered.slice(boundaryIndex + 1) : [];
-    const movableParents = movable.filter(item => !item.isIndented);
-    // Blocks: each block = [parent, ...consecutive indented] for reordering
+
+    // Keep consecutive indented children of the current cue locked with it
+    let freezeEnd = boundaryIndex;
+    if (boundaryIndex >= 0) {
+      for (let i = boundaryIndex + 1; i < filtered.length; i++) {
+        if (itemIsIndented(filtered[i])) freezeEnd = i;
+        else break;
+      }
+    }
+
+    const movable = freezeEnd >= 0 ? filtered.slice(freezeEnd + 1) : [];
+
+    // Rare data edge case: leading indented rows with no parent in the movable zone stay pinned
+    const leadingOrphans: ScheduleItem[] = [];
+    let movableStart = 0;
+    while (movableStart < movable.length && itemIsIndented(movable[movableStart])) {
+      leadingOrphans.push(movable[movableStart]);
+      movableStart += 1;
+    }
+    const movableForBlocks = movable.slice(movableStart);
+
+    const movableParents = movableForBlocks.filter(item => !itemIsIndented(item));
     const blocks: ScheduleItem[][] = [];
-    for (const item of movable) {
-      if (!item.isIndented) blocks.push([item]);
+    for (const item of movableForBlocks) {
+      if (!itemIsIndented(item)) blocks.push([item]);
       else if (blocks.length > 0) blocks[blocks.length - 1].push(item);
     }
-    return { boundaryIndex, movable, movableParents, blocks, filtered };
-  }, [schedule, selectedDay, activeItemId, activeTimers]);
+    return {
+      boundaryIndex,
+      freezeEnd,
+      movable,
+      leadingOrphans,
+      movableParents,
+      blocks,
+      filtered,
+    };
+  }, [schedule, selectedDay, activeItemId, activeTimers, indentedCues]);
 
   const applyMoveRowsReorder = () => {
-    const { blocks, movable, movableParents, boundaryIndex, filtered } = moveRowsBoundaryAndMovable;
+    const {
+      blocks,
+      movable,
+      leadingOrphans,
+      movableParents,
+      freezeEnd,
+      filtered,
+    } = moveRowsBoundaryAndMovable;
     if (blocks.length === 0 || moveRowsSelectedIds.size === 0) return;
     const targetPos = Math.max(0, Math.min(moveRowsTargetPosition, movableParents.length));
     const selectedBlocks = blocks.filter(block => moveRowsSelectedIds.has(block[0].id));
@@ -9737,13 +14554,13 @@ const RunOfShowPage: React.FC = () => {
     const beforeBlocks = blocks.slice(0, targetPos).filter(block => !moveRowsSelectedIds.has(block[0].id));
     const afterBlocks = blocks.slice(targetPos).filter(block => !moveRowsSelectedIds.has(block[0].id));
     const reorderedBlocks = [...beforeBlocks, ...selectedBlocks, ...afterBlocks];
-    const reordered = reorderedBlocks.flat();
+    const reordered = [...leadingOrphans, ...reorderedBlocks.flat()];
     const movableIds = new Set(movable.map(m => m.id));
     const scheduleWithoutMovable = schedule.filter(s => !((s.day || 1) === selectedDay && movableIds.has(s.id)));
-    const boundaryItemId = boundaryIndex >= 0 ? filtered[boundaryIndex].id : null;
+    const freezeItemId = freezeEnd >= 0 ? filtered[freezeEnd].id : null;
     let insertAt: number;
-    if (boundaryItemId != null) {
-      const idx = scheduleWithoutMovable.findIndex(s => s.id === boundaryItemId);
+    if (freezeItemId != null) {
+      const idx = scheduleWithoutMovable.findIndex(s => s.id === freezeItemId);
       insertAt = idx === -1 ? 0 : idx + 1;
     } else {
       insertAt = scheduleWithoutMovable.findIndex(s => (s.day || 1) === selectedDay);
@@ -9767,16 +14584,6 @@ const RunOfShowPage: React.FC = () => {
   const duplicateScheduleItem = (itemId: number) => {
     const itemToDuplicate = schedule.find(item => item.id === itemId);
     if (!itemToDuplicate) return;
-    
-    // Generate random Timer ID for the duplicate
-    const generateRandomTimerId = () => {
-      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-      let result = '';
-      for (let i = 0; i < 5; i++) {
-        result += chars.charAt(Math.floor(Math.random() * chars.length));
-      }
-      return result;
-    };
     
     // Find the index of the item to duplicate
     const sourceIndex = schedule.findIndex(item => item.id === itemId);
@@ -9900,9 +14707,16 @@ const RunOfShowPage: React.FC = () => {
     setActiveRowMenu(null);
   };
 
-  const calculateStartTime = (index: number) => {
+  const calculateStartTime = (index: number): string => {
     const currentItem = schedule[index];
     if (!currentItem) return '';
+
+    // Timed markers: absolute = fixed clock; offset = parent scheduled + offset
+    if (isTimedMarkerItem(currentItem)) {
+      const parentIndex = findParentScheduleIndex(schedule, index, indentedCues);
+      const parentStart = parentIndex >= 0 ? calculateStartTime(parentIndex) : '';
+      return resolveTimedMarkerDisplayTime(currentItem, parentStart, startTimeDisplayMode);
+    }
 
     // Indented rows (e.g. sub-breakouts) share the parent row's start time
     if (isIndentedScheduleItem(currentItem, indentedCues)) {
@@ -9911,8 +14725,41 @@ const RunOfShowPage: React.FC = () => {
       return calculateStartTime(parentIndex);
     }
 
-    // Get the appropriate start time for this day
     const itemDay = currentItem.day || 1;
+    if (isShowBreakProgramType(currentItem.programType)) {
+      const next = nextSessionCueOf(schedule, index, (row) =>
+        itemCountsTowardStartTime(row as ScheduleItem, indentedCues)
+      );
+      return next ? calculateStartTime(next.index) : '';
+    }
+
+    const breakIdx = lastShowBreakIndexBefore(schedule, index, itemDay);
+    const firstIdx =
+      breakIdx >= 0
+        ? firstSessionCueIndexAfter(schedule, breakIdx, itemDay, (row) =>
+            itemCountsTowardStartTime(row as ScheduleItem, indentedCues)
+          )
+        : -1;
+    const sessionSec =
+      firstIdx >= 0
+        ? parseBreakStartTimeToSeconds(
+            sessionStartTimeOf(schedule[firstIdx]) || lockedStartTimes[schedule[firstIdx].id]
+          )
+        : null;
+
+    // Show Break is a hard clock cut — morning durations/offsets never continue past it.
+    if (breakIdx >= 0) {
+      if (sessionSec == null || firstIdx < 0) return '';
+      let sessionSeconds = 0;
+      for (let i = firstIdx; i < index; i++) {
+        const item = schedule[i];
+        if ((item.day || 1) === itemDay && itemCountsTowardStartTime(item, indentedCues)) {
+          sessionSeconds += (item.durationHours || 0) * 3600 + (item.durationMinutes || 0) * 60 + (item.durationSeconds || 0);
+        }
+      }
+      return formatScheduleClock(sessionSec + sessionSeconds, startTimeDisplayMode);
+    }
+
     const startTime = dayStartTimes[itemDay] || masterStartTime;
     
     // If no start time is set for this day, return blank
@@ -9923,27 +14770,45 @@ const RunOfShowPage: React.FC = () => {
     for (let i = 0; i < index; i++) {
       const item = schedule[i];
       // Only count items from the same day and non-indented items
-      if ((item.day || 1) === itemDay && !isIndentedScheduleItem(item, indentedCues)) {
+      if ((item.day || 1) === itemDay && itemCountsTowardStartTime(item, indentedCues)) {
         totalSeconds += (item.durationHours || 0) * 3600 + (item.durationMinutes || 0) * 60 + (item.durationSeconds || 0);
       }
     }
     
-    const [hours, minutes] = startTime.split(':').map(Number);
-    const startSeconds = hours * 3600 + minutes * 60;
+    const parts = startTime.split(':').map(Number);
+    const hours = parts[0];
+    const minutes = parts[1];
+    const masterSecs = Number.isFinite(parts[2]) ? parts[2] : 0;
+    const startSeconds = hours * 3600 + minutes * 60 + masterSecs;
     const totalStartSeconds = startSeconds + totalSeconds;
-    
-    const finalHours = Math.floor(totalStartSeconds / 3600) % 24;
-    const finalMinutes = Math.floor((totalStartSeconds % 3600) / 60);
-    
-    // Convert to 12-hour format
-    const date = new Date();
-    date.setHours(finalHours, finalMinutes, 0, 0);
-    return date.toLocaleTimeString('en-US', { 
-      hour: 'numeric', 
-      minute: '2-digit',
-      hour12: true 
-    });
+    return formatScheduleClock(totalStartSeconds, startTimeDisplayMode);
   };
+
+  useEffect(() => {
+    if (!schedule.length) return;
+    const pins: { id: number; time: string }[] = [];
+    schedule.forEach((item, index) => {
+      if (!isShowBreakProgramType(item.programType)) return;
+      const day = item.day || 1;
+      const firstIdx = firstSessionCueIndexAfter(schedule, index, day, (row) =>
+        itemCountsTowardStartTime(row as ScheduleItem, indentedCues)
+      );
+      if (firstIdx < 0) return;
+      const first = schedule[firstIdx];
+      if (sessionStartTimeOf(first)) return;
+      const pin = normalizeBreakStartTime(
+        lockedStartTimes[first.id] || calculateStartTime(firstIdx)
+      );
+      if (pin) pins.push({ id: first.id, time: pin });
+    });
+    if (!pins.length) return;
+    setSchedule((prev) =>
+      prev.map((row) => {
+        const pin = pins.find((entry) => entry.id === row.id);
+        return pin && !sessionStartTimeOf(row) ? { ...row, sessionStartTime: pin.time } : row;
+      })
+    );
+  }, [schedule, indentedCues]);
 
   // Export current event schedule as CSV (used by menu and Google Sheet modal shortcut)
   const handleExportCSV = () => {
@@ -9961,6 +14826,7 @@ const RunOfShowPage: React.FC = () => {
       'Speakers',
       'Has PPT',
       'Has QA',
+      'Recording',
       'Timer ID',
       'Is Public',
       'Is Indented',
@@ -10018,6 +14884,7 @@ const RunOfShowPage: React.FC = () => {
         item.speakersText || '',
         item.hasPPT ? 'Yes' : 'No',
         item.hasQA ? 'Yes' : 'No',
+        item.needsRecording ? 'Yes' : 'No',
         item.timerId || '',
         item.isPublic ? 'Yes' : 'No',
         item.isIndented ? 'Yes' : 'No',
@@ -10047,35 +14914,41 @@ const RunOfShowPage: React.FC = () => {
     URL.revokeObjectURL(url);
   };
 
-  const formatClockMinutes12h = (totalMinutes: number) => {
-    const wrapped = ((Math.round(totalMinutes) % 1440) + 1440) % 1440;
-    const date = new Date();
-    date.setHours(Math.floor(wrapped / 60), wrapped % 60, 0, 0);
-    return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-  };
-
   /**
    * In-Show: rows after the live cue follow the real clock (actual start of the running cue,
    * or now when nothing is running) instead of only the saved per-cue overtime.
    */
+  const persistLiveStartProjectionArmed = (armed: boolean) => {
+    liveStartProjectionArmedRef.current = armed;
+    setLiveStartProjectionArmed(armed);
+    if (event?.id) {
+      void DatabaseService.saveShowModeWithBaseline(event.id, { liveStartProjection: armed });
+    }
+  };
+
+  const armLiveStartProjection = () => {
+    if (liveStartProjectionArmedRef.current) return;
+    persistLiveStartProjectionArmed(true);
+  };
+
+  const disarmLiveStartProjection = () => {
+    persistLiveStartProjectionArmed(false);
+  };
+
   const liveStartAnchor = useMemo((): LiveStartAnchor | null => {
-    if (showMode !== 'in-show') return null;
+    if (showMode !== 'in-show' || !liveStartProjectionArmed) return null;
     const active = hybridTimerData?.activeTimer;
     const activeRunning =
       !!active && (active.timer_state === 'running' || (active.is_running === true && active.is_active !== false));
-    const runningId = activeRunning ? Number(active.item_id) : NaN;
-    const runningStartMs = Number.isFinite(runningId)
-      ? cueActualStarts[runningId] ?? new Date(active.started_at).getTime()
-      : NaN;
+    const runningId = activeRunning ? normalizeScheduleItemId(active.item_id) : null;
+    const runningStartMs =
+      runningId != null ? cueActualStarts[runningId] ?? new Date(active.started_at).getTime() : NaN;
     const anchor = computeLiveStartAnchor({
       schedule,
-      countsTowardStart: (row) => !isIndentedScheduleItem(row as ScheduleItem, indentedCues),
-      plannedStartSec: (index) => {
-        const mins = wallClockLabelToMinutes(String(calculateStartTime(index) || ''));
-        return mins == null ? null : mins * 60;
-      },
+      countsTowardStart: (row) => itemCountsTowardStartTime(row as ScheduleItem, indentedCues),
+      plannedStartSec: (index) => parseClockToSeconds(calculateStartTime(index)),
       running:
-        Number.isFinite(runningId) && Number.isFinite(runningStartMs)
+        runningId != null && Number.isFinite(runningStartMs)
           ? {
               itemId: runningId,
               startedAtMs: runningStartMs,
@@ -10084,7 +14957,7 @@ const RunOfShowPage: React.FC = () => {
           : null,
       actualStarts: cueActualStarts,
       nowMs: getSyncedNow(clockOffset).getTime(),
-      timeZone: resolveShowTimezone(eventTimezone),
+      timeZone: resolveShowTimezone(calendarTimezoneRef.current, eventTimezone),
     });
     if (!anchor) return null;
     // Rows above ★ (pre-show loops) never push the show
@@ -10099,6 +14972,7 @@ const RunOfShowPage: React.FC = () => {
     return anchor;
   }, [
     showMode,
+    liveStartProjectionArmed,
     hybridTimerData?.activeTimer,
     cueActualStarts,
     schedule,
@@ -10116,44 +14990,109 @@ const RunOfShowPage: React.FC = () => {
   const cueActualStartLabels = useMemo(() => {
     const out: Record<number, string> = {};
     if (showMode !== 'in-show') return out;
-    const tz = resolveShowTimezone(eventTimezone);
+    const tz = resolveShowTimezone(calendarTimezoneRef.current, eventTimezone);
+    const add = (id: number, ms: number) => {
+      if (!Number.isFinite(id) || !Number.isFinite(ms) || new Date(ms).getUTCFullYear() >= 2090) return;
+      out[id] = formatScheduleClock(eventLocalSecondsOfDay(ms, tz), startTimeDisplayMode);
+    };
     for (const [id, ms] of Object.entries(cueActualStarts)) {
-      out[Number(id)] = formatClockMinutes12h(Math.floor(eventLocalSecondsOfDay(ms, tz) / 60));
+      add(Number(id), ms);
     }
+    const active = hybridTimerData?.activeTimer;
+    const activeRunning =
+      !!active && (active.timer_state === 'running' || (active.is_running === true && active.is_active !== false));
+    if (activeRunning) {
+      const liveId = parseInt(String(active.item_id ?? active.itemId ?? ''), 10);
+      const startedRaw = active.started_at || active.timer_started_at || active.startedAt;
+      const liveMs = startedRaw != null ? new Date(startedRaw).getTime() : NaN;
+      if (!out[liveId]) add(liveId, liveMs);
+    }
+    Object.entries(timerProgress).forEach(([id, row]) => {
+      if (!row?.startedAt || out[Number(id)]) return;
+      const ms = row.startedAt instanceof Date ? row.startedAt.getTime() : new Date(row.startedAt).getTime();
+      add(Number(id), ms);
+    });
     return out;
-  }, [showMode, cueActualStarts, eventTimezone]);
+  }, [showMode, cueActualStarts, eventTimezone, startTimeDisplayMode, hybridTimerData?.activeTimer, timerProgress]);
+
+  /** Planned Start for a row with the live anchor applied, or null when the anchor does not reach it. */
+  const liveAnchoredStartMinutes = (index: number): number | null => {
+    if (!liveStartAnchor) return null;
+    const row = schedule[index];
+    if (
+      !row ||
+      index <= liveStartAnchor.anchorIndex ||
+      (row.day || 1) !== liveStartAnchor.day ||
+      !sameShowSession(schedule, liveStartAnchor.anchorIndex, index) ||
+      isIndexFrozenByShowSection(schedule, index)
+    ) return null;
+    return liveStartAnchor.offsetMinutes;
+  };
 
   // Calculate start time with automatic overtime adjustments
-  const calculateStartTimeWithOvertime = (index: number) => {
+  const calculateStartTimeWithOvertime = (index: number): string =>
+    startTimeWithOvertime(index, true);
+
+  /** Saved-overtime cascade only — Auto Roll fires on these, not on live projection. */
+  const calculatePlannedStartTimeWithOvertime = (index: number): string =>
+    startTimeWithOvertime(index, false);
+
+  const startTimeWithOvertime = (index: number, useLive: boolean): string => {
     const currentItem = schedule[index];
     if (!currentItem) return '';
+
+    // Absolute markers keep wall-clock time; offset markers follow parent OT
+    if (isTimedMarkerItem(currentItem)) {
+      const parentIndex = findParentScheduleIndex(schedule, index, indentedCues);
+      const parentStart =
+        parentIndex >= 0 &&
+        normalizeMarkerTimeMode(currentItem.markerTimeMode) !== 'absolute'
+          ? startTimeWithOvertime(parentIndex, useLive)
+          : parentIndex >= 0
+            ? calculateStartTime(parentIndex)
+            : '';
+      return resolveTimedMarkerDisplayTime(currentItem, parentStart, startTimeDisplayMode);
+    }
 
     if (isIndentedScheduleItem(currentItem, indentedCues)) {
       const parentIndex = findParentScheduleIndex(schedule, index, indentedCues);
       if (parentIndex < 0) return '';
-      return calculateStartTimeWithOvertime(parentIndex);
+      return startTimeWithOvertime(parentIndex, useLive);
+    }
+
+    if (isShowBreakProgramType(currentItem.programType)) {
+      const next = nextSessionCueOf(schedule, index, (row) =>
+        itemCountsTowardStartTime(row as ScheduleItem, indentedCues)
+      );
+      return next ? startTimeWithOvertime(next.index, useLive) : '';
     }
 
     // Get the base start time
     const baseStartTime = calculateStartTime(index);
     if (!baseStartTime) return '';
 
-    if (
-      liveStartAnchor &&
-      index > liveStartAnchor.anchorIndex &&
-      (currentItem.day || 1) === liveStartAnchor.day
-    ) {
-      const baseMinutes = wallClockLabelToMinutes(String(baseStartTime));
-      if (baseMinutes == null) return baseStartTime;
-      return formatClockMinutes12h(baseMinutes + liveStartAnchor.offsetMinutes);
+    const liveOffset = useLive ? liveAnchoredStartMinutes(index) : null;
+    if (liveOffset != null) {
+      const baseSec = parseClockToSeconds(baseStartTime);
+      if (baseSec == null) return baseStartTime;
+      return formatScheduleClock(baseSec + liveOffset * 60, startTimeDisplayMode);
     }
     
     // Calculate total overtime from previous cues, but ignore rows ABOVE the STAR
     let totalOvertimeMinutes = 0;
     
-    // Find the START cue index to know where to start counting overtime
-    const startCueIndex = startCueId ? schedule.findIndex(s => s.id === startCueId) : -1;
-    const startCountingFrom = startCueIndex !== -1 ? startCueIndex : 0;
+    const inSession = isIndexInActiveShowSection(schedule, index);
+    const sessionStartIndex = sessionStartCueId
+      ? schedule.findIndex((s) => s.id === sessionStartCueId)
+      : -1;
+    const morningStartIndex = startCueId ? schedule.findIndex((s) => s.id === startCueId) : -1;
+    const startCountingFrom = inSession
+      ? sessionStartIndex >= 0
+        ? sessionStartIndex
+        : activeShowSectionBreakIndex(schedule) + 1
+      : morningStartIndex !== -1
+        ? morningStartIndex
+        : 0;
     
     // Only count overtime from START cue onwards (ignore rows above STAR)
     for (let i = startCountingFrom; i < index; i++) {
@@ -10161,52 +15100,26 @@ const RunOfShowPage: React.FC = () => {
       const itemDay = item.day || 1;
       const currentItemDay = currentItem.day || 1;
       
-      // Only count overtime from the same day and non-indented items
-      if (itemDay === currentItemDay && !isIndentedScheduleItem(item, indentedCues)) {
+      // Only count overtime from the same day, same session, and non-indented items
+      if (
+        itemDay === currentItemDay &&
+        itemCountsTowardStartTime(item, indentedCues) &&
+        sameShowSession(schedule, i, index)
+      ) {
         totalOvertimeMinutes += overtimeMinutes[item.id] || 0;
       }
     }
 
-    // Add ★ show-start overtime only for rows on the START cue's day
-    if (
-      shouldApplyShowStartOvertime({
-        showStartOvertime,
-        startCueId,
-        startCueIndex,
-        rowIndex: index,
-        schedule,
-        rowDay: currentItem.day || 1,
-      })
-    ) {
-      totalOvertimeMinutes += showStartOvertime;
-    }
+    totalOvertimeMinutes += rowShowStartOvertime(index);
 
     // If no overtime, return the base start time
     if (totalOvertimeMinutes === 0) {
       return baseStartTime;
     }
     
-    // Parse the base start time and add overtime
-    const [timePart, period] = baseStartTime.split(' ');
-    const [hours, minutes] = timePart.split(':').map(Number);
-    
-    let hour24 = hours;
-    if (period === 'PM' && hours !== 12) hour24 += 12;
-    if (period === 'AM' && hours === 12) hour24 = 0;
-    
-    // Add overtime minutes
-    const totalMinutes = hour24 * 60 + minutes + totalOvertimeMinutes;
-    const finalHours = Math.floor(totalMinutes / 60) % 24;
-    const finalMinutes = totalMinutes % 60;
-    
-    // Convert back to 12-hour format
-    const date = new Date();
-    date.setHours(finalHours, finalMinutes, 0, 0);
-    return date.toLocaleTimeString('en-US', { 
-      hour: 'numeric', 
-      minute: '2-digit',
-      hour12: true 
-    });
+    const baseSec = parseClockToSeconds(baseStartTime);
+    if (baseSec == null) return baseStartTime;
+    return formatScheduleClock(baseSec + totalOvertimeMinutes * 60, startTimeDisplayMode);
   };
 
   // Precompute cumulative overtime for each row (optimization to avoid passing schedule array)
@@ -10215,6 +15128,9 @@ const RunOfShowPage: React.FC = () => {
     
     // Find the START cue index to know where to start counting overtime
     const startCueIndex = startCueId ? schedule.findIndex(s => s.id === startCueId) : -1;
+    const sessionStartIndex = sessionStartCueId
+      ? schedule.findIndex((s) => s.id === sessionStartCueId)
+      : -1;
     
     schedule.forEach((item, index) => {
       let totalOvertime = 0;
@@ -10229,43 +15145,66 @@ const RunOfShowPage: React.FC = () => {
       if (
         liveStartAnchor &&
         index > liveStartAnchor.anchorIndex &&
-        currentItemDay === liveStartAnchor.day
+        currentItemDay === liveStartAnchor.day &&
+        sameShowSession(schedule, liveStartAnchor.anchorIndex, index) &&
+        !isIndexFrozenByShowSection(schedule, index)
       ) {
         overtimeMap.set(item.id, liveStartAnchor.offsetMinutes);
         return;
       }
-      const startCountingFrom = startCueIndex !== -1 ? startCueIndex : 0;
+      const startCountingFrom = isIndexInActiveShowSection(schedule, index)
+        ? sessionStartIndex >= 0
+          ? sessionStartIndex
+          : activeShowSectionBreakIndex(schedule) + 1
+        : startCueIndex !== -1
+          ? startCueIndex
+          : 0;
       
       // Only count overtime from START cue onwards (ignore rows above STAR)
       for (let i = startCountingFrom; i < index; i++) {
         const prevItem = schedule[i];
         const prevItemDay = prevItem.day || 1;
         
-        // Only count overtime from the same day and non-indented items
-        if (prevItemDay === currentItemDay && !isIndentedScheduleItem(prevItem, indentedCues)) {
+        // Only count overtime from the same day, same session, and non-indented items
+        if (
+          prevItemDay === currentItemDay &&
+          itemCountsTowardStartTime(prevItem, indentedCues) &&
+          sameShowSession(schedule, i, index)
+        ) {
           totalOvertime += overtimeMinutes[prevItem.id] || 0;
         }
       }
 
-      // Add ★ show-start overtime only for rows on the START cue's day
-      if (
-        shouldApplyShowStartOvertime({
-          showStartOvertime,
-          startCueId,
-          startCueIndex,
-          rowIndex: index,
-          schedule,
-          rowDay: currentItemDay,
-        })
-      ) {
-        totalOvertime += showStartOvertime;
-      }
+      totalOvertime += rowShowStartOvertime(index);
 
       overtimeMap.set(item.id, totalOvertime);
     });
 
     return overtimeMap;
-  }, [schedule, overtimeMinutes, indentedCues, startCueId, showStartOvertime, liveStartAnchor]);
+  }, [schedule, overtimeMinutes, indentedCues, startCueId, showStartOvertime, sessionStartCueId, sessionShowStartOvertime, liveStartAnchor]);
+
+  const resolveShowBreakResume = (item: ScheduleItem, fallbackIndex: number) => {
+    if (!isShowBreakProgramType(item.programType)) return null;
+    const breakIndex = schedule.findIndex((row) => row.id === item.id);
+    return nextSessionCueOf(
+      schedule,
+      breakIndex >= 0 ? breakIndex : fallbackIndex,
+      (row) => itemCountsTowardStartTime(row as ScheduleItem, indentedCues)
+    );
+  };
+
+  const showBreakResumeMirror = (item: ScheduleItem, fallbackIndex: number) => {
+    const next = resolveShowBreakResume(item, fallbackIndex);
+    if (!next) return null;
+    return {
+      itemId: next.item.id,
+      index: next.index,
+      lockedStartTime: lockedStartTimes[next.item.id] || null,
+      actualStartLabel: cueActualStartLabels[Number(next.item.id)] || null,
+      cumulativeOvertime: cumulativeOvertimeByItemId.get(next.item.id) || 0,
+      clockLabel: String(calculateStartTime(next.index) || ''),
+    };
+  };
 
   // Get available days based on event duration
   const getAvailableDays = () => {
@@ -10288,10 +15227,11 @@ const RunOfShowPage: React.FC = () => {
 
   // Memoized filtered schedule
   const filteredSchedule = useMemo(() => getFilteredSchedule(), [schedule, selectedDay]);
+  const duplicateCues = useMemo(() => buildDuplicateCueMap(filteredSchedule), [filteredSchedule]);
 
   // Pin-Notes popout: send schedule + current cue + selected columns (and available columns for selector)
   const sendPinNotesUpdate = useCallback(() => {
-    if (!pinNotesWindow || pinNotesWindow.closed || pinNotesColumns.length === 0) return;
+    if (!pinNotesWindow || pinNotesWindow.closed) return;
     const currentId = hybridTimerData?.activeTimer?.item_id ?? activeItemId;
     const availableColumns: { type: 'notes' | 'custom' | 'cue'; id: string; name: string }[] = [
       { type: 'notes', id: 'notes', name: 'Notes' },
@@ -10313,7 +15253,7 @@ const RunOfShowPage: React.FC = () => {
   useEffect(() => {
     const handleMessage = (e: MessageEvent) => {
       if (e.data?.type === 'PIN_NOTES_READY') sendPinNotesUpdate();
-      if (e.data?.type === 'PIN_NOTES_SET_COLUMNS' && Array.isArray(e.data?.columns) && e.data.columns.length > 0) {
+      if (e.data?.type === 'PIN_NOTES_SET_COLUMNS' && Array.isArray(e.data?.columns)) {
         setPinNotesColumns(e.data.columns);
       }
     };
@@ -10331,17 +15271,24 @@ const RunOfShowPage: React.FC = () => {
     filteredSchedule.forEach((item, index) => {
       const hybridItemId: any = hybridTimerData?.activeTimer?.item_id;
       const isMatch = hybridItemId && (parseInt(String(hybridItemId)) === item.id || hybridItemId === item.id || String(hybridItemId) === String(item.id));
-      const isHybridRunning = Boolean(isMatch && hybridTimerData?.activeTimer?.is_running && hybridTimerData?.activeTimer?.is_active);
-      const isHybridLoaded = Boolean(isMatch && hybridTimerData?.activeTimer?.is_active && !hybridTimerData?.activeTimer?.is_running);
+      const isHybridRunning = Boolean(
+        isMatch &&
+          hybridTimerData?.activeTimer?.is_active !== false &&
+          (hybridTimerData?.activeTimer?.is_running ||
+            hybridTimerData?.activeTimer?.timer_state === 'running' ||
+            activeTimers[item.id])
+      );
+      const isHybridLoaded = Boolean(isMatch && hybridTimerData?.activeTimer?.is_active && !hybridTimerData?.activeTimer?.is_running && hybridTimerData?.activeTimer?.timer_state !== 'running');
       const isCompleted = isItemCompleted(item.id);
       const isStopped = stoppedItems.has(item.id);
 
-      if (isHybridRunning && !isCompleted && !isStopped) {
+      // Running wins over stale completed flags (refresh / tab return)
+      if (isHybridRunning && !isStopped) {
         classNames.set(
           item.id,
           isResolumeSynced(hybridTimerData?.activeTimer)
             ? RESOLUME_RUNNING_ROW_CLASS
-            : 'bg-green-950'
+            : 'bg-[#053816] ring-2 ring-inset ring-green-400'
         );
         return;
       }
@@ -10349,7 +15296,9 @@ const RunOfShowPage: React.FC = () => {
         classNames.set(item.id, RESOLUME_RUNNING_ROW_CLASS);
         return;
       }
-      if (showCompletedHighlight && (isCompleted || isStopped)) {
+      // Completed/stopped → dimmed purple immediately (even if still "loaded").
+      // Only a RUNNING cue stays green over completed.
+      if (showCompletedHighlight && (isCompleted || isStopped) && !isCueRunningOnStage(item.id)) {
         classNames.set(item.id, COMPLETED_ROW_CLASS);
         return;
       }
@@ -10366,17 +15315,45 @@ const RunOfShowPage: React.FC = () => {
         classNames.set(item.id, 'bg-purple-950/60 ring-1 ring-inset ring-purple-400');
         return;
       }
-      if (loadedCueDependents.has(item.id)) { classNames.set(item.id, 'bg-amber-950 border-amber-600'); return; }
-      if (indentedCues[item.id]) {
-        const parentId = indentedCues[item.id].parentId;
-        const currentlyLoadedItemId: any = hybridTimerData?.activeTimer?.item_id || activeItemId;
-        const parentIsLoaded = Boolean(currentlyLoadedItemId && (
-          parseInt(String(currentlyLoadedItemId)) === parentId ||
-          currentlyLoadedItemId === parentId ||
-          String(currentlyLoadedItemId) === String(parentId)
-        ));
-        const parentIsRunning = activeTimers[parentId] !== undefined;
-        if (parentIsLoaded || parentIsRunning) { classNames.set(item.id, 'bg-amber-950 border-amber-600'); return; }
+      // Indented sub-cues + timed markers: amber while parent is loaded/running
+      if (loadedCueDependents.has(item.id)) {
+        classNames.set(item.id, 'bg-amber-950 border-amber-600');
+        return;
+      }
+      if (indentedCues[item.id] || item.isTimedMarker) {
+        const parentId =
+          indentedCues[item.id]?.parentId ??
+          (() => {
+            const idx = filteredSchedule.findIndex((s) => s.id === item.id);
+            if (idx < 0) return null;
+            const pIdx = findParentScheduleIndex(filteredSchedule, idx, indentedCues);
+            return pIdx >= 0 ? filteredSchedule[pIdx].id : null;
+          })();
+        if (parentId != null) {
+          const currentlyLoadedItemId: any = hybridTimerData?.activeTimer?.item_id || activeItemId;
+          const parentIsLoaded = Boolean(currentlyLoadedItemId && (
+            parseInt(String(currentlyLoadedItemId)) === parentId ||
+            currentlyLoadedItemId === parentId ||
+            String(currentlyLoadedItemId) === String(parentId)
+          ));
+          const parentIsRunning =
+            activeTimers[parentId] !== undefined ||
+            Boolean(
+              hybridTimerData?.activeTimer &&
+              itemMatchesTimerRow(parentId, hybridTimerData.activeTimer) &&
+              (hybridTimerData.activeTimer.is_running ||
+                hybridTimerData.activeTimer.timer_state === 'running')
+            );
+          if (parentIsLoaded || parentIsRunning) {
+            classNames.set(item.id, 'bg-amber-950 border-amber-600');
+            return;
+          }
+        }
+      }
+      // Idle timed markers keep sky tint (no left border — that shifted columns vs header)
+      if (item.isTimedMarker) {
+        classNames.set(item.id, 'bg-sky-950/50');
+        return;
       }
       if (lastLoadedCueId === item.id) { classNames.set(item.id, 'bg-purple-950 border-purple-400'); return; }
       classNames.set(item.id, index % 2 === 0 ? 'bg-slate-800' : 'bg-slate-900');
@@ -10384,8 +15361,21 @@ const RunOfShowPage: React.FC = () => {
     return classNames;
   }, [
     filteredSchedule,
-    hybridTimerData?.activeTimer,
-    hybridTimerData?.secondaryTimer,
+    // Color-relevant timer slices only — elapsed ticks must not rebuild row classes
+    hybridTimerData?.activeTimer?.item_id,
+    hybridTimerData?.activeTimer?.is_running,
+    hybridTimerData?.activeTimer?.timer_state,
+    hybridTimerData?.activeTimer?.is_active,
+    hybridTimerData?.activeTimer?.resolume_state,
+    hybridTimerData?.activeTimer?.mitti_state,
+    hybridTimerData?.activeTimer?.time_source,
+    hybridTimerData?.secondaryTimer?.item_id,
+    hybridTimerData?.secondaryTimer?.is_running,
+    hybridTimerData?.secondaryTimer?.timer_state,
+    hybridTimerData?.secondaryTimer?.is_active,
+    hybridTimerData?.secondaryTimer?.resolume_state,
+    hybridTimerData?.secondaryTimer?.mitti_state,
+    hybridTimerData?.secondaryTimer?.time_source,
     completedCues,
     stoppedItems,
     loadedCueDependents,
@@ -10413,52 +15403,68 @@ const RunOfShowPage: React.FC = () => {
     if (!mainScrollContainer) return;
 
     let isSyncing = false;
+    let stickyHeaderContainer: HTMLElement | null = null;
 
-    const syncScroll = (source: HTMLElement, target: HTMLElement) => {
-      if (isSyncing) return;
+    const syncScroll = (source: HTMLElement, target: HTMLElement | null) => {
+      if (!target || isSyncing) return;
+      if (target.scrollLeft === source.scrollLeft) return;
       isSyncing = true;
       target.scrollLeft = source.scrollLeft;
-      // Use requestAnimationFrame to reset the flag after the scroll event has been processed
+      // Hold lock through the browser's follow-up scroll event from the assignment
       requestAnimationFrame(() => {
-        isSyncing = false;
+        requestAnimationFrame(() => {
+          isSyncing = false;
+        });
       });
     };
 
     const handleMainScroll = () => {
-      // Sync with sticky header if it exists
-      const stickyHeaderContainer = document.querySelector('.sticky-header-scroll-container');
-      if (stickyHeaderContainer) {
-        syncScroll(mainScrollContainer, stickyHeaderContainer as HTMLElement);
+      syncScroll(mainScrollContainer, stickyHeaderContainer);
+    };
+
+    const handleStickyHeaderScroll = (e: Event) => {
+      syncScroll(e.currentTarget as HTMLElement, mainScrollContainer);
+    };
+
+    const bindStickyHeader = () => {
+      const next = document.querySelector(
+        '.sticky-header-scroll-container'
+      ) as HTMLElement | null;
+      if (next !== stickyHeaderContainer) {
+        if (stickyHeaderContainer) {
+          stickyHeaderContainer.removeEventListener('scroll', handleStickyHeaderScroll);
+        }
+        stickyHeaderContainer = next;
+        if (stickyHeaderContainer) {
+          stickyHeaderContainer.addEventListener('scroll', handleStickyHeaderScroll, {
+            passive: true,
+          });
+        }
+      }
+      // Always re-align when sticky header is shown/resized (not only on first bind)
+      if (stickyHeaderContainer && stickyHeaderContainer.scrollLeft !== mainScrollContainer.scrollLeft) {
+        stickyHeaderContainer.scrollLeft = mainScrollContainer.scrollLeft;
       }
     };
 
-    const handleStickyHeaderScroll = () => {
-      const stickyHeaderContainer = document.querySelector('.sticky-header-scroll-container');
-      if (stickyHeaderContainer) {
-        syncScroll(stickyHeaderContainer as HTMLElement, mainScrollContainer);
-      }
-    };
+    mainScrollContainer.addEventListener('scroll', handleMainScroll, { passive: true });
+    bindStickyHeader();
 
-    mainScrollContainer.addEventListener('scroll', handleMainScroll);
-
-    // Add listener for sticky header when it appears
-    const observer = new MutationObserver(() => {
-      const stickyHeaderContainer = document.querySelector('.sticky-header-scroll-container');
-      if (stickyHeaderContainer) {
-        stickyHeaderContainer.addEventListener('scroll', handleStickyHeaderScroll);
-      }
-    });
-
+    // Re-bind only when the sticky header node appears/disappears (no stacked listeners)
+    const observer = new MutationObserver(bindStickyHeader);
     observer.observe(document.body, {
       childList: true,
-      subtree: true
+      subtree: true,
     });
 
     return () => {
       mainScrollContainer.removeEventListener('scroll', handleMainScroll);
+      if (stickyHeaderContainer) {
+        stickyHeaderContainer.removeEventListener('scroll', handleStickyHeaderScroll);
+      }
       observer.disconnect();
     };
-  }, []);
+  }, [showGridHeaders]);
 
   // Drag-to-scroll functionality for horizontal scrolling
   useEffect(() => {
@@ -10574,54 +15580,13 @@ const RunOfShowPage: React.FC = () => {
     };
   }, []);
 
-  // Auto-scroll to active row when activeItemId changes
   useEffect(() => {
-    if (activeItemId !== null) {
-      // Small delay to ensure DOM is updated
-      setTimeout(() => {
-        scrollToActiveRow();
-      }, 100);
-    }
-  }, [activeItemId, isFollowEnabled]);
-
-        // Auto-scroll to active timer row when timers start/stop
-        useEffect(() => {
-          if (isFollowEnabled && Object.keys(activeTimers).length > 0) {
-            const activeTimerId = parseInt(Object.keys(activeTimers)[0]);
-            const activeRow = document.querySelector(`[data-item-id="${activeTimerId}"]`);
-            if (activeRow) {
-              setTimeout(() => {
-                // Find the column headers (main grid headers) to ensure row doesn't scroll past them
-                const columnHeaders = document.querySelector('#main-scroll-container .h-24');
-                let headerOffset = 100; // Default fallback
-                
-                if (columnHeaders) {
-                  const headerRect = columnHeaders.getBoundingClientRect();
-                  const containerRect = document.querySelector('#main-scroll-container')?.getBoundingClientRect();
-                  if (containerRect) {
-                    // Calculate the offset from the top of the viewport to the bottom of column headers
-                    // Use getBoundingClientRect for consistent positioning regardless of horizontal scroll
-                    headerOffset = headerRect.bottom - containerRect.top - 120; // -120px gap - split the difference
-                  }
-                }
-                
-                // Calculate position: ensure row doesn't go above column headers
-                // Use getBoundingClientRect for consistent positioning regardless of horizontal scroll
-                const elementRect = (activeRow as HTMLElement).getBoundingClientRect();
-                const containerRect = document.querySelector('#main-scroll-container')?.getBoundingClientRect();
-                if (containerRect) {
-                  const scrollPosition = elementRect.top - containerRect.top - headerOffset;
-                  
-                  // Scroll to position the row below the column headers
-                  window.scrollTo({
-                    top: scrollPosition,
-                    behavior: 'smooth'
-                  });
-                }
-              }, 100);
-            }
-          }
-        }, [activeTimers, isFollowEnabled]);
+    if (!isFollowEnabled || followTargetId == null) return;
+    const timer = window.setTimeout(() => {
+      scrollToFollowTarget(followTargetId);
+    }, 120);
+    return () => window.clearTimeout(timer);
+  }, [followTargetId, isFollowEnabled]);
   if (!event) {
     return (
       <div className="min-h-screen bg-slate-900 text-white flex items-center justify-center">
@@ -10639,6 +15604,285 @@ const RunOfShowPage: React.FC = () => {
   }
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 text-slate-200">
+      {canAccessPreFlightChecklist(user) &&
+      event?.id &&
+      showMode === 'rehearsal' &&
+      inShowNudgeEligible &&
+      !inShowNudgeDismissed ? (
+        <div className="fixed inset-0 z-[72] flex items-center justify-center p-4 sm:p-8">
+          <div
+            className="absolute inset-0 bg-black/55 backdrop-blur-[1px]"
+            onClick={() => setInShowNudgeDismissed(true)}
+            aria-hidden
+          />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="inshow-nudge-title"
+            className="ros-inshow-nudge-banner relative z-10 w-full max-w-xl overflow-hidden rounded-2xl border-2 border-violet-500/60 bg-slate-800 shadow-2xl shadow-black/50"
+          >
+            <div className="h-1.5 w-full bg-gradient-to-r from-violet-500 via-orange-400 to-emerald-500" />
+            <div className="px-8 py-10 text-center sm:px-10 sm:py-12">
+              <div className="mx-auto mb-5 flex items-center justify-center gap-3">
+                <span className="ros-preshow-callout-tally h-3.5 w-3.5 rounded-full bg-orange-400" />
+                <span
+                  id="inshow-nudge-title"
+                  className="ros-inshow-nudge-title text-xs font-semibold tracking-[0.35em] text-orange-300 sm:text-sm"
+                >
+                  PRE SHOW RUNNING
+                </span>
+              </div>
+              <p className="ros-preshow-brand-text text-3xl font-bold leading-tight sm:text-4xl">
+                Switch to In-Show
+              </p>
+              <p className="mt-3 text-base text-orange-100/90">
+                Still in Rehearsal
+                {currentUserRole !== 'OPERATOR' ? ' — Operator needed to toggle' : ''}
+              </p>
+              <p className="mx-auto mt-4 max-w-md text-sm leading-snug text-slate-300">
+                Only In-Show adjusts schedule timing from timers that run over or have time remaining.
+              </p>
+              <div className="mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row">
+                {currentUserRole === 'OPERATOR' ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setInShowNudgeDismissed(true);
+                      setShowInShowConfirmModal(true);
+                    }}
+                    className="rounded-xl bg-blue-600 px-10 py-4 text-lg font-bold text-white shadow-lg shadow-blue-900/40 hover:bg-blue-500 sm:text-xl"
+                  >
+                    Switch to In-Show
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => setInShowNudgeDismissed(true)}
+                  className="rounded-xl bg-slate-700/90 px-8 py-3 text-sm font-semibold text-slate-200 hover:bg-slate-600"
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {/* Audio callout alert — centered */}
+      {activeVoAlert && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center pointer-events-none">
+          <div className="absolute inset-0 bg-black/50 pointer-events-auto" />
+          <div
+            className={`pointer-events-auto relative mx-4 flex max-w-3xl flex-col items-center gap-4 rounded-2xl border-4 px-10 py-8 text-center shadow-2xl ${
+              activeVoAlert.vo.kind === 'bgm'
+                ? 'border-teal-400 bg-teal-950 shadow-teal-900/60'
+                : 'border-amber-400 bg-amber-950 shadow-amber-900/60'
+            }`}
+          >
+            <div
+              className={`text-3xl font-bold leading-snug ${
+                activeVoAlert.vo.kind === 'bgm' ? 'text-teal-100' : 'text-amber-100'
+              }`}
+            >
+              {formatCalloutChipText(activeVoAlert.vo)}
+            </div>
+            <div
+              className={`text-lg ${
+                activeVoAlert.vo.kind === 'bgm' ? 'text-teal-200/90' : 'text-amber-200/90'
+              }`}
+            >
+              {activeVoAlert.segmentName}
+            </div>
+            <button
+              type="button"
+              className={`mt-2 rounded-xl px-8 py-3 text-lg font-bold text-white ${
+                activeVoAlert.vo.kind === 'bgm'
+                  ? 'bg-teal-600 hover:bg-teal-500'
+                  : 'bg-amber-600 hover:bg-amber-500'
+              }`}
+              onClick={() => {
+                const key = `${activeVoAlert.itemId}:${activeVoAlert.vo.id}`;
+                setDismissedVoAlerts((prev) => new Set(prev).add(key));
+                setActiveVoAlert(null);
+              }}
+            >
+              Fired / Dismiss
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Pre-show standing-by — centered lightbox (T−5 until start) */}
+      {activePreshowWarn && (() => {
+        const synced = getSyncedNow(clockOffset);
+        const tz = resolveShowTimezone(calendarTimezoneRef.current, eventTimezone);
+        const startMs = wallClockStartUtcMs(activePreshowWarn.startHHMM, synced, tz);
+        const remainMs = startMs != null ? Math.max(0, startMs - synced.getTime()) : 0;
+        void preshowWarnTick;
+        const totalSec = Math.ceil(remainMs / 1000);
+        const mm = Math.floor(totalSec / 60);
+        const ss = totalSec % 60;
+        const tMinus = `${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
+        const armKey = `${event?.id}:${activePreshowWarn.itemId}:${activePreshowWarn.startHHMM}`;
+        const isArmed = isPreshowArmedForKey(preshowShowDayArmed, armKey);
+        const dismiss = () => {
+          const workingDay = resolvePreshowWorkingDay(
+            event?.date,
+            event?.numberOfDays,
+            selectedDay
+          );
+          const cue = resolveSessionPreshowCue(workingDay);
+          const startHHMM = cue
+            ? resolvePreshowStartHHMM({
+                cue,
+                lockedStartTimes,
+                dayStartTimes,
+                masterStartTime,
+              })
+            : null;
+          const key = `${event?.id}:${activePreshowWarn.itemId}:${startHHMM || activePreshowWarn.startHHMM}`;
+          setDismissedPreshowWarnKeys((prev) => new Set(prev).add(key));
+          setActivePreshowWarn(null);
+        };
+        const confirmShowDay = () => {
+          if (!event?.id || isArmed || preshowConfirmBusy) return;
+          const todayDay = resolvePreshowWorkingDay(
+            event.date,
+            event.numberOfDays,
+            selectedDay
+          );
+          const payload = {
+            confirmed: true as const,
+            day: todayDay,
+            key: armKey,
+            cueId: activePreshowWarn.itemId,
+            startHHMM: activePreshowWarn.startHHMM,
+            confirmedAt: new Date().toISOString(),
+            confirmedBy: user?.id != null ? String(user.id) : null,
+            confirmedByName: user?.full_name || user?.email || null,
+          };
+          setPreshowConfirmBusy(true);
+          void (async () => {
+            try {
+              const ok = await DatabaseService.saveShowModeWithBaseline(event.id, {
+                preshowShowDay: payload,
+              });
+              if (ok) {
+                setPreshowShowDayArmed(payload);
+                if (event.numberOfDays && event.numberOfDays > 1) {
+                  userChangedDayRef.current = true;
+                  setSelectedDay(todayDay);
+                }
+                // Prime: load cue so everyone sees LOADED (start still fires at scheduled time)
+                try {
+                  await loadCueRef.current(activePreshowWarn.itemId);
+                } catch (err) {
+                  console.warn('⚠️ Pre-show arm loadCue failed:', err);
+                }
+              }
+            } catch (err) {
+              console.error('❌ Confirm show day failed:', err);
+            } finally {
+              setPreshowConfirmBusy(false);
+            }
+          })();
+        };
+        return (
+          <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 sm:p-8">
+            <div
+              className="absolute inset-0 bg-black/55 backdrop-blur-[1px]"
+              onClick={dismiss}
+              aria-hidden
+            />
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="preshow-standby-title"
+              className="ros-preshow-callout relative z-10 w-full max-w-3xl overflow-hidden rounded-2xl border border-slate-600 bg-slate-800 shadow-2xl shadow-black/50"
+            >
+              <div className="h-1.5 w-full bg-gradient-to-r from-violet-500 via-blue-500 to-emerald-500" />
+              <div className="px-8 py-10 text-center sm:px-12 sm:py-12">
+                <div className="mx-auto mb-5 flex items-center justify-center gap-3">
+                  <span className="ros-preshow-callout-tally h-3 w-3 rounded-full bg-violet-400" />
+                  <span
+                    id="preshow-standby-title"
+                    className="text-sm font-semibold tracking-[0.35em] text-slate-300 sm:text-base"
+                  >
+                    PRE-SHOW STANDING BY
+                  </span>
+                </div>
+                <p className="text-lg text-white sm:text-xl">
+                  {activePreshowWarn.segmentName}
+                </p>
+                <p className="mt-4 text-base text-slate-300 sm:text-lg">
+                  {isArmed
+                    ? 'Show day confirmed — Pre-Show is armed for everyone and will auto load & start at the set time.'
+                    : 'Confirm show day to arm Pre-Show for everyone in this event (works for Viewer, Editor, and Operator).'}
+                </p>
+                <div className="mt-8 grid grid-cols-1 gap-6 sm:grid-cols-2 sm:gap-10">
+                  <div className="rounded-xl border border-slate-600 bg-slate-700/80 px-6 py-5 shadow-sm">
+                    <div className="text-xs uppercase tracking-[0.2em] text-slate-400">
+                      Start time
+                    </div>
+                    <div className="mt-2 font-mono text-4xl font-semibold tabular-nums text-white sm:text-5xl">
+                      {activePreshowWarn.startLabel}
+                    </div>
+                  </div>
+                  <div className="rounded-xl border border-violet-500/40 bg-violet-950/50 px-6 py-5 shadow-sm">
+                    <div className="text-xs uppercase tracking-[0.2em] text-violet-300">
+                      Time remaining
+                    </div>
+                    <div className="mt-2 font-mono text-4xl font-bold tabular-nums tracking-tight text-violet-200 sm:text-5xl">
+                      T−{tMinus}
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-8 flex flex-col items-center gap-3">
+                  {isArmed ? (
+                    <div className="rounded-xl border border-emerald-500/50 bg-emerald-950/60 px-6 py-3 text-sm font-semibold text-emerald-200">
+                      ✓ Show day confirmed
+                      {preshowShowDayArmed?.confirmedByName
+                        ? ` · ${preshowShowDayArmed.confirmedByName}`
+                        : ''}
+                      — locked for this event
+                    </div>
+                  ) : (
+                    <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-violet-500/40 bg-violet-950/40 px-5 py-3 text-left text-sm text-violet-100 hover:bg-violet-950/70">
+                      <input
+                        type="checkbox"
+                        className="h-5 w-5 rounded border-violet-400"
+                        checked={false}
+                        disabled={preshowConfirmBusy}
+                        onChange={(e) => {
+                          if (e.target.checked) confirmShowDay();
+                        }}
+                      />
+                      <span>
+                        <span className="font-semibold text-white">
+                          Confirm it is show day
+                          {event?.numberOfDays && event.numberOfDays > 1
+                            ? ` (Day ${resolvePreshowWorkingDay(event.date, event.numberOfDays, selectedDay)})`
+                            : ''}
+                        </span>
+                        <span className="mt-0.5 block text-xs text-violet-200/80">
+                          Arms Pre-Show globally so it auto-starts even if you&apos;re Viewer or Editor
+                        </span>
+                      </span>
+                    </label>
+                  )}
+                  <button
+                    type="button"
+                    className="rounded-xl bg-slate-600 px-10 py-3.5 text-base font-semibold text-white hover:bg-slate-500 sm:text-lg"
+                    onClick={dismiss}
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Page Visibility Indicator */}
       {!isPageVisible && (
         <div className="fixed top-4 left-1/2 transform -translate-x-1/2 z-50 bg-yellow-600 text-white px-4 py-2 rounded-lg shadow-lg flex items-center gap-2">
@@ -10652,28 +15896,30 @@ const RunOfShowPage: React.FC = () => {
         isOpen={showRoleChangeModal}
         onClose={() => setShowRoleChangeModal(false)}
         onRoleSelected={(role) => {
-          setCurrentUserRole(role as 'VIEWER' | 'EDITOR' | 'OPERATOR');
+          const resolved = resolveSessionRole(role, user);
+          setCurrentUserRole(resolved);
+          currentUserRoleRef.current = resolved;
+          roleHydratedRef.current = true;
           
-          // Save role to both API and localStorage
+          // Save role to both API and localStorage (Viewer / Editor / Operator)
           if (event?.id && user?.id) {
             try {
               const username = user.full_name || user.email || 'Unknown';
-              DatabaseService.saveUserSession(event.id, user.id, username, role).then(success => {
+              localStorage.setItem(`userRole_${event.id}`, resolved);
+              localStorage.setItem(`user_role_${event.id}_${user.id}`, resolved);
+              DatabaseService.saveUserSession(event.id, user.id, username, resolved).then(success => {
                 if (success) {
-                  console.log('✅ Role saved to API from RunOfShowPage:', role);
+                  console.log('✅ Role saved to API from RunOfShowPage:', resolved);
                 } else {
                   console.log('⚠️ Failed to save role to API, using localStorage only');
                 }
               });
-              
-              // Also save to localStorage for immediate access
-              localStorage.setItem(`userRole_${event.id}`, role);
-              console.log('💾 Saved role to localStorage from RunOfShowPage:', role);
+              console.log('💾 Saved role to localStorage from RunOfShowPage:', resolved);
             } catch (error) {
               console.error('❌ Failed to save role to API from RunOfShowPage:', error);
-              // Still save to localStorage as fallback
-              localStorage.setItem(`userRole_${event.id}`, role);
-              console.log('💾 Saved role to localStorage as fallback:', role);
+              localStorage.setItem(`userRole_${event.id}`, resolved);
+              localStorage.setItem(`user_role_${event.id}_${user.id}`, resolved);
+              console.log('💾 Saved role to localStorage as fallback:', resolved);
             }
           }
           setShowRoleChangeModal(false);
@@ -10688,11 +15934,20 @@ const RunOfShowPage: React.FC = () => {
         onConfirm={() => {
           void (async () => {
             if (!event?.id) return;
+            const existing = rehearsalBaseline;
+            const baseline = existing || buildRehearsalBaseline(schedule);
+            const isNewBaseline = !existing;
+            // Freeze current Start column times so WAS stays put when durations/offsets change.
             const nextLocked: Record<number, string> = {};
             const lockedForApi: Record<string, string> = {};
             schedule.forEach((item, idx) => {
               if (item?.id == null) return;
               if (indentedCues[item.id] || item.isIndented) return;
+              if (isIndexFrozenByShowSection(schedule, idx) && lockedStartTimes[item.id]) {
+                nextLocked[item.id] = lockedStartTimes[item.id];
+                lockedForApi[String(item.id)] = lockedStartTimes[item.id];
+                return;
+              }
               const t = String(calculateStartTime(idx) || '').trim();
               if (!t) return;
               nextLocked[item.id] = t;
@@ -10700,24 +15955,60 @@ const RunOfShowPage: React.FC = () => {
             });
             await DatabaseService.saveShowModeWithBaseline(event.id, {
               showMode: 'in-show',
+              rehearsalBaseline: baseline,
               lockedStartTimes: lockedForApi,
             });
             setShowMode('in-show');
+            setRehearsalBaseline(baseline);
             setLockedStartTimes(nextLocked);
             logChange(
               'SHOW_MODE_CHANGE',
-              `Entered In-Show — locked start times (${Object.keys(nextLocked).length})`,
+              isNewBaseline
+                ? `Entered In-Show — locked start times (${Object.keys(nextLocked).length}) + frozen rehearsal baseline (${baseline.itemCount} rows)`
+                : `Entered In-Show — locked start times (${Object.keys(nextLocked).length}); keeping rehearsal baseline from ${new Date(baseline.capturedAt).toLocaleString()}`,
               {
                 fieldName: 'showMode',
                 oldValue: 'rehearsal',
                 newValue: 'in-show',
+                baselineCapturedAt: baseline.capturedAt,
+                baselineItemCount: baseline.itemCount,
+                newBaseline: isNewBaseline,
                 lockedStartCount: Object.keys(nextLocked).length,
               }
             );
           })();
         }}
         title="Enter Live Show Tracking Mode?"
-        message="Current start times will be locked. WAS under Start will keep those locked times even if you add or remove minutes. Overtime will be tracked and the Start column will show live adjustments. Hit OK to continue."
+        message={(() => {
+          const core = rehearsalBaseline
+            ? `Current start times will be locked. WAS under Start will keep those locked times even if you add or remove minutes. Overtime will be tracked and the Start column will show live adjustments. Your rehearsal baseline from ${new Date(rehearsalBaseline.capturedAt).toLocaleString()} will be kept for Show vs rehearsal. Hit OK to continue.`
+            : 'Current start times will be locked. WAS under Start will keep those locked times even if you add or remove minutes. Overtime will be tracked and the Start column will show live adjustments. The current schedule will be frozen as the rehearsal baseline for Show vs rehearsal. Hit OK to continue.';
+          const multiDay = Boolean(event?.numberOfDays && event.numberOfDays > 1);
+          const rawStart = multiDay
+            ? (dayStartTimes[selectedDay] || dayStartTimes[String(selectedDay) as any] || masterStartTime)
+            : masterStartTime;
+          let startLabel = '';
+          if (rawStart) {
+            const [h, m] = String(rawStart).split(':').map(Number);
+            if (Number.isFinite(h) && Number.isFinite(m)) {
+              const d = new Date();
+              d.setHours(h, m, 0, 0);
+              startLabel = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+            } else {
+              startLabel = String(rawStart);
+            }
+          }
+          if (!multiDay) {
+            return startLabel ? `Start ${startLabel}. ${core}` : core;
+          }
+          const calendarDay = getEventDayNumberForDate(event?.date, event?.numberOfDays);
+          const startBit = startLabel ? ` · start ${startLabel}` : '';
+          const dayNote =
+            calendarDay != null && calendarDay !== selectedDay
+              ? `Day ${selectedDay}${startBit} (today is Day ${calendarDay}). `
+              : `Day ${selectedDay}${startBit}. `;
+          return `${dayNote}${core}`;
+        })()}
         confirmLabel="OK — Enter In-Show"
         cancelLabel="Cancel"
         confirmClassName="bg-green-600 hover:bg-green-500"
@@ -10738,17 +16029,18 @@ const RunOfShowPage: React.FC = () => {
             setLockedStartTimes({});
             logChange(
               'SHOW_MODE_CHANGE',
-              'Switched back to Rehearsal — overtime tracking paused (start-time lock cleared)',
+              'Switched back to Rehearsal — overtime tracking paused (baseline kept; start-time lock cleared)',
               {
                 fieldName: 'showMode',
                 oldValue: 'in-show',
                 newValue: 'rehearsal',
+                baselineKept: !!rehearsalBaseline,
               }
             );
           })();
         }}
         title="Switch back to Rehearsal mode?"
-        message="Overtime will no longer be tracked and the Start column will show scheduled times only. Locked start times (WAS) will be cleared. Continue?"
+        message="Overtime will no longer be tracked and the Start column will show scheduled times only. Locked start times (WAS) will be cleared. Your rehearsal baseline is kept for Show vs rehearsal. Continue?"
         confirmLabel="Switch to Rehearsal"
         cancelLabel="Stay In-Show"
         confirmClassName="bg-amber-600 hover:bg-amber-500"
@@ -10770,17 +16062,18 @@ const RunOfShowPage: React.FC = () => {
 
       {/* Move Rows modal - reorder rows below current loaded/running cue (step 1: select, step 2: confirm) */}
       {showMoveRowsModal && (() => {
-        const { boundaryIndex, filtered, movable, movableParents, blocks } = moveRowsBoundaryAndMovable;
+        const { boundaryIndex, freezeEnd, filtered, movable, movableParents, blocks } = moveRowsBoundaryAndMovable;
         const selectedBlocks = blocks.filter(block => moveRowsSelectedIds.has(block[0].id));
         const totalRowsToMove = selectedBlocks.reduce((sum, b) => sum + b.length, 0);
+        const rowBase = freezeEnd >= 0 ? freezeEnd : boundaryIndex;
         const targetLabel = movableParents.length === 0
           ? ''
           : moveRowsTargetPosition === 0
             ? 'at start (before first row below cue)'
             : moveRowsTargetPosition >= movableParents.length
-              ? `at end (after row ${boundaryIndex + 1 + movable.length})`
+              ? `at end (after row ${rowBase + 1 + movable.length})`
               : (() => {
-                  const rowNum = boundaryIndex + 2 + blocks.slice(0, moveRowsTargetPosition).reduce((acc, b) => acc + b.length, 0);
+                  const rowNum = rowBase + 2 + blocks.slice(0, moveRowsTargetPosition).reduce((acc, b) => acc + b.length, 0);
                   const parent = movableParents[moveRowsTargetPosition - 1];
                   const cuePart = parent?.customFields?.cue ? ` CUE ${parent.customFields.cue}` : '';
                   return `after row ${rowNum}${cuePart}`;
@@ -10792,7 +16085,7 @@ const RunOfShowPage: React.FC = () => {
                 <h3 className="text-lg font-bold text-white">Move Rows {moveRowsStep === 2 ? '— Confirm' : ''}</h3>
                 <p className="text-slate-400 text-sm mt-1">
                   {moveRowsStep === 1
-                    ? 'Reorder rows below the current loaded/running cue. Select one or more rows (indented sub-cues move with their parent), then choose where to move them.'
+                    ? 'Reorder main cues below the current loaded/running cue. Indented sub-cues stay with their parent and are not listed separately.'
                     : 'You are moving rows during a live program. This will reorder the run of show for everyone. Confirm below.'}
                 </p>
                 {boundaryIndex >= 0 && filtered[boundaryIndex] && (() => {
@@ -10825,9 +16118,9 @@ const RunOfShowPage: React.FC = () => {
                     <p className="text-slate-400">No rows below the current cue to reorder.</p>
                   ) : (
                     <div className="space-y-2">
-                      <p className="text-slate-300 text-sm font-medium">Select row(s) to move (indented sub-cues move with parent):</p>
+                      <p className="text-slate-300 text-sm font-medium">Select main cue(s) to move — sub-cues stay with parent:</p>
                       {movableParents.map((item, i) => {
-                        const displayRow = boundaryIndex + 2 + blocks.slice(0, i).reduce((acc, b) => acc + b.length, 0);
+                        const displayRow = rowBase + 2 + blocks.slice(0, i).reduce((acc, b) => acc + b.length, 0);
                         const cueLabel = item.customFields?.cue ? `CUE ${item.customFields.cue}` : '—';
                         const subCount = blocks[i]?.length > 1 ? blocks[i].length - 1 : 0;
                         return (
@@ -10901,14 +16194,14 @@ const RunOfShowPage: React.FC = () => {
                     >
                       <option value={0}>At start (before first row below cue)</option>
                       {movableParents.slice(0, -1).map((item, i) => {
-                        const rowNum = boundaryIndex + 2 + blocks.slice(0, i + 1).reduce((acc, b) => acc + b.length, 0) - 1;
+                        const rowNum = rowBase + 2 + blocks.slice(0, i + 1).reduce((acc, b) => acc + b.length, 0) - 1;
                         const cueLabel = item.customFields?.cue ? ` CUE ${item.customFields.cue}` : '';
                         return (
                           <option key={item.id} value={i + 1}>After row {rowNum}{cueLabel}</option>
                         );
                       })}
                       {movableParents.length > 0 && (
-                        <option value={movableParents.length}>At end (after row {boundaryIndex + 1 + movable.length})</option>
+                        <option value={movableParents.length}>At end (after row {rowBase + 1 + movable.length})</option>
                       )}
                     </select>
                   </div>
@@ -11044,28 +16337,96 @@ const RunOfShowPage: React.FC = () => {
         </div>
       )}
 
-      {/* One-time reminder when page first opens: close / hide tab / sign out when not actively working */}
-      {showInactivityReminder && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-slate-800 rounded-lg p-8 max-w-2xl w-full mx-4 border-2 border-blue-500 shadow-xl">
-            <div className="text-blue-400 text-2xl font-bold mb-3 text-center">
-              When you&apos;re not actively working on this event
-            </div>
-            <p className="text-slate-300 text-base mb-4 text-center">
-              Please do one of the following so others see accurate presence:
+      {/* Live sync / presence not connected (Socket.IO) */}
+      {showSocketPresenceAlert && !showDisconnectedByAdminModal && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[100] p-4">
+          <div className="bg-slate-800 rounded-lg p-6 max-w-lg w-full border-2 border-amber-500 shadow-xl">
+            {socketPresenceAlertTestPreview && (
+              <div className="mb-3 text-[11px] font-semibold uppercase tracking-wide text-amber-200/90 bg-amber-900/40 border border-amber-600/50 rounded px-2 py-1 inline-block">
+                Admin test preview — socket still connected
+              </div>
+            )}
+            <h2 className="text-amber-300 text-xl font-bold mb-2">
+              Live connection issue
+            </h2>
+            <p className="text-slate-200 text-sm mb-3">
+              {socketPresenceAlertTestPreview || !socketLiveConnected
+                ? 'This browser is not connected to live sync (Socket.IO). You may not appear in Admin presence, and real-time updates (timers, viewers, collaborative edits) can fail.'
+                : 'Connected to the server, but you are not listed in event presence yet. Admin may not see you on this event.'}
             </p>
-            <ul className="text-slate-200 text-base mb-6 list-disc list-inside space-y-2 pl-2">
-              <li><strong>Close</strong> this browser tab</li>
-              <li><strong>Switch</strong> to another browser tab or window</li>
-              <li><strong>Sign out</strong> from the app</li>
+            <ul className="text-slate-300 text-sm list-disc pl-5 mb-4 space-y-1">
+              <li>Try <strong className="text-white">Retry connection</strong> below</li>
+              <li>Disable VPN, or try a phone hotspot (rules out work/home firewall)</li>
+              <li>Confirm you are signed in and on the correct event</li>
             </ul>
-            <div className="text-center">
+            <div className="flex flex-wrap gap-3 justify-end">
               <button
-                onClick={() => setShowInactivityReminder(false)}
-                className="px-6 py-2 bg-slate-600 hover:bg-slate-500 text-white rounded transition-colors"
+                type="button"
+                onClick={() => {
+                  setSocketPresenceAlertTestPreview(false);
+                  setSocketPresenceAlertDismissed(true);
+                  setShowSocketPresenceAlert(false);
+                }}
+                className="px-4 py-2 bg-slate-600 hover:bg-slate-500 text-white rounded transition-colors text-sm"
               >
                 Dismiss
               </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setSocketPresenceAlertTestPreview(false);
+                  setSocketPresenceAlertDismissed(false);
+                  setShowSocketPresenceAlert(false);
+                  setSocketReconnectNonce((n) => n + 1);
+                }}
+                className="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded transition-colors text-sm font-medium"
+              >
+                Retry connection
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Presence reminder: lightbox over everything; card stays at bottom */}
+      {showInactivityReminder && (
+        <div
+          className="fixed inset-0 z-[10000] flex items-end justify-center bg-black/70 px-3 pb-4 pt-8 sm:px-6 sm:pb-5"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="inactivity-reminder-title"
+        >
+          <div className="w-full max-w-6xl rounded-2xl border-2 border-blue-500 bg-slate-800 p-5 shadow-2xl shadow-black/50 sm:p-6">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0 max-w-3xl">
+                <h2 id="inactivity-reminder-title" className="text-xl font-bold text-blue-300 sm:text-2xl">
+                  When you&apos;re not actively working on this event
+                </h2>
+                <p className="mt-2 text-base text-slate-300">
+                  Please do one of the following so others see accurate presence:
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowInactivityReminder(false)}
+                className="shrink-0 rounded-lg bg-blue-600 px-6 py-2.5 text-base font-semibold text-white hover:bg-blue-500"
+              >
+                Dismiss
+              </button>
+            </div>
+            <div className="mt-5 grid gap-3 sm:grid-cols-3">
+              <div className="rounded-xl border border-slate-600 bg-slate-900/70 px-5 py-5">
+                <div className="text-xl font-bold text-white sm:text-2xl">Close</div>
+                <div className="mt-2 text-base text-slate-300 sm:text-lg">this browser tab</div>
+              </div>
+              <div className="rounded-xl border border-slate-600 bg-slate-900/70 px-5 py-5">
+                <div className="text-xl font-bold text-white sm:text-2xl">Switch</div>
+                <div className="mt-2 text-base text-slate-300 sm:text-lg">to another tab or window</div>
+              </div>
+              <div className="rounded-xl border border-slate-600 bg-slate-900/70 px-5 py-5">
+                <div className="text-xl font-bold text-white sm:text-2xl">Sign out</div>
+                <div className="mt-2 text-base text-slate-300 sm:text-lg">from the app</div>
+              </div>
             </div>
           </div>
         </div>
@@ -11076,13 +16437,13 @@ const RunOfShowPage: React.FC = () => {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-slate-800 rounded-lg p-6 max-w-4xl w-full mx-4 max-h-[80vh] overflow-hidden flex flex-col">
             <div className="flex justify-between items-center mb-4">
-              <div className="flex items-center gap-4">
+              <div className="flex items-center gap-4 flex-wrap">
               <h2 className="text-2xl font-bold text-white">Change Log</h2>
-                <div className="flex gap-2">
+                <div className="flex gap-2 flex-wrap">
                   <button
-                    onClick={() => setShowMasterChangeLog(false)}
+                    onClick={() => { setChangeLogTab('local'); setShowMasterChangeLog(false); }}
                     className={`px-3 py-1 rounded text-sm transition-colors ${
-                      !showMasterChangeLog 
+                      changeLogTab === 'local'
                         ? 'bg-blue-600 text-white' 
                         : 'bg-slate-600 text-slate-300 hover:bg-slate-500'
                     }`}
@@ -11090,19 +16451,30 @@ const RunOfShowPage: React.FC = () => {
                     Local ({changeLog.length})
                   </button>
                   <button
-                    onClick={() => setShowMasterChangeLog(true)}
+                    onClick={() => { setChangeLogTab('master'); setShowMasterChangeLog(true); }}
                     className={`px-3 py-1 rounded text-sm transition-colors ${
-                      showMasterChangeLog 
+                      changeLogTab === 'master'
                         ? 'bg-blue-600 text-white' 
                         : 'bg-slate-600 text-slate-300 hover:bg-slate-500'
                     }`}
                   >
                     Master ({masterChangeLog.length})
                   </button>
+                  <button
+                    onClick={() => { setChangeLogTab('vs-rehearsal'); setShowMasterChangeLog(false); }}
+                    className={`px-3 py-1 rounded text-sm transition-colors ${
+                      changeLogTab === 'vs-rehearsal'
+                        ? 'bg-emerald-600 text-white'
+                        : 'bg-slate-600 text-slate-300 hover:bg-slate-500'
+                    }`}
+                    title="Compare live schedule to the frozen rehearsal baseline"
+                  >
+                    Show vs rehearsal ({showVsRehearsalDiffs.length})
+                  </button>
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                {!showMasterChangeLog && (
+                {!showMasterChangeLog && changeLogTab === 'local' && (
                   <div className="flex gap-2">
                     <button
                       onClick={async () => {
@@ -11133,7 +16505,7 @@ const RunOfShowPage: React.FC = () => {
                     </button>
                   </div>
                 )}
-                {showMasterChangeLog && (
+                {showMasterChangeLog && changeLogTab === 'master' && (
                   <button
                     onClick={async () => {
                       console.log('🔄 Manual reload button clicked...');
@@ -11149,6 +16521,19 @@ const RunOfShowPage: React.FC = () => {
                     🔄 Reload
                   </button>
                 )}
+                {canAccessAccessManager(user) && event?.id && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const url = `/post-show-report?eventId=${event.id}&eventName=${encodeURIComponent(event?.name || '')}`;
+                      window.open(url, '_blank');
+                    }}
+                    className="px-3 py-1 bg-rose-700 hover:bg-rose-600 text-white text-sm rounded transition-colors"
+                    title="Open post-show report (Complaint Line + Show vs rehearsal)"
+                  >
+                    Post-show report
+                  </button>
+                )}
               <button
                 onClick={() => setShowChangeLog(false)}
                 className="text-gray-400 hover:text-white text-2xl"
@@ -11158,29 +16543,106 @@ const RunOfShowPage: React.FC = () => {
               </div>
             </div>
             
+            {changeLogTab !== 'vs-rehearsal' && (
+              <div className="mb-3 flex flex-wrap items-center gap-2">
+                <input
+                  type="search"
+                  value={changeLogSearch}
+                  onChange={(e) => setChangeLogSearch(e.target.value)}
+                  placeholder="Search cue, user, notes text…"
+                  className="flex-1 min-w-[180px] px-3 py-1.5 rounded bg-slate-700 border border-slate-600 text-white text-sm placeholder:text-slate-400"
+                />
+                <select
+                  value={changeLogFieldFilter}
+                  onChange={(e) => setChangeLogFieldFilter(e.target.value)}
+                  className="px-3 py-1.5 rounded bg-slate-700 border border-slate-600 text-white text-sm"
+                  title="Filter by field"
+                >
+                  <option value="all">All fields</option>
+                  <option value="notes">Notes</option>
+                  <option value="speakers">Speakers</option>
+                  <option value="assets">Assets</option>
+                  <option value="other">Other fields</option>
+                </select>
+                {canAccessAdmin(user) && (
+                  <span className="text-xs text-amber-300/90">
+                    Admin: Restore this value puts the logged text back on the cue. Restore previous undoes that edit.
+                  </span>
+                )}
+              </div>
+            )}
+
             <div className="flex-1 overflow-y-auto">
-              {showMasterChangeLog ? (
+              {changeLogTab === 'vs-rehearsal' ? (
+                <ShowVsRehearsalPanel
+                  baseline={rehearsalBaseline}
+                  diffs={showVsRehearsalDiffs}
+                  canRecapture={currentUserRole === 'EDITOR' || currentUserRole === 'OPERATOR'}
+                  recapturing={recapturingBaseline}
+                  onRecapture={() => {
+                    void (async () => {
+                      if (!event?.id) return;
+                      const ok = window.confirm(
+                        'Replace the rehearsal baseline with the current schedule?\n\nShow vs rehearsal will then start from this moment.'
+                      );
+                      if (!ok) return;
+                      setRecapturingBaseline(true);
+                      try {
+                        const baseline = buildRehearsalBaseline(schedule);
+                        await DatabaseService.saveShowModeWithBaseline(event.id, {
+                          rehearsalBaseline: baseline,
+                        });
+                        setRehearsalBaseline(baseline);
+                        // Only refresh "was durations" originals if that UI is already enabled
+                        if (trackWasDurations) {
+                          setOriginalDurations(baselineToOriginalDurations(baseline));
+                          originalDurationsSetForEventRef.current = event.id;
+                        }
+                        logChange(
+                          'SHOW_MODE_CHANGE',
+                          `Recaptured rehearsal baseline (${baseline.itemCount} rows)`,
+                          {
+                            fieldName: 'rehearsalBaseline',
+                            oldValue: rehearsalBaseline?.capturedAt || '(none)',
+                            newValue: baseline.capturedAt,
+                            baselineItemCount: baseline.itemCount,
+                            newBaseline: true,
+                          }
+                        );
+                      } finally {
+                        setRecapturingBaseline(false);
+                      }
+                    })();
+                  }}
+                />
+              ) : showMasterChangeLog ? (
                 // Master Change Log (from Supabase) - Clean Format
                 masterChangeLog.length === 0 ? (
                   <p className="text-gray-400 text-center py-8">No master changes found</p>
                 ) : (
                   <div className="space-y-3">
-                    {masterChangeLog.map((change) => {
-                      // Parse data from new_values_json if new columns are null (before migration)
-                      const details = change.new_values_json || {};
-                      const metadata = change.metadata || {};
+                    {masterChangeLog.filter(changeLogEntryMatchesFilters).length === 0 && (
+                      <p className="text-gray-400 text-center py-6">No changes match this search/filter</p>
+                    )}
+                    {masterChangeLog.filter(changeLogEntryMatchesFilters).map((change) => {
+                      const info = getChangeLogFieldInfo(change);
+                      const details = info.details;
+                      const metadata = typeof change.metadata === 'object' && change.metadata ? change.metadata : {};
                       const rowNumber = change.row_number || metadata.rowNumber || details.rowNumber;
                       const cueNumber = change.cue_number || metadata.cueNumber || details.cueNumber;
                       const userRole = change.user_role || metadata.userRole || 'EDITOR';
-                      const fieldName = change.field_name || details.fieldName || details.changeType;
-                      const oldValue = change.old_value || details.oldValue;
-                      const newValue = change.new_value || details.newValue;
-                      const description = change.description || details.itemName;
+                      const fieldName = info.fieldName;
+                      const oldValue = info.oldValue;
+                      const newValue = info.newValue;
+                      const description = info.description;
+                      const entryKey = String(change.id || `${change.batch_id}-${change.created_at}-${fieldName}`);
+                      const expanded = expandedChangeLogIds.has(entryKey);
+                      const restorable = isChangeLogFieldRestorable(change);
                       
                       return (
-                      <div key={change.id} className="bg-slate-700 rounded-lg p-4">
-                        <div className="flex justify-between items-start mb-2">
-                          <div className="flex items-center gap-2">
+                      <div key={entryKey} className="bg-slate-700 rounded-lg p-4">
+                        <div className="flex justify-between items-start mb-2 gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
                             <span className={`text-white text-xs px-2 py-1 rounded ${
                               change.action === 'ADD_ITEM' ? 'bg-green-600' :
                               change.action === 'REMOVE_ITEM' ? 'bg-red-600' :
@@ -11188,6 +16650,7 @@ const RunOfShowPage: React.FC = () => {
                               change.action === 'MOVE_ITEM' ? 'bg-yellow-600' :
                               change.action === 'COLUMN_ADD' ? 'bg-purple-600' :
                               change.action === 'COLUMN_REMOVE' ? 'bg-orange-600' :
+                              change.action === 'SHOW_MODE_CHANGE' ? 'bg-emerald-600' :
                               'bg-blue-600'
                             }`}>
                               {change.action}
@@ -11211,38 +16674,67 @@ const RunOfShowPage: React.FC = () => {
                               </span>
                             )}
                           </div>
-                          <div className="text-gray-400 text-xs">
-                            {new Date(change.created_at || change.timestamp || change.change_timestamp).toLocaleString()}
+                          <div className="flex items-center gap-2 shrink-0">
+                            {restorable && changeLogValueHasContent(newValue) && (
+                              <button
+                                type="button"
+                                onClick={() => restoreChangeLogValue(change, 'new')}
+                                className="px-2 py-1 rounded text-xs font-medium bg-amber-600 hover:bg-amber-500 text-white"
+                                title="Put this logged value back on the cue"
+                              >
+                                Restore this value
+                              </button>
+                            )}
+                            {restorable && changeLogValueHasContent(oldValue) && (
+                              <button
+                                type="button"
+                                onClick={() => restoreChangeLogValue(change, 'old')}
+                                className="px-2 py-1 rounded text-xs font-medium bg-slate-600 hover:bg-slate-500 text-white"
+                                title="Undo this edit and put the previous value back"
+                              >
+                                Restore previous
+                              </button>
+                            )}
+                            <div className="text-gray-400 text-xs">
+                              {new Date(change.created_at || change.timestamp || change.change_timestamp).toLocaleString()}
+                            </div>
                           </div>
                         </div>
                         
-                        {/* Show field changes only (ROW/CUE already shown at top) */}
                           <div className="space-y-1 text-sm">
-                          {/* Show field changes for FIELD_UPDATE - handle both new columns and existing JSON */}
-                          {change.action === 'FIELD_UPDATE' && (fieldName || details.fieldName) && (
+                          {change.action === 'FIELD_UPDATE' && fieldName && (
                               <div className="text-gray-300">
-                              <strong>Field:</strong> {fieldName || details.fieldName}
+                              <strong>Field:</strong> {fieldName}
                               </div>
                             )}
                             
-                          {/* Show value changes - handle both new columns and existing JSON */}
-                          {change.action === 'FIELD_UPDATE' && (oldValue !== undefined || details.oldValue !== undefined) && (
-                              <div className="text-gray-300">
-                                <strong>Changed from:</strong> 
-                              <span className="text-red-300 ml-1">"{oldValue || details.oldValue}"</span>
-                              <span className="text-gray-400 mx-1">→</span>
-                              <span className="text-green-300">"{newValue || details.newValue}"</span>
+                          {change.action === 'FIELD_UPDATE' && (oldValue !== undefined || newValue !== undefined) && (
+                              <div className="text-gray-300 space-y-1">
+                                <div>
+                                  <strong>Changed from:</strong>{' '}
+                                  <span className="text-red-300">"{formatChangeLogPreview(oldValue, expanded)}"</span>
+                                  <span className="text-gray-400 mx-1">→</span>
+                                  <span className="text-green-300">"{formatChangeLogPreview(newValue, expanded)}"</span>
+                                </div>
+                                {(formatChangeLogPreview(oldValue, true).length > 180 ||
+                                  formatChangeLogPreview(newValue, true).length > 180) && (
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleChangeLogExpanded(entryKey)}
+                                    className="text-xs text-sky-300 hover:text-sky-200"
+                                  >
+                                    {expanded ? 'Show less' : 'Show full text'}
+                                  </button>
+                                )}
                             </div>
                           )}
                           
-                          {/* Fallback: if no field info, show the description but formatted nicely */}
-                          {change.action === 'FIELD_UPDATE' && !fieldName && !details.fieldName && description && (
+                          {change.action === 'FIELD_UPDATE' && !fieldName && description && (
                             <div className="text-gray-300">
                               <strong>Change:</strong> {description}
                               </div>
                             )}
                             
-                            {/* Show batch information */}
                             {change.batch_id && (
                               <div className="text-gray-500 text-xs mt-2 pt-2 border-t border-slate-600">
                                 Batch: {change.batch_id.slice(0, 8)}... | 
@@ -11260,10 +16752,16 @@ const RunOfShowPage: React.FC = () => {
                   <p className="text-gray-400 text-center py-8">No local changes recorded yet</p>
               ) : (
                 <div className="space-y-3">
-                  {changeLog.map((change) => (
+                  {changeLog.filter(changeLogEntryMatchesFilters).length === 0 && changeLog.length > 0 && (
+                    <p className="text-gray-400 text-center py-6">No changes match this search/filter</p>
+                  )}
+                  {changeLog.filter(changeLogEntryMatchesFilters).map((change) => {
+                    const localInfo = getChangeLogFieldInfo(change);
+                    const localRestorable = isChangeLogFieldRestorable(change);
+                    return (
                     <div key={change.id} className="bg-slate-700 rounded-lg p-4">
-                      <div className="flex justify-between items-start mb-2">
-                        <div className="flex items-center gap-2">
+                      <div className="flex justify-between items-start mb-2 gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <span className={`text-white text-xs px-2 py-1 rounded ${
                             change.action === 'ADD_ITEM' ? 'bg-green-600' :
                             change.action === 'REMOVE_ITEM' ? 'bg-red-600' :
@@ -11294,8 +16792,30 @@ const RunOfShowPage: React.FC = () => {
                             </span>
                           )}
                         </div>
-                        <div className="text-gray-400 text-xs">
-                          {change.timestamp.toLocaleString()}
+                        <div className="flex items-center gap-2 shrink-0">
+                          {localRestorable && changeLogValueHasContent(localInfo.newValue) && (
+                            <button
+                              type="button"
+                              onClick={() => restoreChangeLogValue(change, 'new')}
+                              className="px-2 py-1 rounded text-xs font-medium bg-amber-600 hover:bg-amber-500 text-white"
+                              title="Put this logged value back on the cue"
+                            >
+                              Restore this value
+                            </button>
+                          )}
+                          {localRestorable && changeLogValueHasContent(localInfo.oldValue) && (
+                            <button
+                              type="button"
+                              onClick={() => restoreChangeLogValue(change, 'old')}
+                              className="px-2 py-1 rounded text-xs font-medium bg-slate-600 hover:bg-slate-500 text-white"
+                              title="Undo this edit and put the previous value back"
+                            >
+                              Restore previous
+                            </button>
+                          )}
+                          <div className="text-gray-400 text-xs">
+                            {change.timestamp.toLocaleString()}
+                          </div>
                         </div>
                       </div>
                       
@@ -11405,8 +16925,11 @@ const RunOfShowPage: React.FC = () => {
                                   <strong>Assets:</strong>
                                   <div className="mt-1 text-sm text-blue-300">
                                     {(() => {
-                                      const assets = change.details.newValue.split('||').filter(s => s.trim());
-                                      return assets.map(asset => {
+                                      const raw = typeof change.details.newValue === 'string'
+                                        ? change.details.newValue
+                                        : formatChangeLogPreview(change.details.newValue, true);
+                                      const assets = raw.split('||').filter((s: string) => s.trim());
+                                      return assets.map((asset: string) => {
                                         if (asset.includes('|')) {
                                           const [name, url] = asset.split('|');
                                           return `${name}${url ? ` (${url})` : ''}`;
@@ -11439,13 +16962,13 @@ const RunOfShowPage: React.FC = () => {
                             <div className="text-gray-300">
                               {/* Show just the changed value for duration fields */}
                               {(change.details.fieldName === 'durationHours' || change.details.fieldName === 'durationMinutes' || change.details.fieldName === 'durationSeconds') ? (
-                                <span className="text-green-300">{change.details.newValue}</span>
+                                <span className="text-green-300">{formatChangeLogPreview(change.details.newValue, true)}</span>
                               ) : (
                                 <>
                                   <strong>Changed from:</strong> 
-                                  <span className="text-red-300 ml-1">"{change.details.oldValue}"</span>
+                                  <span className="text-red-300 ml-1">"{formatChangeLogPreview(change.details.oldValue, false)}"</span>
                                   <span className="text-gray-400 mx-1">→</span>
-                                  <span className="text-green-300">"{change.details.newValue}"</span>
+                                  <span className="text-green-300">"{formatChangeLogPreview(change.details.newValue, false)}"</span>
                                 </>
                               )}
                             </div>
@@ -11453,7 +16976,8 @@ const RunOfShowPage: React.FC = () => {
                         </div>
                       )}
                     </div>
-                  ))}
+                    );
+                  })}
                   
                   {/* Pending changes */}
                   {Array.from(pendingChanges.entries()).map(([changeKey, pendingChange]) => {
@@ -11496,9 +17020,9 @@ const RunOfShowPage: React.FC = () => {
                             {pendingChange.details.oldValue !== undefined && pendingChange.details.newValue !== undefined && (
                               <div className="text-slate-300">
                                 <strong>Will change from:</strong> 
-                                <span className="text-red-300 ml-1">"{pendingChange.details.oldValue}"</span>
+                                <span className="text-red-300 ml-1">"{formatChangeLogPreview(pendingChange.details.oldValue, false)}"</span>
                                 <span className="text-slate-400 mx-1">→</span>
-                                <span className="text-green-300">"{pendingChange.details.newValue}"</span>
+                                <span className="text-green-300">"{formatChangeLogPreview(pendingChange.details.newValue, false)}"</span>
                               </div>
                             )}
                           </div>
@@ -11577,7 +17101,7 @@ const RunOfShowPage: React.FC = () => {
       {scheduleSyncState !== 'ready' && (
         <div
           className="fixed left-0 right-0 bottom-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm"
-          style={{ top: 'var(--app-header-height)' }}
+          style={{ top: `${getAppHeaderOffsetPx(appHeaderCollapsed)}px` }}
           role="status"
           aria-live="polite"
         >
@@ -11619,21 +17143,25 @@ const RunOfShowPage: React.FC = () => {
           <div className="flex justify-between items-center mb-2 px-8">
             <div className="flex items-center gap-3">
               <button
-                onClick={() => navigate('/')}
+                onClick={() => void handleBackToEvents()}
                 className="px-4 py-2 bg-slate-600 hover:bg-slate-500 text-white font-semibold rounded-lg transition-colors"
               >
                 ← Back to Events
               </button>
-              
-              
-              
+
               {/* Menu Dropdown */}
               <div className="relative" ref={menuDropdownContainerRef}>
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
                     setShowMenuDropdown(!showMenuDropdown);
-                    if (showMenuDropdown) { setShowImportExportSubmenu(false); setShowOperatorActionsSubmenu(false); }
+                    if (showMenuDropdown) {
+                      setShowImportExportSubmenu(false);
+                      setImportExportGroup(null);
+                      setShowOperatorActionsSubmenu(false);
+                      setShowPowerPointSubmenu(false);
+                      setShowReportsSubmenu(false);
+                    }
                   }}
                   className="px-3 py-2 bg-slate-600 hover:bg-slate-500 text-white rounded-lg transition-colors"
                   title="Menu"
@@ -11644,8 +17172,37 @@ const RunOfShowPage: React.FC = () => {
                 </button>
                 
                 {showMenuDropdown && (
-                  <div className="absolute top-full left-0 mt-1 w-48 bg-slate-800 border border-slate-600 rounded-lg shadow-lg z-50">
+                  <div
+                    ref={menuMainPanelRef}
+                    className="absolute top-full left-0 mt-1 w-56 bg-slate-800 border border-slate-600 rounded-lg shadow-lg z-50"
+                  >
                     <div className="py-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          toggleAppHeaderCollapsed();
+                          setShowMenuDropdown(false);
+                        }}
+                        className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center gap-3"
+                      >
+                        <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5h16M4 5a2 2 0 012-2h12a2 2 0 012 2M4 11h16v8a2 2 0 01-2 2H6a2 2 0 01-2-2v-8z" />
+                        </svg>
+                        <span className="flex-1">Top logo bar</span>
+                        <span
+                          className={`w-4 h-4 flex-shrink-0 rounded border flex items-center justify-center ${
+                            appHeaderCollapsed ? 'border-slate-500' : 'border-emerald-400 bg-emerald-400/15'
+                          }`}
+                          aria-hidden
+                        >
+                          {!appHeaderCollapsed && (
+                            <svg className="w-3 h-3 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                            </svg>
+                          )}
+                        </span>
+                      </button>
+                      <div className="my-1 border-t border-slate-600" />
                       <button
                         onClick={() => {
                           setShowMenuDropdown(false);
@@ -11671,22 +17228,122 @@ const RunOfShowPage: React.FC = () => {
                         </svg>
                         Green Room
                       </button>
+                      {canAccessPreFlightChecklist(user) && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowMenuDropdown(false);
+                            setShowPreFlightChecklistModal(true);
+                          }}
+                          className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center gap-3"
+                          title="Pre-Flight / Show Checklist (AV Cockpit)"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                          </svg>
+                          <span className="flex-1">Pre-Flight Checklist</span>
+                          {preflightProgress && !preflightProgress.complete ? (
+                            <span className="text-[10px] font-semibold uppercase tracking-wide text-amber-400">
+                              {preflightProgress.checked}/{preflightProgress.total}
+                            </span>
+                          ) : preflightProgress?.complete ? (
+                            <span className="text-[10px] font-semibold uppercase tracking-wide text-emerald-400">
+                              Clear
+                            </span>
+                          ) : null}
+                        </button>
+                      )}
+                      <div className="relative">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowPowerPointSubmenu(!showPowerPointSubmenu);
+                            setShowOperatorActionsSubmenu(false);
+                            setShowImportExportSubmenu(false);
+                            setImportExportGroup(null);
+                            setShowReportsSubmenu(false);
+                          }}
+                          className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center justify-between gap-3"
+                          title="Use PowerPoint with this Run of Show"
+                        >
+                          <span className="flex items-center gap-3">
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                            </svg>
+                            PowerPoint
+                          </span>
+                          <svg className={`w-4 h-4 flex-shrink-0 transition-transform ${showPowerPointSubmenu ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                          </svg>
+                        </button>
+                        {showPowerPointSubmenu && (
+                          <div
+                            ref={powerPointFlyoutRef}
+                            className="absolute top-0 z-[60] w-64 py-1 bg-slate-800 border border-slate-600 rounded-lg shadow-lg"
+                          >
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setShowMenuDropdown(false);
+                                setShowPowerPointSubmenu(false);
+                                const powerpointUrl = `/powerpoint?eventId=${event?.id}&eventName=${encodeURIComponent(event?.name || '')}`;
+                                window.open(powerpointUrl, '_blank');
+                              }}
+                              className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors"
+                              title="Map a live slideshow to ROS cues and timers"
+                            >
+                              PowerPoint Show with Timers
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setShowMenuDropdown(false);
+                                setShowPowerPointSubmenu(false);
+                                const playbackUrl = `/powerpoint-playback?eventId=${event?.id}&eventName=${encodeURIComponent(event?.name || '')}`;
+                                window.open(playbackUrl, '_blank');
+                              }}
+                              className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors"
+                              title="Load a cue to open its PowerPoint from the asset bucket"
+                            >
+                              ROS PPT Launcher
+                            </button>
+                          </div>
+                        )}
+                      </div>
                       <button
                         onClick={() => {
                           setShowMenuDropdown(false);
                           setShowOSCModal(true);
                         }}
-                        className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center gap-3"
+                        className={`w-full px-4 py-2 text-left transition-colors flex items-center gap-3 ${
+                          currentUserRole === 'OPERATOR'
+                            ? 'text-white hover:bg-slate-700'
+                            : 'text-slate-500 cursor-not-allowed'
+                        }`}
+                        title={
+                          currentUserRole === 'OPERATOR'
+                            ? 'OSC Control downloads and commands'
+                            : 'Operator role required'
+                        }
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
                         </svg>
                         OSC Control
+                        {currentUserRole !== 'OPERATOR' && (
+                          <span className="ml-auto text-[10px] uppercase tracking-wide text-slate-500">Locked</span>
+                        )}
                       </button>
                       {/* Operator Actions - flyout submenu */}
                       <div className="relative">
                         <button
-                          onClick={() => setShowOperatorActionsSubmenu(!showOperatorActionsSubmenu)}
+                          onClick={() => {
+                            setShowOperatorActionsSubmenu(!showOperatorActionsSubmenu);
+                            setShowPowerPointSubmenu(false);
+                            setShowImportExportSubmenu(false);
+                            setImportExportGroup(null);
+                            setShowReportsSubmenu(false);
+                          }}
                           className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center justify-between gap-3"
                         >
                           <span className="flex items-center gap-3">
@@ -11701,7 +17358,74 @@ const RunOfShowPage: React.FC = () => {
                           </svg>
                         </button>
                         {showOperatorActionsSubmenu && (
-                          <div className="absolute left-full top-0 ml-1 min-w-[11rem] w-44 py-1 bg-slate-800 border border-slate-600 rounded-lg shadow-lg z-[60]">
+                          <div
+                            ref={operatorActionsFlyoutRef}
+                            className="absolute top-0 z-[60] w-56 py-1 bg-slate-800 border border-slate-600 rounded-lg shadow-lg"
+                          >
+                            <button
+                              type="button"
+                              onClick={() => {
+                                void toggleAutoRoll();
+                              }}
+                              disabled={autoRollBusy}
+                              className={`w-full px-4 py-2 text-left transition-colors flex items-center gap-3 ${
+                                currentUserRole !== 'OPERATOR'
+                                  ? 'text-slate-500 cursor-not-allowed'
+                                  : 'text-white hover:bg-slate-700'
+                              }`}
+                              title="Keep this Run of Show tab open. At each cue's Start time, Auto Roll loads and starts that timer and stops the previous one."
+                            >
+                              <span className="w-4 text-center font-black">{autoRollArmed ? '☑' : '☐'}</span>
+                              <span className="flex-1">Auto Roll</span>
+                              {autoRollArmed ? (
+                                <span className="text-[10px] font-semibold uppercase tracking-wide text-emerald-400">
+                                  On
+                                </span>
+                              ) : null}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (currentUserRole === 'VIEWER') {
+                                  alert('Viewers cannot send operator timers. Change role to EDITOR or OPERATOR.');
+                                  return;
+                                }
+                                setShowMenuDropdown(false);
+                                setShowOperatorActionsSubmenu(false);
+                                setShowOperatorCountdownModal(true);
+                              }}
+                              className={`w-full px-4 py-2 text-left transition-colors flex items-center gap-3 ${
+                                currentUserRole === 'VIEWER'
+                                  ? 'text-slate-500 cursor-not-allowed'
+                                  : 'text-white hover:bg-slate-700'
+                              }`}
+                              title="Open Op Timer (use Pop out in the modal for a small window)"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                              </svg>
+                              <span className="flex-1">Op Timer</span>
+                              {operatorCountdownLive ? (
+                                <span className="text-[10px] font-semibold uppercase tracking-wide text-emerald-400">
+                                  Live
+                                </span>
+                              ) : null}
+                            </button>
+                            <button
+                              onClick={() => {
+                                setShowMenuDropdown(false);
+                                setShowOperatorActionsSubmenu(false);
+                                const directorUrl = `/director-view?eventId=${event?.id}&eventName=${encodeURIComponent(event?.name || '')}&eventDate=${encodeURIComponent(event?.date || '')}&eventLocation=${encodeURIComponent(event?.location || '')}`;
+                                window.open(directorUrl, '_blank');
+                              }}
+                              className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center gap-3"
+                              title="Director dashboard: notes + guest-style ROS + synced custom columns"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zm10 0a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zm10 0a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+                              </svg>
+                              Director View
+                            </button>
                             <button
                               onClick={() => {
                                 setShowMenuDropdown(false);
@@ -11715,6 +17439,40 @@ const RunOfShowPage: React.FC = () => {
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
                               </svg>
                               Photo View
+                            </button>
+                            <button
+                              onClick={() => {
+                                setShowMenuDropdown(false);
+                                setShowOperatorActionsSubmenu(false);
+                                const micUrl = `/mic-manager?eventId=${event?.id}&eventName=${encodeURIComponent(event?.name || '')}&eventDate=${encodeURIComponent(event?.date || '')}&eventLocation=${encodeURIComponent(event?.location || '')}`;
+                                window.open(micUrl, '_blank');
+                              }}
+                              className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center gap-3"
+                              title="Plan and track Lav / Handheld / Lectern assignments per speaker"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                              </svg>
+                              Mic Manager
+                            </button>
+                            <button
+                              onClick={() => {
+                                setShowMenuDropdown(false);
+                                setShowOperatorActionsSubmenu(false);
+                                const operatorUrl = `/operator-cue-display?eventId=${event?.id}&eventName=${encodeURIComponent(event?.name || '')}&eventDate=${encodeURIComponent(event?.date || '')}&eventLocation=${encodeURIComponent(event?.location || '')}`;
+                                window.open(
+                                  operatorUrl,
+                                  'ros-operator-cue-display',
+                                  'width=1920,height=1080,menubar=no,toolbar=no,location=no,status=no'
+                                );
+                              }}
+                              className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center gap-3"
+                              title="16:9 operator cue sheet for control-room monitors"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2" />
+                              </svg>
+                              Operator Large view
                             </button>
                             <button
                               onClick={() => {
@@ -11748,6 +17506,52 @@ const RunOfShowPage: React.FC = () => {
                               onClick={() => {
                                 setShowMenuDropdown(false);
                                 setShowOperatorActionsSubmenu(false);
+                                const cueCardsUrl = `/cue-cards?eventId=${event?.id}&eventName=${encodeURIComponent(event?.name || '')}`;
+                                window.open(cueCardsUrl, '_blank');
+                              }}
+                              className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center gap-3"
+                              title="Web cue cards: scroller + viewer slides grouped by cue"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                              </svg>
+                              Cue Cards
+                            </button>
+                            <button
+                              onClick={() => {
+                                setShowMenuDropdown(false);
+                                setShowOperatorActionsSubmenu(false);
+                                const powerpointUrl = `/powerpoint?eventId=${event?.id}&eventName=${encodeURIComponent(event?.name || '')}`;
+                                window.open(powerpointUrl, '_blank');
+                              }}
+                              className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center gap-3"
+                              title="Map a live slideshow to ROS cues and timers"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                              </svg>
+                              PowerPoint Show with Timers
+                            </button>
+                            <button
+                              onClick={() => {
+                                setShowMenuDropdown(false);
+                                setShowOperatorActionsSubmenu(false);
+                                const playbackUrl = `/powerpoint-playback?eventId=${event?.id}&eventName=${encodeURIComponent(event?.name || '')}`;
+                                window.open(playbackUrl, '_blank');
+                              }}
+                              className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center gap-3"
+                              title="Load a cue to open its PowerPoint from the asset bucket"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                              </svg>
+                              ROS PPT Launcher
+                            </button>
+                            <button
+                              onClick={() => {
+                                setShowMenuDropdown(false);
+                                setShowOperatorActionsSubmenu(false);
                                 const graphicsLinksUrl = `/graphics-links?eventId=${event?.id}&eventName=${encodeURIComponent(event?.name || '')}`;
                                 window.open(graphicsLinksUrl, '_blank');
                               }}
@@ -11758,13 +17562,104 @@ const RunOfShowPage: React.FC = () => {
                               </svg>
                               Graphics Links
                             </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (!event?.id || currentUserRole === 'VIEWER') return;
+                                const next = !mittiWatchColumnEnabled;
+                                setMittiWatchColumnEnabled(next);
+                                void apiClient.setMittiWatchColumn(event.id, next).catch((err) => {
+                                  console.warn('Mitti column toggle failed', err);
+                                  setMittiWatchColumnEnabled(!next);
+                                });
+                              }}
+                              className={`w-full px-4 py-2 text-left transition-colors flex items-center gap-3 ${
+                                currentUserRole === 'VIEWER'
+                                  ? 'text-slate-500 cursor-not-allowed'
+                                  : 'text-white hover:bg-slate-700'
+                              }`}
+                              title="Show a Mitti checkbox column. Only one row can be checked. The next Mitti play uses that row."
+                            >
+                              <span className="w-4 text-center font-black">{mittiWatchColumnEnabled ? '☑' : '☐'}</span>
+                              <span className="flex-1">Mitti column</span>
+                              {mittiWatchColumnEnabled ? (
+                                <span className="text-[10px] font-semibold uppercase tracking-wide text-orange-300">
+                                  On
+                                </span>
+                              ) : null}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (!event?.id || currentUserRole === 'VIEWER') return;
+                                const next = !avWatchColumnEnabled;
+                                setAvWatchColumnEnabled(next);
+                                void apiClient.setAvWatchColumn(event.id, next).catch((err) => {
+                                  console.warn('AV column toggle failed', err);
+                                  setAvWatchColumnEnabled(!next);
+                                });
+                              }}
+                              className={`w-full px-4 py-2 text-left transition-colors flex items-center gap-3 ${
+                                currentUserRole === 'VIEWER'
+                                  ? 'text-slate-500 cursor-not-allowed'
+                                  : 'text-white hover:bg-slate-700'
+                              }`}
+                              title="Show an AV-Playout checkbox column. Only one row can be checked. The next AV play uses that row."
+                            >
+                              <span className="w-4 text-center font-black">{avWatchColumnEnabled ? '☑' : '☐'}</span>
+                              <span className="flex-1">AV column</span>
+                              {avWatchColumnEnabled ? (
+                                <span className="text-[10px] font-semibold uppercase tracking-wide text-sky-300">
+                                  On
+                                </span>
+                              ) : null}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (!event?.id || currentUserRole === 'VIEWER') return;
+                                const next = !dsmColumnEnabled;
+                                setDsmColumnEnabled(next);
+                                if (next) {
+                                  setVisibleColumns((prev) =>
+                                    prev.dsm === false ? { ...prev, dsm: true } : prev
+                                  );
+                                }
+                                void apiClient.setDsmColumn(event.id, next).catch((err) => {
+                                  console.warn('DSM column toggle failed', err);
+                                  setDsmColumnEnabled(!next);
+                                });
+                              }}
+                              className={`w-full px-4 py-2 text-left transition-colors flex items-center gap-3 ${
+                                currentUserRole === 'VIEWER'
+                                  ? 'text-slate-500 cursor-not-allowed'
+                                  : 'text-white hover:bg-slate-700'
+                              }`}
+                              title="Show a DSM column (before Public). Check a row to send Full/LED/VID/PPT when that cue is loaded."
+                            >
+                              <span className="w-4 text-center font-black">{dsmColumnEnabled ? '☑' : '☐'}</span>
+                              <span className="flex-1">DSM column</span>
+                              {dsmColumnEnabled ? (
+                                <span className="text-[10px] font-semibold uppercase tracking-wide text-emerald-300">
+                                  On
+                                </span>
+                              ) : null}
+                            </button>
                           </div>
                         )}
                       </div>
-                      {/* Import & Export - flyout submenu to the right */}
+                      {/* Import & Export — side flyout with accordion: Export / Import / Backup */}
                       <div className="border-t border-slate-600 my-1 pt-1 relative">
                         <button
-                          onClick={() => setShowImportExportSubmenu(!showImportExportSubmenu)}
+                          type="button"
+                          onClick={() => {
+                            const next = !showImportExportSubmenu;
+                            setShowImportExportSubmenu(next);
+                            setImportExportGroup(null);
+                            setShowOperatorActionsSubmenu(false);
+                            setShowPowerPointSubmenu(false);
+                            setShowReportsSubmenu(false);
+                          }}
                           className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center justify-between gap-3"
                         >
                           <span className="flex items-center gap-3">
@@ -11778,119 +17673,219 @@ const RunOfShowPage: React.FC = () => {
                           </svg>
                         </button>
                         {showImportExportSubmenu && (
-                          <div className="absolute left-full top-0 ml-1 min-w-[11rem] w-44 py-1 bg-slate-800 border border-slate-600 rounded-lg shadow-lg z-[60]">
-                      <button
-                        onClick={() => {
-                          setShowMenuDropdown(false);
-                          setShowImportExportSubmenu(false);
-                          handleExportCSV();
-                        }}
-                        className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center gap-3"
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                        </svg>
-                        Export CSV
-                      </button>
-                      <button
-                        onClick={() => {
-                          setShowMenuDropdown(false);
-                          setShowImportExportSubmenu(false);
-                          handleModalEditing();
-                          setShowGoogleSheetExportModal(true);
-                        }}
-                        className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center gap-3"
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                        </svg>
-                        Export to Google Sheet
-                      </button>
-                      <button
-                        onClick={() => {
-                          setShowMenuDropdown(false);
-                          setShowImportExportSubmenu(false);
-                          handleModalEditing();
-                          setShowCSVImportModal(true);
-                        }}
-                        className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center gap-3"
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                        </svg>
-                        Import CSV
-                      </button>
-                      <button
-                        onClick={() => {
-                          setShowMenuDropdown(false);
-                          setShowImportExportSubmenu(false);
-                          handleModalEditing();
-                          setShowExcelImportModal(true);
-                        }}
-                        className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center gap-3"
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                        </svg>
-                        Import Excel
-                      </button>
-                      <button
-                        onClick={() => {
-                          setShowMenuDropdown(false);
-                          setShowImportExportSubmenu(false);
-                          handleModalEditing();
-                          setShowAgendaImportModal(true);
-                        }}
-                        className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center gap-3"
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                        </svg>
-                        Import Agenda
-                      </button>
-                      <button
-                        onClick={() => {
-                          setShowMenuDropdown(false);
-                          setShowImportExportSubmenu(false);
-                          handleModalEditing();
-                          setShowImportEventModal(true);
-                        }}
-                        className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center gap-3"
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                        </svg>
-                        Import from Event
-                      </button>
-                      <button
-                        onClick={() => {
-                          setShowMenuDropdown(false);
-                          setShowImportExportSubmenu(false);
-                          setShowBackupModal(true);
-                        }}
-                        className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center gap-3"
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-                        </svg>
-                        Backups
-                      </button>
+                          <div
+                            ref={importExportFlyoutRef}
+                            className="absolute top-0 z-[60] w-52 py-1.5 bg-slate-800 border border-slate-600 rounded-lg shadow-lg"
+                          >
+                            {/* Import */}
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setImportExportGroup((g) => (g === 'import' ? null : 'import'))
+                              }
+                              className={`w-full px-3 py-2 text-left text-sm font-semibold transition-colors flex items-center justify-between gap-2 ${
+                                importExportGroup === 'import'
+                                  ? 'bg-slate-700 text-white'
+                                  : 'text-white hover:bg-slate-700'
+                              }`}
+                            >
+                              Import
+                              <svg
+                                className={`w-3.5 h-3.5 text-slate-400 transition-transform ${importExportGroup === 'import' ? 'rotate-90' : ''}`}
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                              >
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                              </svg>
+                            </button>
+                            {importExportGroup === 'import' && (
+                              <div className="mx-2 mb-1.5 rounded-md border border-slate-600/70 bg-slate-950/70 overflow-hidden">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setShowMenuDropdown(false);
+                                    setShowImportExportSubmenu(false);
+                                    setImportExportGroup(null);
+                                    handleModalEditing();
+                                    setShowCSVImportModal(true);
+                                  }}
+                                  className="w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-slate-700/80 transition-colors border-b border-slate-700/60"
+                                >
+                                  CSV
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setShowMenuDropdown(false);
+                                    setShowImportExportSubmenu(false);
+                                    setImportExportGroup(null);
+                                    handleModalEditing();
+                                    setShowExcelImportModal(true);
+                                  }}
+                                  className="w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-slate-700/80 transition-colors border-b border-slate-700/60"
+                                >
+                                  Excel
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setShowMenuDropdown(false);
+                                    setShowImportExportSubmenu(false);
+                                    setImportExportGroup(null);
+                                    handleModalEditing();
+                                    setShowAgendaImportModal(true);
+                                  }}
+                                  className="w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-slate-700/80 transition-colors border-b border-slate-700/60"
+                                >
+                                  Agenda
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setShowMenuDropdown(false);
+                                    setShowImportExportSubmenu(false);
+                                    setImportExportGroup(null);
+                                    handleModalEditing();
+                                    setShowImportEventModal(true);
+                                  }}
+                                  className="w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-slate-700/80 transition-colors"
+                                >
+                                  From Event
+                                </button>
+                              </div>
+                            )}
+
+                            {/* Export */}
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setImportExportGroup((g) => (g === 'export' ? null : 'export'))
+                              }
+                              className={`w-full px-3 py-2 text-left text-sm font-semibold transition-colors flex items-center justify-between gap-2 ${
+                                importExportGroup === 'export'
+                                  ? 'bg-slate-700 text-white'
+                                  : 'text-white hover:bg-slate-700'
+                              }`}
+                            >
+                              Export
+                              <svg
+                                className={`w-3.5 h-3.5 text-slate-400 transition-transform ${importExportGroup === 'export' ? 'rotate-90' : ''}`}
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                              >
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                              </svg>
+                            </button>
+                            {importExportGroup === 'export' && (
+                              <div className="mx-2 mb-1.5 rounded-md border border-slate-600/70 bg-slate-950/70 overflow-hidden">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setShowMenuDropdown(false);
+                                    setShowImportExportSubmenu(false);
+                                    setImportExportGroup(null);
+                                    handleExportCSV();
+                                  }}
+                                  className="w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-slate-700/80 transition-colors border-b border-slate-700/60"
+                                >
+                                  CSV
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setShowMenuDropdown(false);
+                                    setShowImportExportSubmenu(false);
+                                    setImportExportGroup(null);
+                                    handleModalEditing();
+                                    setShowGoogleSheetExportModal(true);
+                                  }}
+                                  className="w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-slate-700/80 transition-colors"
+                                >
+                                  Google Sheet
+                                </button>
+                              </div>
+                            )}
+
+                            <div className="my-1 border-t border-slate-700" />
+
+                            {/* Backup — direct action */}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setShowMenuDropdown(false);
+                                setShowImportExportSubmenu(false);
+                                setImportExportGroup(null);
+                                setShowBackupModal(true);
+                              }}
+                              className="w-full px-3 py-2 text-left text-sm font-semibold text-white hover:bg-slate-700 transition-colors"
+                            >
+                              Backup
+                            </button>
                           </div>
                         )}
                       </div>
-                      <button
-                        onClick={() => {
-                          setShowMenuDropdown(false);
-                          const reportsUrl = `/reports?eventId=${event?.id}&eventName=${encodeURIComponent(event?.name || '')}`;
-                          window.open(reportsUrl, '_blank');
-                        }}
-                        className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center gap-3"
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                        </svg>
-                        Reports and Printing
-                      </button>
+                      <div className="relative">
+                        <button
+                          onClick={() => {
+                            setShowReportsSubmenu(!showReportsSubmenu);
+                            setShowImportExportSubmenu(false);
+                            setImportExportGroup(null);
+                            setShowOperatorActionsSubmenu(false);
+                            setShowPowerPointSubmenu(false);
+                          }}
+                          className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center justify-between gap-3"
+                        >
+                          <span className="flex items-center gap-3">
+                            <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                            </svg>
+                            Reports and Printing
+                          </span>
+                          <svg className={`w-4 h-4 flex-shrink-0 transition-transform ${showReportsSubmenu ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                          </svg>
+                        </button>
+                        {showReportsSubmenu && (
+                          <div
+                            ref={reportsFlyoutRef}
+                            className="absolute top-0 z-[60] w-56 py-1 bg-slate-800 border border-slate-600 rounded-lg shadow-lg"
+                          >
+                            <button
+                              onClick={() => {
+                                setShowMenuDropdown(false);
+                                setShowReportsSubmenu(false);
+                                const reportsUrl = `/reports?eventId=${event?.id}&eventName=${encodeURIComponent(event?.name || '')}`;
+                                window.open(reportsUrl, '_blank');
+                              }}
+                              className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center gap-3"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                              </svg>
+                              Schedule reports
+                            </button>
+                            {canAccessAccessManager(user) && (
+                              <button
+                                onClick={() => {
+                                  setShowMenuDropdown(false);
+                                  setShowReportsSubmenu(false);
+                                  const url = `/post-show-report?eventId=${event?.id}&eventName=${encodeURIComponent(event?.name || '')}`;
+                                  window.open(url, '_blank');
+                                }}
+                                className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center gap-3"
+                                title="Complaint Line notes + Show vs rehearsal"
+                              >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                </svg>
+                                Post-show report
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
                       <button
                         onClick={() => {
                           setShowMenuDropdown(false);
@@ -11905,6 +17900,22 @@ const RunOfShowPage: React.FC = () => {
                         </svg>
                         Content review
                       </button>
+                      {(extendEventControlsEnabled || eventHasExtendEventControls(event)) && (
+                        <button
+                          onClick={() => {
+                            setShowMenuDropdown(false);
+                            const url = `/extend-event-controls?eventId=${event?.id}&eventName=${encodeURIComponent(event?.name || '')}`;
+                            window.open(url, '_blank');
+                          }}
+                          className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center gap-3"
+                          title="Event-specific extended controls (e.g. Civics Bee Students)"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h10M4 18h7" />
+                          </svg>
+                          Extend Event Controls
+                        </button>
+                      )}
                       <button
                         onClick={() => {
                           setShowMenuDropdown(false);
@@ -11919,6 +17930,48 @@ const RunOfShowPage: React.FC = () => {
                         </svg>
                         Viewers ({viewers.length})
                       </button>
+                      {canAccessAdmin(user) && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setShowMenuDropdown(false);
+                              setSocketPresenceAlertTestPreview(true);
+                              setSocketPresenceAlertDismissed(false);
+                              setShowSocketPresenceAlert(true);
+                            }}
+                            className="w-full px-4 py-2 text-left text-amber-200 hover:bg-slate-700 transition-colors flex items-center gap-3"
+                            title="Preview the Live connection issue popup (does not drop your socket)"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                            </svg>
+                            Test sync alert
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setShowMenuDropdown(false);
+                              setSocketPresenceAlertTestPreview(false);
+                              setSocketPresenceAlertDismissed(false);
+                              socketWatchStartedAtRef.current = 0;
+                              if (event?.id) {
+                                socketClient.disconnect(event.id);
+                              }
+                              setSocketLiveConnected(false);
+                              setShowSocketPresenceAlert(true);
+                            }}
+                            className="w-full px-4 py-2 text-left text-amber-200 hover:bg-slate-700 transition-colors flex items-center gap-3"
+                            title="Actually disconnect Socket.IO so you can verify detection + Retry"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 5.636l-12.728 12.728M5.636 5.636l12.728 12.728" />
+                            </svg>
+                            Simulate sync drop
+                          </button>
+                        </>
+                      )}
                       <button
                         onClick={() => {
                           setShowMenuDropdown(false);
@@ -11981,64 +18034,87 @@ const RunOfShowPage: React.FC = () => {
                   }}
                   title={currentUserRole === 'VIEWER' ? 'Editors or Operators can change start time' : `Set ${(event?.numberOfDays && event.numberOfDays > 1) ? `Day ${selectedDay}` : 'master'} start time`}
                 />
+                {canAccessPreFlightChecklist(user) && (
+                  <button
+                    type="button"
+                    onClick={clearMasterStartTimes}
+                    className="px-2.5 py-2 text-xs font-semibold rounded-lg border border-slate-500 bg-slate-800 text-slate-200 hover:bg-slate-700 hover:text-white"
+                    title="Clear master/day start times (Admin/Crew only). Start column blanks until you set a new time."
+                  >
+                    Clear
+                  </button>
+                )}
               </div>
             </div>
             
             {/* Countdown Timer and Action Buttons - Top Right */}
             <div className="flex items-center gap-6">
               <div className="text-center">
-                {hybridTimerData?.activeTimer ? (
+                {autoRollArmed ? (
+                  <div
+                    className="mb-1 inline-flex max-w-[20rem] items-center gap-1.5 rounded-full border border-emerald-500/40 bg-emerald-950/80 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.14em] text-emerald-200"
+                    title="Auto Roll is on. This Run of Show tab loads and starts each cue at its Start time. Turn it off in Operator Actions."
+                  >
+                    Auto Roll
+                    {autoRollHud ? (
+                      <span className="truncate font-semibold normal-case tracking-normal text-emerald-100">
+                        · {autoRollHud}
+                      </span>
+                    ) : null}
+                  </div>
+                ) : null}
+                {hybridActiveTimer ? (
+                  <div className="flex flex-col items-center gap-0.5">
                   <div className="flex flex-col items-center gap-0.5">
                   <div className={`text-lg font-bold ${
-                    hybridTimerData.activeTimer.is_running && hybridTimerData.activeTimer.is_active
+                    hybridActiveTimer.is_running && hybridActiveTimer.is_active
                       ? isResolumeSyncPulseActive
                         ? 'text-yellow-300'
-                        : isResolumeSynced(hybridTimerData.activeTimer)
+                        : isResolumeSynced(hybridActiveTimer)
                           ? 'text-purple-400'
                           : 'text-green-400'
-                      : isResolumeArmed(hybridTimerData.activeTimer)
+                      : isResolumeArmed(hybridActiveTimer)
                         ? 'text-purple-300'
                         : 'text-yellow-400'
                   }`}>
-                    {hybridTimerData.activeTimer.is_running && hybridTimerData.activeTimer.is_active
-                      ? isResolumeSynced(hybridTimerData.activeTimer)
-                        ? `RUNNING · ${getExternalSyncLabel(hybridTimerData.activeTimer).toUpperCase()}`
-                        : 'RUNNING'
-                      : isResolumeArmed(hybridTimerData.activeTimer)
-                        ? `LOADED · ${getExternalSyncLabel(hybridTimerData.activeTimer).toUpperCase()}`
-                        : 'LOADED'
-                    } - {(() => {
-                      // Try to find the schedule item with proper type conversion
-                      const itemId = hybridTimerData.activeTimer.item_id;
+                    {(() => {
+                      const itemId = hybridActiveTimer.item_id;
                       const idNum = typeof itemId === 'string' ? parseInt(itemId, 10) : Number(itemId);
                       const scheduleItem = schedule.find(item => item.id === idNum);
-                      
-                      // Debug: Log only occasionally to reduce spam
-                      if (Math.random() < 0.01) {
-                        console.log('🔍 RunOfShow: Hybrid timer data:', hybridTimerData.activeTimer);
-                        console.log('🔍 RunOfShow: Looking for item_id:', hybridTimerData.activeTimer.item_id, typeof hybridTimerData.activeTimer.item_id);
-                        console.log('🔍 RunOfShow: Found schedule item:', scheduleItem);
-                      }
-                      
-                      if (scheduleItem?.customFields?.cue) {
-                        return formatCueDisplay(scheduleItem.customFields.cue);
-                      } else {
-                        // Fallback: show item_id or try to get cue from timer data
-                        console.log('🔍 RunOfShow: No schedule item found, using fallback');
-                        return `CUE ${itemId}`;
-                      }
+                      const cueLabel = resolveScheduleCueLabel(scheduleItem, null);
+                      const running = !!(hybridActiveTimer.is_running && hybridActiveTimer.is_active);
+                      const sync = isResolumeSynced(hybridActiveTimer) || isResolumeArmed(hybridActiveTimer)
+                        ? getExternalSyncLabel(hybridActiveTimer).toUpperCase()
+                        : '';
+                      return formatTimerCueStatus(running ? 'running' : 'loaded', cueLabel, sync);
                     })()}
                   </div>
-                  {isResolumeArmed(hybridTimerData.activeTimer) && (
+                  {rosPreshowRainbow ? (
+                    <span
+                      className="inline-flex items-center rounded-md border border-violet-400/40 bg-violet-950/80 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.14em] text-violet-100 shadow-sm"
+                      title="Pre Show Countdown is active on displays"
+                    >
+                      <span className="ros-rainbow-text">Pre Show Countdown</span>
+                    </span>
+                  ) : isPreshowProgramType(activeCueForPreshow?.programType) ? (
+                    <span
+                      className="inline-flex items-center rounded-md border border-violet-400/40 bg-violet-950/80 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.14em] text-violet-100 shadow-sm"
+                      title="This cue is Pre Show / End"
+                    >
+                      <span className="ros-rainbow-text">Pre Show</span>
+                    </span>
+                  ) : null}
+                  </div>
+                  {isResolumeArmed(hybridActiveTimer) && (
                     <div className="text-xs text-purple-300/90">
-                      Waiting for {getExternalSyncLabel(hybridTimerData.activeTimer)} playback…
+                      Waiting for {getExternalSyncLabel(hybridActiveTimer)} playback…
                     </div>
                   )}
-                  {isResolumeSynced(hybridTimerData.activeTimer) &&
-                    hybridTimerData.activeTimer.is_running &&
-                    hybridTimerData.activeTimer.is_active && (
+                  {isResolumeSynced(hybridActiveTimer) &&
+                    hybridActiveTimer.is_running &&
+                    hybridActiveTimer.is_active && (
                     <div className="text-xs text-purple-300/90">
-                      Countdown synced to {getExternalSyncLabel(hybridTimerData.activeTimer)} clip
+                      Countdown synced to {getExternalSyncLabel(hybridActiveTimer)} clip
                     </div>
                   )}
                   {((hybridSecondaryTimer?.is_running && hybridSecondaryTimer?.is_active !== false) ||
@@ -12085,19 +18161,53 @@ const RunOfShowPage: React.FC = () => {
                         })()}
                       </div>
                     )}
+                  {renderOperatorCountdownTopLine()}
                   </div>
                 ) : Object.keys(activeTimers).length > 0 ? (
-                  <div className="text-lg text-green-400 font-bold">
-                    RUNNING - {formatCueDisplay(schedule.find(item => activeTimers[item.id])?.customFields.cue)}
-                    {secondaryTimer && (
-                      <div className="text-lg text-orange-400 mt-0.5 font-bold">
-                        {formatCueDisplay(schedule.find(item => item.id === secondaryTimer.itemId)?.customFields.cue)} - {formatSubCueTime(secondaryTimer.remaining)}
-                      </div>
-                    )}
+                  <div className="flex flex-col items-center gap-0.5">
+                    <div className="text-lg text-green-400 font-bold">
+                      {formatTimerCueStatus(
+                        'running',
+                        resolveScheduleCueLabel(schedule.find(item => activeTimers[item.id]), null)
+                      )}
+                      {secondaryTimer && (
+                        <div className="text-lg text-orange-400 mt-0.5 font-bold">
+                          {formatCueDisplay(schedule.find(item => item.id === secondaryTimer.itemId)?.customFields.cue)} - {formatSubCueTime(secondaryTimer.remaining)}
+                        </div>
+                      )}
+                      {renderOperatorCountdownTopLine()}
+                    </div>
+                    {rosPreshowRainbow ? (
+                      <span
+                        className="inline-flex items-center rounded-md border border-violet-400/40 bg-violet-950/80 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.14em] text-violet-100 shadow-sm"
+                        title="Pre Show Countdown is active on displays"
+                      >
+                        <span className="ros-rainbow-text">Pre Show Countdown</span>
+                      </span>
+                    ) : null}
                   </div>
                 ) : activeItemId && timerProgress[activeItemId] ? (
-                  <div className="text-lg text-yellow-400 font-bold">
-                    LOADED - {formatCueDisplay(schedule.find(item => item.id === activeItemId)?.customFields.cue)}
+                  <div className="flex flex-col items-center gap-0.5">
+                    <div className="text-lg text-yellow-400 font-bold">
+                      {formatTimerCueStatus(
+                        'loaded',
+                        resolveScheduleCueLabel(schedule.find(item => item.id === activeItemId), null)
+                      )}
+                    </div>
+                    {renderOperatorCountdownTopLine()}
+                    {isPreshowProgramType(schedule.find((item) => item.id === activeItemId)?.programType) ? (
+                      <span
+                        className="inline-flex items-center rounded-md border border-violet-400/40 bg-violet-950/80 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.14em] text-violet-100 shadow-sm"
+                        title="This cue is Pre Show / End"
+                      >
+                        <span className="ros-rainbow-text">Pre Show</span>
+                      </span>
+                    ) : null}
+                  </div>
+                ) : liveOperatorCountdown ? (
+                  <div className="flex flex-col items-center gap-0.5">
+                    <div className="text-lg text-slate-300 font-bold">Op Timer</div>
+                    {renderOperatorCountdownTopLine()}
                   </div>
                 ) : (
                   <div className="text-lg text-slate-300 font-bold">
@@ -12127,11 +18237,16 @@ const RunOfShowPage: React.FC = () => {
                     </div>
                   ) : null}
                   <div
-                    className={`px-6 text-center ${rosClockTodBadge ? 'py-2' : 'py-3'}`}
-                    style={{ color: getCountdownColor() }}
+                    className={`px-6 text-center ${rosClockTodBadge ? 'py-2' : 'py-3'} ${rosPreshowRainbow ? 'ros-rainbow-text' : ''}`}
+                    style={rosPreshowRainbow ? undefined : { color: getCountdownColor() }}
                   >
                     <div className="text-3xl font-mono leading-none">
-                      {formatTime(getRemainingTime())}
+                      <OvertimeClockText
+                        seconds={getRemainingTime()}
+                        body={formatTime(getRemainingTime())}
+                        sign={overtimeSign}
+                        signClassName={pageClockSignClass(getRemainingTime(), overtimeSign)}
+                      />
                     </div>
                     {rosClockTodBadge ? (
                       <div className="mt-1 font-mono text-[11px] font-semibold leading-none tracking-wide text-cyan-300">
@@ -12149,10 +18264,12 @@ const RunOfShowPage: React.FC = () => {
           <div className="px-8 mb-2">
             <div className="w-full h-2 bg-slate-700 rounded-full overflow-hidden border border-slate-600 relative">
               <div 
-                className="h-full transition-all duration-1000 absolute top-0 right-0"
+                className={`h-full transition-all duration-1000 absolute top-0 right-0 ${
+                  rosPreshowRainbow ? 'ros-rainbow-fill' : ''
+                }`}
                 style={{ 
                   width: `${getRemainingPercentage()}%`,
-                  background: getProgressBarColor()
+                  ...(rosPreshowRainbow ? {} : { background: getProgressBarColor() }),
                 }}
               />
             </div>
@@ -12164,7 +18281,7 @@ const RunOfShowPage: React.FC = () => {
               {/* Role Display - Left Side */}
               <div className="flex items-center gap-3">
                 <div className="text-sm text-slate-300">
-                  Role: <span className="font-semibold text-white">{currentUserRole}</span>
+                  Role: <span className="font-semibold text-white">{sessionRoleLabel(currentUserRole)}</span>
                 </div>
                 <button
                   onClick={() => setShowRoleChangeModal(true)}
@@ -12174,12 +18291,56 @@ const RunOfShowPage: React.FC = () => {
                   Change Role
                 </button>
                 <button
-                  onClick={createManualBackup}
+                  onClick={openNameBackupModal}
                   className="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded transition-colors"
-                  title="Create a manual backup of current data"
+                  title="Create a named manual backup of current data"
                 >
                   💾 Create Backup
                 </button>
+                {currentUserRole !== 'VIEWER' && (
+                  autoBackupEnabled ? (
+                    <div className="flex items-stretch rounded overflow-hidden border border-emerald-600/70 text-sm h-[30px]">
+                      <button
+                        type="button"
+                        onClick={() => { void disableAutoBackup(); }}
+                        className="flex items-center gap-1 px-2 bg-emerald-700/90 hover:bg-emerald-600 text-emerald-50"
+                        title={autoBackupStatus || `Auto every ${autoBackupIntervalMinutes} min — click to turn off`}
+                      >
+                        <span className="w-1.5 h-1.5 bg-emerald-200 rounded-full animate-pulse shrink-0" />
+                        Auto
+                      </button>
+                      <select
+                        value={autoBackupIntervalMinutes}
+                        onChange={(e) => setAutoBackupIntervalMinutes(Number(e.target.value))}
+                        className="px-1 bg-emerald-900/80 text-emerald-100 border-l border-emerald-600/70 text-sm focus:outline-none max-w-[3.25rem] h-full"
+                        title="Interval"
+                      >
+                        {AUTO_BACKUP_INTERVALS.map((mins) => (
+                          <option key={mins} value={mins}>{mins}m</option>
+                        ))}
+                      </select>
+                    </div>
+                  ) : autoBackupHeldByOther ? (
+                    <button
+                      type="button"
+                      disabled
+                      className="flex items-center gap-1 px-3 py-1 bg-yellow-600/90 text-yellow-50 text-sm rounded border border-yellow-500/80 cursor-default opacity-95"
+                      title={`Auto enabled by ${autoBackupHeldByOther.userName} (every ${autoBackupHeldByOther.intervalMinutes} min). Frees up after ~12 min of inactivity.`}
+                    >
+                      <span className="w-1.5 h-1.5 bg-yellow-200 rounded-full animate-pulse shrink-0" />
+                      Auto
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => { void enableAutoBackup(); }}
+                      className="px-3 py-1 bg-slate-600 hover:bg-emerald-700 text-slate-200 hover:text-white text-sm rounded border border-slate-500"
+                      title={`Enable auto backup every ${autoBackupIntervalMinutes} min`}
+                    >
+                      Auto+
+                    </button>
+                  )
+                )}
                 {isUserEditing && (
                   <div className="flex items-center space-x-2 px-3 py-1 bg-yellow-600 rounded text-sm">
                     <div className="w-2 h-2 bg-yellow-200 rounded-full animate-pulse"></div>
@@ -12189,10 +18350,13 @@ const RunOfShowPage: React.FC = () => {
                 
                 {/* Countdown timer button */}
                 {!isUserEditing && isPageVisible && (
-                  <div className="flex items-center space-x-2 px-3 py-1 bg-blue-600 rounded text-sm">
-                    <div className="w-2 h-2 bg-blue-200 rounded-full animate-pulse"></div>
-                    <span className="text-blue-100 font-medium">
-                      {isSyncing ? 'Syncing...' : `Next sync in ${countdown}s`}
+                  <div
+                    className="flex items-center gap-1.5 px-2 py-1 bg-blue-600 rounded text-sm tabular-nums"
+                    title={isSyncing ? 'Syncing schedule…' : `Next schedule sync in ${countdown}s`}
+                  >
+                    <div className="w-2 h-2 bg-blue-200 rounded-full animate-pulse shrink-0" />
+                    <span className="text-blue-100 font-medium whitespace-nowrap">
+                      {isSyncing ? 'Syncing…' : `Sync ${countdown}s`}
                     </span>
                   </div>
                 )}
@@ -12251,6 +18415,8 @@ const RunOfShowPage: React.FC = () => {
                     : 'Hide button labels'
                 }
               >
+                {/* Compact → « collapse feel / show that labels expand the other way;
+                    Expanded → »  (flipped per operator preference) */}
                 <svg
                   className="h-4 w-4"
                   viewBox="0 0 24 24"
@@ -12316,7 +18482,7 @@ const RunOfShowPage: React.FC = () => {
                     <>
                       <div className="font-bold text-black">Time Toast is on</div>
                       <div className="mt-1.5 font-medium text-neutral-900">
-                        Shows a popup when a cue starts early, late, or on time.
+                        Shows a popup when a cue starts early, late, or on time. VO/BGM pop-ups are a separate switch in the VO / BGM editor.
                       </div>
                       <div className="mt-1.5 text-sm font-medium text-neutral-700">Click to turn off</div>
                     </>
@@ -12324,7 +18490,7 @@ const RunOfShowPage: React.FC = () => {
                     <>
                       <div className="font-bold text-black">Time Toast is off</div>
                       <div className="mt-1.5 font-medium text-neutral-900">
-                        Turn on to get popup alerts when a cue starts early, late, or on time.
+                        Turn on to get popup alerts when a cue starts early, late, or on time. VO/BGM pop-ups are a separate switch in the VO / BGM editor.
                       </div>
                       <div className="mt-1.5 text-sm font-medium text-neutral-700">Click to turn on</div>
                     </>
@@ -12426,25 +18592,25 @@ const RunOfShowPage: React.FC = () => {
                 </button>
               </div>
               
-              {/* Messages Button */}
+              {/* Messages — EDITOR + OPERATOR */}
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => {
-                    if (currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR') {
-                      alert('Only OPERATORs can send messages. Please change your role to OPERATOR.');
+                    if (currentUserRole === 'VIEWER') {
+                      alert('Viewers cannot send messages. Please change your role to EDITOR or OPERATOR.');
                       return;
                     }
                     setShowMessagesModal(true);
                   }}
                   className={`px-4 py-2 text-white text-sm font-medium rounded transition-colors ${
-                    currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR'
+                    currentUserRole === 'VIEWER'
                       ? 'bg-gray-500 text-gray-300 cursor-not-allowed'
                       : messageEnabled 
                         ? 'bg-purple-600 hover:bg-purple-500 ring-4 ring-inset ring-green-500' 
                         : 'bg-purple-600 hover:bg-purple-500'
                   }`}
-                  disabled={currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR'}
-                  title={currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR' ? 'Only OPERATORs can send messages' : 'Send Messages to Full Screen Timer'}
+                  disabled={currentUserRole === 'VIEWER'}
+                  title={currentUserRole === 'VIEWER' ? 'Viewers cannot send messages' : 'Send Messages to Full Screen Timer'}
                 >
                   Messages
                 </button>
@@ -12453,8 +18619,8 @@ const RunOfShowPage: React.FC = () => {
                 {messageEnabled && (
                   <button
                     onClick={async () => {
-                      if (currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR') {
-                        alert('Only OPERATORs can control messages. Please change your role to OPERATOR.');
+                      if (currentUserRole === 'VIEWER') {
+                        alert('Viewers cannot control messages. Please change your role to EDITOR or OPERATOR.');
                         return;
                       }
                       
@@ -12510,9 +18676,10 @@ const RunOfShowPage: React.FC = () => {
               </div>
             </div>
           </div>
-          {/* Duplicate Grid Headers - Fixed at Top */}
-          <div className={`px-8 transition-all duration-500 ease-in-out overflow-hidden ${showGridHeaders ? 'max-h-80 opacity-100 -mb-6' : 'max-h-0 opacity-0 mb-0'}`}>
-            <div className="bg-slate-800 rounded-xl p-4 shadow-2xl" style={{ transform: 'scale(0.75)', transformOrigin: 'top center', width: '127.67%', marginLeft: '-13.83%' }}>
+          {/* Duplicate Grid Headers — same max-w/px as schedule so columns match when sticky */}
+          <div className={`transition-all duration-500 ease-in-out overflow-hidden ${showGridHeaders ? 'max-h-80 opacity-100 -mb-6' : 'max-h-0 opacity-0 mb-0'}`}>
+            <div className="max-w-[95%] mx-auto px-6">
+            <div className="bg-slate-800 rounded-xl p-4 shadow-2xl" style={{ zoom: 0.75 }}>
               <div className="flex border-2 border-slate-600 rounded-lg overflow-hidden bg-slate-900">
                 {/* Row Number Column Header - click to cycle: normal → small → hidden */}
                 <div className="w-12 flex-shrink-0 bg-slate-900 border-r-2 border-slate-600">
@@ -12526,9 +18693,18 @@ const RunOfShowPage: React.FC = () => {
                   </button>
                 </div>
                 
-                {/* CUE Column Header */}
-                <div className="w-40 flex-shrink-0 bg-slate-900" style={{ borderRight: '6px solid #475569' }}>
-                  <div className="h-16 bg-slate-700 border-b-3 border-slate-600 flex items-center justify-center">
+                {/* CUE (+ optional pinned Start) — shared header strip so thin dividers match scroll columns */}
+                <div className="flex flex-shrink-0 bg-slate-900">
+                  <div
+                    className={`h-16 bg-slate-700 border-b-3 border-slate-600 flex items-center justify-center ${
+                      startPinnedBesideCue ? 'w-40 border-r border-slate-600' : 'w-40'
+                    }`}
+                    style={
+                      startPinnedBesideCue
+                        ? undefined
+                        : { borderRight: '6px solid #475569' }
+                    }
+                  >
                     <span className="text-white font-bold text-lg flex items-center gap-1">
                       CUE
                       {currentUserRole === 'VIEWER' && (
@@ -12536,29 +18712,66 @@ const RunOfShowPage: React.FC = () => {
                       )}
                     </span>
                   </div>
+                  {startPinnedBesideCue && (
+                    <div
+                      className="h-16 bg-slate-700 border-b-3 border-slate-600 flex items-center justify-center relative cursor-pointer hover:bg-slate-600 transition-colors min-w-0"
+                      style={{
+                        width: columnWidths.start,
+                        minWidth: columnWidths.start,
+                        maxWidth: columnWidths.start,
+                        flex: `0 0 ${columnWidths.start}px`,
+                        borderRight: '6px solid #475569',
+                      }}
+                      onClick={toggleStartTimeDisplayMode}
+                      title={`Start time: ${startTimeDisplayModeLabel(startTimeDisplayMode)} (click for ${startTimeDisplayModeLabel(cycleStartTimeDisplayMode(startTimeDisplayMode))})`}
+                    >
+                      <div className="text-center pointer-events-none">
+                        <div className="text-white font-bold">Start</div>
+                        <div className="text-[10px] text-slate-400">{startTimeDisplayModeLabel(startTimeDisplayMode)}</div>
+                      </div>
+                      <div
+                        className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 opacity-0 hover:opacity-100 transition-opacity"
+                        onMouseDown={(e) => {
+                          e.stopPropagation();
+                          handleResizeStart(e, 'start');
+                        }}
+                      />
+                    </div>
+                  )}
                 </div>
 
 
                 {/* Center Scrollable Section Headers */}
-                <div className="flex-1 overflow-x-auto sticky-header-scroll-container" style={{ scrollbarWidth: 'thin' }}>
+                <div
+                  className="flex-1 overflow-x-auto overflow-y-hidden sticky-header-scroll-container"
+                  style={{ scrollbarWidth: 'none' }}
+                >
                   <div className="min-w-max">
                     <div className="h-16 bg-slate-700 border-b-3 border-slate-600 flex">
-                      {visibleColumns.start && (
+                      {visibleColumns.start && !startPinnedBesideCue && (
                         <div 
-                          className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                          style={{ width: columnWidths.start }}
+                          className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative cursor-pointer hover:bg-slate-600/80 transition-colors"
+                          style={colBox(columnWidths.start, 'start')}
+                          onClick={toggleStartTimeDisplayMode}
+                          title={`Start time: ${startTimeDisplayModeLabel(startTimeDisplayMode)} (click for ${startTimeDisplayModeLabel(cycleStartTimeDisplayMode(startTimeDisplayMode))})`}
                         >
-                          <span className="text-white font-bold">Start</span>
+                          <div className="text-center pointer-events-none">
+                            <div className="text-white font-bold">Start</div>
+                            <div className="text-[10px] text-slate-400">{startTimeDisplayModeLabel(startTimeDisplayMode)}</div>
+                          </div>
                           <div 
                             className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 opacity-0 hover:opacity-100 transition-opacity"
-                            onMouseDown={(e) => handleResizeStart(e, 'start')}
+                            onMouseDown={(e) => {
+                              e.stopPropagation();
+                              handleResizeStart(e, 'start');
+                            }}
                           />
                         </div>
                       )}
                       {visibleColumns.programType && (
                         <div 
                           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                          style={{ width: columnWidths.programType }}
+                          style={colBox(columnWidths.programType, 'programType')}
                         >
                           <span className="text-white font-bold flex items-center gap-1">
                             Program Type
@@ -12575,7 +18788,7 @@ const RunOfShowPage: React.FC = () => {
                       {visibleColumns.duration && (
                         <div 
                           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                          style={{ width: columnWidths.duration }}
+                          style={colBox(columnWidths.duration, 'duration')}
                         >
                           <div className="text-center">
                             <div className="text-white font-bold flex items-center justify-center gap-1">
@@ -12594,25 +18807,33 @@ const RunOfShowPage: React.FC = () => {
                       )}
                       {visibleColumns.segmentName && (
                         <div 
-                          className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                          style={{ width: columnWidths.segmentName }}
+                          className="px-3 py-2 border-r border-slate-600 flex items-center justify-start flex-shrink-0 relative cursor-pointer hover:bg-slate-600/80 transition-colors min-w-0"
+                          style={colBox(columnWidths.segmentName, 'segmentName')}
+                          onClick={toggleSegmentNameDisplayMode}
+                          title={`Segment: ${segmentNameDisplayModeLabel(segmentNameDisplayMode)} (click for ${segmentNameDisplayModeLabel(cycleSegmentNameDisplayMode(segmentNameDisplayMode))})`}
                         >
-                          <span className="text-white font-bold flex items-center gap-1">
-                            Segment Name
-                            {(currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') && (
-                              <span className="text-yellow-400" title="Read-only for your role">🔒</span>
-                            )}
-                          </span>
+                          <div className="text-left pointer-events-none min-w-0">
+                            <div className="text-white font-bold flex items-center justify-start gap-1">
+                              Segment Name
+                              {(currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') && (
+                                <span className="text-yellow-400" title="Read-only for your role">🔒</span>
+                              )}
+                            </div>
+                            <div className="text-[10px] text-slate-400">{segmentNameDisplayModeLabel(segmentNameDisplayMode)}</div>
+                          </div>
                           <div 
                             className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 opacity-0 hover:opacity-100 transition-opacity"
-                            onMouseDown={(e) => handleResizeStart(e, 'segmentName')}
+                            onMouseDown={(e) => {
+                              e.stopPropagation();
+                              handleResizeStart(e, 'segmentName');
+                            }}
                           />
                         </div>
                       )}
                       {visibleColumns.shotType && (
                         <div 
                           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                          style={{ width: columnWidths.shotType }}
+                          style={colBox(columnWidths.shotType, 'shotType')}
                         >
                           <span className="text-white font-bold flex items-center gap-1">
                             Shot Type
@@ -12629,7 +18850,7 @@ const RunOfShowPage: React.FC = () => {
                       {visibleColumns.pptQA && (
                         <div 
                           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                          style={{ width: columnWidths.pptQA }}
+                          style={colBox(columnWidths.pptQA, 'pptQA')}
                         >
                           <span className="text-white font-bold flex items-center gap-1">
                             PPT/Q&A
@@ -12645,8 +18866,8 @@ const RunOfShowPage: React.FC = () => {
                       )}
                       {visibleColumns.recording && (
                         <div 
-                          className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                          style={{ width: columnWidths.recording }}
+                          className="group/rec-hdr px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative overflow-visible"
+                          style={colBox(columnWidths.recording, 'recording')}
                         >
                           <span className="text-white font-bold flex items-center gap-1">
                             Rec
@@ -12654,16 +18875,41 @@ const RunOfShowPage: React.FC = () => {
                               <span className="text-yellow-400" title="Read-only for your role">🔒</span>
                             )}
                           </span>
+                          <div
+                            role="tooltip"
+                            className="pointer-events-none absolute left-1/2 top-full z-[90] mt-2 w-96 -translate-x-1/2 rounded-md border-2 border-slate-500 bg-white px-5 py-4 text-left leading-snug text-black opacity-0 shadow-xl transition-opacity duration-150 group-hover/rec-hdr:opacity-100"
+                          >
+                            <div className="text-[22px] font-black text-black">{CUE_RECORDING_HOVER_TITLE}</div>
+                            <div className="mt-2 text-[18px] font-bold text-neutral-900">{CUE_RECORDING_HOVER_BODY}</div>
+                          </div>
                           <div 
                             className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 opacity-0 hover:opacity-100 transition-opacity"
                             onMouseDown={(e) => handleResizeStart(e, 'recording')}
                           />
                         </div>
                       )}
+                      {showMittiWatchColumn && (
+                        <div
+                          className="px-2 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
+                          style={colBox(88, 'mittiWatch')}
+                          title="Checked row is the next Mitti play. Only one row at a time."
+                        >
+                          <span className="text-white font-bold text-sm">Mitti</span>
+                        </div>
+                      )}
+                      {showAvWatchColumn && (
+                        <div
+                          className="px-2 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
+                          style={colBox(72, 'avWatch')}
+                          title="Checked row is the next AV-Playout play. Only one row at a time."
+                        >
+                          <span className="text-white font-bold text-sm">AV</span>
+                        </div>
+                      )}
                       {visibleColumns.notes && (
                         <div 
                           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                          style={{ width: columnWidths.notes }}
+                          style={colBox(columnWidths.notes, 'notes')}
                         >
                           <span className="text-white font-bold flex items-center gap-1">
                             Notes
@@ -12677,10 +18923,23 @@ const RunOfShowPage: React.FC = () => {
                           />
                         </div>
                       )}
+                      {visibleColumns.vog !== false && (
+                        <div
+                          className="px-2 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
+                          style={colBox(columnWidths.vog || 100, 'vog')}
+                          title="ElevenLabs Voice of God — preview and download WAV"
+                        >
+                          <span className="text-white font-bold text-sm">VOG</span>
+                          <div
+                            className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 opacity-0 hover:opacity-100 transition-opacity"
+                            onMouseDown={(e) => handleResizeStart(e, 'vog')}
+                          />
+                        </div>
+                      )}
                       {visibleColumns.assets && (
                         <div 
                           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                          style={{ width: columnWidths.assets }}
+                          style={colBox(columnWidths.assets, 'assets')}
                         >
                           <span className="text-white font-bold flex items-center gap-1">
                             Assets
@@ -12697,7 +18956,7 @@ const RunOfShowPage: React.FC = () => {
                       {visibleColumns.participants && (
                         <div 
                           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                          style={{ width: columnWidths.participants }}
+                          style={colBox(columnWidths.participants, 'participants')}
                         >
                           <span className="text-white font-bold flex items-center gap-1">
                             Participants
@@ -12714,7 +18973,7 @@ const RunOfShowPage: React.FC = () => {
                       {visibleColumns.speakers && (
                         <div 
                           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                          style={{ width: columnWidths.speakers }}
+                          style={colBox(columnWidths.speakers, 'speakers')}
                         >
                           <span className="text-white font-bold flex items-center gap-1">
                             Speakers
@@ -12728,10 +18987,19 @@ const RunOfShowPage: React.FC = () => {
                           />
                         </div>
                       )}
+                      {showDsmColumn && (
+                        <div
+                          className="px-2 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
+                          style={colBox(148, 'dsm')}
+                          title="Checked rows send DSM layout (Full/LED/VID/PPT) when the cue is loaded."
+                        >
+                          <span className="text-white font-bold text-sm">DSM</span>
+                        </div>
+                      )}
                       {visibleColumns.public && (
                         <div 
                           className="px-4 py-2 border-r border-slate-600 flex-shrink-0 relative"
-                          style={{ width: columnWidths.public }}
+                          style={colBox(columnWidths.public, 'public')}
                         >
                           <button
                             type="button"
@@ -12739,6 +19007,7 @@ const RunOfShowPage: React.FC = () => {
                               if (currentUserRole === 'EDITOR') {
                                 const dayItems = schedule.filter((i: ScheduleItem) => (i.day || 1) === selectedDay);
                                 setPublicBulkSelectedIds(dayItems.filter((i: ScheduleItem) => i.isPublic).map((i: ScheduleItem) => i.id));
+                                handleModalEditing();
                                 setShowPublicBulkModal(true);
                               }
                             }}
@@ -12759,7 +19028,7 @@ const RunOfShowPage: React.FC = () => {
                       {visibleColumns.timer && (
                         <div 
                           className="px-4 py-2 border-r border-slate-600 flex-shrink-0 relative flex items-center justify-center"
-                          style={{ width: columnWidths.timer }}
+                          style={colBox(columnWidths.timer, 'timer')}
                         >
                           <span className="font-bold text-white text-center flex items-center gap-1" title="Clock page: Countdown, Time of Day, or TOD Only">
                             Counter
@@ -12778,7 +19047,7 @@ const RunOfShowPage: React.FC = () => {
                           <div 
                             key={column.id} 
                             className="px-4 py-2 border-r border-slate-600 flex items-center justify-center relative flex-shrink-0"
-                            style={{ width: customColumnWidths[column.id] || 256 }}
+                            style={colBox(customColumnWidths[column.id] || 256, customColumnOrderKey(column.id))}
                           >
                             <span className="text-white font-bold">{column.name}</span>
                             <div 
@@ -12805,14 +19074,18 @@ const RunOfShowPage: React.FC = () => {
                 </div>
               </div>
             </div>
+            </div>
           </div>
         </div>
       </div>
 
 
       {/* Schedule Container */}
-      <div className="max-w-[95%] mx-auto px-6" style={{ paddingTop: '250px' }}>
-        <div className="bg-slate-800 rounded-xl p-4 shadow-2xl" style={{ transform: 'scale(0.75)', transformOrigin: 'top center', width: '133.33%', marginLeft: '-16.67%' }}>
+      <div className="max-w-[95%] mx-auto px-6" style={{ paddingTop: `${schedulePaddingTopPx}px` }}>
+        {currentUserRole === 'OPERATOR' && event?.id ? (
+          <OperatorPptPendingDecks eventId={String(event.id)} />
+        ) : null}
+        <div className="bg-slate-800 rounded-xl p-4 shadow-2xl" style={{ zoom: 0.75 }}>
           <div className="flex justify-between items-center mb-6">
             <div>
               <div className="flex items-center gap-4 flex-wrap">
@@ -12889,7 +19162,13 @@ const RunOfShowPage: React.FC = () => {
                       <input
                         type="checkbox"
                         checked={showCompletedHighlight}
-                        onChange={(e) => setShowCompletedHighlight(e.target.checked)}
+                        onChange={(e) => {
+                          const next = e.target.checked;
+                          setShowCompletedHighlight(next);
+                          if (event?.id) {
+                            DatabaseService.saveShowCompletedHighlight(event.id, next);
+                          }
+                        }}
                         className="rounded border-slate-500 w-5 h-5"
                       />
                       <span className="text-white text-sm">Show completed</span>
@@ -12944,14 +19223,47 @@ const RunOfShowPage: React.FC = () => {
                     value={selectedDay}
                     onChange={(e) => {
                       handleUserEditing();
+                      userChangedDayRef.current = true;
                       setSelectedDay(parseInt(e.target.value));
                     }}
-                    className="px-4 py-2 bg-slate-700 border-2 border-slate-600 rounded-lg text-white focus:border-blue-500 focus:outline-none text-base font-semibold w-20"
+                    className="px-4 py-2 bg-slate-700 border-2 border-slate-600 rounded-lg text-white focus:border-blue-500 focus:outline-none text-base font-semibold w-28"
                   >
-                    {Array.from({ length: event.numberOfDays }, (_, i) => (
-                      <option key={i + 1} value={i + 1}>{i + 1}</option>
-                    ))}
+                    {Array.from({ length: event.numberOfDays }, (_, i) => {
+                      const day = i + 1;
+                      const done = completedDays.includes(day);
+                      return (
+                        <option key={day} value={day}>
+                          {done ? `${day} ✓` : String(day)}
+                        </option>
+                      );
+                    })}
                   </select>
+                  {(currentUserRole === 'EDITOR' || currentUserRole === 'OPERATOR') && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const next = completedDays.includes(selectedDay)
+                          ? completedDays.filter((d) => d !== selectedDay)
+                          : [...completedDays, selectedDay].sort((a, b) => a - b);
+                        setCompletedDays(next);
+                        completedDaysRef.current = next;
+                        handleUserEditing();
+                        void saveToAPI();
+                      }}
+                      className={`px-3 py-2 text-xs font-semibold rounded-lg border transition-colors ${
+                        completedDays.includes(selectedDay)
+                          ? 'border-emerald-500/60 bg-emerald-950/50 text-emerald-200 line-through'
+                          : 'border-slate-600 bg-slate-800 text-slate-200 hover:bg-slate-700'
+                      }`}
+                      title={
+                        completedDays.includes(selectedDay)
+                          ? 'Day marked complete — click to reopen'
+                          : 'Mark this day complete so next launch prefers the next day'
+                      }
+                    >
+                      {completedDays.includes(selectedDay) ? 'Day done' : 'Mark day done'}
+                    </button>
+                  )}
                 </div>
               )}
 
@@ -12959,8 +19271,13 @@ const RunOfShowPage: React.FC = () => {
                 const prevCue = resolvePreviousCueForOvertimeAdjust();
                 const prevOt = prevCue ? (overtimeMinutes[prevCue.id] || 0) : 0;
                 const isRoot = offsetAdjustTarget === 'root';
-                const displayValue = isRoot ? showStartOvertime : prevOt;
-                const canAdjust = isRoot ? !!startCueId : !!prevCue;
+                const sectionOn = activeShowSectionBreakIndex(schedule) >= 0;
+                const displayValue = isRoot
+                  ? (sectionOn ? sessionShowStartOvertime : showStartOvertime)
+                  : prevOt;
+                const canAdjust = isRoot
+                  ? (sectionOn ? !!sessionStartCueId : !!startCueId)
+                  : !!prevCue;
                 const adjust = (delta: number) => {
                   if (isRoot) void adjustShowStartOffset(delta);
                   else void adjustPreviousCueOvertime(delta);
@@ -13019,6 +19336,8 @@ const RunOfShowPage: React.FC = () => {
                   }
                   // Pause syncing when adding new item
                   handleModalEditing();
+                  const draftId = Date.now();
+                  setModalDraftItemId(draftId);
                   setShowAddModal(true);
                   // Reset form to defaults
                   setModalForm({
@@ -13036,8 +19355,9 @@ const RunOfShowPage: React.FC = () => {
                     speakersText: '',
                     hasPPT: false,
                     hasQA: false,
+                    needsRecording: false,
                     timerId: '',
-                    isPublic: false,
+                    isPublic: true,
                     isIndented: false,
                     timerDisplay: 'countdown',
                     customFields: {}
@@ -13118,8 +19438,9 @@ const RunOfShowPage: React.FC = () => {
                      key={`${item.id}-${item.notes?.length || 0}-${item.speakers?.length || 0}`}
                      className={`border-b-2 border-slate-600 flex items-center justify-center gap-1 ${getRowContainerClass(item.id, index)} ${
                        activeJumpMenu === item.id ? 'relative z-[90]' : ''
-                     }`}
+                     }${sideLockClass(item.id)}`}
                      style={getRowContainerStyle(item)}
+                     title={isRowLockedByOther(item.id) ? rowEditorLabel(item.id) : undefined}
                    >
                     <div className={`flex flex-col items-center gap-1 relative ${activeJumpMenu === item.id ? 'z-[90]' : ''}`}>
                       <button
@@ -13129,7 +19450,13 @@ const RunOfShowPage: React.FC = () => {
                             alert('Viewers cannot access row actions. Please change your role to EDITOR or OPERATOR.');
                             return;
                           }
-                          setActiveJumpMenu(activeJumpMenu === item.id ? null : item.id);
+                          if (activeJumpMenu === item.id) {
+                            setActiveJumpMenu(null);
+                            handleModalClosed();
+                            return;
+                          }
+                          if (!beginRowAction(item.id, 'idle')) return;
+                          setActiveJumpMenu(item.id);
                         }}
                         className={`w-5 h-5 text-white rounded flex items-center justify-center text-xs font-bold transition-colors ${
                           currentUserRole === 'VIEWER'
@@ -13137,7 +19464,7 @@ const RunOfShowPage: React.FC = () => {
                             : 'bg-purple-600 hover:bg-purple-500'
                         }`}
                         disabled={currentUserRole === 'VIEWER'}
-                        title="Row actions"
+                        title={isRowLockedByOther(item.id) ? rowEditorLabel(item.id) : 'Row actions'}
                       >
                         #
                       </button>
@@ -13151,7 +19478,7 @@ const RunOfShowPage: React.FC = () => {
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
-                              handleUserEditing();
+                              if (!beginRowAction(item.id, 'idle')) return;
                               
                               // Pause syncing immediately BEFORE the prompt
                               console.log('✏️ Move to row button clicked - pausing sync');
@@ -13169,8 +19496,8 @@ const RunOfShowPage: React.FC = () => {
                                 // Resume syncing after prompt closes
                                 console.log('⏸️ Row jump prompt closed - resuming sync in 5 seconds');
                                 const timeout = setTimeout(() => {
-                                  console.log('⏸️ User stopped editing - resuming sync');
-                                  setIsUserEditing(false);
+                                  console.log('⏸️ Row jump prompt closed');
+                                  finishEditingSessionRef.current();
                                 }, 5000);
                                 setEditingTimeout(timeout);
                                 
@@ -13189,7 +19516,7 @@ const RunOfShowPage: React.FC = () => {
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
-                              handleUserEditing();
+                              if (!beginRowAction(item.id, 'idle')) return;
                               duplicateScheduleItem(item.id);
                               setActiveJumpMenu(null);
                             }}
@@ -13202,7 +19529,7 @@ const RunOfShowPage: React.FC = () => {
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
-                              handleModalEditing();
+                              if (!beginRowAction(item.id, 'modal')) return;
                               setActiveJumpMenu(null);
                               setInsertRowPosition(schedule.findIndex(scheduleItem => scheduleItem.id === item.id));
                               setDelayBlockDay(item.day || selectedDay);
@@ -13218,11 +19545,49 @@ const RunOfShowPage: React.FC = () => {
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
+                              if (!beginRowAction(item.id, 'modal')) return;
+                              setActiveJumpMenu(null);
+                              setInsertRowPosition(schedule.findIndex(scheduleItem => scheduleItem.id === item.id));
+                              setDelayBlockDay(item.day || selectedDay);
+                              setShowBreakLabel('Evening');
+                              setShowBreakStartTime('17:00');
+                              setShowShowBreakModal(true);
+                            }}
+                            className="w-full px-4 py-2 text-left text-cyan-100 hover:bg-slate-600 flex items-center gap-2"
+                            title="Insert a Show Break after this row — next session starts on a new clock"
+                          >
+                            <span>⏸</span>
+                            <span>Add Show Break</span>
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (!beginRowAction(item.id, 'idle')) return;
+                              setActiveJumpMenu(null);
+                              addTimedMarkerAfter(item.id);
+                            }}
+                            className="w-full px-4 py-2 text-left text-sky-100 hover:bg-slate-600 flex items-center gap-2 border-t border-slate-600"
+                            title={
+                              isTimedMarkerItem(item) || isIndentedScheduleItem(item, indentedCues)
+                                ? 'Add another timed marker after this row (same parent)'
+                                : 'Add a timed marker under this cue (start time, no duration)'
+                            }
+                          >
+                            <span>◇</span>
+                            <span>
+                              {isTimedMarkerItem(item)
+                                ? 'Add Timed Marker After'
+                                : 'Add Timed Marker'}
+                            </span>
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
                               if (currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') {
                                 alert('Only EDITORs can set other room. Please change your role to EDITOR.');
                                 return;
                               }
-                              handleModalEditing();
+                              if (!beginRowAction(item.id, 'modal')) return;
                               setActiveJumpMenu(null);
                               setOtherRoomItemId(item.id);
                               setOtherRoomDraft(item.otherRoom || '');
@@ -13239,7 +19604,7 @@ const RunOfShowPage: React.FC = () => {
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
-                                handleModalEditing();
+                                if (!beginRowAction(item.id, 'modal')) return;
                                 setActiveJumpMenu(null);
                                 setBreakoutRoomParentId(item.id);
                                 setBreakoutRoomsData([{ location: 'Great Hall', title: '' }]);
@@ -13270,12 +19635,12 @@ const RunOfShowPage: React.FC = () => {
                             alert('Viewers cannot add rows. Please change your role to EDITOR or OPERATOR.');
                             return;
                           }
-                          // Pause syncing when inserting new row
-                          handleModalEditing();
+                          if (!beginRowAction(item.id, 'modal')) return;
                           // Use full-schedule index (not day-filtered index) so multi-day
                           // inserts land after this item instead of near the top of the day.
                           const fullIndex = schedule.findIndex(scheduleItem => scheduleItem.id === item.id);
                           setInsertRowPosition(fullIndex >= 0 ? fullIndex : index);
+                          setModalDraftItemId(Date.now());
                           setShowAddModal(true);
                         }}
                         className={`w-5 h-5 text-white rounded flex items-center justify-center text-xs font-bold transition-colors ${
@@ -13284,7 +19649,13 @@ const RunOfShowPage: React.FC = () => {
                             : 'bg-blue-600 hover:bg-blue-500'
                         }`}
                         disabled={currentUserRole === 'VIEWER'}
-                        title={currentUserRole === 'VIEWER' ? 'Viewers cannot add rows' : `Insert row after row ${index + 1}`}
+                        title={
+                          isRowLockedByOther(item.id)
+                            ? rowEditorLabel(item.id)
+                            : currentUserRole === 'VIEWER'
+                              ? 'Viewers cannot add rows'
+                              : `Insert row after row ${index + 1}`
+                        }
                       >
                         +
                       </button>
@@ -13295,9 +19666,16 @@ const RunOfShowPage: React.FC = () => {
             </div>
             
             {/* CUE Column with Controls */}
-            <div className="w-40 flex-shrink-0 bg-slate-900" style={{ borderRight: '6px solid #475569' }}>
+            <div
+              className="w-40 flex-shrink-0 bg-slate-900"
+              style={startPinnedBesideCue ? undefined : { borderRight: '6px solid #475569' }}
+            >
               {/* Header */}
-              <div className="h-24 bg-slate-700 border-b-3 border-slate-600 flex items-center justify-center">
+              <div
+                className={`h-24 bg-slate-700 border-b-3 border-slate-600 flex items-center justify-center ${
+                  startPinnedBesideCue ? 'border-r border-slate-600' : ''
+                }`}
+              >
                 <span className="text-white font-bold text-lg flex items-center gap-1">
                   CUE
                   {currentUserRole === 'VIEWER' && (
@@ -13309,23 +19687,57 @@ const RunOfShowPage: React.FC = () => {
               
                              {/* CUEs with Controls */}
                {getFilteredSchedule().length === 0 ? (
-                 <div className="h-24 flex items-center justify-center text-slate-500">
+                 <div
+                   className={`h-24 flex items-center justify-center text-slate-500 ${
+                     startPinnedBesideCue ? 'border-r border-slate-600' : ''
+                   }`}
+                 >
                    No items
                  </div>
                ) : (
-                 getFilteredSchedule().map((item, index) => (
+                 getFilteredSchedule().map((item, index) => {
+                   const dup = duplicateCues.get(item.id);
+                   return (
                    <div 
                      key={`${item.id}-${item.notes?.length || 0}-${item.speakers?.length || 0}`}
-                     className={`border-b-2 border-slate-600 flex flex-col items-center justify-center gap-1 ${getSideColumnRowClass(item.id, index)}`}
+                     className={`border-b-2 border-slate-600 flex flex-col items-center justify-center gap-1 ${getSideColumnRowClass(item.id, index)} ${
+                       startPinnedBesideCue ? 'border-r border-slate-600' : ''
+                     }${sideLockClass(item.id)}`}
                      style={getSideColumnRowStyle(item)}
+                     title={isRowLockedByOther(item.id) ? rowEditorLabel(item.id) : undefined}
                    >
                    <div className="flex items-center gap-1">
                      {/* Star button for marking START cue */}
+                     {!isShowBreakProgramType(item.programType) && (
                      <button
                        onClick={async () => {
+                         const fullIndex = schedule.findIndex((row) => row.id === item.id);
+                         const inSection = isIndexInActiveShowSection(schedule, fullIndex);
+                         if (isIndexFrozenByShowSection(schedule, fullIndex)) {
+                           alert('Morning offsets are frozen. Turn Section On and use the cyan star for the next session.');
+                           return;
+                         }
+                         if (inSection) {
+                           const newId = sessionStartCueId === item.id ? null : item.id;
+                           setSessionStartCueId(newId);
+                           setSessionShowStartOvertime(0);
+                           const updatedSchedule = schedule.map((row) => ({
+                             ...row,
+                             isSessionStartCue: row.id === newId,
+                             sessionStartOvertime: row.id === newId ? 0 : row.sessionStartOvertime,
+                           }));
+                           setSchedule(updatedSchedule);
+                           void persistScheduleNow(updatedSchedule);
+                           return;
+                         }
                          // Toggle: if this cue is already the START cue, unset it; otherwise set it
                          const newStartCueId = startCueId === item.id ? null : item.id;
                          setStartCueId(newStartCueId);
+                         // Moving ★ must not keep a leftover show-start offset on the new row.
+                         setShowStartOvertime(0);
+                         if (event?.id) {
+                           void DatabaseService.clearShowStartOvertime(event.id);
+                         }
                          
                          // Save START cue selection to main schedule table
                          if (event?.id) {
@@ -13353,7 +19765,10 @@ const RunOfShowPage: React.FC = () => {
                                  numberOfDays: event?.numberOfDays,
                                  show_mode: showMode,
                                  track_was_durations: trackWasDurations,
-                                 ...(Object.keys(originalDurations).length > 0 && { original_durations: originalDurations })
+                                 show_completed_highlight: showCompletedHighlight,
+                                 ...(Object.keys(originalDurations).length > 0 && { original_durations: originalDurations }),
+                                 ...autoRollSettingsPatch(autoRollArmedRef.current),
+          voAlertsEnabled: voAlertsEnabledRef.current !== false,
                                }
                              };
                              
@@ -13370,27 +19785,50 @@ const RunOfShowPage: React.FC = () => {
                          }
                        }}
                        className={`w-7 h-7 flex items-center justify-center text-xl rounded transition-colors bg-slate-700 hover:bg-slate-600 ${
-                         startCueId === item.id 
-                           ? 'text-yellow-400' // Gold star when selected
+                         (isIndexInActiveShowSection(schedule, schedule.findIndex((row) => row.id === item.id))
+                          ? sessionStartCueId === item.id || !!item.isSessionStartCue
+                          : startCueId === item.id)
+                           ? (isIndexInActiveShowSection(schedule, schedule.findIndex((row) => row.id === item.id))
+                             ? 'text-cyan-300'
+                             : 'text-yellow-400')
                            : 'text-slate-400 hover:text-yellow-400'
                        }`}
-                       title={startCueId === item.id ? "Unmark as SHOW START" : "Mark as SHOW START"}
+                       title={
+                         isIndexInActiveShowSection(schedule, schedule.findIndex((row) => row.id === item.id))
+                           ? (sessionStartCueId === item.id ? 'Unmark session START' : 'Mark as session START')
+                           : (startCueId === item.id ? 'Unmark as SHOW START' : 'Mark as SHOW START')
+                       }
                      >
-                       {startCueId === item.id ? '⭐' : '☆'}
+                       {(isIndexInActiveShowSection(schedule, schedule.findIndex((row) => row.id === item.id))
+                         ? sessionStartCueId === item.id || !!item.isSessionStartCue
+                         : startCueId === item.id)
+                         ? '⭐'
+                         : '☆'}
                      </button>
+                     )}
                      
                     <div className="flex">
-                      <div className={`flex items-center px-1 py-1 border border-slate-600 border-r-0 rounded-l text-white text-lg font-medium min-w-[40px] ${
-                        lastLoadedCueId === item.id ? 'bg-purple-600' : 'bg-slate-600'
+                      <div className={`flex items-center px-1 py-1 border border-r-0 rounded-l text-white text-lg font-medium min-w-[40px] ${
+                        lastLoadedCueId === item.id
+                          ? 'bg-purple-600 border-slate-600'
+                          : dup
+                            ? 'bg-amber-600 border-amber-400'
+                            : 'bg-slate-600 border-slate-600'
                       }`}>
                         CUE
                       </div>
                     <input
                       type="text"
                         value={item.customFields.cue ? item.customFields.cue.replace(/^CUE\s*/, '') : ''}
+                      onFocus={() => {
+                        if (currentUserRole === 'VIEWER') return;
+                        if (!beginRowAction(item.id, 'idle')) {
+                          (document.activeElement as HTMLElement | null)?.blur();
+                        }
+                      }}
+                      onBlur={() => handleRowBlur(item.id)}
                       onChange={(e) => {
-                        // Detect user editing
-                        handleUserEditing();
+                        if (!beginRowAction(item.id, 'idle')) return;
                         
                         if (currentUserRole === 'VIEWER') {
                           alert('Viewers cannot edit cue names. Please change your role to EDITOR or OPERATOR.');
@@ -13429,39 +19867,57 @@ const RunOfShowPage: React.FC = () => {
                           }
                         );
                       }}
-                      disabled={currentUserRole === 'VIEWER'}
-                      className="w-14 px-1 py-1 border border-slate-600 rounded-r text-center text-lg transition-colors bg-slate-700 text-white focus:outline-none focus:border-blue-500"
-                      title={currentUserRole === 'VIEWER' ? 'Viewers cannot edit cue names' : 'Edit cue number'}
+                      disabled={currentUserRole === 'VIEWER' || isRowLockedByOther(item.id)}
+                      className={`w-14 px-1 py-1 border rounded-r text-center text-lg transition-colors bg-slate-700 text-white focus:outline-none focus:border-blue-500 ${
+                        dup ? 'border-amber-400' : 'border-slate-600'
+                      }`}
+                      title={
+                        isRowLockedByOther(item.id)
+                          ? rowEditorLabel(item.id)
+                          : currentUserRole === 'VIEWER'
+                            ? 'Viewers cannot edit cue names'
+                            : dup
+                              ? duplicateCueTooltip(dup.otherRowNumbers)
+                              : 'Edit cue number'
+                      }
                       maxLength={4}
                     />
                      </div>
                     </div>
+                    {dup ? <DuplicateCueFlag otherRowNumbers={dup.otherRowNumbers} /> : null}
                     <div className="flex gap-1">
                       <button
                         onClick={() => {
-                          // Detect user editing
-                          handleUserEditing();
-                          
                           if (currentUserRole === 'VIEWER') {
                             alert('Viewers cannot indent/unindent items. Please change your role to EDITOR or OPERATOR.');
                             return;
                           }
-                          
-                          // Use new database-backed indent logic
+                          if (isTimedMarkerItem(item)) {
+                            alert('Timed markers stay grouped under their parent. Delete the marker to remove it.');
+                            return;
+                          }
+                          if (!beginRowAction(item.id, 'idle')) return;
                           toggleIndentedCue(item.id);
-                          
                         }}
                         className={`w-7 h-7 text-white flex items-center justify-center text-lg rounded font-bold transition-colors ${
                           currentUserRole === 'VIEWER'
                             ? 'bg-gray-500 text-gray-300 cursor-not-allowed'
-                            : indentedCues[item.id] 
-                              ? 'bg-orange-600 hover:bg-orange-500' 
+                            : isTimedMarkerItem(item) || indentedCues[item.id]
+                              ? 'bg-orange-600 hover:bg-orange-500'
                               : 'bg-slate-600 hover:bg-slate-500'
-                        }`}
-                        disabled={currentUserRole === 'VIEWER'}
-                        title={currentUserRole === 'VIEWER' ? 'Viewers cannot indent/unindent items' : (indentedCues[item.id] ? "Unindent (group with row above)" : "Indent (group with row above)")}
+                        } ${isTimedMarkerItem(item) ? 'cursor-not-allowed' : ''}`}
+                        disabled={currentUserRole === 'VIEWER' || isTimedMarkerItem(item)}
+                        title={
+                          isTimedMarkerItem(item)
+                            ? 'Timed marker (grouped under parent)'
+                            : currentUserRole === 'VIEWER'
+                              ? 'Viewers cannot indent/unindent items'
+                              : indentedCues[item.id]
+                                ? 'Unindent (group with row above)'
+                                : 'Indent (group with row above)'
+                        }
                       >
-                        {indentedCues[item.id] ? '↗' : '↘'}
+                        {indentedCues[item.id] || isTimedMarkerItem(item) ? '↗' : '↘'}
                       </button>
                       <button
                         onClick={() => {
@@ -13528,30 +19984,125 @@ const RunOfShowPage: React.FC = () => {
                       </button>
                     </div>
                   </div>
-                ))
+                );
+                 })
               )}
             </div>
+
+            {/* Start pinned beside CUE (outside horizontal scroll) */}
+            {startPinnedBesideCue && (
+              <div
+                className="flex-shrink-0 bg-slate-900 min-w-0"
+                style={{
+                  width: columnWidths.start,
+                  minWidth: columnWidths.start,
+                  maxWidth: columnWidths.start,
+                  flex: `0 0 ${columnWidths.start}px`,
+                }}
+              >
+                <div
+                  className="h-24 bg-slate-700 border-b-3 border-slate-600 flex items-center justify-center relative cursor-pointer hover:bg-slate-600 transition-colors min-w-0 w-full"
+                  style={{ borderRight: '6px solid #475569' }}
+                  onClick={toggleStartTimeDisplayMode}
+                  title={`Start time: ${startTimeDisplayModeLabel(startTimeDisplayMode)} (click for ${startTimeDisplayModeLabel(cycleStartTimeDisplayMode(startTimeDisplayMode))})`}
+                >
+                  <div className="text-center pointer-events-none">
+                    <div className="text-white font-bold">Start</div>
+                    <div className="text-[10px] text-slate-400">{startTimeDisplayModeLabel(startTimeDisplayMode)}</div>
+                  </div>
+                  <div
+                    className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 opacity-0 hover:opacity-100 transition-opacity"
+                    onMouseDown={(e) => {
+                      e.stopPropagation();
+                      handleResizeStart(e, 'start');
+                    }}
+                  />
+                </div>
+                {getFilteredSchedule().length === 0 ? (
+                  <div
+                    className="h-24 flex items-center justify-center text-slate-500"
+                    style={{ borderRight: '6px solid #475569' }}
+                  >
+                    —
+                  </div>
+                ) : (
+                  getFilteredSchedule().map((item, index) => {
+                    const originalIndex = schedule.findIndex((s) => s.id === item.id);
+                    const resume = showBreakResumeMirror(item, originalIndex >= 0 ? originalIndex : index);
+                    const inSection = isIndexInActiveShowSection(schedule, originalIndex);
+                    return (
+                      <div
+                        key={`sticky-start-${item.id}`}
+                        className={`border-b-2 border-slate-600 flex items-stretch ${getSideColumnRowClass(item.id, index)}${sideLockClass(item.id)}`}
+                        style={{
+                          ...getSideColumnRowStyle(item),
+                          borderRight: '6px solid #475569',
+                        }}
+                      >
+                        <StartTimeColumnCell
+                          itemId={resume?.itemId ?? item.id}
+                          index={resume?.index ?? (originalIndex >= 0 ? originalIndex : index)}
+                          width={columnWidths.start}
+                          isIndented={
+                            !resume &&
+                            Boolean(
+                              indentedCues[item.id] || item.isIndented || item.isTimedMarker
+                            )
+                          }
+                          showMode={isIndexFrozenByShowSection(schedule, originalIndex) ? 'rehearsal' : showMode}
+                          overtimeMinutes={overtimeMinutes}
+                          startCueId={inSection ? sessionStartCueId : startCueId}
+                          showStartOvertime={inSection ? sessionShowStartOvertime : showStartOvertime}
+                          cumulativeOvertime={resume?.cumulativeOvertime ?? (cumulativeOvertimeByItemId.get(item.id) || 0)}
+                          lockedStartTime={resume?.lockedStartTime ?? (lockedStartTimes[item.id] || null)}
+                        actualStartLabel={resume?.actualStartLabel ?? (cueActualStartLabels[Number(item.id)] || null)}
+                          calculateStartTime={calculateStartTime}
+                          calculateStartTimeWithOvertime={calculateStartTimeWithOvertime}
+                          isTimedMarker={item.isTimedMarker === true}
+                          markerTimeMode={
+                            item.markerTimeMode === 'absolute' ? 'absolute' : 'offset'
+                          }
+                          onEditTimedMarker={
+                            item.isTimedMarker ? () => editTimedMarkerTime(item.id) : undefined
+                          }
+                          className="border-r-0 h-full"
+                        />
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            )}
+
             {/* Center Scrollable Section - Main Schedule Data */}
-            <div id="main-scroll-container" className="flex-1 overflow-x-auto" style={{ scrollbarWidth: 'thin' }}>
+            <div id="main-scroll-container" className="flex-1 overflow-x-auto overflow-y-hidden" style={{ scrollbarWidth: 'thin' }}>
               <div className="min-w-max">
                 {/* Header Row */}
                 <div className="h-24 bg-slate-700 border-b-3 border-slate-600 flex">
-                  {visibleColumns.start && (
+                  {visibleColumns.start && !startPinnedBesideCue && (
                     <div 
-                      className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                      style={{ width: columnWidths.start }}
+                      className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative cursor-pointer hover:bg-slate-600/80 transition-colors"
+                      style={colBox(columnWidths.start, 'start')}
+                      onClick={toggleStartTimeDisplayMode}
+                      title={`Start time: ${startTimeDisplayModeLabel(startTimeDisplayMode)} (click for ${startTimeDisplayModeLabel(cycleStartTimeDisplayMode(startTimeDisplayMode))})`}
                     >
-                      <span className="text-white font-bold">Start</span>
+                      <div className="text-center pointer-events-none">
+                        <div className="text-white font-bold">Start</div>
+                        <div className="text-[10px] text-slate-400">{startTimeDisplayModeLabel(startTimeDisplayMode)}</div>
+                      </div>
                       <div 
                         className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 opacity-0 hover:opacity-100 transition-opacity"
-                        onMouseDown={(e) => handleResizeStart(e, 'start')}
+                        onMouseDown={(e) => {
+                          e.stopPropagation();
+                          handleResizeStart(e, 'start');
+                        }}
                       />
                     </div>
                   )}
                   {visibleColumns.programType && (
                     <div 
                       className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                      style={{ width: columnWidths.programType }}
+                      style={colBox(columnWidths.programType, 'programType')}
                     >
                       <span className="text-white font-bold flex items-center gap-1">
                         Program Type
@@ -13568,7 +20119,7 @@ const RunOfShowPage: React.FC = () => {
                   {visibleColumns.duration && (
                     <div 
                       className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                      style={{ width: columnWidths.duration }}
+                      style={colBox(columnWidths.duration, 'duration')}
                     >
                       <div className="text-center">
                         <div className="text-white font-bold flex items-center justify-center gap-1">
@@ -13587,25 +20138,33 @@ const RunOfShowPage: React.FC = () => {
                   )}
                   {visibleColumns.segmentName && (
                     <div 
-                      className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                      style={{ width: columnWidths.segmentName }}
+                      className="px-3 py-2 border-r border-slate-600 flex items-center justify-start flex-shrink-0 relative cursor-pointer hover:bg-slate-600/80 transition-colors min-w-0"
+                      style={colBox(columnWidths.segmentName, 'segmentName')}
+                      onClick={toggleSegmentNameDisplayMode}
+                      title={`Segment: ${segmentNameDisplayModeLabel(segmentNameDisplayMode)} (click for ${segmentNameDisplayModeLabel(cycleSegmentNameDisplayMode(segmentNameDisplayMode))})`}
                     >
-                      <span className="text-white font-bold flex items-center gap-1">
-                        Segment Name
-                        {(currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') && (
-                          <span className="text-yellow-400" title="Read-only for your role">🔒</span>
-                        )}
-                      </span>
+                      <div className="text-left pointer-events-none min-w-0">
+                        <div className="text-white font-bold flex items-center justify-start gap-1">
+                          Segment Name
+                          {(currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') && (
+                            <span className="text-yellow-400" title="Read-only for your role">🔒</span>
+                          )}
+                        </div>
+                        <div className="text-[10px] text-slate-400">{segmentNameDisplayModeLabel(segmentNameDisplayMode)}</div>
+                      </div>
                       <div 
                         className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 opacity-0 hover:opacity-100 transition-opacity"
-                        onMouseDown={(e) => handleResizeStart(e, 'segmentName')}
+                        onMouseDown={(e) => {
+                          e.stopPropagation();
+                          handleResizeStart(e, 'segmentName');
+                        }}
                       />
                     </div>
                   )}
                   {visibleColumns.shotType && (
                     <div 
                       className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                      style={{ width: columnWidths.shotType }}
+                      style={colBox(columnWidths.shotType, 'shotType')}
                     >
                       <span className="text-white font-bold flex items-center gap-1">
                         Shot Type
@@ -13622,7 +20181,7 @@ const RunOfShowPage: React.FC = () => {
                   {visibleColumns.pptQA && (
                     <div 
                       className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                      style={{ width: columnWidths.pptQA }}
+                      style={colBox(columnWidths.pptQA, 'pptQA')}
                     >
                       <span className="text-white font-bold flex items-center gap-1">
                         PPT/Q&A
@@ -13638,8 +20197,8 @@ const RunOfShowPage: React.FC = () => {
                   )}
                   {visibleColumns.recording && (
                     <div 
-                      className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                      style={{ width: columnWidths.recording }}
+                      className="group/rec-hdr px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative overflow-visible"
+                      style={colBox(columnWidths.recording, 'recording')}
                     >
                       <span className="text-white font-bold flex items-center gap-1">
                         Rec
@@ -13647,16 +20206,41 @@ const RunOfShowPage: React.FC = () => {
                           <span className="text-yellow-400" title="Read-only for your role">🔒</span>
                         )}
                       </span>
+                      <div
+                        role="tooltip"
+                        className="pointer-events-none absolute left-1/2 top-full z-[90] mt-2 w-96 -translate-x-1/2 rounded-md border-2 border-slate-500 bg-white px-5 py-4 text-left leading-snug text-black opacity-0 shadow-xl transition-opacity duration-150 group-hover/rec-hdr:opacity-100"
+                      >
+                        <div className="text-[22px] font-black text-black">{CUE_RECORDING_HOVER_TITLE}</div>
+                        <div className="mt-2 text-[18px] font-bold text-neutral-900">{CUE_RECORDING_HOVER_BODY}</div>
+                      </div>
                       <div 
                         className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 opacity-0 hover:opacity-100 transition-opacity"
                         onMouseDown={(e) => handleResizeStart(e, 'recording')}
                       />
                     </div>
                   )}
+                  {showMittiWatchColumn && (
+                    <div
+                      className="px-2 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
+                      style={colBox(88, 'mittiWatch')}
+                      title="Checked row is the next Mitti play. Only one row at a time."
+                    >
+                      <span className="text-white font-bold text-sm">Mitti</span>
+                    </div>
+                  )}
+                  {showAvWatchColumn && (
+                    <div
+                      className="px-2 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
+                      style={colBox(72, 'avWatch')}
+                      title="Checked row is the next AV-Playout play. Only one row at a time."
+                    >
+                      <span className="text-white font-bold text-sm">AV</span>
+                    </div>
+                  )}
                   {visibleColumns.notes && (
                     <div 
                       className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                      style={{ width: columnWidths.notes }}
+                      style={colBox(columnWidths.notes, 'notes')}
                     >
                       <span className="text-white font-bold flex items-center gap-1">
                         Notes
@@ -13670,10 +20254,23 @@ const RunOfShowPage: React.FC = () => {
                       />
                     </div>
                   )}
+                  {visibleColumns.vog !== false && (
+                    <div
+                      className="px-2 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
+                      style={colBox(columnWidths.vog || 100, 'vog')}
+                      title="ElevenLabs Voice of God — preview and download WAV"
+                    >
+                      <span className="text-white font-bold text-sm">VOG</span>
+                      <div
+                        className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 opacity-0 hover:opacity-100 transition-opacity"
+                        onMouseDown={(e) => handleResizeStart(e, 'vog')}
+                      />
+                    </div>
+                  )}
                   {visibleColumns.assets && (
                     <div 
                       className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                      style={{ width: columnWidths.assets }}
+                      style={colBox(columnWidths.assets, 'assets')}
                     >
                       <span className="text-white font-bold flex items-center gap-1">
                         Assets
@@ -13690,7 +20287,7 @@ const RunOfShowPage: React.FC = () => {
                   {visibleColumns.participants && (
                     <div 
                       className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                      style={{ width: columnWidths.participants }}
+                      style={colBox(columnWidths.participants, 'participants')}
                     >
                       <span className="text-white font-bold flex items-center gap-1">
                         Participants
@@ -13707,7 +20304,7 @@ const RunOfShowPage: React.FC = () => {
                   {visibleColumns.speakers && (
                     <div 
                       className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative"
-                      style={{ width: columnWidths.speakers }}
+                      style={colBox(columnWidths.speakers, 'speakers')}
                     >
                       <span className="text-white font-bold flex items-center gap-1">
                         Speakers
@@ -13721,10 +20318,19 @@ const RunOfShowPage: React.FC = () => {
                       />
                     </div>
                   )}
+                  {showDsmColumn && (
+                    <div
+                      className="px-2 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
+                      style={colBox(148, 'dsm')}
+                      title="Checked rows send DSM layout (Full/LED/VID/PPT) when the cue is loaded."
+                    >
+                      <span className="text-white font-bold text-sm">DSM</span>
+                    </div>
+                  )}
                   {visibleColumns.public && (
                     <div 
                       className="px-4 py-2 border-r border-slate-600 flex-shrink-0 relative"
-                      style={{ width: columnWidths.public }}
+                      style={colBox(columnWidths.public, 'public')}
                     >
                       <button
                         type="button"
@@ -13732,6 +20338,7 @@ const RunOfShowPage: React.FC = () => {
                           if (currentUserRole === 'EDITOR') {
                             const dayItems = schedule.filter((i: ScheduleItem) => (i.day || 1) === selectedDay);
                             setPublicBulkSelectedIds(dayItems.filter((i: ScheduleItem) => i.isPublic).map((i: ScheduleItem) => i.id));
+                            handleModalEditing();
                             setShowPublicBulkModal(true);
                           }
                         }}
@@ -13752,7 +20359,7 @@ const RunOfShowPage: React.FC = () => {
                   {visibleColumns.timer && (
                     <div 
                       className="px-4 py-2 border-r border-slate-600 flex-shrink-0 relative flex items-center justify-center"
-                      style={{ width: columnWidths.timer }}
+                      style={colBox(columnWidths.timer, 'timer')}
                     >
                       <span className="font-bold text-white text-center flex items-center gap-1" title="Clock page: Countdown, Time of Day, or TOD Only">
                         Counter
@@ -13771,7 +20378,7 @@ const RunOfShowPage: React.FC = () => {
                       <div 
                         key={column.id} 
                         className="px-4 py-2 border-r border-slate-600 flex items-center justify-center relative flex-shrink-0"
-                        style={{ width: customColumnWidths[column.id] || 256 }}
+                        style={colBox(customColumnWidths[column.id] || 256, customColumnOrderKey(column.id))}
                       >
                         <span className="text-white font-bold">{column.name}</span>
                         <button
@@ -13825,19 +20432,32 @@ const RunOfShowPage: React.FC = () => {
                         currentUserId={user?.id}
                         onRowEditStart={claimRowEditLock}
                         onRowEditEnd={releaseRowEditLock}
+                        confirmRecordingMark={shouldConfirmCueRecordingMark(user)}
+                        isCommsUser={user?.is_comms === true}
                         item={item}
                         index={originalIndex >= 0 ? originalIndex : index}
                         columnWidths={columnWidths}
-                        visibleColumns={visibleColumns}
+                        visibleColumns={scrollVisibleColumns}
+                        columnFlexOrder={scrollColumnFlexOrder}
                         indentedCues={indentedCues}
                         overtimeMinutes={overtimeMinutes}
-                        startCueId={startCueId}
-                        showStartOvertime={showStartOvertime}
+                        startCueId={isIndexInActiveShowSection(schedule, originalIndex) ? sessionStartCueId : startCueId}
+                        showStartOvertime={isIndexInActiveShowSection(schedule, originalIndex) ? sessionShowStartOvertime : showStartOvertime}
                         cumulativeOvertime={cumulativeOvertimeByItemId.get(item.id) || 0}
+                        resumeCueLabel={
+                          resolveShowBreakResume(item, originalIndex)?.item
+                            ? resolveScheduleCueLabel(
+                                resolveShowBreakResume(item, originalIndex)!.item,
+                                resolveShowBreakResume(item, originalIndex)!.item.id
+                              )
+                            : ''
+                        }
+                        resumeStartMirror={showBreakResumeMirror(item, originalIndex)}
                         programTypes={programTypes}
                         programTypeColors={programTypeColors}
                         shotTypes={shotTypes}
                         currentUserRole={currentUserRole}
+                        segmentSpellingMode="ros"
                         setSchedule={setSchedule}
                         handleUserEditing={handleUserEditing}
                         handleModalEditing={handleModalEditing}
@@ -13845,11 +20465,20 @@ const RunOfShowPage: React.FC = () => {
                         logChangeDebounced={logChangeDebounced}
                         logChange={logChange}
                         saveToAPI={saveToAPI}
+                        onNotesChipUpdated={applyNotesChipToOpenEditor}
+                        persistCueRecording={persistCueRecording}
+                        persistScheduleCheckboxes={persistScheduleCheckboxes}
+                        persistMittiWatch={persistMittiWatch}
+                        persistAvWatch={persistAvWatch}
+                        persistDsmCue={persistDsmCue}
+                        onEditTimedMarker={editTimedMarkerTime}
                         setEditingNotesItem={setEditingNotesItem}
                         setShowNotesModal={setShowNotesModal}
                         setEditingVoItemId={setEditingVoItemId}
                         setShowVoModal={setShowVoModal}
                         setTempVoCues={setTempVoCues}
+                        setEditingVogItemId={setEditingVogItemId}
+                        setShowVogModal={setShowVogModal}
                         setViewingAssetsItem={setViewingAssetsItem}
                         setShowViewAssetsModal={setShowViewAssetsModal}
                         setViewingSpeakersItem={setViewingSpeakersItem}
@@ -13865,11 +20494,13 @@ const RunOfShowPage: React.FC = () => {
                         displaySpeakersText={displaySpeakersText}
                         calculateStartTimeWithOvertime={calculateStartTimeWithOvertime}
                         calculateStartTime={calculateStartTime}
-                        showMode={showMode}
+                        segmentNameDisplayMode={segmentNameDisplayMode}
+                        showMode={isIndexFrozenByShowSection(schedule, originalIndex) ? 'rehearsal' : showMode}
                         originalDuration={originalDurations[item.id]}
                         showWasUnderDuration={showMode === 'in-show' && trackWasDurations}
                         lockedStartTime={lockedStartTimes[item.id] || null}
-                        actualStartLabel={cueActualStartLabels[item.id] || null}
+                        actualStartLabel={cueActualStartLabels[Number(item.id)] || null}
+                        platformFileCount={platformFileCountByItem.get(item.id) || 0}
                         customColumns={customColumns}
                         visibleCustomColumns={visibleCustomColumns}
                         customColumnWidths={customColumnWidths}
@@ -13929,19 +20560,69 @@ const RunOfShowPage: React.FC = () => {
                    return (
                    <div 
                      key={`${item.id}-${item.notes?.length || 0}-${item.speakers?.length || 0}`}
-                     className={`border-b-2 border-slate-600 flex flex-col items-center justify-center gap-1 ${getSideColumnRowClass(item.id, index)}`}
+                     className={`border-b-2 border-slate-600 flex flex-col items-center justify-center gap-1 ${getSideColumnRowClass(item.id, index)}${sideLockClass(item.id)}`}
                      style={getSideColumnRowStyle(item)}
+                     title={isRowLockedByOther(item.id) ? rowEditorLabel(item.id) : undefined}
                    >
                     <div className="flex flex-col items-center justify-center h-full gap-1">
                       <div className="text-sm font-mono text-slate-300">
-                        {item.programType === 'Delay Block' ? 'SCHEDULE ONLY' : (item.timerId || 'TIMER')}
+                        {isScheduleOnlyProgramType(item.programType) ? 'SCHEDULE ONLY' : (item.timerId || 'TIMER')}
                       </div>
                       <div className="flex flex-col gap-1">
-                        {!indentedCues[item.id] ? (
+                        {isTimedMarkerItem(item) ? (
+                          <>
+                            {/* Timed markers never run timers — no Play/Stop even if parent is loaded/running */}
+                            <button
+                              type="button"
+                              disabled
+                              className="px-3 py-1 rounded text-sm font-bold bg-gray-500 text-gray-300 cursor-not-allowed"
+                              title="Timed markers have no timer — they only mark a time under the parent cue"
+                            >
+                              MARKER
+                            </button>
+                            <button
+                              type="button"
+                              disabled
+                              className="px-3 py-1 rounded text-sm font-bold bg-slate-700 text-slate-500 cursor-not-allowed"
+                              title="Timed markers cannot play or stop"
+                            >
+                              —
+                            </button>
+                          </>
+                        ) : isShowBreakProgramType(item.programType) ? (
+                          <div className="flex flex-col items-center gap-0.5">
+                            <div className="text-[9px] font-bold uppercase tracking-wide text-cyan-300">Section</div>
+                            <div
+                              className="flex rounded overflow-hidden border border-slate-500"
+                              title="Off = still working above the break. On = freeze those offsets and work the next section."
+                            >
+                              <button
+                                type="button"
+                                onClick={() => void toggleShowSection(item.id, false)}
+                                disabled={currentUserRole !== 'OPERATOR'}
+                                className={`px-2 py-1 text-xs font-bold ${
+                                  !item.sectionStarted ? 'bg-slate-600 text-white' : 'bg-slate-800 text-slate-400'
+                                }`}
+                              >
+                                Off
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void toggleShowSection(item.id, true)}
+                                disabled={currentUserRole !== 'OPERATOR'}
+                                className={`px-2 py-1 text-xs font-bold ${
+                                  item.sectionStarted ? 'bg-cyan-600 text-white' : 'bg-slate-800 text-slate-400'
+                                }`}
+                              >
+                                On
+                              </button>
+                            </div>
+                          </div>
+                        ) : !indentedCues[item.id] ? (
                           <>
                             <button
                               onClick={async () => {
-                                if (item.programType === 'Delay Block') return;
+                                if (isScheduleOnlyProgramType(item.programType)) return;
                                 console.log('🔥🔥🔥 LOAD BUTTON CLICKED!');
                                 console.log('🔥🔥🔥 currentUserRole:', currentUserRole);
                                 console.log('🔥🔥🔥 item.id:', item.id);
@@ -13966,17 +20647,17 @@ const RunOfShowPage: React.FC = () => {
                                   console.error('🔥🔥🔥 loadCue failed:', error);
                                 }
                               }}
-                              disabled={item.programType === 'Delay Block' || activeItemId === item.id || currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR'}
+                              disabled={isScheduleOnlyProgramType(item.programType) || activeItemId === item.id || currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR'}
                               className={`px-3 py-1 rounded text-sm font-bold transition-colors ${
-                                item.programType === 'Delay Block' || currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR'
+                                isScheduleOnlyProgramType(item.programType) || currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR'
                                   ? 'bg-gray-500 text-gray-300 cursor-not-allowed'
                                   : activeItemId === item.id
                                     ? 'bg-blue-600 text-white cursor-default'
                                     : 'bg-slate-600 hover:bg-slate-500 text-white'
                               }`}
-                              title={item.programType === 'Delay Block' ? 'Delay Blocks only adjust the schedule' : currentUserRole === 'VIEWER' ? 'Viewers cannot load cues' : currentUserRole === 'EDITOR' ? 'Editors cannot load cues' : 'Load this cue'}
+                              title={isScheduleOnlyProgramType(item.programType) ? 'This row only splits or holds the schedule' : currentUserRole === 'VIEWER' ? 'Viewers cannot load cues' : currentUserRole === 'EDITOR' ? 'Editors cannot load cues' : 'Load this cue'}
                             >
-                              {item.programType === 'Delay Block' ? 'DELAY' : activeItemId === item.id ? 'LOADED' : 'LOAD'}
+                              {isScheduleOnlyProgramType(item.programType) ? 'BREAK' : activeItemId === item.id ? 'LOADED' : 'LOAD'}
                             </button>
                             <button
                               onClick={async () => {
@@ -14050,7 +20731,7 @@ const RunOfShowPage: React.FC = () => {
                                   ? 'bg-gray-500 text-gray-300 cursor-not-allowed'
                                   : !isParentCueRunning(item.id)
                                     ? 'bg-gray-500 text-gray-300 cursor-not-allowed'
-                                    : subPlaying
+                                      : subPlaying
                                       ? isSubResolumePlayingRow
                                         ? 'bg-yellow-500 hover:bg-yellow-400 text-slate-900'
                                         : 'bg-red-600 hover:bg-red-500 text-white'
@@ -14125,6 +20806,50 @@ const RunOfShowPage: React.FC = () => {
           </div>
         </div>
       )}
+      {showShowBreakModal && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-md rounded-lg border border-slate-600 bg-slate-800 shadow-2xl">
+            <div className="border-b border-slate-600 px-5 py-4">
+              <h2 className="text-lg font-semibold text-white">Add Show Break</h2>
+              <p className="mt-1 text-sm text-slate-300">
+                Splits this day into a new session. The next cue keeps its Start time and everything after it follows that cue.
+              </p>
+            </div>
+            <div className="p-5">
+              <label className="text-sm text-slate-200">
+                Session name
+                <input
+                  type="text"
+                  value={showBreakLabel}
+                  onChange={(e) => setShowBreakLabel(e.target.value)}
+                  className="mt-1 w-full rounded border border-slate-500 bg-slate-700 px-3 py-2 text-white focus:border-cyan-400 focus:outline-none"
+                  placeholder="Evening"
+                />
+              </label>
+            </div>
+            <div className="flex justify-end gap-2 border-t border-slate-600 px-5 py-4">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowShowBreakModal(false);
+                  setInsertRowPosition(null);
+                  handleModalClosed();
+                }}
+                className="rounded bg-slate-600 px-4 py-2 text-white hover:bg-slate-500"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={addShowBreak}
+                className="rounded bg-cyan-700 px-4 py-2 font-medium text-white hover:bg-cyan-600"
+              >
+                Add Show Break
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Add Item Modal */}
       {showAddModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -14175,13 +20900,22 @@ const RunOfShowPage: React.FC = () => {
                       handleModalEditing();
                     }}
                     onChange={(e) => {
-                      setModalForm(prev => ({ ...prev, programType: e.target.value }));
+                      setModalForm((prev) => {
+                        const programType = e.target.value;
+                        const autoShot =
+                          getAutoShotTypeFromSpeakers() && !prev.shotTypeManualOverride
+                            ? shotTypePatchFromSpeakers(parseSpeakersForShotType(prev.speakersText), {
+                                programType,
+                              })
+                            : {};
+                        return { ...prev, programType, ...autoShot };
+                      });
                       // Resume syncing when dropdown selection is made
                       handleModalClosed();
                     }}
                     className="w-full px-3 py-2 bg-slate-700 border-2 border-slate-500 rounded text-white focus:outline-none focus:border-blue-500 text-sm"
                     style={{ 
-                      backgroundColor: programTypeColors[modalForm.programType] || '#374151',
+                      ...programTypeSurfaceStyle(modalForm.programType, programTypeColors),
                       color: modalForm.programType === 'Sub Cue' ? '#000000' : '#ffffff'
                     }}
                   >
@@ -14239,11 +20973,18 @@ const RunOfShowPage: React.FC = () => {
                       handleModalEditing();
                     }}
                     onChange={(e) => {
-                      setModalForm(prev => ({ ...prev, shotType: e.target.value }));
+                      setModalForm((prev) => ({ ...prev, ...shotTypeManualEditPatch(e.target.value) }));
                       // Resume syncing when dropdown selection is made
                       handleModalClosed();
                     }}
-                    className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white focus:outline-none focus:border-blue-500 text-sm"
+                    className={`w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-white focus:outline-none focus:border-blue-500 text-sm${
+                      modalForm.shotTypeManualOverride ? ' border-amber-500/70' : ''
+                    }`}
+                    title={
+                      modalForm.shotTypeManualOverride
+                        ? 'Manual override — speakers won’t change this. Clear shot type to unlock auto.'
+                        : undefined
+                    }
                   >
                     <option value="">Select Shot Type</option>
                     {shotTypes.map(type => (
@@ -14320,6 +21061,18 @@ const RunOfShowPage: React.FC = () => {
                   />
                   <span className="text-slate-300 text-sm">Has QA</span>
                 </label>
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={!!modalForm.needsRecording}
+                    onChange={(e) => {
+                      handleUserEditing();
+                      setModalForm(prev => ({ ...prev, needsRecording: e.target.checked }));
+                    }}
+                    className="rounded"
+                  />
+                  <span className="text-slate-300 text-sm">Record</span>
+                </label>
               </div>
             </div>
             
@@ -14336,10 +21089,12 @@ const RunOfShowPage: React.FC = () => {
               >
                 {modalForm.notes ? (
                   <div 
-                    className="text-sm notes-display" 
+                    className="text-sm min-w-0 notes-display" 
                     style={{
                       lineHeight: '1.4',
-                      overflow: 'visible'
+                      overflow: 'hidden',
+                      overflowWrap: 'anywhere',
+                      wordBreak: 'break-word',
                     }}
                     dangerouslySetInnerHTML={{ __html: modalForm.notes }} 
                   />
@@ -14356,7 +21111,10 @@ const RunOfShowPage: React.FC = () => {
                 onClick={() => {
                   // Pause syncing when assets modal opens
                   handleModalEditing();
-                  setEditingAssetsItem(-1); // Use -1 to indicate modal form editing
+                  // Prefer draft cue id so ROS file upload works before Add Item is saved
+                  const draftId = modalDraftItemId && modalDraftItemId > 0 ? modalDraftItemId : Date.now();
+                  if (!modalDraftItemId || modalDraftItemId <= 0) setModalDraftItemId(draftId);
+                  setEditingAssetsItem(draftId);
                   setShowAssetsModal(true);
                 }}
               >
@@ -14408,6 +21166,7 @@ const RunOfShowPage: React.FC = () => {
                 <button
                   onClick={() => {
                     setShowAddModal(false);
+                    setModalDraftItemId(null);
                     handleModalClosed();
                   }}
                   className="flex-1 px-3 py-2 bg-slate-600 hover:bg-slate-500 text-white font-medium rounded transition-colors text-sm"
@@ -14476,17 +21235,140 @@ const RunOfShowPage: React.FC = () => {
          </div>
        )}
 
-       {/* VO / BGM chips editor */}
+       {showVogModal && editingVogItemId !== null && (
+         <VogModal
+           open={showVogModal}
+           eventId={event?.id ? String(event.id) : null}
+           activeItemId={editingVogItemId}
+           selectedDay={selectedDay}
+           segmentName={schedule.find((s) => s.id === editingVogItemId)?.segmentName || ''}
+           cueLabel={resolveScheduleCueLabel(
+             schedule.find((s) => s.id === editingVogItemId),
+             editingVogItemId
+           )}
+           initialText={schedule.find((s) => s.id === editingVogItemId)?.vogText || ''}
+           initialVoiceId={schedule.find((s) => s.id === editingVogItemId)?.vogVoiceId || ''}
+           initialVoiceName={schedule.find((s) => s.id === editingVogItemId)?.vogVoiceName || ''}
+           cues={schedule.map((row) => ({
+             id: row.id,
+             day: row.day || 1,
+             cueLabel: resolveScheduleCueLabel(row, row.id),
+             segmentName: String(row.segmentName || ''),
+             vogText: String(row.vogText || ''),
+             vogVoiceId: String(row.vogVoiceId || ''),
+             vogVoiceName: String(row.vogVoiceName || ''),
+           }))}
+           readOnly={currentUserRole === 'VIEWER'}
+           onClose={() => {
+             setShowVogModal(false);
+             setEditingVogItemId(null);
+             handleModalClosed();
+           }}
+           onSelectCue={(itemId) => {
+             setEditingVogItemId(itemId);
+           }}
+           onApplyVoiceToCues={async (itemIds, vogVoiceId, vogVoiceName) => {
+             if (currentUserRole === 'VIEWER' || !itemIds.length) {
+               throw new Error('Cannot update VOG voices.');
+             }
+             if (!event?.id) throw new Error('Missing event id — cannot save VOG voice.');
+             const idSet = new Set(itemIds);
+             setSchedule((prev) =>
+               prev.map((row) =>
+                 idSet.has(row.id)
+                   ? {
+                       ...row,
+                       vogVoiceId: vogVoiceId || undefined,
+                       vogVoiceName: vogVoiceName || undefined,
+                     }
+                   : row
+               )
+             );
+             await apiClient.applyVogVoiceBulk(String(event.id), {
+               itemIds,
+               vogVoiceId,
+               vogVoiceName,
+             });
+             handleUserEditing();
+             logChangeDebounced?.(
+               `vog_voice_bulk_${itemIds.join('_')}`,
+               'FIELD_UPDATE',
+               `Applied VOG voice “${vogVoiceName}” to ${itemIds.length} cues`,
+               {
+                 changeType: 'FIELD_CHANGE',
+                 fieldName: 'vogVoiceId',
+                 newValue: vogVoiceId,
+                 details: { itemIds, vogVoiceName },
+               }
+             );
+           }}
+           onSave={async ({ vogText, vogVoiceId, vogVoiceName }) => {
+             if (editingVogItemId == null || currentUserRole === 'VIEWER') return;
+             if (!event?.id) throw new Error('Missing event id — cannot save VOG script.');
+             const itemId = editingVogItemId;
+             setSchedule((prev) =>
+               prev.map((row) =>
+                 row.id === itemId
+                   ? {
+                       ...row,
+                       vogText: vogText || undefined,
+                       vogVoiceId: vogVoiceId || undefined,
+                       vogVoiceName: vogVoiceName || undefined,
+                     }
+                   : row
+               )
+             );
+             await apiClient.upsertVogScript(String(event.id), itemId, {
+               vogText,
+               vogVoiceId,
+               vogVoiceName,
+             });
+             handleUserEditing();
+             logChangeDebounced?.(
+               `vog_${itemId}`,
+               'FIELD_UPDATE',
+               `Updated VOG script on cue ${itemId}`,
+               {
+                 changeType: 'FIELD_CHANGE',
+                 itemId,
+                 fieldName: 'vogText',
+                 newValue: vogText.slice(0, 120),
+               }
+             );
+           }}
+         />
+       )}
+
+       {/* VO / BGM chips editor (prototype) */}
        {showVoModal && editingVoItemId !== null && (
          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
            <div className="bg-slate-800 rounded-xl p-6 max-w-xl w-full shadow-xl border border-slate-500/50">
-             <h2 className="text-xl font-bold text-white mb-1">VO &amp; Background Music</h2>
-             <p className="text-slate-300 text-sm mb-4">
-               Adds formatted text into Notes for{' '}
-               <span className="text-white font-semibold">
+             <div className="mb-3 flex items-center justify-between gap-3">
+               <h2 className="text-xl font-bold text-white">VO &amp; Background Music</h2>
+               <label className="flex shrink-0 cursor-pointer items-center gap-2 text-sm text-slate-200">
+                 <input
+                   type="checkbox"
+                   checked={voAlertsEnabled}
+                   onChange={(e) => {
+                     const next = e.target.checked;
+                     setVoAlertsEnabled(next);
+                     voAlertsEnabledRef.current = next;
+                     if (!next) setActiveVoAlert(null);
+                     if (!event?.id || currentUserRole === 'VIEWER') return;
+                     settingsSaveRequestedRef.current = true;
+                     handleUserEditing();
+                     saveToAPI();
+                   }}
+                 />
+                 Pop-ups
+               </label>
+             </div>
+             <p className="mb-4 text-sm text-slate-400">
+               Timed note on{' '}
+               <span className="font-semibold text-slate-200">
                  {schedule.find((s) => s.id === editingVoItemId)?.segmentName || 'this cue'}
                </span>
-               . Wall-clock only — does <span className="text-white font-medium">not</span> change duration or start times.
+               .
              </p>
 
              <ul className="space-y-2 mb-4 max-h-56 overflow-y-auto">
@@ -14625,14 +21507,21 @@ const RunOfShowPage: React.FC = () => {
                          schedule.find((s) => s.id === editingVoItemId)?.customFields?.cue || ''
                        ).trim()
                      : undefined;
+                   const normalizedTime =
+                     normalizeCalloutTimeToHHMM(voDraftTime) || voDraftTime;
+                   const venueTz = resolveShowTimezone(
+                     calendarTimezoneRef.current,
+                     eventTimezone
+                   );
                    setTempVoCues((prev) =>
                      [
                        ...prev,
                        {
                          id: `vo_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-                         time: voDraftTime,
+                         time: normalizedTime,
                          label: voDraftLabel.trim(),
                          kind: voDraftKind,
+                         timeZone: venueTz,
                          ...(cuePrefix ? { cuePrefix } : {}),
                        },
                      ].sort((a, b) => a.time.localeCompare(b.time))
@@ -14651,7 +21540,7 @@ const RunOfShowPage: React.FC = () => {
                  onClick={() => {
                    setShowVoModal(false);
                    setEditingVoItemId(null);
-                   handleModalClosed();
+                   resumeAfterFieldEditorClose();
                  }}
                >
                  Cancel
@@ -14661,12 +21550,27 @@ const RunOfShowPage: React.FC = () => {
                  className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold"
                  onClick={() => {
                    const itemId = editingVoItemId;
-                   const next = [...tempVoCues].sort((a, b) => a.time.localeCompare(b.time));
+                   const venueTz = resolveShowTimezone(
+                     calendarTimezoneRef.current,
+                     eventTimezone
+                   );
+                   const next = [...tempVoCues]
+                     .map((vo) => {
+                       const normalized = normalizeCalloutTimeToHHMM(vo.time);
+                       return {
+                         ...vo,
+                         time: normalized || vo.time,
+                         timeZone: vo.timeZone || venueTz,
+                       };
+                     })
+                     .sort((a, b) => a.time.localeCompare(b.time));
+                   let syncedNotes = '';
                    setSchedule((prev) =>
                      prev.map((row) => {
                        if (row.id !== itemId) return row;
                        const previous = Array.isArray(row.voCues) ? row.voCues : [];
                        const notes = syncCalloutsIntoNotes(row.notes || '', previous, next);
+                       syncedNotes = notes;
                        return {
                          ...row,
                          voCues: next.length ? next : undefined,
@@ -14674,6 +21578,7 @@ const RunOfShowPage: React.FC = () => {
                        };
                      })
                    );
+                   if (itemId != null) applyNotesChipToOpenEditor(itemId, syncedNotes);
                    logChange(
                      'VO_CUES_UPDATE',
                      `Updated VO/BGM callouts on cue ${itemId}`,
@@ -14687,7 +21592,7 @@ const RunOfShowPage: React.FC = () => {
                    saveToAPI();
                    setShowVoModal(false);
                    setEditingVoItemId(null);
-                   handleModalClosed();
+                   resumeAfterFieldEditorClose();
                  }}
                >
                  Save
@@ -14842,32 +21747,37 @@ const RunOfShowPage: React.FC = () => {
                        title="White"
                      ></button>
                      <button
-                       onClick={() => applyFormatting('color', '#ef4444')}
-                       className="w-6 h-6 bg-red-500 rounded"
+                       onClick={() => applyFormatting('color', '#dc2626')}
+                       className="w-6 h-6 rounded"
+                       style={{ backgroundColor: '#dc2626' }}
                        title="Red"
                      ></button>
                      <button
-                       onClick={() => applyFormatting('color', '#3b82f6')}
-                       className="w-6 h-6 bg-blue-500 rounded"
+                       onClick={() => applyFormatting('color', '#2563eb')}
+                       className="w-6 h-6 rounded"
+                       style={{ backgroundColor: '#2563eb' }}
                        title="Blue"
                      ></button>
                      <button
                        onClick={() => applyFormatting('color', '#22c55e')}
-                       className="w-6 h-6 bg-green-500 rounded"
+                       className="w-6 h-6 rounded"
+                       style={{ backgroundColor: '#22c55e' }}
                        title="Green"
                      ></button>
                      <button
-                       onClick={() => applyFormatting('color', '#f97316')}
-                       className="w-6 h-6 bg-orange-500 rounded"
+                       onClick={() => applyFormatting('color', '#ea580c')}
+                       className="w-6 h-6 rounded"
+                       style={{ backgroundColor: '#ea580c' }}
                        title="Orange"
                      ></button>
                      <button
-                       onClick={() => applyFormatting('color', '#a855f7')}
-                       className="w-6 h-6 bg-purple-500 rounded"
+                       onClick={() => applyFormatting('color', '#7e22ce')}
+                       className="w-6 h-6 rounded"
+                       style={{ backgroundColor: '#7e22ce' }}
                        title="Purple"
                      ></button>
                      <button
-                       onClick={() => applyFormatting('color', '#000000')}
+                       onClick={() => applyFormatting('color', '#111111')}
                        className="w-6 h-6 bg-black border border-slate-400 rounded"
                        title="Black"
                      ></button>
@@ -14885,28 +21795,33 @@ const RunOfShowPage: React.FC = () => {
                        ×
                      </button>
                      <button
-                       onClick={() => applyFormatting('highlight', '#fbbf24')}
-                       className="w-6 h-6 bg-yellow-400 rounded"
+                       onClick={() => applyFormatting('highlight', '#ffe600')}
+                       className="w-6 h-6 rounded ring-1 ring-white/40"
+                       style={{ backgroundColor: '#ffe600' }}
                        title="Yellow"
                      ></button>
                      <button
-                       onClick={() => applyFormatting('highlight', '#60a5fa')}
-                       className="w-6 h-6 bg-blue-400 rounded"
-                       title="Light Blue"
+                       onClick={() => applyFormatting('highlight', '#00b0ff')}
+                       className="w-6 h-6 rounded ring-1 ring-white/40"
+                       style={{ backgroundColor: '#00b0ff' }}
+                       title="Sky"
                      ></button>
                      <button
-                       onClick={() => applyFormatting('highlight', '#4ade80')}
-                       className="w-6 h-6 bg-green-400 rounded"
-                       title="Light Green"
+                       onClick={() => applyFormatting('highlight', '#00e676')}
+                       className="w-6 h-6 rounded ring-1 ring-white/40"
+                       style={{ backgroundColor: '#00e676' }}
+                       title="Green"
                      ></button>
                      <button
-                       onClick={() => applyFormatting('highlight', '#f472b6')}
-                       className="w-6 h-6 bg-pink-400 rounded"
+                       onClick={() => applyFormatting('highlight', '#ff4081')}
+                       className="w-6 h-6 rounded ring-1 ring-white/40"
+                       style={{ backgroundColor: '#ff4081' }}
                        title="Pink"
                      ></button>
                      <button
-                       onClick={() => applyFormatting('highlight', '#fb923c')}
-                       className="w-6 h-6 bg-orange-400 rounded"
+                       onClick={() => applyFormatting('highlight', '#ff9100')}
+                       className="w-6 h-6 rounded ring-1 ring-white/40"
+                       style={{ backgroundColor: '#ff9100' }}
                        title="Orange"
                      ></button>
                    </div>
@@ -14926,6 +21841,7 @@ const RunOfShowPage: React.FC = () => {
                </div>
                <div
                  id="notes-editor"
+                 ref={notesEditorRef}
                  contentEditable
                  className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white text-base focus:outline-none focus:border-blue-500 overflow-auto"
                  style={{ 
@@ -14934,8 +21850,23 @@ const RunOfShowPage: React.FC = () => {
                    fontFamily: 'system-ui, -apple-system, sans-serif'
                  }}
                  data-placeholder="Start typing your notes here..."
+                 onKeyDown={(e) => {
+                   const editor = e.currentTarget as HTMLDivElement;
+                   if (handleNotesChipEnter(editor, e)) {
+                     const html = editor.innerHTML;
+                     setTempNotesHtml(html);
+                     setTempNotesVoCues((prev) => reconcileVoCuesWithNotes(html, prev));
+                   }
+                 }}
                  onInput={(e) => {
-                   setTempNotesHtml((e.currentTarget as HTMLDivElement).innerHTML);
+                   const html = (e.currentTarget as HTMLDivElement).innerHTML;
+                   setTempNotesHtml(html);
+                   setTempNotesVoCues((prev) => reconcileVoCuesWithNotes(html, prev));
+                 }}
+                 onBlur={(e) => {
+                   const html = (e.currentTarget as HTMLDivElement).innerHTML;
+                   setTempNotesHtml(html);
+                   setTempNotesVoCues((prev) => reconcileVoCuesWithNotes(html, prev));
                  }}
                />
              </div>
@@ -14954,7 +21885,7 @@ const RunOfShowPage: React.FC = () => {
                    setEditingNotesItem(null);
                    setTempNotesHtml('');
                    setTempNotesVoCues([]);
-                   handleModalClosed();
+                   resumeAfterFieldEditorClose();
                  }}
                  className="flex-1 px-6 py-3 bg-slate-600 hover:bg-slate-500 text-white font-semibold rounded-lg transition-colors"
                >
@@ -14978,7 +21909,7 @@ const RunOfShowPage: React.FC = () => {
                  onClick={() => {
                    setShowSpeakersModal(false);
                    setEditingSpeakersItem(null);
-                   handleModalClosed();
+                   resumeAfterFieldEditorClose();
                  }}
                  className="text-slate-400 hover:text-white text-xl"
                >
@@ -14989,8 +21920,8 @@ const RunOfShowPage: React.FC = () => {
              {/* Content */}
              <div className="flex-1 p-6 overflow-y-auto">
                
-               {/* Add Speaker Button */}
-               <div className="mb-6">
+               {/* Add Speaker + DB hint */}
+               <div className="mb-6 flex flex-wrap items-center gap-3">
                  <button
                    onClick={addSpeakerText}
                    disabled={tempSpeakersText.length >= 7}
@@ -14998,24 +21929,105 @@ const RunOfShowPage: React.FC = () => {
                  >
                    + Add Speaker {tempSpeakersText.length < 7 && `(${7 - tempSpeakersText.length} slots remaining)`}
                  </button>
+                 <div className="flex-1 min-w-[220px] rounded-lg border border-blue-500/40 bg-blue-950/40 px-3 py-2 text-sm text-blue-100">
+                   Recurring guest? Open a speaker slot and click{' '}
+                   <span className="font-semibold text-white">Search Database</span> to import name, title, org, and photo.
+                 </div>
                </div>
                
                {/* Speakers List */}
                <div className="space-y-4 mb-6">
                  {tempSpeakersText.sort((a, b) => a.slot - b.slot).map((speaker) => (
                    <div key={speaker.id} className="bg-slate-700 rounded-lg p-4 border border-slate-600">
-                     <div className="flex items-center justify-between mb-4">
+                     <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
                        <h3 className="text-lg font-semibold text-white">
                          Speaker {speaker.slot}
                        </h3>
-                       <button
-                         onClick={() => removeSpeakerText(speaker.id)}
-                         className="w-8 h-8 bg-red-600 hover:bg-red-500 text-white rounded flex items-center justify-center transition-colors"
-                         title="Remove Speaker"
-                       >
-                         ✕
-                       </button>
+                       <div className="flex items-center gap-2">
+                         <button
+                           type="button"
+                           onClick={() => {
+                             setSpeakerDbSearchId(speaker.id);
+                             setSpeakerDbQuery(speaker.fullName || '');
+                             if (speaker.fullName?.trim()) {
+                               void runSpeakerDbSearch(speaker.id, speaker.fullName);
+                             } else {
+                               setSpeakerDbHits([]);
+                             }
+                           }}
+                           className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors ${
+                             speakerDbSearchId === speaker.id
+                               ? 'bg-blue-500 text-white'
+                               : 'bg-blue-600 hover:bg-blue-500 text-white'
+                           }`}
+                           title="Import name, title, org, and photo from the speaker database"
+                         >
+                           Search Database
+                         </button>
+                         <button
+                           onClick={() => removeSpeakerText(speaker.id)}
+                           className="w-8 h-8 bg-red-600 hover:bg-red-500 text-white rounded flex items-center justify-center transition-colors"
+                           title="Remove Speaker"
+                         >
+                           ✕
+                         </button>
+                       </div>
                      </div>
+
+                     {speakerDbSearchId === speaker.id && (
+                       <div className="mb-4 rounded-lg border border-blue-500/50 bg-slate-900/70 p-3 space-y-2">
+                         <label className="block text-sm font-medium text-blue-200">
+                           Search speaker database
+                         </label>
+                         <input
+                           type="search"
+                           autoFocus
+                           value={speakerDbQuery}
+                           onChange={(e) => void runSpeakerDbSearch(speaker.id, e.target.value)}
+                           placeholder="Type a name to find a recurring speaker…"
+                           className="w-full px-3 py-2 bg-slate-800 border border-blue-500/60 rounded text-white text-sm placeholder-slate-400 focus:outline-none focus:border-blue-400"
+                         />
+                         <div className="max-h-40 overflow-y-auto rounded border border-slate-600 bg-slate-950/80">
+                           {speakerDbBusy && (
+                             <div className="px-3 py-2 text-xs text-slate-400">Searching…</div>
+                           )}
+                           {!speakerDbBusy && speakerDbQuery.trim() && speakerDbHits.length === 0 && (
+                             <div className="px-3 py-2 text-xs text-slate-400">No matches</div>
+                           )}
+                           {!speakerDbBusy && !speakerDbQuery.trim() && (
+                             <div className="px-3 py-2 text-xs text-slate-400">
+                               Start typing to search the global speaker list
+                             </div>
+                           )}
+                           {speakerDbHits.map((hit) => (
+                             <button
+                               key={hit.id}
+                               type="button"
+                               onClick={() => importSpeakerFromDb(speaker.id, hit)}
+                               className="w-full text-left px-3 py-2 text-sm text-slate-200 hover:bg-blue-900/40 border-b border-slate-700/80 last:border-0"
+                             >
+                               <span className="font-medium text-white">{hit.full_name}</span>
+                               {(hit.title || hit.org) && (
+                                 <span className="block text-xs text-slate-400 truncate">
+                                   {[hit.title, hit.org].filter(Boolean).join(' · ')}
+                                 </span>
+                               )}
+                             </button>
+                           ))}
+                         </div>
+                         <button
+                           type="button"
+                           onClick={() => {
+                             setSpeakerDbSearchId(null);
+                             setSpeakerDbQuery('');
+                             setSpeakerDbHits([]);
+                           }}
+                           className="text-xs font-medium text-slate-400 hover:text-white"
+                         >
+                           Close search
+                         </button>
+                       </div>
+                     )}
                      
                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                        {/* Slot Number */}
@@ -15049,10 +22061,9 @@ const RunOfShowPage: React.FC = () => {
                            onChange={(e) => updateSpeakerText(speaker.id, 'location', e.target.value)}
                            className="w-full px-3 py-2 bg-slate-600 border border-slate-500 rounded text-white text-sm focus:outline-none focus:border-blue-500"
                          >
-                           <option value="Podium">Podium</option>
-                           <option value="Seat">Seat</option>
-                           <option value="Moderator">Moderator</option>
-                           <option value="Virtual">Virtual</option>
+                           {SPEAKER_LOCATIONS.map((loc) => (
+                             <option key={loc} value={loc}>{loc}</option>
+                           ))}
                          </select>
                        </div>
                        
@@ -15141,7 +22152,7 @@ const RunOfShowPage: React.FC = () => {
              <div className="border-t border-slate-700 p-6">
                <div className="flex gap-3">
                  <button
-                   onClick={saveSpeakers}
+                   onClick={() => void saveSpeakers()}
                    className="flex-1 px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-lg transition-colors"
                  >
                    Save & Close
@@ -15150,6 +22161,8 @@ const RunOfShowPage: React.FC = () => {
                    onClick={() => {
                      setShowSpeakersModal(false);
                      setEditingSpeakersItem(null);
+                     setSpeakerDbSearchId(null);
+                     setSpeakerSyncPending(null);
                      handleModalClosed();
                    }}
                    className="flex-1 px-6 py-3 bg-slate-600 hover:bg-slate-500 text-white font-semibold rounded-lg transition-colors"
@@ -15161,15 +22174,186 @@ const RunOfShowPage: React.FC = () => {
            </div>
          </div>
        )}
+
+       {speakerSyncPending && (
+         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[60] p-4">
+           <div className="bg-slate-800 rounded-xl max-w-lg w-full border border-slate-600 shadow-2xl">
+             <div className="px-5 py-4 border-b border-slate-700">
+               <h3 className="text-lg font-semibold text-white">Speaker database</h3>
+               <p className="text-sm text-slate-400 mt-1">
+                 Add new speakers or update existing records before saving this cue.
+               </p>
+             </div>
+             <div className="px-5 py-4 space-y-3 max-h-[50vh] overflow-y-auto">
+               {speakerSyncPending.map((action, idx) => (
+                 <label
+                   key={`${action.type}-${action.full_name}-${idx}`}
+                   className="flex items-start gap-3 rounded-lg border border-slate-600 bg-slate-900/50 px-3 py-2 cursor-pointer"
+                 >
+                   <input
+                     type="checkbox"
+                     checked={action.accepted}
+                     onChange={(e) => {
+                       const checked = e.target.checked;
+                       setSpeakerSyncPending((prev) =>
+                         prev
+                           ? prev.map((row, i) => (i === idx ? { ...row, accepted: checked } : row))
+                           : prev
+                       );
+                     }}
+                     className="mt-1"
+                   />
+                   <span className="text-sm text-slate-200">
+                     <span className="font-semibold text-white">
+                       {action.type === 'add' ? 'Add' : 'Update'} {action.full_name}
+                     </span>
+                     <span className="block text-xs text-slate-400 mt-0.5">
+                       {[action.title, action.org].filter(Boolean).join(' · ') || 'No title/org'}
+                     </span>
+                   </span>
+                 </label>
+               ))}
+             </div>
+             <div className="px-5 py-3 border-t border-slate-700 flex gap-2 justify-end">
+               <button
+                 type="button"
+                 disabled={speakerSyncBusy}
+                 onClick={() => {
+                   setSpeakerSyncPending(null);
+                   finishSaveSpeakers();
+                 }}
+                 className="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-sm text-white"
+               >
+                 Skip all
+               </button>
+               <button
+                 type="button"
+                 disabled={speakerSyncBusy}
+                 onClick={() => void confirmSpeakerSyncAndSave()}
+                 className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-sm font-semibold text-white"
+               >
+                 {speakerSyncBusy ? 'Saving…' : 'Apply & save cue'}
+               </button>
+             </div>
+           </div>
+         </div>
+       )}
+
        {/* Assets Editor Modal */}
        {showAssetsModal && editingAssetsItem !== null && (
          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
            <div className="bg-slate-800 rounded-xl p-6 max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-             <h2 className="text-2xl font-bold text-white mb-6">Edit Assets</h2>
+             <h2 className="text-2xl font-bold text-white mb-4">Edit Assets</h2>
+             <AssetRetentionNotice className="mb-4" />
+
+             <div className="mb-5 rounded-lg border border-slate-600 bg-slate-700/60 p-4 space-y-3">
+               <div className="flex flex-wrap items-center justify-between gap-2">
+                 <h3 className="text-lg font-semibold text-white">Upload to ROS</h3>
+                 {!platformUploadConfigured && (
+                   <span className="text-xs text-slate-400">Platform storage not configured yet</span>
+                 )}
+               </div>
+               {platformUploadConfigured && (
+                 <>
+                   <input
+                     ref={platformFileInputRef}
+                     type="file"
+                     multiple
+                     className="hidden"
+                     disabled={platformUploadBusy || !!pdfConvertBusyId || editingAssetsItem <= 0}
+                     onChange={(e) => {
+                       void handlePlatformCueFileUpload(e.target.files);
+                       e.currentTarget.value = '';
+                     }}
+                   />
+                   <div
+                     role="button"
+                     tabIndex={0}
+                     onClick={() => {
+                       if (platformUploadBusy || !!pdfConvertBusyId || editingAssetsItem <= 0) return;
+                       platformFileInputRef.current?.click();
+                     }}
+                     onKeyDown={(e) => {
+                       if (e.key === 'Enter' || e.key === ' ') {
+                         e.preventDefault();
+                         if (platformUploadBusy || !!pdfConvertBusyId || editingAssetsItem <= 0) return;
+                         platformFileInputRef.current?.click();
+                       }
+                     }}
+                     onDragEnter={(e) => {
+                       e.preventDefault();
+                       e.stopPropagation();
+                       if (platformUploadBusy || !!pdfConvertBusyId || editingAssetsItem <= 0) return;
+                       setPlatformUploadDragOver(true);
+                     }}
+                     onDragOver={(e) => {
+                       e.preventDefault();
+                       e.stopPropagation();
+                       if (platformUploadBusy || !!pdfConvertBusyId || editingAssetsItem <= 0) return;
+                       e.dataTransfer.dropEffect = 'copy';
+                       setPlatformUploadDragOver(true);
+                     }}
+                     onDragLeave={(e) => {
+                       e.preventDefault();
+                       e.stopPropagation();
+                       setPlatformUploadDragOver(false);
+                     }}
+                     onDrop={(e) => {
+                       e.preventDefault();
+                       e.stopPropagation();
+                       setPlatformUploadDragOver(false);
+                       if (platformUploadBusy || !!pdfConvertBusyId || editingAssetsItem <= 0) return;
+                       const dropped = Array.from(e.dataTransfer.files || []);
+                       void handlePlatformCueFileUpload(dropped);
+                     }}
+                     className={`rounded-lg border-2 border-dashed px-4 py-8 text-center transition-colors ${
+                       platformUploadBusy || !!pdfConvertBusyId || editingAssetsItem <= 0
+                         ? 'border-slate-600 bg-slate-800/40 cursor-not-allowed text-slate-500'
+                         : platformUploadDragOver
+                           ? 'border-cyan-400 bg-cyan-900/40 text-cyan-100 cursor-copy'
+                           : 'border-slate-500 bg-slate-800/60 text-slate-200 hover:border-cyan-500 hover:bg-slate-800 cursor-pointer'
+                     }`}
+                   >
+                     <div className="text-sm font-semibold">
+                       {platformUploadBusy
+                         ? 'Uploading…'
+                         : pdfConvertBusyId
+                           ? 'Creating PowerPoint from PDF slides…'
+                           : 'Drag a file here, or click to upload'}
+                     </div>
+                     <div className="mt-1 text-xs text-slate-400">
+                       Any file type · max 200 MB · same name becomes the next version
+                     </div>
+                   </div>
+                 </>
+               )}
+               {editingAssetsItem <= 0 && (
+                 <p className="text-sm text-slate-300">Save this cue first, then you can upload files.</p>
+               )}
+               {platformUploadError && (
+                 <p className="text-sm text-red-300">{platformUploadError}</p>
+               )}
+               {platformUploadNote && (
+                 <p className="text-sm text-emerald-200">{platformUploadNote}</p>
+               )}
+               <CuePlatformFileList
+                 files={modalPlatformFiles}
+                 canEdit
+                 usingId={platformUsingVersionId}
+                 convertingId={pdfConvertBusyId}
+                 onOpen={(fileId) => void openPlatformCueFile(fileId)}
+                 onDownload={(file) => void downloadPlatformCueFile(file)}
+                 onDelete={(fileId) => void handleDeletePlatformCueFile(fileId)}
+                 onUseVersion={(file) => void handleUsePlatformCueFileVersion(file)}
+                 onConvertPdf={(file) => {
+                   setPdfConvertPrompt(file);
+                 }}
+               />
+             </div>
              
              <div className="space-y-4">
                <div className="flex justify-between items-center">
-                 <h3 className="text-lg font-semibold text-white">Assets List</h3>
+                 <h3 className="text-lg font-semibold text-white">Links (Dropbox, Drive, etc.)</h3>
                  <button
                    onClick={addAssetRow}
                    className="px-4 py-2 bg-green-600 hover:bg-green-500 text-white rounded-lg transition-colors"
@@ -15179,10 +22363,96 @@ const RunOfShowPage: React.FC = () => {
                </div>
                
                <div id="assets-list" className="space-y-3">
-                 {/* Assets will be dynamically added here */}
+                 {tempAssets.map((asset) => (
+                   <div key={asset.id} className="asset-item p-3 bg-slate-700 rounded-lg space-y-3">
+                     <div className="flex gap-3 items-center">
+                       <input
+                         type="text"
+                         className="asset-name flex-1 px-3 py-2 bg-slate-600 border border-slate-500 rounded text-white placeholder-slate-400 focus:outline-none focus:border-blue-500"
+                         placeholder="Asset name..."
+                         value={asset.name}
+                         onChange={(e) => updateAssetField(asset.id, 'name', e.target.value)}
+                       />
+                       <button
+                         type="button"
+                         onClick={() => toggleAssetLink(asset.id)}
+                         className={`toggle-link px-3 py-2 text-white rounded transition-colors text-sm ${
+                           asset.showLink
+                             ? 'bg-slate-600 hover:bg-slate-500'
+                             : 'bg-blue-600 hover:bg-blue-500'
+                         }`}
+                       >
+                         {asset.showLink ? '− Link' : '+ Link'}
+                       </button>
+                       <button
+                         type="button"
+                         onClick={() => removeAssetRow(asset.id)}
+                         className="remove-asset px-3 py-2 bg-red-600 hover:bg-red-500 text-white rounded transition-colors"
+                       >
+                         Remove
+                       </button>
+                     </div>
+                     {asset.showLink && (
+                       <div className="asset-link-container">
+                         <input
+                           type="url"
+                           className="asset-link w-full px-3 py-2 bg-slate-600 border border-slate-500 rounded text-white placeholder-slate-400 focus:outline-none focus:border-blue-500"
+                           placeholder="Enter asset URL..."
+                           value={asset.link}
+                           onChange={(e) => updateAssetField(asset.id, 'link', e.target.value)}
+                         />
+                       </div>
+                     )}
+                   </div>
+                 ))}
                </div>
              </div>
              
+             {pdfConvertPrompt ? (
+               <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4">
+                 <div className="w-full max-w-md rounded-xl border border-slate-600 bg-slate-800 p-5 shadow-2xl">
+                   <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-400">
+                     PDF uploaded
+                   </p>
+                   <h3 className="mt-1 text-lg font-bold text-white">Is this a presentation?</h3>
+                   <p className="mt-2 text-sm text-slate-300">
+                     We’ll keep{' '}
+                     <span className="font-medium text-white">{cueFileDisplayName(pdfConvertPrompt)}</span>{' '}
+                     and add a PowerPoint of its slides (one picture per page). This is for assets only — it
+                     does not change the PowerPoint helper.
+                   </p>
+                   <div className="mt-5 flex flex-wrap gap-2">
+                     <button
+                       type="button"
+                       disabled={!!pdfConvertBusyId}
+                       onClick={() => {
+                         const file = pdfConvertPrompt;
+                         const rest = pdfConvertQueue;
+                         if (!file) return;
+                         void (async () => {
+                           await handleConvertPdfCueFile(file);
+                           advancePdfConvertPrompt(rest);
+                         })();
+                       }}
+                       className="flex-1 rounded-lg bg-amber-500 px-4 py-2.5 text-sm font-semibold text-slate-950 hover:bg-amber-400 disabled:opacity-50"
+                     >
+                       {pdfConvertBusyId === pdfConvertPrompt.id
+                         ? 'Creating…'
+                         : 'Yes — add PowerPoint'}
+                     </button>
+                     <button
+                       type="button"
+                       disabled={!!pdfConvertBusyId}
+                       onClick={() => advancePdfConvertPrompt(pdfConvertQueue)}
+                       className="rounded-lg bg-slate-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-500 disabled:opacity-50"
+                     >
+                       Keep PDF only
+                     </button>
+                   </div>
+                 </div>
+               </div>
+             ) : null}
+
              <div className="flex gap-3 mt-6">
                <button
                  onClick={saveAssets}
@@ -15194,7 +22464,7 @@ const RunOfShowPage: React.FC = () => {
                  onClick={() => {
                    setShowAssetsModal(false);
                    setEditingAssetsItem(null);
-                   handleModalClosed();
+                   resumeAfterFieldEditorClose();
                  }}
                  className="flex-1 px-6 py-3 bg-slate-600 hover:bg-slate-500 text-white font-semibold rounded-lg transition-colors"
                >
@@ -15205,11 +22475,11 @@ const RunOfShowPage: React.FC = () => {
          </div>
        )}
 
-       {/* View-Only Assets Modal for OPERATORs */}
+       {/* View-Only Assets Modal for VIEWERs */}
        {showViewAssetsModal && viewingAssetsItem !== null && (
          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
            <div className="bg-slate-800 rounded-xl p-6 max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-             <div className="flex justify-between items-center mb-6">
+             <div className="flex justify-between items-center mb-4">
                <h2 className="text-2xl font-bold text-white">Assets List</h2>
                <button
                  onClick={() => {
@@ -15221,12 +22491,23 @@ const RunOfShowPage: React.FC = () => {
                  Close
                </button>
              </div>
+             <AssetRetentionNotice className="mb-4" />
+             {modalPlatformFiles.length > 0 && (
+               <div className="mb-4 space-y-2">
+                 <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-300">Uploaded to ROS</h3>
+                 <CuePlatformFileList
+                   files={modalPlatformFiles}
+                   onOpen={(fileId) => void openPlatformCueFile(fileId)}
+                   onDownload={(file) => void downloadPlatformCueFile(file)}
+                 />
+               </div>
+             )}
              
              <div className="space-y-4">
                {(() => {
                  const item = schedule.find(s => s.id === viewingAssetsItem);
                  if (!item || !item.assets) {
-                   return (
+                   return modalPlatformFiles.length > 0 ? null : (
                      <div className="text-center py-8">
                        <p className="text-slate-400 text-lg">No assets available for this item.</p>
                      </div>
@@ -15287,7 +22568,7 @@ const RunOfShowPage: React.FC = () => {
                  }
                  
                  if (assets.length === 0) {
-                   return (
+                   return modalPlatformFiles.length > 0 ? null : (
                      <div className="text-center py-8">
                        <p className="text-slate-400 text-lg">No assets available for this item.</p>
                      </div>
@@ -15414,8 +22695,14 @@ const RunOfShowPage: React.FC = () => {
                                      {speaker.location === 'Seat' && <span className="noto-emoji" title="Seat">🪑</span>}
                                      {speaker.location === 'Virtual' && <span>📺</span>}
                                      {speaker.location === 'Moderator' && <span>📢</span>}
-                                     {!['Podium', 'Seat', 'Virtual', 'Moderator'].includes(speaker.location) && <span>📍</span>}
-                                     <span>{speaker.location}</span>
+                                     {(speaker.location === 'Ted-Talk' || speaker.location === 'Walking') && <span>🎙️</span>}
+                                     {!SPEAKER_LOCATIONS.includes(speaker.location) &&
+                                       speaker.location !== 'Walking' && <span>📍</span>}
+                                     <span>
+                                       {speaker.location === 'Walking'
+                                         ? 'Ted-Talk'
+                                         : speaker.location}
+                                     </span>
                                    </div>
                                  )}
                                </div>
@@ -15464,6 +22751,7 @@ const RunOfShowPage: React.FC = () => {
                  onClick={() => {
                    setShowParticipantsModal(false);
                    setEditingParticipantsItem(null);
+                   resumeAfterFieldEditorClose();
                  }}
                  className="text-slate-400 hover:text-white text-xl"
                >
@@ -15533,10 +22821,9 @@ const RunOfShowPage: React.FC = () => {
                            onChange={(e) => updateSpeaker(speaker.id, 'location', e.target.value)}
                            className="w-full px-3 py-2 bg-slate-600 border border-slate-500 rounded text-white text-sm focus:outline-none focus:border-blue-500"
                          >
-                           <option value="Podium">Podium</option>
-                           <option value="Seat">Seat</option>
-                           <option value="Moderator">Moderator</option>
-                           <option value="Virtual">Virtual</option>
+                           {SPEAKER_LOCATIONS.map((loc) => (
+                             <option key={loc} value={loc}>{loc}</option>
+                           ))}
                          </select>
                        </div>
                        
@@ -15641,6 +22928,7 @@ const RunOfShowPage: React.FC = () => {
                    onClick={() => {
                      setShowParticipantsModal(false);
                      setEditingParticipantsItem(null);
+                     resumeAfterFieldEditorClose();
                    }}
                    className="flex-1 px-6 py-3 bg-slate-600 hover:bg-slate-500 text-white font-semibold rounded-lg transition-colors"
                  >
@@ -15809,10 +23097,72 @@ const RunOfShowPage: React.FC = () => {
         </div>
       )}
 
-      {/* Filter View Modal */}
+      {showOperatorCountdownModal && event?.id && (
+        <OperatorCountdownModal
+          isOpen={showOperatorCountdownModal}
+          eventId={event.id}
+          userId={user?.id}
+          userName={user?.full_name || user?.email || undefined}
+          userRole={currentUserRole || undefined}
+          liveCountdown={hybridTimerData?.operatorCountdown ?? null}
+          onClose={() => setShowOperatorCountdownModal(false)}
+          onStarted={() => setOperatorCountdownLive(true)}
+          onCleared={() => setOperatorCountdownLive(false)}
+          onLiveRow={(mapped) =>
+            setHybridTimerData((prev) => ({ ...prev, operatorCountdown: mapped }))
+          }
+          onPopOut={() => {
+            setShowOperatorCountdownModal(false);
+            openOperatorTimerPopout();
+          }}
+        />
+      )}
+
+      {timedMarkerModal && (() => {
+        const parentIndex = schedule.findIndex((s) => s.id === timedMarkerModal.parentId);
+        const parent = parentIndex >= 0 ? schedule[parentIndex] : null;
+        const parentStart =
+          parentIndex >= 0 ? calculateStartTime(parentIndex) || '' : '';
+        const editing =
+          timedMarkerModal.mode === 'edit' && timedMarkerModal.itemId != null
+            ? schedule.find((s) => s.id === timedMarkerModal.itemId)
+            : null;
+        return (
+          <TimedMarkerModal
+            isOpen
+            parentSegmentName={parent?.segmentName || 'cue'}
+            parentStartDisplay={parentStart}
+            initialMode={
+              editing ? normalizeMarkerTimeMode(editing.markerTimeMode) : 'absolute'
+            }
+            initialOffsetSeconds={
+              editing
+                ? normalizeMarkerOffsetSeconds(editing.markerOffsetSeconds)
+                : 0
+            }
+            initialAbsoluteSeconds={
+              editing?.markerAbsoluteSeconds != null
+                ? normalizeMarkerAbsoluteSeconds(editing.markerAbsoluteSeconds)
+                : undefined
+            }
+            initialLabel={editing?.segmentName || 'Timed marker'}
+            title={timedMarkerModal.mode === 'edit' ? 'Edit Timed Marker' : 'Add Timed Marker'}
+            confirmLabel={timedMarkerModal.mode === 'edit' ? 'Save marker' : 'Add marker'}
+            onClose={() => {
+              setTimedMarkerModal(null);
+              handleModalClosed();
+            }}
+            onConfirm={(result) => {
+              void applyTimedMarkerModal(result);
+            }}
+          />
+        );
+      })()}
+
+      {/* Filter View Modal — left-to-right chips (matches column strip) */}
       {showFilterModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-800 rounded-lg max-w-md w-full max-h-[80vh] flex flex-col">
+          <div className="bg-slate-800 rounded-lg max-w-4xl w-full max-h-[85vh] flex flex-col">
             {/* Modal Header */}
             <div className="flex items-center justify-between p-4 border-b border-slate-600">
               <h2 className="text-lg font-bold text-white">Filter Columns</h2>
@@ -15826,180 +23176,223 @@ const RunOfShowPage: React.FC = () => {
             
             {/* Scrollable Content */}
             <div className="flex-1 overflow-y-auto p-4">
-              <div className="space-y-3">
-                <p className="text-slate-300 text-sm mb-4">Select which columns to display in the schedule:</p>
-                
-                <div className="space-y-2">
-                  <label className="flex items-center gap-3">
-                    <input
-                      type="checkbox"
-                      checked={visibleColumns.start}
-                      onChange={(e) => setVisibleColumns(prev => ({ ...prev, start: e.target.checked }))}
-                      className="rounded"
-                    />
-                    <span className="text-white">Start Time</span>
-                  </label>
-                  
-                  <label className="flex items-center gap-3">
-                    <input
-                      type="checkbox"
-                      checked={visibleColumns.programType}
-                      onChange={(e) => setVisibleColumns(prev => ({ ...prev, programType: e.target.checked }))}
-                      className="rounded"
-                    />
-                    <span className="text-white">Program Type</span>
-                  </label>
-                  
-                  <label className="flex items-center gap-3">
-                    <input
-                      type="checkbox"
-                      checked={visibleColumns.duration}
-                      onChange={(e) => setVisibleColumns(prev => ({ ...prev, duration: e.target.checked }))}
-                      className="rounded"
-                    />
-                    <span className="text-white">Duration</span>
-                  </label>
-                  
-                  <label className="flex items-center gap-3">
-                    <input
-                      type="checkbox"
-                      checked={visibleColumns.segmentName}
-                      onChange={(e) => setVisibleColumns(prev => ({ ...prev, segmentName: e.target.checked }))}
-                      className="rounded"
-                    />
-                    <span className="text-white">Segment Name</span>
-                  </label>
-                  
-                  <label className="flex items-center gap-3">
-                    <input
-                      type="checkbox"
-                      checked={visibleColumns.shotType}
-                      onChange={(e) => setVisibleColumns(prev => ({ ...prev, shotType: e.target.checked }))}
-                      className="rounded"
-                    />
-                    <span className="text-white">Shot Type</span>
-                  </label>
-                  
-                  <label className="flex items-center gap-3">
-                    <input
-                      type="checkbox"
-                      checked={visibleColumns.pptQA}
-                      onChange={(e) => setVisibleColumns(prev => ({ ...prev, pptQA: e.target.checked }))}
-                      className="rounded"
-                    />
-                    <span className="text-white">PPT/Q&A</span>
-                  </label>
-                  
-                  <label className="flex items-center gap-3">
-                    <input
-                      type="checkbox"
-                      checked={visibleColumns.recording}
-                      onChange={(e) => setVisibleColumns(prev => ({ ...prev, recording: e.target.checked }))}
-                      className="rounded"
-                    />
-                    <span className="text-white">Recording</span>
-                  </label>
-                  
-                  <label className="flex items-center gap-3">
-                    <input
-                      type="checkbox"
-                      checked={visibleColumns.notes}
-                      onChange={(e) => setVisibleColumns(prev => ({ ...prev, notes: e.target.checked }))}
-                      className="rounded"
-                    />
-                    <span className="text-white">Notes</span>
-                  </label>
-                  
-                  <label className="flex items-center gap-3">
-                    <input
-                      type="checkbox"
-                      checked={visibleColumns.assets}
-                      onChange={(e) => setVisibleColumns(prev => ({ ...prev, assets: e.target.checked }))}
-                      className="rounded"
-                    />
-                    <span className="text-white">Assets</span>
-                  </label>
-                  
-                  {/* Participants section hidden */}
-                  {/* <label className="flex items-center gap-3">
-                    <input
-                      type="checkbox"
-                      checked={visibleColumns.participants}
-                      onChange={(e) => setVisibleColumns(prev => ({ ...prev, participants: e.target.checked }))}
-                      className="rounded"
-                    />
-                    <span className="text-white">Participants</span>
-                  </label> */}
-                  
-                  <label className="flex items-center gap-3">
-                    <input
-                      type="checkbox"
-                      checked={visibleColumns.speakers}
-                      onChange={(e) => setVisibleColumns(prev => ({ ...prev, speakers: e.target.checked }))}
-                      className="rounded"
-                    />
-                    <span className="text-white">Speakers</span>
-                  </label>
-                  
-                  
-                  <label className="flex items-center gap-3">
-                    <input
-                      type="checkbox"
-                      checked={visibleColumns.public}
-                      onChange={(e) => setVisibleColumns(prev => ({ ...prev, public: e.target.checked }))}
-                      className="rounded"
-                    />
-                    <span className="text-white">Public</span>
-                  </label>
-                  <label className="flex items-center gap-3">
-                    <input
-                      type="checkbox"
-                      checked={visibleColumns.timer}
-                      onChange={(e) => setVisibleColumns(prev => ({ ...prev, timer: e.target.checked }))}
-                      className="rounded"
-                    />
-                    <span className="text-white">Counter</span>
-                  </label>
-                  
-                  {customColumns.map((column, index) => (
-                    <label key={column.id} className="flex items-center gap-3">
-                      <input
-                        type="checkbox"
-                        checked={visibleCustomColumns[column.id] !== false}
-                        onChange={(e) => setVisibleCustomColumns(prev => ({ ...prev, [column.id]: e.target.checked }))}
-                        className="rounded"
-                      />
-                      <span className="text-white">
-                        {column.name}
-                        <span className="text-slate-400 text-xs ml-2">(Custom)</span>
-                      </span>
-                    </label>
-                  ))}
+              <div className="space-y-4">
+                <p className="text-slate-300 text-sm">
+                  Toggle columns left-to-right (same order as the schedule). Drag chips or use ← → to reorder. # and CUE stay fixed on the left.
+                  Changes always stay in this browser; optionally sync them to your signed-in account for every event and device.
+                </p>
+
+                <label className="flex items-start gap-3 rounded-lg border border-blue-700/50 bg-blue-950/25 px-3 py-2.5">
+                  <input
+                    type="checkbox"
+                    checked={filterViewSyncToAccount}
+                    disabled={!user?.id}
+                    onChange={(e) => {
+                      const enabled = e.target.checked;
+                      setFilterViewSyncToAccount(enabled);
+                      saveFilterViewAccountSync(enabled);
+                      if (enabled && user?.id) {
+                        const prefs: RosUiPreferences = {
+                          ...readLocalRosUiPreferences(columnOrder, customColumns, stickyStartColumn),
+                          visibleColumns,
+                          visibleCustomByName: customColumnVisibilityToNames(
+                            customColumns,
+                            visibleCustomColumns
+                          ),
+                          stickyStartColumn,
+                          columnOrder: toPortableColumnOrder(columnOrder, customColumns),
+                        };
+                        portableColumnOrderRef.current = prefs.columnOrder || null;
+                        void saveUserUiPreferences(user.id, prefs).catch((err) => {
+                          console.warn('Could not save account UI preferences to Neon:', err);
+                        });
+                      }
+                    }}
+                    className="rounded mt-0.5"
+                  />
+                  <span className="text-slate-200 text-sm">
+                    Save Filter View to my account
+                    <span className="block text-xs text-slate-400 font-normal">
+                      {user?.id
+                        ? filterViewSyncToAccount
+                          ? 'On — this layout syncs to Neon and follows you on any event/device when signed in.'
+                          : 'Off — keep this layout only in this browser (not pushed to your account).'
+                        : 'Sign in to sync Filter View to your account.'}
+                    </span>
+                  </span>
+                </label>
+
+                <div className="rounded-lg border border-slate-700/80 bg-slate-900/50 px-3 py-2.5">
+                  <p className="text-[10px] uppercase tracking-wide text-slate-500 font-semibold mb-1.5">
+                    Schedule preview
+                  </p>
+                  <div className="flex items-stretch gap-1 overflow-x-auto pb-0.5">
+                    {(() => {
+                      const labels: { label: string; pinned?: boolean }[] = [
+                        { label: '#', pinned: true },
+                        { label: 'CUE', pinned: true },
+                      ];
+                      if (stickyStartColumn && visibleColumns.start) {
+                        labels.push({ label: 'Start', pinned: true });
+                      }
+                      for (const key of columnOrder) {
+                        const customId = parseCustomColumnOrderKey(key);
+                        const customCol = customId
+                          ? customColumns.find((c) => c.id === customId)
+                          : null;
+                        if (customId && !customCol) continue;
+                        const checked = customId
+                          ? visibleCustomColumns[customId] !== false
+                          : Boolean((visibleColumns as Record<string, boolean>)[key]);
+                        if (!checked) continue;
+                        if (key === 'start' && stickyStartColumn) continue;
+                        const label = customCol
+                          ? customCol.name
+                          : BUILTIN_COLUMN_LABELS[key as keyof typeof BUILTIN_COLUMN_LABELS] || key;
+                        labels.push({ label });
+                      }
+                      return labels.map((item, i) => (
+                        <div
+                          key={`${item.label}-${i}`}
+                          className={`flex-shrink-0 rounded px-2.5 py-1.5 text-xs font-semibold border ${
+                            item.pinned
+                              ? 'bg-slate-700 border-slate-500 text-white'
+                              : 'bg-blue-950/40 border-blue-600/50 text-blue-100'
+                          }`}
+                          title={item.label}
+                        >
+                          {item.label}
+                        </div>
+                      ));
+                    })()}
+                  </div>
                 </div>
+
+                <div className="flex flex-wrap gap-2 items-stretch content-start">
+                  {columnOrder.map((key, index) => {
+                    const customId = parseCustomColumnOrderKey(key);
+                    const customCol = customId
+                      ? customColumns.find((c) => c.id === customId)
+                      : null;
+                    if (customId && !customCol) return null;
+
+                    const label = customCol
+                      ? customCol.name
+                      : BUILTIN_COLUMN_LABELS[key as keyof typeof BUILTIN_COLUMN_LABELS] || key;
+                    const checked = customId
+                      ? visibleCustomColumns[customId] !== false
+                      : Boolean((visibleColumns as Record<string, boolean>)[key]);
+
+                    return (
+                      <div
+                        key={key}
+                        draggable
+                        onDragStart={() => setColumnDragKey(key)}
+                        onDragOver={(e) => e.preventDefault()}
+                        onDrop={() => {
+                          if (!columnDragKey || columnDragKey === key) return;
+                          const from = columnOrder.indexOf(columnDragKey);
+                          const to = columnOrder.indexOf(key);
+                          if (from >= 0 && to >= 0) moveScrollColumn(from, to);
+                          setColumnDragKey(null);
+                        }}
+                        onDragEnd={() => setColumnDragKey(null)}
+                        className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 max-w-full ${
+                          checked
+                            ? 'border-blue-500/70 bg-blue-950/50 text-blue-50'
+                            : 'border-slate-600 bg-slate-700/50 text-slate-400'
+                        } ${columnDragKey === key ? 'opacity-60 ring-1 ring-blue-400' : ''}`}
+                      >
+                        <span
+                          className="cursor-grab text-slate-500 select-none text-xs"
+                          title="Drag to reorder"
+                          aria-hidden
+                        >
+                          ⋮⋮
+                        </span>
+                        <label className="inline-flex items-center gap-1.5 cursor-pointer min-w-0">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(e) => {
+                              if (customId) {
+                                setVisibleCustomColumns((prev) => ({
+                                  ...prev,
+                                  [customId]: e.target.checked,
+                                }));
+                              } else {
+                                setVisibleColumns((prev) => ({
+                                  ...prev,
+                                  [key]: e.target.checked,
+                                }));
+                              }
+                            }}
+                            className="rounded flex-shrink-0"
+                          />
+                          <span className="text-sm font-medium truncate max-w-[10rem]" title={label}>
+                            {label}
+                          </span>
+                          {customCol ? (
+                            <span className="text-[10px] uppercase tracking-wide text-slate-500 flex-shrink-0">
+                              custom
+                            </span>
+                          ) : null}
+                        </label>
+                        <div className="inline-flex items-center flex-shrink-0 border-l border-slate-600/80 pl-1 ml-0.5">
+                          <button
+                            type="button"
+                            disabled={index === 0}
+                            onClick={() => moveScrollColumn(index, index - 1)}
+                            className="px-1 py-0.5 text-slate-300 hover:text-white disabled:opacity-30 text-xs"
+                            title="Move left"
+                          >
+                            ←
+                          </button>
+                          <button
+                            type="button"
+                            disabled={index === columnOrder.length - 1}
+                            onClick={() => moveScrollColumn(index, index + 1)}
+                            className="px-1 py-0.5 text-slate-300 hover:text-white disabled:opacity-30 text-xs"
+                            title="Move right"
+                          >
+                            →
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <label
+                  className={`flex items-start gap-3 rounded-lg border border-slate-600/80 bg-slate-900/40 px-3 py-2.5 ${
+                    !visibleColumns.start ? 'opacity-50' : ''
+                  }`}
+                  title="Keep Start fixed next to CUE when scrolling horizontally"
+                >
+                  <input
+                    type="checkbox"
+                    checked={stickyStartColumn}
+                    disabled={!visibleColumns.start}
+                    onChange={(e) => setStickyStartColumn(e.target.checked)}
+                    className="rounded mt-0.5"
+                  />
+                  <span className="text-slate-200 text-sm">
+                    Pin Start next to CUE
+                    <span className="block text-xs text-slate-400 font-normal">
+                      Stays fixed on the left while other columns scroll
+                    </span>
+                  </span>
+                </label>
               </div>
             </div>
             
             {/* Modal Footer */}
             <div className="p-4 border-t border-slate-600">
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <button
                   onClick={() => {
-                    setVisibleColumns({
-                      start: true,
-                      programType: true,
-                      duration: true,
-                      segmentName: true,
-                      shotType: true,
-                      pptQA: true,
-                      recording: true,
-                      notes: true,
-                      assets: true,
-                      participants: false, // 👈 hidden now,
-                      speakers: true,
-                      public: true,
-                      timer: true,
-                      custom: true
-                    });
+                    // Keep Participants hidden — it stays opt-in only (default false).
+                    setVisibleColumns({ ...DEFAULT_ROS_VISIBLE_COLUMNS, custom: true });
                     // Show all custom columns
                     const allCustomVisible: Record<string, boolean> = {};
                     customColumns.forEach(column => {
@@ -16014,6 +23407,7 @@ const RunOfShowPage: React.FC = () => {
                 <button
                   onClick={() => {
                     setVisibleColumns({
+                      ...DEFAULT_ROS_VISIBLE_COLUMNS,
                       start: false,
                       programType: false,
                       duration: false,
@@ -16022,6 +23416,7 @@ const RunOfShowPage: React.FC = () => {
                       pptQA: false,
                       recording: false,
                       notes: false,
+                      vog: false,
                       assets: false,
                       participants: false,
                       speakers: false,
@@ -16041,8 +23436,16 @@ const RunOfShowPage: React.FC = () => {
                   Hide All
                 </button>
                 <button
+                  type="button"
+                  onClick={resetScrollColumnOrder}
+                  className="px-3 py-2 bg-slate-600 hover:bg-slate-500 text-white font-medium rounded transition-colors text-sm"
+                  title="Restore default left-to-right column order"
+                >
+                  Reset Order
+                </button>
+                <button
                   onClick={() => setShowFilterModal(false)}
-                  className="flex-1 px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white font-medium rounded transition-colors text-sm"
+                  className="flex-1 min-w-[7rem] px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white font-medium rounded transition-colors text-sm"
                 >
                   Apply Filters
                 </button>
@@ -16056,8 +23459,12 @@ const RunOfShowPage: React.FC = () => {
       {showPublicBulkModal && (() => {
         const dayItems = schedule.filter((item: ScheduleItem) => (item.day || 1) === selectedDay);
         const allDayIds = dayItems.map((i: ScheduleItem) => i.id);
+        const closePublicBulkModal = () => {
+          setShowPublicBulkModal(false);
+          handleModalClosed();
+        };
         return (
-          <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={() => setShowPublicBulkModal(false)}>
+          <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={closePublicBulkModal}>
             <div
               className="bg-slate-800 rounded-xl shadow-2xl border border-slate-600 w-full max-w-xl"
               style={{ maxHeight: '90vh' }}
@@ -16067,7 +23474,7 @@ const RunOfShowPage: React.FC = () => {
                 <h2 className="text-xl font-bold text-white">Set public cues</h2>
                 <button
                   type="button"
-                  onClick={() => setShowPublicBulkModal(false)}
+                  onClick={closePublicBulkModal}
                   className="w-8 h-8 flex items-center justify-center text-slate-400 hover:text-white hover:bg-slate-600 rounded"
                   aria-label="Close"
                 >
@@ -16075,7 +23482,7 @@ const RunOfShowPage: React.FC = () => {
                 </button>
               </div>
               <p className="text-slate-400 text-sm px-4 pt-2 pb-3">
-                Select which cues should be public (current day only).
+                Select which cues should be public (current day only). Sync is paused while this is open.
               </p>
               <div className="overflow-y-auto border-t border-b border-slate-600" style={{ height: 'min(400px, 50vh)' }}>
                 <table className="w-full border-collapse text-left">
@@ -16137,7 +23544,7 @@ const RunOfShowPage: React.FC = () => {
                 <div className="flex gap-2">
                   <button
                     type="button"
-                    onClick={() => setShowPublicBulkModal(false)}
+                    onClick={closePublicBulkModal}
                     className="px-4 py-2 bg-slate-600 hover:bg-slate-500 text-white font-medium rounded-lg"
                   >
                     Cancel
@@ -16145,19 +23552,30 @@ const RunOfShowPage: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => {
-                    setSchedule((prev: ScheduleItem[]) => prev.map(scheduleItem => ({
-                      ...scheduleItem,
-                      isPublic: publicBulkSelectedIds.includes(scheduleItem.id)
-                    })));
+                    const publicAt = Date.now();
+                    setSchedule((prev: ScheduleItem[]) => prev.map(scheduleItem => {
+                      if ((scheduleItem.day || 1) !== selectedDay) return scheduleItem;
+                      return stampScheduleCheckboxes(
+                        {
+                          ...scheduleItem,
+                          isPublic: publicBulkSelectedIds.includes(scheduleItem.id)
+                        },
+                        ['isPublic'],
+                        publicAt
+                      );
+                    }));
+                    handleUserEditing();
                     if (logChange) {
                       logChange('FIELD_UPDATE', `Bulk set public: ${publicBulkSelectedIds.length} of ${allDayIds.length} cues`, {
                         changeType: 'BULK_PUBLIC',
                         details: { selectedCount: publicBulkSelectedIds.length, dayTotal: allDayIds.length }
                       });
                     }
-                    handleUserEditing();
-                    if (saveToAPI) saveToAPI();
                     setShowPublicBulkModal(false);
+                    handleModalClosed();
+                    window.setTimeout(() => {
+                      void flushSaveToAPIRef.current?.();
+                    }, 50);
                   }}
                   className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-lg"
                 >
@@ -16169,50 +23587,6 @@ const RunOfShowPage: React.FC = () => {
           </div>
         );
       })()}
-
-      {/* Audio callout alert — centered */}
-      {activeVoAlert && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center pointer-events-none">
-          <div className="absolute inset-0 bg-black/50 pointer-events-auto" />
-          <div
-            className={`pointer-events-auto relative mx-4 flex max-w-3xl flex-col items-center gap-4 rounded-2xl border-4 px-10 py-8 text-center shadow-2xl ${
-              activeVoAlert.vo.kind === 'bgm'
-                ? 'border-teal-400 bg-teal-950 shadow-teal-900/60'
-                : 'border-amber-400 bg-amber-950 shadow-amber-900/60'
-            }`}
-          >
-            <div
-              className={`text-3xl font-bold leading-snug ${
-                activeVoAlert.vo.kind === 'bgm' ? 'text-teal-100' : 'text-amber-100'
-              }`}
-            >
-              {formatCalloutChipText(activeVoAlert.vo)}
-            </div>
-            <div
-              className={`text-lg ${
-                activeVoAlert.vo.kind === 'bgm' ? 'text-teal-200/90' : 'text-amber-200/90'
-              }`}
-            >
-              {activeVoAlert.segmentName}
-            </div>
-            <button
-              type="button"
-              className={`mt-2 rounded-xl px-8 py-3 text-lg font-bold text-white ${
-                activeVoAlert.vo.kind === 'bgm'
-                  ? 'bg-teal-600 hover:bg-teal-500'
-                  : 'bg-amber-600 hover:bg-amber-500'
-              }`}
-              onClick={() => {
-                const key = `${activeVoAlert.itemId}:${activeVoAlert.vo.id}`;
-                setDismissedVoAlerts((prev) => new Set(prev).add(key));
-                setActiveVoAlert(null);
-              }}
-            >
-              Fired / Dismiss
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* Time Status Toast */}
       {showTimeToast && timeToastEnabled && (
@@ -16298,6 +23672,7 @@ const RunOfShowPage: React.FC = () => {
         isOpen={showOSCModal}
         onClose={() => setShowOSCModal(false)}
         event={event}
+        isOperator={currentUserRole === 'OPERATOR'}
       />
 
       {/* Display Selection Modal */}
@@ -16310,10 +23685,16 @@ const RunOfShowPage: React.FC = () => {
       {/* Pin-Notes popout: choose one or more columns, then open movable window */}
       {showPinNotesColumnModal && (
         <PinNotesColumnModal
+          eventId={event?.id}
           customColumns={customColumns}
           onClose={() => setShowPinNotesColumnModal(false)}
-          onOpen={(selected) => {
-            setPinNotesColumns(selected);
+          onOpen={(config) => {
+            setPinNotesColumns(config.columns);
+            try {
+              sessionStorage.setItem('ros_pin_notes_launch', JSON.stringify(config));
+            } catch {
+              /* ignore */
+            }
             const popoutUrl = `${window.location.origin}/pin-notes-popout?eventId=${event?.id || ''}`;
             const win = window.open(
               popoutUrl,
@@ -16326,96 +23707,163 @@ const RunOfShowPage: React.FC = () => {
         />
       )}
 
+      {canAccessAccessManager(user) && event?.id && user?.id ? (
+        <>
+          <ComplaintLineFab onOpen={() => setShowComplaintLineModal(true)} />
+          <ComplaintLineModal
+            isOpen={showComplaintLineModal}
+            onClose={() => setShowComplaintLineModal(false)}
+            eventId={event.id}
+            userId={user.id}
+            userName={user.full_name || user.email}
+          />
+        </>
+      ) : null}
+
+      {canAccessPreFlightChecklist(user) && event?.id && user?.id ? (
+        <PreFlightChecklistModal
+          isOpen={showPreFlightChecklistModal}
+          onClose={() => setShowPreFlightChecklistModal(false)}
+          eventId={event.id}
+          eventName={event.name}
+          day={selectedDay || 1}
+          numberOfDays={event.numberOfDays || 1}
+          userId={user.id}
+          userName={user.full_name || user.email}
+          onProgressChange={setPreflightProgress}
+        />
+      ) : null}
+
       {/* Backup Modal */}
       {showBackupModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-800 rounded-lg p-8 w-full max-w-7xl max-h-[95vh] overflow-hidden flex flex-col">
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-2xl font-bold text-white">Backup Management</h2>
-              <button
-                onClick={() => setShowBackupModal(false)}
-                className="text-slate-400 hover:text-white text-2xl font-bold"
-              >
-                ✕
-              </button>
-            </div>
-
-            {/* Info Banner */}
-            <div className="bg-blue-900 border border-blue-600 rounded-lg p-4 mb-6">
-              <div className="flex items-start">
-                <div className="text-blue-400 text-xl mr-3">ℹ️</div>
-                <div>
-                  <h4 className="text-blue-200 font-semibold mb-1">Neon Database Backups</h4>
-                  <p className="text-blue-100 text-sm">
-                    Create and manage backups of your run of show data stored in Neon database. 
-                    Use the "💾 Create Backup" button to create manual backups when needed.
-                  </p>
-                </div>
+          <div className="bg-slate-800 rounded-lg p-5 w-full max-w-5xl max-h-[90vh] overflow-hidden flex flex-col min-h-0">
+            <div className="flex justify-between items-center mb-3 shrink-0 gap-3">
+              <h2 className="text-xl font-bold text-white">Backup Management</h2>
+              <div className="flex items-center gap-2">
+                {currentUserRole !== 'VIEWER' && (
+                  <button
+                    type="button"
+                    onClick={openNameBackupModal}
+                    className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded"
+                  >
+                    Named backup
+                  </button>
+                )}
+                <button
+                  onClick={() => setShowBackupModal(false)}
+                  className="text-slate-400 hover:text-white text-2xl font-bold leading-none"
+                >
+                  ✕
+                </button>
               </div>
             </div>
 
-            {/* Filters and Search */}
-            <div className="bg-slate-700 rounded-lg p-6 mb-6">
-              <h3 className="text-lg font-semibold text-white mb-4">Filter & Search</h3>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div>
-                  <label className="block text-slate-300 text-base font-medium mb-3">Search by Event Name</label>
+            {/* Auto backup + filters (compact) */}
+            <div className="shrink-0 space-y-3 mb-3">
+              <div className="bg-slate-700 rounded-lg px-3 py-2.5 flex flex-wrap items-center gap-x-4 gap-y-2">
+                <label className="flex items-center gap-2 cursor-pointer select-none">
                   <input
-                    type="text"
-                    placeholder="Filter by event name..."
-                    className="w-full px-4 py-3 bg-slate-600 border border-slate-500 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:border-blue-500 text-base"
+                    type="checkbox"
+                    checked={autoBackupEnabled}
                     onChange={(e) => {
-                      // TODO: Implement search filtering
+                      if (e.target.checked) void enableAutoBackup();
+                      else void disableAutoBackup();
                     }}
+                    className="rounded border-slate-500 w-4 h-4"
+                    disabled={currentUserRole === 'VIEWER' || Boolean(autoBackupHeldByOther)}
                   />
-                </div>
-                <div>
-                  <label className="block text-slate-300 text-base font-medium mb-3">Filter by Date</label>
-                  <input
-                    type="date"
-                    className="w-full px-4 py-3 bg-slate-600 border border-slate-500 rounded-lg text-white focus:outline-none focus:border-blue-500 text-base"
-                    onChange={(e) => {
-                      // TODO: Implement date filtering
-                    }}
-                  />
-                </div>
-                <div>
-                  <label className="block text-slate-300 text-base font-medium mb-3">Sort by</label>
-                  <select className="w-full px-4 py-3 bg-slate-600 border border-slate-500 rounded-lg text-white focus:outline-none focus:border-blue-500 text-base">
-                    <option value="newest">Newest First</option>
-                    <option value="oldest">Oldest First</option>
-                    <option value="event">Event Name</option>
-                    <option value="type">Backup Type</option>
+                  <span className="text-white text-sm font-medium">Auto backup</span>
+                </label>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-slate-400 text-xs">Every</span>
+                  <select
+                    value={autoBackupIntervalMinutes}
+                    disabled={!autoBackupEnabled || currentUserRole === 'VIEWER'}
+                    onChange={(e) => setAutoBackupIntervalMinutes(Number(e.target.value))}
+                    className="px-2 py-1 bg-slate-600 border border-slate-500 rounded text-white text-sm disabled:opacity-40"
+                  >
+                    {AUTO_BACKUP_INTERVALS.map((mins) => (
+                      <option key={mins} value={mins}>{mins} min</option>
+                    ))}
                   </select>
                 </div>
+                <span className="text-slate-400 text-xs truncate max-w-[28rem]">
+                  {autoBackupHeldByOther
+                    ? `On for ${autoBackupHeldByOther.userName} · frees after ~12 min inactive`
+                    : autoBackupEnabled
+                      ? (autoBackupStatus || 'Snapshots while this tab is open · keeps last 24')
+                      : 'Off — only one person can enable Auto at a time'}
+                </span>
+              </div>
+
+              <div className="bg-slate-700 rounded-lg px-3 py-2.5 grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <input
+                  type="text"
+                  value={backupSearchTerm}
+                  placeholder="Search backups..."
+                  className="w-full px-2.5 py-1.5 bg-slate-600 border border-slate-500 rounded text-white placeholder-slate-400 text-sm focus:outline-none focus:border-blue-500"
+                  onChange={(e) => setBackupSearchTerm(e.target.value)}
+                />
+                <input
+                  type="date"
+                  value={backupDateFilter}
+                  className="w-full px-2.5 py-1.5 bg-slate-600 border border-slate-500 rounded text-white text-sm focus:outline-none focus:border-blue-500"
+                  onChange={(e) => setBackupDateFilter(e.target.value)}
+                />
+                <select
+                  value={backupSortOrder}
+                  className="w-full px-2.5 py-1.5 bg-slate-600 border border-slate-500 rounded text-white text-sm focus:outline-none focus:border-blue-500"
+                  onChange={(e) => setBackupSortOrder(e.target.value as typeof backupSortOrder)}
+                >
+                  <option value="newest">Newest First</option>
+                  <option value="oldest">Oldest First</option>
+                  <option value="event">Event Name</option>
+                  <option value="type">Backup Type</option>
+                </select>
               </div>
             </div>
 
             {/* Backup List */}
-            <div className="bg-slate-700 rounded-lg p-6 flex-1 overflow-hidden flex flex-col">
-              <div className="flex justify-between items-center mb-6">
-                <h3 className="text-xl font-semibold text-white">Available Backups</h3>
+            <div className="bg-slate-700 rounded-lg p-3 flex-1 min-h-0 overflow-hidden flex flex-col">
+              <div className="flex justify-between items-center mb-2 shrink-0">
+                <h3 className="text-base font-semibold text-white">
+                  Available Backups
+                  {backups.length > 0 && (
+                    <span className="text-slate-400 text-sm font-normal ml-2">
+                      {filteredBackups.length !== backups.length
+                        ? `(${filteredBackups.length} of ${backups.length})`
+                        : `(${backups.length})`}
+                    </span>
+                  )}
+                </h3>
                 <button
                   onClick={loadBackups}
-                  className="px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white text-base font-medium rounded-lg transition-colors"
+                  className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded transition-colors"
                 >
-                  🔄 Refresh
+                  Refresh
                 </button>
               </div>
               
-              <div className="flex-1 overflow-y-auto">
+              <div className="flex-1 min-h-0 overflow-y-auto">
                 {backups.length === 0 ? (
-                  <div className="text-slate-400 text-center py-12 text-lg">
-                    No backups available. Use the "💾 Create Backup" button in the main interface to create a manual backup.
+                  <div className="text-slate-400 text-center py-8 text-sm">
+                    No backups yet. Use Create Backup, or turn on Auto backup above.
+                  </div>
+                ) : filteredBackups.length === 0 ? (
+                  <div className="text-slate-400 text-center py-8 text-sm">
+                    No backups match your search or date filter.
                   </div>
                 ) : (
-                  <div className="space-y-4">
-                    {backups.map((backup) => (
-                      <div key={backup.id} className="bg-slate-600 p-6 rounded-lg flex justify-between items-center hover:bg-slate-500 transition-colors">
-                        <div className="flex-1">
-                          <div className="text-white font-semibold text-xl mb-2 flex items-center gap-3">
-                            {backup.backup_name}
-                            <span className={`px-3 py-1 rounded-full text-sm font-medium ${
+                  <div className="space-y-2">
+                    {filteredBackups.map((backup) => {
+                      const preview = getBackupPreviewStats(backup.schedule_data, 3);
+                      return (
+                      <div key={backup.id} className="bg-slate-600 px-3 py-2.5 rounded-lg flex justify-between items-start gap-3 hover:bg-slate-500 transition-colors">
+                        <div className="flex-1 min-w-0">
+                          <div className="text-white font-medium text-sm flex items-center gap-2 flex-wrap">
+                            <span className="truncate">{backup.backup_name}</span>
+                            <span className={`px-2 py-0.5 rounded-full text-xs font-medium shrink-0 ${
                               backup.backup_type === 'auto' 
                                 ? 'bg-blue-600 text-blue-100' 
                                 : 'bg-green-600 text-green-100'
@@ -16423,30 +23871,48 @@ const RunOfShowPage: React.FC = () => {
                               {backup.backup_type}
                             </span>
                           </div>
-                          <div className="text-slate-400 text-sm">
-                            <strong>Event Date:</strong> {backup.event_data?.date ? new Date(backup.event_data.date).toLocaleDateString() : 'N/A'} • 
-                            <strong> Schedule Items:</strong> {backup.schedule_data?.length || 0} • 
-                            <strong> Custom Columns:</strong> {backup.custom_columns_data?.length || 0}
+                          <div className="text-slate-400 text-xs mt-0.5">
+                            {new Date(backup.backup_timestamp || backup.created_at).toLocaleString()}
+                            {backup.created_by_name ? ` · ${backup.created_by_name}` : ''}
+                            {' · '}
+                            {preview.itemCount || backup.schedule_items_count || 0} items
+                            {' · '}
+                            {preview.rowsWithNotes} notes
+                            {' · '}
+                            {preview.rowsWithSpeakers} speakers
                           </div>
+                          {preview.samples.length > 0 && (
+                            <div className="text-slate-300 text-xs mt-1 space-y-0.5">
+                              {preview.samples.map((s, i) => (
+                                <div key={i} className="truncate">
+                                  <span className="text-slate-400">Cue {s.cue}</span>
+                                  {s.segment ? ` · ${s.segment}` : ''}
+                                  {s.notesPreview ? ` — ${s.notesPreview}` : ''}
+                                  {!s.notesPreview && s.speakersPreview ? ` — ${s.speakersPreview}` : ''}
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
-                        <div className="flex space-x-3">
+                        <div className="flex space-x-2 shrink-0">
                           <button
                             onClick={() => openRestorePreview(backup)}
-                            className="px-6 py-3 bg-green-600 hover:bg-green-500 text-white text-base font-medium rounded-lg transition-colors"
+                            className="px-3 py-1.5 bg-green-600 hover:bg-green-500 text-white text-sm font-medium rounded transition-colors"
                             title="Preview and load this backup"
                           >
-                            🔄 Load/Overwrite
+                            Preview
                           </button>
                           <button
                             onClick={() => deleteBackup(String(backup.id))}
-                            className="px-5 py-3 bg-red-600 hover:bg-red-500 text-white text-base font-medium rounded-lg transition-colors"
+                            className="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white text-sm font-medium rounded transition-colors"
                             title="Delete this backup"
                           >
-                            🗑️ Delete
+                            Delete
                           </button>
                         </div>
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -16496,12 +23962,70 @@ const RunOfShowPage: React.FC = () => {
         </div>
       )}
 
+      {/* Name manual backup modal */}
+      {showNameBackupModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60] p-4">
+          <div className="bg-slate-800 rounded-lg p-6 w-full max-w-lg border border-slate-600">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl font-bold text-white">Name this backup</h2>
+              <button
+                type="button"
+                onClick={() => !manualBackupSaving && setShowNameBackupModal(false)}
+                className="text-slate-400 hover:text-white text-2xl font-bold leading-none"
+              >
+                ✕
+              </button>
+            </div>
+            <p className="text-slate-300 text-sm mb-3">
+              Use a clear name so you can find it later (e.g. “Japan — end of day notes”).
+            </p>
+            <input
+              type="text"
+              value={manualBackupName}
+              onChange={(e) => setManualBackupName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !manualBackupSaving) void createManualBackup();
+              }}
+              className="w-full px-3 py-2 bg-slate-700 border border-slate-500 rounded text-white text-sm focus:outline-none focus:border-blue-500 mb-2"
+              placeholder="Backup name"
+              autoFocus
+              maxLength={255}
+            />
+            <p className="text-slate-400 text-xs mb-4">
+              Snapshot: {schedule.length} items ·{' '}
+              {getBackupPreviewStats(schedule).rowsWithNotes} with notes ·{' '}
+              {getBackupPreviewStats(schedule).rowsWithSpeakers} with speakers
+            </p>
+            <div className="flex justify-end gap-3">
+              <button
+                type="button"
+                disabled={manualBackupSaving}
+                onClick={() => setShowNameBackupModal(false)}
+                className="px-4 py-2 bg-slate-600 hover:bg-slate-500 text-white text-sm rounded disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={manualBackupSaving || !manualBackupName.trim()}
+                onClick={() => void createManualBackup()}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded disabled:opacity-50"
+              >
+                {manualBackupSaving ? 'Saving…' : 'Save backup'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Restore Preview Confirmation Modal */}
-      {showRestorePreview && selectedBackup && (
+      {showRestorePreview && selectedBackup && (() => {
+        const restorePreview = getBackupPreviewStats(selectedBackup.schedule_data, 12);
+        return (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-800 rounded-lg p-8 w-full max-w-2xl">
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-2xl font-bold text-white">Confirm Backup Restore</h2>
+          <div className="bg-slate-800 rounded-lg p-6 w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="flex justify-between items-center mb-4 shrink-0">
+              <h2 className="text-2xl font-bold text-white">Backup preview</h2>
               <button
                 onClick={() => setShowRestorePreview(false)}
                 className="text-slate-400 hover:text-white text-2xl font-bold"
@@ -16510,56 +24034,67 @@ const RunOfShowPage: React.FC = () => {
               </button>
             </div>
 
-            <div className="bg-slate-700 rounded-lg p-6 mb-6">
-              <h3 className="text-lg font-semibold text-white mb-4">Backup Details</h3>
-              <div className="space-y-3">
-                <div className="flex justify-between">
-                  <span className="text-slate-300">Backup Name:</span>
-                  <span className="text-white font-medium">{selectedBackup.backup_name}</span>
+            <div className="overflow-y-auto flex-1 min-h-0 space-y-4 mb-4">
+              <div className="bg-slate-700 rounded-lg p-4">
+                <h3 className="text-lg font-semibold text-white mb-3">Details</h3>
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between gap-4">
+                    <span className="text-slate-300">Name</span>
+                    <span className="text-white font-medium text-right">{selectedBackup.backup_name}</span>
+                  </div>
+                  <div className="flex justify-between gap-4">
+                    <span className="text-slate-300">When</span>
+                    <span className="text-white font-medium">
+                      {new Date(selectedBackup.backup_timestamp || selectedBackup.created_at).toLocaleString()}
+                    </span>
+                  </div>
+                  <div className="flex justify-between gap-4">
+                    <span className="text-slate-300">Type / by</span>
+                    <span className="text-white font-medium">
+                      {selectedBackup.backup_type}
+                      {selectedBackup.created_by_name ? ` · ${selectedBackup.created_by_name}` : ''}
+                    </span>
+                  </div>
+                  <div className="flex justify-between gap-4">
+                    <span className="text-slate-300">Contents</span>
+                    <span className="text-white font-medium text-right">
+                      {restorePreview.itemCount} items · {restorePreview.rowsWithNotes} notes
+                      ({restorePreview.notesChars.toLocaleString()} chars) · {restorePreview.rowsWithSpeakers} speakers
+                    </span>
+                  </div>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-300">Event:</span>
-                  <span className="text-white font-medium">{selectedBackup.event_data?.name || 'Unknown'}</span>
+              </div>
+
+              {restorePreview.samples.length > 0 && (
+                <div className="bg-slate-700 rounded-lg p-4">
+                  <h3 className="text-lg font-semibold text-white mb-3">Data preview</h3>
+                  <div className="space-y-2 max-h-56 overflow-y-auto">
+                    {restorePreview.samples.map((s, i) => (
+                      <div key={i} className="bg-slate-600/80 rounded px-3 py-2 text-xs">
+                        <div className="text-white font-medium">
+                          Cue {s.cue}{s.segment ? ` · ${s.segment}` : ''}
+                        </div>
+                        {s.speakersPreview ? (
+                          <div className="text-emerald-200/90 mt-0.5">Speakers: {s.speakersPreview}</div>
+                        ) : null}
+                        {s.notesPreview ? (
+                          <div className="text-slate-300 mt-0.5 line-clamp-2">Notes: {s.notesPreview}</div>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-300">Date:</span>
-                  <span className="text-white font-medium">{new Date(selectedBackup.backup_timestamp).toLocaleString()}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-300">Type:</span>
-                  <span className={`px-3 py-1 rounded-full text-sm font-medium ${
-                    selectedBackup.backup_type === 'auto' 
-                      ? 'bg-blue-600 text-blue-100' 
-                      : 'bg-green-600 text-green-100'
-                  }`}>
-                    {selectedBackup.backup_type}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-300">Schedule Items:</span>
-                  <span className="text-white font-medium">{selectedBackup.schedule_data?.length || 0}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-300">Custom Columns:</span>
-                  <span className="text-white font-medium">{selectedBackup.custom_columns_data?.length || 0}</span>
-                </div>
+              )}
+
+              <div className="bg-yellow-900 border border-yellow-600 rounded-lg p-4">
+                <h4 className="text-yellow-200 font-semibold mb-1">Warning</h4>
+                <p className="text-yellow-100 text-sm">
+                  Restore overwrites your current run of show with this backup. Create a named backup first if you might need what you have now.
+                </p>
               </div>
             </div>
 
-            <div className="bg-yellow-900 border border-yellow-600 rounded-lg p-4 mb-6">
-              <div className="flex items-start">
-                <div className="text-yellow-400 text-xl mr-3">⚠️</div>
-                <div>
-                  <h4 className="text-yellow-200 font-semibold mb-2">Warning</h4>
-                  <p className="text-yellow-100 text-sm">
-                    This will completely overwrite your current run of show data with the backup data. 
-                    This action cannot be undone. Make sure you want to proceed.
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex justify-end space-x-4">
+            <div className="flex justify-end space-x-4 shrink-0">
               <button
                 onClick={() => setShowRestorePreview(false)}
                 className="px-6 py-3 bg-slate-600 hover:bg-slate-500 text-white text-base font-medium rounded-lg transition-colors"
@@ -16570,12 +24105,13 @@ const RunOfShowPage: React.FC = () => {
                 onClick={confirmRestoreFromBackup}
                 className="px-6 py-3 bg-green-600 hover:bg-green-500 text-white text-base font-medium rounded-lg transition-colors"
               >
-                🔄 Confirm Restore
+                Restore this backup
               </button>
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* Speaker Manager Modal */}
       {showSpeakerManagerModal && (
@@ -16746,7 +24282,8 @@ const RunOfShowPage: React.FC = () => {
                                       {speaker.location === 'Seat' && <span className="noto-emoji">🪑</span>}
                                       {speaker.location === 'Virtual' && '📺'}
                                       {speaker.location === 'Moderator' && '📢'}
-                                      {speaker.location}
+                                      {(speaker.location === 'Ted-Talk' || speaker.location === 'Walking') && '🎙️'}
+                                      {speaker.location === 'Walking' ? 'Ted-Talk' : speaker.location}
                                     </span>
                                   </div>
                                   {speaker.title && <div className="mt-1">Title: {speaker.title}</div>}
@@ -16813,7 +24350,7 @@ const RunOfShowPage: React.FC = () => {
                               } catch {}
                             }
                             const availableSlots = [1, 2, 3, 4, 5, 6, 7].filter(slot => !existingSlots.includes(slot));
-                            const locationOptions: ('Podium' | 'Seat' | 'Virtual' | 'Moderator')[] = ['Podium', 'Seat', 'Virtual', 'Moderator'];
+                            const locationOptions = [...SPEAKER_LOCATIONS];
 
                             return (
                               <div key={speakerId} className="bg-slate-600 rounded-lg p-3">
@@ -16850,7 +24387,7 @@ const RunOfShowPage: React.FC = () => {
                                     <select
                                       value={speaker.location}
                                       onChange={(e) => {
-                                        const newLocation = e.target.value as 'Podium' | 'Seat' | 'Virtual' | 'Moderator';
+                                        const newLocation = e.target.value as SpeakerLocation;
                                         setEditableSpeakers(prev =>
                                           prev.map(s =>
                                             (s.id || `speaker_${editableSpeakers.indexOf(s)}`) === speakerId
@@ -16998,7 +24535,6 @@ const RunOfShowPage: React.FC = () => {
               newValue: next,
             }
           );
-          saveToAPI();
           closeOtherRoomModal();
         };
         return (
@@ -17152,6 +24688,7 @@ const RunOfShowPage: React.FC = () => {
                       setBreakoutRoomParentId(null);
                       setBreakoutRoomsData([{ location: 'Great Hall', title: '' }]);
                       setNumberOfBreakoutRooms(1);
+                      handleModalClosed();
                     } else {
                       alert('Please fill in both Location and Breakout Title for all rooms.');
                     }
@@ -17167,6 +24704,7 @@ const RunOfShowPage: React.FC = () => {
                     setBreakoutRoomParentId(null);
                     setBreakoutRoomsData([{ location: 'Great Hall', title: '' }]);
                     setNumberOfBreakoutRooms(1);
+                    handleModalClosed();
                   }}
                   className="flex-1 px-4 py-2 bg-slate-600 hover:bg-slate-500 text-white font-medium rounded transition-colors"
                 >

@@ -78,6 +78,11 @@ import { sseClient } from '../services/sse-client';
 import { socketClient } from '../services/socket-client';
 import { canAccessAccessManager, canAccessAdmin, canAccessPreFlightChecklist, canSelectOperatorRole } from '../services/auth-service';
 import { eventHasExtendEventControls, parseExtendEventControls } from '../lib/extendEventControls';
+import {
+  getPreflightFeatureEnabled,
+  parsePreflightChecklistEnabled,
+  PREFLIGHT_FEATURE_CHANGE_EVENT,
+} from '../lib/preflightFeature';
 import { shouldConfirmCueRecordingMark, CUE_RECORDING_HOVER_TITLE, CUE_RECORDING_HOVER_BODY } from '../lib/cueRecording';
 import {
   applyNewerCheckboxFields,
@@ -1547,6 +1552,16 @@ const RunOfShowPage: React.FC = () => {
   const [extendEventControlsEnabled, setExtendEventControlsEnabled] = useState(
     event?.extendEventControlsEnabled === true
   );
+  const [preflightChecklistEnabled, setPreflightChecklistEnabled] = useState(
+    event?.preflightChecklistEnabled === true
+  );
+  const [preflightFeatureEnabled, setPreflightFeatureEnabled] = useState(() =>
+    getPreflightFeatureEnabled()
+  );
+  const preflightUiAllowed =
+    !!canAccessPreFlightChecklist(user) &&
+    preflightFeatureEnabled &&
+    preflightChecklistEnabled;
   
   // Change tracking state
   const [lastChangeAt, setLastChangeAt] = useState<string | null>(null);
@@ -4483,7 +4498,7 @@ const RunOfShowPage: React.FC = () => {
 
   // Pre-Flight progress for BTS Crew / Admin (menu badge for selected day + takeoff hold for today's day)
   useEffect(() => {
-    if (!event?.id || !user || !canAccessPreFlightChecklist(user)) {
+    if (!event?.id || !user || !preflightUiAllowed) {
       setPreflightProgress(null);
       return;
     }
@@ -4501,7 +4516,7 @@ const RunOfShowPage: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [event?.id, event?.date, event?.numberOfDays, user, showMode, selectedDay]);
+  }, [event?.id, event?.date, event?.numberOfDays, user, showMode, selectedDay, preflightUiAllowed]);
 
   // Load change log data and sync status
   useEffect(() => {
@@ -10480,6 +10495,9 @@ const RunOfShowPage: React.FC = () => {
           const ext = await DatabaseService.getExtendEventControls(event.id);
           if (!cancelled) setExtendEventControlsEnabled(ext.enabled);
         }
+        if (!cancelled) {
+          setPreflightChecklistEnabled(parsePreflightChecklistEnabled(cal?.schedule_data));
+        }
       } catch (e) {
         console.warn('🌍 Could not load calendar event metadata:', e);
       }
@@ -10488,6 +10506,13 @@ const RunOfShowPage: React.FC = () => {
     return () => {
       cancelled = true;
     };
+  useEffect(() => {
+    const sync = () => setPreflightFeatureEnabled(getPreflightFeatureEnabled());
+    sync();
+    window.addEventListener(PREFLIGHT_FEATURE_CHANGE_EVENT, sync);
+    return () => window.removeEventListener(PREFLIGHT_FEATURE_CHANGE_EVENT, sync);
+  }, []);
+
   }, [event?.id, event?.timezone]);
 
 
@@ -15153,7 +15178,7 @@ const RunOfShowPage: React.FC = () => {
   }
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 text-slate-200">
-      {canAccessPreFlightChecklist(user) &&
+      {preflightUiAllowed &&
       event?.id &&
       showMode === 'rehearsal' &&
       inShowNudgeEligible &&
@@ -16777,7 +16802,7 @@ const RunOfShowPage: React.FC = () => {
                         </svg>
                         Green Room
                       </button>
-                      {canAccessPreFlightChecklist(user) && (
+                      {preflightUiAllowed && (
                         <button
                           type="button"
                           onClick={() => {
@@ -23271,7 +23296,7 @@ const RunOfShowPage: React.FC = () => {
         </>
       ) : null}
 
-      {canAccessPreFlightChecklist(user) && event?.id && user?.id ? (
+      {preflightUiAllowed && event?.id && user?.id ? (
         <PreFlightChecklistModal
           isOpen={showPreFlightChecklistModal}
           onClose={() => setShowPreFlightChecklistModal(false)}

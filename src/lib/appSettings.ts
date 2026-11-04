@@ -25,6 +25,10 @@ import {
   parseOvertimeSignId,
   type OvertimeSignId,
 } from './overtimeSign';
+import {
+  applyPreflightFeatureEnabled,
+  getPreflightFeatureEnabled,
+} from './preflightFeature';
 
 export type RefreshNotice = {
   version: string;
@@ -41,6 +45,7 @@ export type AppSettingsResponse = {
   hideFullscreenTimerOption: boolean;
   autoShotTypeFromSpeakers: boolean;
   showLiveSyncStatusBadge: boolean;
+  preflightChecklistEnabled: boolean;
   refreshNotice: RefreshNotice | null;
   updatedAt: string | null;
   needsMigration?: boolean;
@@ -71,6 +76,7 @@ function parseSettings(data: Partial<AppSettingsResponse> & { error?: string }):
     hideFullscreenTimerOption: data.hideFullscreenTimerOption === true,
     autoShotTypeFromSpeakers: data.autoShotTypeFromSpeakers === true,
     showLiveSyncStatusBadge: data.showLiveSyncStatusBadge === true,
+    preflightChecklistEnabled: data.preflightChecklistEnabled === true,
     refreshNotice: parseRefreshNotice(data.refreshNotice),
     updatedAt: data.updatedAt ?? null,
     needsMigration: data.needsMigration === true,
@@ -85,6 +91,7 @@ function applySettings(settings: AppSettingsResponse): AppSettingsResponse {
   applyHideFullscreenTimerOption(settings.hideFullscreenTimerOption);
   applyAutoShotTypeFromSpeakers(settings.autoShotTypeFromSpeakers);
   applyShowLiveSyncStatusBadge(settings.showLiveSyncStatusBadge);
+  applyPreflightFeatureEnabled(settings.preflightChecklistEnabled);
   return settings;
 }
 
@@ -232,6 +239,23 @@ export async function saveAdminShowLiveSyncStatusBadge(
   return applySettings(parseSettings(data));
 }
 
+export async function saveAdminPreflightChecklistEnabled(
+  preflightChecklistEnabled: boolean
+): Promise<AppSettingsResponse> {
+  const res = await adminFetch('/api/admin/app-settings', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ preflightChecklistEnabled }),
+  });
+  const data = (await res.json().catch(() => ({}))) as Partial<AppSettingsResponse> & {
+    error?: string;
+  };
+  if (!res.ok) {
+    throw new Error(data.error || `Failed to save Pre-Flight feature setting (${res.status})`);
+  }
+  return applySettings(parseSettings(data));
+}
+
 export async function saveAdminRefreshNotice(
   refreshNotice: { version: string; date?: string; seq?: number } | null
 ): Promise<AppSettingsResponse> {
@@ -277,6 +301,7 @@ export async function hydrateLogoVariantFromServer(): Promise<LogoVariantId> {
         applyHideFullscreenTimerOption(getHideFullscreenTimerOption());
         applyAutoShotTypeFromSpeakers(getAutoShotTypeFromSpeakers());
         applyShowLiveSyncStatusBadge(getShowLiveSyncStatusBadge());
+        applyPreflightFeatureEnabled(getPreflightFeatureEnabled());
         return getLogoVariantId();
       }
     })();

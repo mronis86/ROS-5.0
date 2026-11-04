@@ -89,6 +89,9 @@ const { registerSpeakerRoutes, ensureSpeakersSchema } = require('./lib/speakers'
 const { buildPlatformMaintenanceReport, startPlatformMaintenanceAlerts } = require('./lib/platform-maintenance');
 const { loadDisplaySyncEnabled, setDisplaySyncEnabled } = require('./lib/display-sync');
 const {
+  setPreflightChecklistEnabled,
+} = require('./lib/preflight-feature');
+const {
   ensureExtendedEventDataSchema,
   loadExtendEventControls,
   loadExtendEventControlsMap,
@@ -4441,6 +4444,32 @@ app.get('/api/display-sync/:eventId', async (req, res) => {
   } catch (error) {
     console.error('❌ Error fetching display sync:', error);
     res.status(500).json({ error: 'Failed to fetch display sync' });
+  }
+});
+
+// Per-event Pre-Flight checklist (admin) — also gated by global app_settings.preflight_checklist_enabled
+app.patch('/api/calendar-events/:id/preflight-checklist', async (req, res) => {
+  try {
+    if (!req.auth?.isAdmin && !requireAdminAccess(req, res)) return;
+
+    const { id } = req.params;
+    const { preflightChecklistEnabled } = req.body || {};
+    if (typeof preflightChecklistEnabled !== 'boolean') {
+      return res.status(400).json({ error: 'preflightChecklistEnabled (boolean) is required' });
+    }
+
+    const result = await setPreflightChecklistEnabled(pool, id, preflightChecklistEnabled);
+    if (!result.ok) {
+      return res.status(result.status || 500).json({ error: result.error || 'Update failed' });
+    }
+
+    res.json({
+      id: String(id),
+      preflightChecklistEnabled: preflightChecklistEnabled === true,
+    });
+  } catch (error) {
+    console.error('❌ Error updating Pre-Flight checklist flag:', error);
+    res.status(500).json({ error: 'Failed to update Pre-Flight checklist flag' });
   }
 });
 

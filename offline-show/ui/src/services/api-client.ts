@@ -1,3 +1,17 @@
+export type EventCueFile = {
+  id?: string;
+  name?: string;
+  file_name?: string;
+  url?: string;
+  [key: string]: unknown;
+};
+
+export type SpeakerDirectoryRow = {
+  id?: string;
+  full_name?: string;
+  [key: string]: unknown;
+};
+
 // Offline show: all API calls go to the LAN server on :3004 (cloud vs SQLite decided server-side).
 import { apiJsonHeaders } from '../lib/sessionAuth';
 

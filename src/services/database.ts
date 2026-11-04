@@ -588,6 +588,19 @@ export class DatabaseService {
     }
   }
 
+  static async setPreflightChecklistEnabled(
+    calendarEventId: string,
+    enabled: boolean
+  ): Promise<boolean> {
+    try {
+      await apiClient.patchPreflightChecklistEnabled(calendarEventId, enabled);
+      return true;
+    } catch (error) {
+      console.error('❌ Exception updating Pre-Flight checklist flag:', error);
+      return false;
+    }
+  }
+
   static async getExtendEventControls(
     eventId: string
   ): Promise<{ enabled: boolean; modules: string[]; moduleData: Record<string, unknown> }> {

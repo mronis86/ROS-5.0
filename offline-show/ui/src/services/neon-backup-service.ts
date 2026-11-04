@@ -1,3 +1,4 @@
+export type AutoBackupLease = { release?: () => void; [key: string]: unknown };
 export type BackupData = Record<string, unknown>;
 
 export class NeonBackupService {
