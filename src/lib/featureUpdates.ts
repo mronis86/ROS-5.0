@@ -257,14 +257,210 @@ export const FEATURE_UPDATES_DEFAULT: FeatureUpdateMonth[] = [
   {
     id: '2026-10',
     label: 'October 2026',
-    weeks: [],
-    emptyMessage: 'October draft next — send notes after September is locked.',
+    weeks: [
+      {
+        id: '2026-10-w1',
+        label: 'Week of Oct 23',
+        rangeLabel: 'Oct 23–25',
+        items: [
+          {
+            id: 'o1',
+            title: 'ROS PPT Launcher',
+            detail:
+              'Launcher sits on its own page, follows the live ROS cue, and syncs decks into a chosen folder so only the matching cue file opens. Opening a loaded cue retries through PowerPoint COM failures instead of dying on E_FAIL.',
+          },
+          {
+            id: 'o2',
+            title: 'Launcher slide previews',
+            detail:
+              'Current and next slides show large in the Launcher with a slide count. Previews stay centered; leftover stills expire after about a month so the machine does not fill with old thumbs.',
+          },
+          {
+            id: 'o3',
+            title: 'Overtime sign (Admin)',
+            detail:
+              'Admin picks minus or plus for overtime so every clock and display uses the same sign. Signs sit beside the digits without lifting the numbers.',
+          },
+          {
+            id: 'o4',
+            title: 'End show / open any deck',
+            detail:
+              'Launcher can end by quitting PowerPoint. You can open any synced deck without waiting for a cue load when you need a manual deck.',
+          },
+          {
+            id: 'o22',
+            title: 'VDO.Ninja Live Capture',
+            detail:
+              'PowerPoint Bridge can send Live Capture into PPT Launcher. Pick a screen without VDO elevate; swap cue decks without a desktop flash. Operators can push a new upcoming PPT to the helper from Launcher or ROS.',
+          },
+        ],
+      },
+      {
+        id: '2026-10-w2',
+        label: 'Week of Oct 26',
+        rangeLabel: 'Oct 26–27',
+        items: [
+          {
+            id: 'o5',
+            title: 'Cue file versions',
+            detail:
+              'Same-name cue uploads become versions (Name_V2 in the filename). Operators pick the current file so downloads do not collide or overwrite the wrong deck.',
+          },
+          {
+            id: 'o6',
+            title: 'ReCue# & typed notes',
+            detail:
+              'ReCue# labels sit with Move. Typed VO/Settle notes convert in place without shuffling live rows. Same tools ship in offline ROS.',
+          },
+          {
+            id: 'o7',
+            title: 'Filter Pin Start default',
+            detail:
+              'New ROS and guest views default Filter Pin Start next to CUE on, so Start stays visible without re-toggling every show.',
+          },
+          {
+            id: 'o8',
+            title: 'Photo View & For Photos',
+            detail:
+              'For Photos row checkboxes and Photo/Large Ops program colors match. Photo View stays on the last loaded cue between timers instead of jumping back to PreShow. Session roles were renamed for clarity.',
+          },
+          {
+            id: 'o9',
+            title: 'Show completed & change-log notes',
+            detail:
+              'Show completed sits next to Track was durations (For Photos checkbox removed from that spot). Change-log notes restore onto the cue instead of writing an empty previous value. Next Photo View speaker photo can show beside program type.',
+          },
+          {
+            id: 'o10',
+            title: 'Editor hold & Start estimates',
+            detail:
+              'The first editor on a cue is held so a later save cannot wipe their work. Live Start estimates show only while a cue is running (and only when it actually shifts times), then clear after Clear/Reset until the next load/start.',
+          },
+          {
+            id: 'o11',
+            title: 'Column layout & VO chips',
+            detail:
+              'Delay Start, Program Type, and Duration stay under their headers. VO callouts stay linked to Notes chips so leftover hidden VOs cannot fire popups.',
+          },
+          {
+            id: 'o12',
+            title: 'HyperDeck multi-day',
+            detail:
+              'Show day picker lets HyperDeck ingest follow multi-day events through the last day. You can copy a selected stored clip, not only the last one.',
+          },
+        ],
+      },
+      {
+        id: '2026-10-w3',
+        label: 'Week of Oct 28',
+        rangeLabel: 'Oct 28–30',
+        items: [
+          {
+            id: 'o13',
+            title: 'PPT / Q&A / REC / Public persist',
+            detail:
+              'Those checks save to Neon right away and stay dirty until confirm, so a refresh or pause-end save cannot drop them. Stale rundown saves no longer overwrite newer checkbox stamps (including Mitti and AV).',
+          },
+          {
+            id: 'o14',
+            title: 'Admin version auto-bump',
+            detail:
+              'Admin version bumps on master push (and on Cloudflare pack if needed) so the on-screen label cannot freeze on an old build.',
+          },
+          {
+            id: 'o15',
+            title: 'Session overlay & guest Start',
+            detail:
+              'Session overlay and an Admin-gated refresh notice help after deploy. Guest and Director Start columns show Ran, EST, and overtime from live ROS timing. PDF-to-PPTX cue assets land for Make PowerPoint.',
+          },
+          {
+            id: 'o16',
+            title: 'Show Break section',
+            detail:
+              'Insert a Show Break so evening cues get their own start, offsets, and PreShow instead of sharing the morning START clock.',
+          },
+          {
+            id: 'o17',
+            title: 'Access: see all, request event',
+            detail:
+              'Selected-event users can see every event on the list and request access; managers approve. Access-request list fixes shipped with PowerPoint live preview to Clock.',
+          },
+          {
+            id: 'o18',
+            title: 'Creative spelling check',
+            detail:
+              'Creative can review segment spelling, push a check to ROS, and see wrapped names on guest and embed views. Per-field copy icons replace bulk speaker copy buttons.',
+          },
+          {
+            id: 'o19',
+            title: 'Make PowerPoint on Railway',
+            detail:
+              'PDF→PPT uses Railway’s canvas/pdf.js path (including Node DOMMatrix) so Make PowerPoint renders slides in production.',
+          },
+          {
+            id: 'o20',
+            title: 'PowerPoint helper: live deck',
+            detail:
+              'Helper identifies the live deck, keeps Manual open, refreshes stills on switch, shares Clock auto-push, and supports follow vs manual open. Hosted rebuild stays off Electron dist uploads during Railway deploys.',
+          },
+          {
+            id: 'o21',
+            title: 'Admin key gate & sign-out',
+            detail:
+              'Real admin key is required before the color puzzle. Admin can sign accounts out. PowerPoint show-day picker covers multi-day events on the bridge.',
+          },
+        ],
+      },
+    ],
   },
   {
     id: '2026-11',
     label: 'November 2026',
-    weeks: [],
-    emptyMessage: 'November draft after October.',
+    weeks: [
+      {
+        id: '2026-11-w1',
+        label: 'Week 1',
+        rangeLabel: 'Nov 1–3',
+        items: [
+          {
+            id: 'n1',
+            title: 'PowerPoint Bridge V2 (thrash fixes)',
+            detail:
+              'Open/Loaded thrash from shared deck titles is stopped; keep/run no longer overwrites live identity. Cue matching uses ROS cue labels; Show completed syncs for the whole event. Confirm show day always shows for multi-day (e.g. Business Solves Day 1/2).',
+          },
+          {
+            id: 'n2',
+            title: 'Bridge focus & Protected View',
+            detail:
+              'Focus targets the slide show window (Presenter View when in presenter mode). Focus picker, Force Enable Editing, and auto Enable Editing for Protected View ship in Bridge V2 0.2.4+. Download uses the live hosted zip route.',
+          },
+          {
+            id: 'n3',
+            title: 'VOG (ElevenLabs)',
+            detail:
+              'Notes-adjacent VOG column: preview and WAV/MP3 download, tabbed scripts, bulk MP3. Scripts save to Neon. Admin connection check. Text-to-Dialogue (v4) for emotion and context.',
+          },
+          {
+            id: 'n4',
+            title: 'ROS scroll jello fix',
+            detail:
+              'Horizontal scroll jello on the ROS sheet is fixed so columns stay put while you pan.',
+          },
+          {
+            id: 'n5',
+            title: 'DSM Clock + Companion',
+            detail:
+              'DSM schedule column with Ross Talk Companion bridge. Companion presets/variables control 16:9 vs full DSM layout; page/row/column buttons can fire on cue load. Participants stay hidden on Show All. Sticky header column drift fixed; full zip rebuilt for Cloudflare download.',
+          },
+          {
+            id: 'n6',
+            title: 'Feature Updates page',
+            detail:
+              'Event List → Feature Updates: month and week accordions with short titles plus how/why copy. Admins can Edit copy and Save to Neon once the API is live.',
+          },
+        ],
+      },
+    ],
   },
 ];
 
