@@ -4946,25 +4946,25 @@ export default function AdminPage() {
           <div className="rounded-xl border border-amber-500/30 bg-amber-950/20 p-4 space-y-3 text-sm text-slate-200">
             <div>
               <h3 className="text-base font-semibold text-amber-100">
-                Feature Updates page — thumbs / approve polish (parked 2026-11-04)
+                Feature Updates page (tabled / hidden from production 2026-11-04)
               </h3>
               <p className="mt-1 text-slate-300 leading-relaxed">
-                Changelog / Feature Updates work (Admin edit + approve, clearer Sept/Oct/Nov copy, real stills under{' '}
-                <code className="text-amber-200/90 text-xs">public/feature-updates/</code>, Neon{' '}
-                <code className="text-amber-200/90 text-xs">imageUrl</code> only) is parked on branch{' '}
+                Event List button and <code className="text-amber-200/90 text-xs">/feature-updates</code> are removed from the
+                live site. Public API returns empty while{' '}
+                <code className="text-amber-200/90 text-xs">FEATURE_UPDATES_PUBLIC_ENABLED</code> is false. Neon draft is kept.
+                Polish (thumbs, stills under <code className="text-amber-200/90 text-xs">public/feature-updates/</code>,{' '}
+                <code className="text-amber-200/90 text-xs">imageUrl</code>) lives on branch{' '}
                 <code className="text-amber-200/90 text-xs">feature/feature-updates-by-date-page</code> at{' '}
-                <code className="text-amber-200/90 text-xs">0b77138</code>. Revisit later for remaining stills,
-                October copy pass, Railway redeploy so the API keeps <code className="text-amber-200/90 text-xs">imageUrl</code>,
-                and whether to merge or trim what already landed on master.
+                <code className="text-amber-200/90 text-xs">0b77138</code>.
               </p>
               <ul className="mt-2 list-disc pl-5 space-y-1 text-slate-300">
                 <li>
-                  Resume from <code className="text-amber-200/90 text-xs">feature/feature-updates-by-date-page</code> — do not
-                  rebuild from scratch.
+                  To unpark: restore the Event List button + route, set{' '}
+                  <code className="text-amber-200/90 text-xs">FEATURE_UPDATES_PUBLIC_ENABLED = true</code>, merge polish from{' '}
+                  <code className="text-amber-200/90 text-xs">feature/feature-updates-by-date-page</code>.
                 </li>
                 <li>
-                  Binaries later: Railway object storage; Neon stores URL only. Client may merge default still URLs until
-                  API stops stripping <code className="text-amber-200/90 text-xs">imageUrl</code>.
+                  Binaries later: Railway object storage; Neon stores URL only.
                 </li>
                 <li>Quiet week only — not mid-show.</li>
               </ul>

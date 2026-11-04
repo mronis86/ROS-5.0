@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, useLocation } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import './App.css';
 import { AuthProvider } from './contexts/AuthContext';
 import { ActiveViewersProvider } from './contexts/ActiveViewersContext';
@@ -67,8 +67,6 @@ import UltritouchHealthMonitorPage from './pages/UltritouchHealthMonitorPage';
 import StreamGuidePage from './pages/StreamGuidePage';
 import ExtendEventControlsPage from './pages/ExtendEventControlsPage';
 import CivicsGraphicsSelectPage from './pages/CivicsGraphicsSelectPage';
-import FeatureUpdatesPage from './pages/FeatureUpdatesPage';
-
 function AppContent() {
   const location = useLocation();
 
@@ -206,7 +204,8 @@ function AppContent() {
             <Route path="/cue-cards" element={<CueCardsPage />} />
             <Route path="/powerpoint" element={<PowerPointPage />} />
             <Route path="/powerpoint-playback" element={<PowerPointPlaybackPage />} />
-            <Route path="/feature-updates" element={<FeatureUpdatesPage />} />
+            {/* Feature Updates tabled 2026-11-04 — restore FeatureUpdatesPage when unparking */}
+            <Route path="/feature-updates" element={<Navigate to="/" replace />} />
           </Routes>
           </div>
         </AuthGuard>
