@@ -4,7 +4,9 @@ import { useAuth } from '../contexts/AuthContext';
 import { canAccessAdmin } from '../services/auth-service';
 import {
   FEATURE_UPDATE_CATEGORIES,
+  FEATURE_UPDATES_DEFAULT,
   fetchFeatureUpdates,
+  mergeDefaultImageUrls,
   newFeatureItem,
   newFeatureMonth,
   newFeatureWeek,
@@ -37,6 +39,7 @@ function WeekBlock({
   isAdmin,
   onChangeWeek,
   onRemoveWeek,
+  onPreviewImage,
 }: {
   week: FeatureUpdateWeek;
   open: boolean;
@@ -45,6 +48,7 @@ function WeekBlock({
   isAdmin: boolean;
   onChangeWeek: (next: FeatureUpdateWeek) => void;
   onRemoveWeek: () => void;
+  onPreviewImage: (url: string, title: string) => void;
 }) {
   const approvedCount = week.items.filter((it) => it.approved).length;
 
@@ -190,6 +194,19 @@ function WeekBlock({
                         className="rounded-md border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-300"
                         placeholder="Audience (optional)"
                       />
+                      <input
+                        value={entry.imageUrl || ''}
+                        onChange={(e) => {
+                          const items = week.items.map((it) =>
+                            it.id === entry.id
+                              ? { ...it, imageUrl: e.target.value.trim() || undefined }
+                              : it
+                          );
+                          onChangeWeek({ ...week, items });
+                        }}
+                        className="min-w-[14rem] flex-1 rounded-md border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-300"
+                        placeholder="Image URL (optional thumb)"
+                      />
                       <button
                         type="button"
                         onClick={() => {
@@ -222,34 +239,50 @@ function WeekBlock({
               {week.items.map((entry) => (
                 <li key={entry.id} className="flex gap-3 items-start">
                   <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-sky-400" aria-hidden />
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2 mb-1">
-                      <span
-                        className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${categoryClass(entry.category)}`}
-                      >
-                        {entry.category || 'Feature'}
-                      </span>
-                      {isAdmin && !entry.approved ? (
-                        <span className="rounded border border-slate-600 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-                          Draft
+                  <div className="min-w-0 flex-1 flex gap-4 items-start">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2 mb-1">
+                        <span
+                          className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${categoryClass(entry.category)}`}
+                        >
+                          {entry.category || 'Feature'}
                         </span>
-                      ) : null}
-                      {isAdmin && entry.approved ? (
-                        <span className="rounded border border-emerald-700/60 bg-emerald-950/40 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-200">
-                          Public
-                        </span>
+                        {isAdmin && !entry.approved ? (
+                          <span className="rounded border border-slate-600 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                            Draft
+                          </span>
+                        ) : null}
+                        {isAdmin && entry.approved ? (
+                          <span className="rounded border border-emerald-700/60 bg-emerald-950/40 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-200">
+                            Public
+                          </span>
+                        ) : null}
+                      </div>
+                      <p className="text-base font-semibold text-white leading-snug">
+                        {entry.title}
+                        {entry.forWho ? (
+                          <span className="ml-2 text-xs font-normal text-slate-500">{entry.forWho}</span>
+                        ) : null}
+                      </p>
+                      {entry.detail ? (
+                        <p className="mt-1.5 text-[0.95rem] text-slate-300 leading-relaxed">
+                          {entry.detail}
+                        </p>
                       ) : null}
                     </div>
-                    <p className="text-base font-semibold text-white leading-snug">
-                      {entry.title}
-                      {entry.forWho ? (
-                        <span className="ml-2 text-xs font-normal text-slate-500">{entry.forWho}</span>
-                      ) : null}
-                    </p>
-                    {entry.detail ? (
-                      <p className="mt-1.5 text-[0.95rem] text-slate-300 leading-relaxed">
-                        {entry.detail}
-                      </p>
+                    {entry.imageUrl ? (
+                      <button
+                        type="button"
+                        onClick={() => onPreviewImage(entry.imageUrl!, entry.title)}
+                        className="shrink-0 rounded-lg border border-slate-600 overflow-hidden bg-slate-950 hover:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-500/40"
+                        title="Click to enlarge"
+                      >
+                        <img
+                          src={entry.imageUrl}
+                          alt=""
+                          className="h-16 w-24 object-cover object-top sm:h-20 sm:w-28"
+                        />
+                      </button>
                     ) : null}
                   </div>
                 </li>
@@ -272,6 +305,7 @@ function MonthSection({
   isAdmin,
   onChangeMonth,
   onRemoveMonth,
+  onPreviewImage,
 }: {
   month: FeatureUpdateMonth;
   open: boolean;
@@ -280,6 +314,7 @@ function MonthSection({
   isAdmin: boolean;
   onChangeMonth: (next: FeatureUpdateMonth) => void;
   onRemoveMonth: () => void;
+  onPreviewImage: (url: string, title: string) => void;
 }) {
   const [openWeekIds, setOpenWeekIds] = useState<Set<string>>(() =>
     month.weeks[0] ? new Set([month.weeks[0].id]) : new Set()
@@ -389,6 +424,7 @@ function MonthSection({
                 isAdmin={isAdmin}
                 onChangeWeek={(next) => updateWeek(week.id, next)}
                 onRemoveWeek={() => removeWeek(week.id)}
+                onPreviewImage={onPreviewImage}
               />
             ))
           )}
@@ -422,6 +458,7 @@ const FeatureUpdatesPage: React.FC = () => {
   const [error, setError] = useState('');
   const [savedMeta, setSavedMeta] = useState<{ at?: string | null; by?: string | null }>({});
   const [usingBuiltInDraft, setUsingBuiltInDraft] = useState(false);
+  const [lightbox, setLightbox] = useState<{ url: string; title: string } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -433,13 +470,14 @@ const FeatureUpdatesPage: React.FC = () => {
           setMonths(withDefaultsIfEmpty(null));
           setUsingBuiltInDraft(true);
         } else {
-          setMonths(doc.months);
+          // Railway may strip imageUrl until redeployed; merge thumbs from built-in defaults by id.
+          setMonths(mergeDefaultImageUrls(doc.months));
           setUsingBuiltInDraft(false);
         }
         setSavedMeta({ at: doc.updatedAt, by: doc.updatedByName });
       } else {
         const doc = await fetchFeatureUpdates();
-        setMonths(doc.months);
+        setMonths(mergeDefaultImageUrls(doc.months));
         setUsingBuiltInDraft(false);
         setSavedMeta({ at: doc.updatedAt, by: doc.updatedByName });
       }
@@ -490,6 +528,7 @@ const FeatureUpdatesPage: React.FC = () => {
               title: entry.title.trim(),
               detail: entry.detail?.trim() || undefined,
               forWho: entry.forWho?.trim() || undefined,
+              imageUrl: entry.imageUrl?.trim() || undefined,
               category: entry.category || 'Feature',
               approved: entry.approved === true,
             }))
@@ -511,7 +550,7 @@ const FeatureUpdatesPage: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-900">
-      <div className="mx-auto max-w-4xl px-4 sm:px-6 py-8 sm:py-10">
+      <div className="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8 py-8 sm:py-10">
         <div className="mb-8 flex flex-wrap items-start justify-between gap-4">
           <div>
             <button
@@ -522,9 +561,9 @@ const FeatureUpdatesPage: React.FC = () => {
               ← Event List
             </button>
             <h1 className="text-3xl font-bold text-white tracking-tight">Feature Updates</h1>
-            <p className="mt-2 text-base text-slate-400 max-w-xl leading-relaxed">
+            <p className="mt-2 text-sm text-slate-400 whitespace-nowrap overflow-hidden text-ellipsis">
               {isAdmin
-                ? 'Draft from git — check Approve on each item, then Save. Only approved items are public.'
+                ? 'Check Approve on each item, then Save — only approved items are public.'
                 : 'Approved updates by month. Open a month, then a week.'}
             </p>
             {isAdmin && usingBuiltInDraft ? (
@@ -543,13 +582,37 @@ const FeatureUpdatesPage: React.FC = () => {
 
           <div className="flex flex-wrap items-center gap-2">
             {isAdmin && !editing ? (
-              <button
-                type="button"
-                onClick={beginEdit}
-                className="rounded-lg border border-amber-600/70 bg-amber-950/50 px-4 py-2 text-sm font-semibold text-amber-100 hover:bg-amber-900/60"
-              >
-                Edit copy
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={beginEdit}
+                  className="rounded-lg border border-amber-600/70 bg-amber-950/50 px-4 py-2 text-sm font-semibold text-amber-100 hover:bg-amber-900/60"
+                >
+                  Edit copy
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (
+                      !window.confirm(
+                        'Replace the saved draft with the latest built-in copy from the app? Your Approve checks will reset to Draft until you approve again. You still need to Save.'
+                      )
+                    ) {
+                      return;
+                    }
+                    const next = structuredClone(FEATURE_UPDATES_DEFAULT);
+                    setMonths(next);
+                    setDraft(next);
+                    setEditing(true);
+                    setUsingBuiltInDraft(true);
+                    setError('');
+                  }}
+                  className="rounded-lg border border-slate-600 px-4 py-2 text-sm text-slate-300 hover:bg-slate-800"
+                  title="Pull latest built-in Sept/Oct/Nov wording into Edit (then Save to Neon)"
+                >
+                  Load built-in draft
+                </button>
+              </>
             ) : null}
             {editing ? (
               <>
@@ -606,6 +669,7 @@ const FeatureUpdatesPage: React.FC = () => {
                   if (!draft) return;
                   setDraft(draft.filter((m) => m.id !== month.id));
                 }}
+                onPreviewImage={(url, title) => setLightbox({ url, title })}
               />
             ))}
 
@@ -626,6 +690,35 @@ const FeatureUpdatesPage: React.FC = () => {
           </div>
         )}
       </div>
+
+      {lightbox ? (
+        <div
+          className="fixed inset-0 z-[80] flex items-center justify-center bg-black/80 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label={lightbox.title}
+          onClick={() => setLightbox(null)}
+        >
+          <div
+            className="relative max-h-[90vh] max-w-5xl w-full"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => setLightbox(null)}
+              className="absolute -top-10 right-0 text-sm text-slate-300 hover:text-white"
+            >
+              Close
+            </button>
+            <img
+              src={lightbox.url}
+              alt={lightbox.title}
+              className="max-h-[85vh] w-full object-contain rounded-lg border border-slate-600 bg-slate-950"
+            />
+            <p className="mt-2 text-center text-sm text-slate-300">{lightbox.title}</p>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 };

@@ -22,6 +22,8 @@ export type FeatureUpdateItem = {
   /** Public readers only see approved items */
   approved?: boolean;
   forWho?: string;
+  /** Optional still — shown as a small thumb; click expands */
+  imageUrl?: string;
 };
 
 export type FeatureUpdateWeek = {
@@ -54,7 +56,8 @@ function item(
   title: string,
   detail: string,
   category: FeatureUpdateCategory,
-  forWho?: string
+  forWho?: string,
+  imageUrl?: string
 ): FeatureUpdateItem {
   return {
     id,
@@ -63,6 +66,7 @@ function item(
     category,
     approved: false,
     ...(forWho ? { forWho } : {}),
+    ...(imageUrl ? { imageUrl } : {}),
   };
 }
 
@@ -103,7 +107,8 @@ export const FEATURE_UPDATES_DEFAULT: FeatureUpdateMonth[] = [
             'Creative ROS tools',
             'Creatives can filter the run of show, copy segment details, export only filtered rows, and upload Content Review PDFs from their own login.',
             'Feature',
-            'Creative'
+            'Creative',
+            '/feature-updates/s1-content-review-pdf.png'
           ),
           item(
             's2',
@@ -121,7 +126,7 @@ export const FEATURE_UPDATES_DEFAULT: FeatureUpdateMonth[] = [
           item(
             's4',
             'Event Board workspace',
-            'Day-of notes and files workspace next to the show, with multi-day ROS fixes so board and sheet stay aligned.',
+            'For General Meeting and Hollow Square, choose Event Board instead of a timed Run of Show. It is a shared workspace for agenda, PowerPoint decks, display files, and note tabs (conference setup, food & beverage, AV)—not a minute-by-minute cue timer. Multi-day events keep board content lined up with each day.',
             'Feature',
             'Event ops'
           ),
@@ -135,16 +140,16 @@ export const FEATURE_UPDATES_DEFAULT: FeatureUpdateMonth[] = [
           item(
             's5',
             'Event Board day-of workflow',
-            'Note tabs, simpler agenda view, and drag-and-drop uploads (CORS accepts the role header).',
+            'On the Event Board: switch note tabs (agenda / setup / food / AV), use a simpler agenda layout, and drag-and-drop upload decks or display files without leaving the page.',
             'Feature',
             'Event ops'
           ),
           item(
             's6',
-            'HyperDeck / Record',
-            'In-Show vs Rehearsal record gate, follow UX, REC marks persist immediately, Comms Record badge, marks refresh while following.',
+            'Comms role + HyperDeck Record Bridge',
+            'New Comms user role marks cues for post/social export (Record badge on the ROS) without changing the master full-program record. The HyperDeck Ingest bridge follows those marks: when a Record-marked cue is loaded or running it starts the deck, stops when the cue ends or you jump, then copies/indexes each clip into an editor folder with a dated event–segment name. In-Show vs Rehearsal gate keeps rehearsal takes out of the show index; marks refresh while following.',
             'Feature',
-            'Record'
+            'Comms'
           ),
           item(
             's7',
@@ -257,10 +262,9 @@ export const FEATURE_UPDATES_DEFAULT: FeatureUpdateMonth[] = [
           ),
           item(
             's22',
-            'Civics Bee Students control',
-            'Extend Event Controls includes Civics Bee Students.',
-            'Feature',
-            'Civics'
+            'Extend Event Controls',
+            'Per-event specialty modules you turn on from the Event List when a show needs more than the standard ROS. Admin/EM flip Extend on for that event, pick which modules apply, then open them from the ROS menu. Civics Bee Students is the first module—graphics, selection, and companion tools for that show—without forcing Civics UI onto every other event.',
+            'Feature'
           ),
         ],
       },
@@ -271,35 +275,85 @@ export const FEATURE_UPDATES_DEFAULT: FeatureUpdateMonth[] = [
         items: [
           item(
             's23',
-            'Multi-day show start',
-            'Show-start offsets follow the START cue day. Enter In-Show copy matches that day. Event List split-days for Admin/EM/Crew; guest column controls.',
+            'START offsets follow the show day',
+            'On multi-day events, overtime and show-start math use the day that owns the START cue—not a single master clock for every day. Enter In-Show copy shows that day’s start time so the room arms the right morning.',
+            'Fix'
+          ),
+          item(
+            's23b',
+            'Split multi-day events on Event List',
+            'Admin, Event Manager, and Crew can split a multi-day event into per-day rows on the Event List (day split lives in Edit Event). Easier to open or assign just Day 1 or Day 2.',
+            'Feature'
+          ),
+          item(
+            's23c',
+            'Guest column controls',
+            'Guest-facing views get clearer control over which columns show, so public/guest sheets stay lean while the full ROS stays complete.',
             'Feature'
           ),
           item(
             's24',
-            'ROS layout & markers',
-            'Sticky Start beside CUE, scroll column reorder, grouped timed markers (absolute or offset), Ted-Talk rename, left-aligned segment names, faster paints.',
+            'Sticky Start beside CUE',
+            'Start stays pinned next to the CUE column while you scroll sideways, and columns can reorder as you scroll so timing stays visible without hunting.',
             'Feature'
           ),
           item(
-            's25',
-            'PreShow / EndShow & Green Room',
-            'PreShow and EndShow split (EndShow purple stripes). Green Room timer, title, and column toggles. Op Timer as purple ALT on Clock/Fullscreen.',
+            's24b',
+            'Grouped timed markers',
+            'On the ROS, click the cue number on the left to open Row actions, then choose Add Timed Marker. The marker nests under that cue (like an indented timer) with a start time but no duration—set a fixed clock time, or an offset from the parent so it moves with overtime. Click the marker’s Start cell to edit later.',
             'Feature'
+          ),
+          item(
+            's24c',
+            'Ted-Talk location + segment names',
+            '“Walking” speaker location is renamed Ted-Talk. Segment names left-align for faster scanning on the sheet.',
+            'System Update'
+          ),
+          item(
+            's25',
+            'PreShow and EndShow are separate',
+            'End-of-show is no longer a shared “PreShow/End” blob. PreShow and EndShow are distinct rows; EndShow uses the same purple diagonal treatment so displays read clearly.',
+            'Feature'
+          ),
+          item(
+            's25b',
+            'Green Room timer and layout toggles',
+            'Green Room can show its own timer and title, with toggles for which columns appear—tuned for backstage screens, not the full ROS.',
+            'Feature'
+          ),
+          item(
+            's25c',
+            'Op Timer on Clock / Fullscreen',
+            'Operator countdown is a purple ALT (like indented timers) on Clock and Fullscreen—open as a modal or a small pop-out—without clearing when cues clear.',
+            'Feature',
+            'Operators'
           ),
           item(
             's26',
             'Civics Bee graphics CSV',
-            'Graphics CSV feed for Civics Bee lower-thirds / boards.',
+            'Graphics can pull a Civics Bee CSV feed for lower-thirds and boards instead of hand-building the student list each show.',
             'Feature',
             'Civics'
           ),
           item(
             's27',
-            'Director View & print / master time',
-            'Director View with panel scale/resize and ROS filter preview. Custom print report; Admin/Crew clear master time; offline timer parity.',
+            'Director View',
+            'New Director View: scale and resize panels, preview ROS filters, and run the show from a director-focused layout.',
             'Feature',
             'Director'
+          ),
+          item(
+            's27b',
+            'Custom print + clear master time',
+            'Custom print report for paper rundowns. Admin/Crew can clear master start when the show needs a clean slate. Offline timer behavior matches online.',
+            'Feature'
+          ),
+          item(
+            's27c',
+            'Larger REC hover tip',
+            'Hovering REC shows a bigger tip explaining post/social export marks so operators do not confuse them with master program record.',
+            'System Update',
+            'Comms'
           ),
         ],
       },
@@ -609,6 +663,30 @@ export const FEATURE_UPDATES_DEFAULT: FeatureUpdateMonth[] = [
 export function withDefaultsIfEmpty(doc: FeatureUpdatesDocument | null | undefined): FeatureUpdateMonth[] {
   if (doc?.months?.length) return doc.months;
   return FEATURE_UPDATES_DEFAULT;
+}
+
+/** Fill missing imageUrl from built-in defaults (same item id). */
+export function mergeDefaultImageUrls(months: FeatureUpdateMonth[]): FeatureUpdateMonth[] {
+  const images = new Map<string, string>();
+  for (const month of FEATURE_UPDATES_DEFAULT) {
+    for (const week of month.weeks) {
+      for (const entry of week.items) {
+        if (entry.imageUrl) images.set(entry.id, entry.imageUrl);
+      }
+    }
+  }
+  if (!images.size) return months;
+  return months.map((month) => ({
+    ...month,
+    weeks: month.weeks.map((week) => ({
+      ...week,
+      items: week.items.map((entry) =>
+        entry.imageUrl || !images.has(entry.id)
+          ? entry
+          : { ...entry, imageUrl: images.get(entry.id) }
+      ),
+    })),
+  }));
 }
 
 /** Drop unapproved items; drop empty weeks/months. */
