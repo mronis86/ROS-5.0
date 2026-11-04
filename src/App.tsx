@@ -67,6 +67,7 @@ import UltritouchHealthMonitorPage from './pages/UltritouchHealthMonitorPage';
 import StreamGuidePage from './pages/StreamGuidePage';
 import ExtendEventControlsPage from './pages/ExtendEventControlsPage';
 import CivicsGraphicsSelectPage from './pages/CivicsGraphicsSelectPage';
+import FeatureUpdatesPage from './pages/FeatureUpdatesPage';
 
 function AppContent() {
   const location = useLocation();
@@ -205,6 +206,7 @@ function AppContent() {
             <Route path="/cue-cards" element={<CueCardsPage />} />
             <Route path="/powerpoint" element={<PowerPointPage />} />
             <Route path="/powerpoint-playback" element={<PowerPointPlaybackPage />} />
+            <Route path="/feature-updates" element={<FeatureUpdatesPage />} />
           </Routes>
           </div>
         </AuthGuard>

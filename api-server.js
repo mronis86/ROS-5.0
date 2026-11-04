@@ -56,6 +56,7 @@ const {
 const { installOpsAlerts, createOpsErrorHandler } = require('./lib/ops-alerts');
 const { registerUserReportRoutes } = require('./lib/user-report');
 const { registerAppSettingsRoutes } = require('./lib/app-settings');
+const { registerFeatureUpdatesRoutes } = require('./lib/feature-updates');
 const { registerElevenLabsVogRoutes } = require('./lib/elevenlabs-vog');
 const {
   ensureEventVogScriptsSchema,
@@ -1089,6 +1090,7 @@ app.use(createApiAuthMiddleware(pool, apiAuthConfig));
 registerAuthRoutes(app, pool, { requireAdminAuth });
 registerUserReportRoutes(app, pool);
 registerAppSettingsRoutes(app, pool, { requireAdminAccess });
+registerFeatureUpdatesRoutes(app, pool, { requireAdminAccess });
 registerElevenLabsVogRoutes(app, { requireAdminAccess });
 registerEventVogScriptRoutes(app, { pool, userCanAccessEvent, broadcastUpdate });
 registerEventCueFileRoutes(app, pool);

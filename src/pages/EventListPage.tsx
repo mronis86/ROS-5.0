@@ -1077,8 +1077,16 @@ const EventListPage: React.FC = () => {
             You can see every event. Request access to open one that is not assigned to you.
           </p>
         ) : null}
+        <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
+          <button
+            type="button"
+            onClick={() => navigate('/feature-updates')}
+            className="rounded-lg border border-sky-600/60 bg-sky-950/40 px-3 py-1.5 text-xs font-semibold text-sky-200 hover:bg-sky-900/50"
+          >
+            Feature Updates
+          </button>
         {canAccessAdmin(user) || canAccessAccessManager(user) || canAccessProductionDashboard(user) || canAccessSpeakerManager(user) ? (
-          <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
+          <>
             {canAccessAdmin(user) ? (
               <button
                 type="button"
@@ -1115,8 +1123,9 @@ const EventListPage: React.FC = () => {
                 Open Production Dashboard
               </button>
             ) : null}
-          </div>
+          </>
         ) : null}
+        </div>
       </div>
 
       {/* Main Content */}
