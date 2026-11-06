@@ -1292,7 +1292,8 @@ function buildRailwayHealthMeta() {
     uptimeSeconds: Math.floor(process.uptime()),
     env: process.env.NODE_ENV || 'development',
     powerpointRoutes: true,
-    apiRevision: 'hub-20261106a',
+    // Bump when master should trigger a Railway autodeploy smoke check.
+    apiRevision: 'hub-20261106b',
   };
 }
 
