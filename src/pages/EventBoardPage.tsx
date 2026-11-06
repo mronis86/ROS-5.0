@@ -391,7 +391,17 @@ const EventBoardPage: React.FC = () => {
       );
       if (!res) throw new Error('Not signed in');
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || 'Could not update public control');
+      if (!res.ok) {
+        if (res.status === 404) {
+          throw new Error(
+            'Public control API is missing on Railway — redeploy the API service, then try Share again.'
+          );
+        }
+        throw new Error(
+          (typeof data.error === 'string' && data.error) ||
+            `Could not update public control (${res.status})`
+        );
+      }
       await loadBoard(eventId);
       if (enabled && data.public_token) {
         const url = `${window.location.origin}/meeting-hub/${encodeURIComponent(data.public_token)}`;
