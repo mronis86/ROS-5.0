@@ -23,6 +23,8 @@ class RunOfShowInstance extends InstanceBase {
 		this.refreshStartedAt = null
 		this.syncPausedByTimer = false
 		this._dsmWatchPrev = null
+		this._dsmLastPress = null
+		this._dsmPressInFlight = null
 		this.lastDsmMode = ''
 		this.lastDsmSource = '—'
 		this.dsmFireCount = 0
@@ -177,8 +179,9 @@ class RunOfShowInstance extends InstanceBase {
 	 * Press the Companion button configured for this DSM mode (page / row / column).
 	 * Uses Companion's local HTTP API so that button can hold Ultrix / ATEM / vMix / OBS / Ross Talk actions.
 	 * Page 0 or empty = not configured (skip).
+	 * Dedupes overlapping cue-load + watch presses so LED/PPT do not multi-fire or stomp each other.
 	 */
-	async pressDsmCompanionButton(mode) {
+	async pressDsmCompanionButton(mode, { allowRepeat = false } = {}) {
 		const normalized = normalizeDsmLayoutMode(mode)
 		const ids = this.dsmButtonConfigIds(normalized)
 		const page = parseInt(this.config?.[ids.page], 10)
@@ -188,6 +191,27 @@ class RunOfShowInstance extends InstanceBase {
 		}
 		const row = Math.max(0, parseInt(this.config?.[ids.row], 10) || 0)
 		const column = Math.max(0, parseInt(this.config?.[ids.column], 10) || 0)
+		const now = Date.now()
+		const last = this._dsmLastPress
+		if (
+			!allowRepeat &&
+			last &&
+			last.mode === normalized &&
+			last.page === page &&
+			last.row === row &&
+			last.column === column &&
+			now - last.at < 2000
+		) {
+			this.log(
+				'debug',
+				`DSM ${normalized}: skip duplicate press within 2s (page ${page} row ${row} col ${column})`
+			)
+			return false
+		}
+		if (this._dsmPressInFlight) {
+			this.log('debug', `DSM ${normalized}: skip press — another DSM press is in flight`)
+			return false
+		}
 		const base = String(this.config?.companionHttpBase || 'http://127.0.0.1:8000')
 			.trim()
 			.replace(/\/+$/, '')
@@ -196,6 +220,8 @@ class RunOfShowInstance extends InstanceBase {
 		if (key) url += `?key=${encodeURIComponent(key)}`
 		const headers = { Accept: 'application/json' }
 		if (key) headers.Authorization = `Bearer ${key}`
+		this._dsmPressInFlight = normalized
+		this._dsmLastPress = { mode: normalized, page, row, column, at: now }
 		try {
 			const res = await fetch(url, { method: 'POST', headers })
 			if (!res.ok) {
@@ -213,6 +239,8 @@ class RunOfShowInstance extends InstanceBase {
 				`DSM ${normalized}: Companion button press failed (page ${page}/${row}/${column}): ${err.message}`
 			)
 			return false
+		} finally {
+			this._dsmPressInFlight = null
 		}
 	}
 
@@ -229,7 +257,7 @@ class RunOfShowInstance extends InstanceBase {
 			}
 		}
 		this.publishDsmMode(normalized, source)
-		await this.pressDsmCompanionButton(normalized)
+		await this.pressDsmCompanionButton(normalized, { allowRepeat: source === 'manual' })
 		return normalized
 	}
 
@@ -254,7 +282,7 @@ class RunOfShowInstance extends InstanceBase {
 			await this.applyDsmMode(mode, { layout: true, source: 'manual' })
 		} else {
 			this.publishDsmMode(mode, 'cue_load')
-			await this.pressDsmCompanionButton(mode)
+			await this.pressDsmCompanionButton(mode, { allowRepeat: false })
 		}
 		return true
 	}
@@ -286,7 +314,13 @@ class RunOfShowInstance extends InstanceBase {
 	maybePublishDsmFromActiveTimer() {
 		if (!this.isDsmPublishOnCueLoad()) return
 		const t = this.activeTimer
-		if (!t || t.item_id == null) return
+		if (!t || t.item_id == null) {
+			// Cleared timer — next load of any cue (including same id) should be allowed to fire.
+			if (this._dsmWatchPrev?.itemId) {
+				this._dsmWatchPrev = { itemId: null, state: '' }
+			}
+			return
+		}
 		const itemId = String(t.item_id)
 		const state = String(t.timer_state || '')
 		if (state !== 'loaded' && state !== 'running') return
@@ -297,10 +331,11 @@ class RunOfShowInstance extends InstanceBase {
 			this._dsmWatchPrev = { itemId, state }
 			return
 		}
-		const itemChanged = prev.itemId !== itemId
-		const becameLoaded = state === 'loaded' && prev.state !== 'loaded'
+		// Only fire when the loaded/running cue *changes*.
+		// Do NOT re-press on stop→loaded (becameLoaded) — that multi-pressed Ultrix/ATEM/etc.
+		const itemChanged = String(prev.itemId || '') !== itemId
 		this._dsmWatchPrev = { itemId, state }
-		if (!itemChanged && !becameLoaded) return
+		if (!itemChanged) return
 		void this.fireDsmForLoadedItem(itemId, { force: false })
 	}
 
@@ -535,7 +570,7 @@ class RunOfShowInstance extends InstanceBase {
 				width: 8,
 				default: true,
 				tooltip:
-					'When ON, loading a DSM-enabled cue presses the Companion button for that row DSM mode (and updates dsm_mode / dsm_fire).',
+					'When ON, loading a DSM-enabled cue presses the Companion button for that row DSM mode once per cue change (and updates dsm_mode / dsm_fire). Do not also Trigger the same buttons from dsm_fire.',
 			},
 			{
 				type: 'number',

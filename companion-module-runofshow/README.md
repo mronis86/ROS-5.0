@@ -40,8 +40,8 @@ Bitfocus Companion v3 module for Run of Show (ROS). Controls your ROS schedule v
 - **Event ID**: From your Run of Show web app (Events list)
 - **Day**: 1–10 for multi-day events
 - **Sync interval (seconds)**: How often to fetch schedule/timer (5–600, default 60)
-- **Press DSM button on cue load**: When ON, a DSM-enabled cue load presses the Companion button (page/row/column) configured for that mode.
-- **DSM Full/LED/VID/PPT page · row · column**: Locations of the buttons that hold your switcher actions.
+- **Press DSM button on cue load**: When ON, a DSM-enabled cue load presses the Companion button (page/row/column) configured for that mode (once per cue change; debounced so Load Cue + watch cannot double-press).
+- **DSM Full/LED/VID/PPT page · row · column**: Locations of the buttons that hold your switcher actions. Do not put DSM module actions on those buttons, and do not also Trigger-press them via `dsm_fire` if this press path is ON.
 - **Companion HTTP base URL**: Default `http://127.0.0.1:8000` (HTTP Server must be enabled in Companion).
 
 ## Presets (drag and drop, auto-update by Event ID)
