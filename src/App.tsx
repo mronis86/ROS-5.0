@@ -67,6 +67,8 @@ import UltritouchHealthMonitorPage from './pages/UltritouchHealthMonitorPage';
 import StreamGuidePage from './pages/StreamGuidePage';
 import ExtendEventControlsPage from './pages/ExtendEventControlsPage';
 import CivicsGraphicsSelectPage from './pages/CivicsGraphicsSelectPage';
+import PublicMeetingHubPage from './pages/PublicMeetingHubPage';
+
 function AppContent() {
   const location = useLocation();
 
@@ -100,6 +102,7 @@ function AppContent() {
   const isResetPassword = location.pathname === '/reset-password';
   const isAccessPortal = location.pathname === '/access';
   const isGuestEvent = location.pathname === '/guest';
+  const isMeetingHubPublic = location.pathname.startsWith('/meeting-hub/');
   const isStreamRequest = location.pathname === '/stream-request';
   const isTraining =
     location.pathname === '/training' || location.pathname.startsWith('/training/');
@@ -147,6 +150,7 @@ function AppContent() {
     isResetPassword ||
     isAccessPortal ||
     isGuestEvent ||
+    isMeetingHubPublic ||
     isStreamRequest ||
     isTraining ||
     isLedOutput ||
@@ -161,9 +165,9 @@ function AppContent() {
     <ActiveViewersProvider>
     <div className={`App min-h-screen text-slate-200 ${isLedOutput ? 'led-output-page bg-transparent' : 'bg-slate-900'} ${isClock || isDsmClock ? 'clock-page' : ''}`}>
       {/* Render AppHeader outside AuthGuard for pages that need authentication */}
-      {!isFullScreenTimer && !isPinNotesPopout && !isOperatorTimerPopout && !isGreenRoom && !isPhotoView && !isDirectorView && !isDirectorControl && !isMicManager && !isOperatorCueDisplay && !isScriptsFollow && !isTeleprompter && !isCueCards && !isPowerPoint && !isGoogleSheets && !isLocalXML && !isNetlifyXML && !isAdmin && !isQuickMode && !isComparison && !isResetPassword && !isAccessPortal && !isGuestEvent && !isStreamRequest && !isTraining && !isLedOutput && !isUltritouchHealth && !isStreamGuide && !isReports && <AppHeader />}
+      {!isFullScreenTimer && !isPinNotesPopout && !isOperatorTimerPopout && !isGreenRoom && !isPhotoView && !isDirectorView && !isDirectorControl && !isMicManager && !isOperatorCueDisplay && !isScriptsFollow && !isTeleprompter && !isCueCards && !isPowerPoint && !isGoogleSheets && !isLocalXML && !isNetlifyXML && !isAdmin && !isQuickMode && !isComparison && !isResetPassword && !isAccessPortal && !isGuestEvent && !isMeetingHubPublic && !isStreamRequest && !isTraining && !isLedOutput && !isUltritouchHealth && !isStreamGuide && !isReports && <AppHeader />}
       
-      {!isPinNotesPopout && !isOperatorTimerPopout && !isComparison && !isResetPassword && !isAccessPortal && !isGuestEvent && !isStreamRequest && !isTraining && !isNetlifyXML && !isLocalXML && !isAdmin && !isClock && !isDsmClock && (
+      {!isPinNotesPopout && !isOperatorTimerPopout && !isComparison && !isResetPassword && !isAccessPortal && !isGuestEvent && !isMeetingHubPublic && !isStreamRequest && !isTraining && !isNetlifyXML && !isLocalXML && !isAdmin && !isClock && !isDsmClock && (
         <AuthGuard>
           <div className="min-h-screen bg-slate-900">
           <Routes>
@@ -222,6 +226,7 @@ function AppContent() {
         <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route path="/access" element={<AccessPortalPage />} />
         <Route path="/guest" element={<GuestEventPage />} />
+        <Route path="/meeting-hub/:token" element={<PublicMeetingHubPage />} />
         <Route path="/stream-request" element={<StreamRequestPage />} />
         <Route path="/training" element={<TrainingBookingPage />} />
         <Route path="/training/manage" element={<TrainingManagePage />} />

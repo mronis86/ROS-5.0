@@ -54,7 +54,9 @@ function saveConfig(partial) {
   if (next.apiToken != null) next.apiToken = normalizeApiToken(next.apiToken);
   if (next.eventId != null) next.eventId = String(next.eventId || '').trim();
   if (next.bridgeMode != null) {
-    next.bridgeMode = next.bridgeMode === 'playback' ? 'playback' : 'follow';
+    const mode = String(next.bridgeMode || '').trim().toLowerCase();
+    next.bridgeMode =
+      mode === 'playback' || mode === 'meetinghub' || mode === 'hub' ? (mode === 'hub' ? 'meetinghub' : mode) : 'follow';
   }
   if (next.syncFolder != null) next.syncFolder = String(next.syncFolder || '').trim();
   if (next.liveCaptureSource != null) {

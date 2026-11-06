@@ -43,18 +43,31 @@ const els = {
   livecapError: document.getElementById('livecap-error'),
   focusTarget: document.getElementById('focusTarget'),
   forceEditMode: document.getElementById('forceEditMode'),
+  meetingHubCard: document.getElementById('meetinghub-card'),
+  hubDeckList: document.getElementById('hub-deck-list'),
+  btnHubRefresh: document.getElementById('btn-hub-refresh'),
 };
 
 let loadedEvents = [];
 /** @type {'all' | 'upcoming' | 'past'} */
 let eventFilter = 'upcoming';
-/** @type {'follow' | 'playback'} */
+/** @type {'follow' | 'playback' | 'meetinghub'} */
 let bridgeMode = 'follow';
 /** @type {'screen' | 'camera'} */
 let liveCaptureSource = 'screen';
 let selectedDay = 1;
 /** @type {Record<string, number>} */
 let selectedDaysByEvent = {};
+/** @type {Array<{id:string,name?:string,original_name?:string,version?:number,versionCount?:number}>} */
+let hubDecks = [];
+let hubOpenDeckId = '';
+
+function normalizeBridgeMode(raw) {
+  const mode = String(raw || '').trim().toLowerCase();
+  if (mode === 'playback') return 'playback';
+  if (mode === 'meetinghub' || mode === 'hub') return 'meetinghub';
+  return 'follow';
+}
 
 function selectedEvent() {
   const id = els.eventSelect.value.trim();
@@ -84,24 +97,107 @@ function formConfig() {
 
 function applyModeUi() {
   const playback = bridgeMode === 'playback';
+  const hub = bridgeMode === 'meetinghub';
   document.querySelectorAll('[data-bridge-mode]').forEach((btn) => {
     const active = btn.getAttribute('data-bridge-mode') === bridgeMode;
     btn.classList.toggle('active', active);
     btn.setAttribute('aria-selected', active ? 'true' : 'false');
   });
-  if (els.btnStart) els.btnStart.textContent = playback ? 'Follow ROS cues' : 'Start follow';
+  if (els.btnStart) {
+    els.btnStart.textContent = hub ? 'Ready for Hub decks' : playback ? 'Follow ROS cues' : 'Start follow';
+    els.btnStart.hidden = hub;
+  }
   if (els.btnSync) els.btnSync.hidden = !playback;
-  if (els.btnCapture) els.btnCapture.hidden = playback;
+  if (els.btnCapture) els.btnCapture.hidden = playback || hub;
   if (els.cacheCard) els.cacheCard.hidden = !playback;
+  if (els.meetingHubCard) els.meetingHubCard.hidden = !hub;
+  if (els.dayField) els.dayField.hidden = hub;
   if (els.modeHint) {
-    els.modeHint.textContent = playback
-      ? 'ROS PPT Launcher: pick a sync folder, then Sync decks. Sync downloads each deck and pulls or captures slide images (PowerPoint may open briefly). Follow ROS opens the matching file. Do not run both modes on this PC for the same event.'
-      : 'PowerPoint Show with Timers: capture stills and fire cues when a slide is live. Do not run both modes on this PC for the same event.';
+    els.modeHint.textContent = hub
+      ? 'Meeting Hub: open decks uploaded on the event’s Meeting Hub page. Use this on the room PowerPoint PC for General Meeting / Hollow Square Hub events.'
+      : playback
+        ? 'ROS PPT Launcher: pick a sync folder, then Sync decks. Sync downloads each deck and pulls or captures slide images (PowerPoint may open briefly). Follow ROS opens the matching file. Do not run both modes on this PC for the same event.'
+        : 'PowerPoint Show with Timers: capture stills and fire cues when a slide is live. Do not run both modes on this PC for the same event.';
   }
   if (els.pptHint) {
-    els.pptHint.textContent = playback
-      ? 'If another deck is already open, Follow ROS cues closes it and opens the matching synced file. Run Sync decks after connecting so slide images are ready before follow.'
-      : 'Open the deck in PowerPoint on this PC, then capture stills. Start follow before Slideshow so live slides fire the mapped cues.';
+    els.pptHint.textContent = hub
+      ? 'Refresh decks, then Open. The helper downloads the current Hub version and launches PowerPoint on this PC.'
+      : playback
+        ? 'If another deck is already open, Follow ROS cues closes it and opens the matching synced file. Run Sync decks after connecting so slide images are ready before follow.'
+        : 'Open the deck in PowerPoint on this PC, then capture stills. Start follow before Slideshow so live slides fire the mapped cues.';
+  }
+  if (hub) renderHubDecks(hubDecks);
+}
+
+function renderHubDecks(decks) {
+  hubDecks = Array.isArray(decks) ? decks : [];
+  if (!els.hubDeckList) return;
+  if (!hubDecks.length) {
+    els.hubDeckList.innerHTML =
+      '<p class="hint">No current PowerPoint decks on this Meeting Hub yet. Upload PPT/PPTX (or Make PowerPoint from PDF) on the Hub page.</p>';
+    return;
+  }
+  els.hubDeckList.innerHTML = hubDecks
+    .map((deck) => {
+      const label = deck.name || deck.original_name || deck.id;
+      const open = String(hubOpenDeckId) === String(deck.id);
+      const ver =
+        Number(deck.versionCount) > 1
+          ? ` · v${deck.version || 1}/${deck.versionCount}`
+          : '';
+      return (
+        `<div class="cache-row${open ? ' cache-open' : ''}">` +
+        `<div class="cache-meta"><strong>${escapeHtml(label)}</strong><span class="hint">${escapeHtml(ver.trim())}</span></div>` +
+        `<button type="button" data-hub-open="${escapeHtml(String(deck.id))}" class="secondary">${open ? 'Re-open' : 'Open'}</button>` +
+        `</div>`
+      );
+    })
+    .join('');
+  els.hubDeckList.querySelectorAll('[data-hub-open]').forEach((btn) => {
+    btn.onclick = () => void openHubDeck(btn.getAttribute('data-hub-open'));
+  });
+}
+
+function escapeHtml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+async function refreshHubDecks() {
+  const cfg = formConfig();
+  if (!cfg.eventId) {
+    els.apiMsg.textContent = 'Pick a Meeting Hub event first.';
+    return;
+  }
+  try {
+    if (els.stError) els.stError.textContent = '';
+    const status = await api.listMeetingHubDecks(cfg);
+    hubOpenDeckId = status.openDeckId || '';
+    renderHubDecks(status.decks || []);
+    applyStatus(status);
+    toast(`${(status.decks || []).length} deck(s)`);
+  } catch (err) {
+    if (els.stError) els.stError.textContent = err.message || String(err);
+    if (els.hubDeckList) {
+      els.hubDeckList.innerHTML = `<p class="error">${escapeHtml(err.message || String(err))}</p>`;
+    }
+  }
+}
+
+async function openHubDeck(deckId) {
+  if (!deckId) return;
+  try {
+    if (els.stError) els.stError.textContent = '';
+    const status = await api.openMeetingHubDeck(deckId, formConfig());
+    hubOpenDeckId = status.openDeckId || deckId;
+    renderHubDecks(status.decks?.length ? status.decks : hubDecks);
+    applyStatus(status);
+    toast(status.lastAction || 'Opened');
+  } catch (err) {
+    if (els.stError) els.stError.textContent = err.message || String(err);
   }
 }
 
@@ -441,13 +537,17 @@ function applyStatus(status) {
     if (Array.isArray(status.cacheRows)) window.__rosCacheRows = status.cacheRows;
     renderCache(status.cacheRows || window.__rosCacheRows);
   }
+  if (status.mode === 'meetinghub' || bridgeMode === 'meetinghub') {
+    hubOpenDeckId = status.openDeckId || hubOpenDeckId;
+    if (Array.isArray(status.decks)) renderHubDecks(status.decks);
+  }
 }
 
 async function load() {
   const cfg = await api.loadConfig();
   els.apiBaseUrl.value = cfg.apiBaseUrl || '';
   els.apiToken.value = cfg.apiToken || '';
-  bridgeMode = cfg.bridgeMode === 'playback' ? 'playback' : 'follow';
+  bridgeMode = normalizeBridgeMode(cfg.bridgeMode);
   if (els.syncFolder) els.syncFolder.value = cfg.syncFolder || '';
   selectedDaysByEvent =
     cfg.selectedDaysByEvent && typeof cfg.selectedDaysByEvent === 'object' ? cfg.selectedDaysByEvent : {};
@@ -521,6 +621,9 @@ if (els.eventSelect) {
     if (bridgeMode === 'playback' && id && String(els.syncFolder?.value || '').trim()) {
       await runSyncDecks({ reason: 'event' });
     }
+    if (bridgeMode === 'meetinghub' && id) {
+      await refreshHubDecks();
+    }
   });
 }
 
@@ -537,12 +640,19 @@ if (els.daySelect) {
 
 document.querySelectorAll('[data-bridge-mode]').forEach((btn) => {
   btn.onclick = async () => {
-    bridgeMode = btn.getAttribute('data-bridge-mode') === 'playback' ? 'playback' : 'follow';
+    bridgeMode = normalizeBridgeMode(btn.getAttribute('data-bridge-mode'));
     applyModeUi();
     await api.saveConfig(formConfig());
     await api.stopBridge();
+    if (bridgeMode === 'meetinghub' && formConfig().eventId) {
+      await refreshHubDecks();
+    }
   };
 });
+
+if (els.btnHubRefresh) {
+  els.btnHubRefresh.onclick = () => void refreshHubDecks();
+}
 
 if (els.btnSync) {
   els.btnSync.onclick = async () => {
@@ -573,6 +683,11 @@ document.getElementById('btn-start').onclick = async () => {
   const cfg = formConfig();
   if (!cfg.eventId) {
     els.apiMsg.textContent = 'Pick an event first.';
+    return;
+  }
+  if (cfg.bridgeMode === 'meetinghub') {
+    await api.startBridge(cfg);
+    await refreshHubDecks();
     return;
   }
   if (cfg.bridgeMode === 'playback' && !cfg.syncFolder) {

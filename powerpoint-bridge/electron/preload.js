@@ -12,6 +12,9 @@ contextBridge.exposeInMainWorld('rosPptBridge', {
   getStatus: () => ipcRenderer.invoke('bridge:status'),
   syncPlayback: (partial) => ipcRenderer.invoke('playback:sync', partial),
   pickSyncFolder: () => ipcRenderer.invoke('playback:pick-folder'),
+  listMeetingHubDecks: (partial) => ipcRenderer.invoke('meetinghub:list', partial),
+  openMeetingHubDeck: (deckId, partial) =>
+    ipcRenderer.invoke('meetinghub:open', { deckId, config: partial || {} }),
   startLiveCapture: (partial) => ipcRenderer.invoke('live-capture:start', partial),
   stopLiveCapture: () => ipcRenderer.invoke('live-capture:stop'),
   getLiveCapture: () => ipcRenderer.invoke('live-capture:status'),

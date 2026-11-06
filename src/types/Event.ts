@@ -54,18 +54,22 @@ export function eventHasStreamRequestInfo(details?: EventStreamDetails | null): 
   );
 }
 
-/** Event types that may choose Event Board instead of a timed ROS. */
+/** Event types that may choose Meeting Hub (stored as workspaceMode "board") instead of a timed ROS. */
 export const BOARD_ELIGIBLE_EVENT_TYPES = new Set(['General Meeting', 'Hollow Square']);
 
 export function eventAllowsBoardChoice(eventType?: string | null): boolean {
   return BOARD_ELIGIBLE_EVENT_TYPES.has(String(eventType || '').trim());
 }
 
+/** UI label for the Board / Meeting Hub workspace. */
+export const MEETING_HUB_LABEL = 'Meeting Hub';
+
 export function normalizeWorkspaceMode(
   mode: unknown,
   eventType?: string | null
 ): WorkspaceMode {
-  if (String(mode || '').trim() === 'board' && eventAllowsBoardChoice(eventType)) {
+  const raw = String(mode || '').trim().toLowerCase();
+  if ((raw === 'board' || raw === 'hub') && eventAllowsBoardChoice(eventType)) {
     return 'board';
   }
   return 'ros';
@@ -95,7 +99,7 @@ export interface Event {
    * Stream key is sensitive — do not put in public ICS / guest exports.
    */
   streamDetails?: EventStreamDetails;
-  /** Timed ROS (default) or Event Board workspace. */
+  /** Timed ROS (default) or Meeting Hub workspace (stored as "board"). */
   workspaceMode?: WorkspaceMode;
   created_at?: string;
   updated_at?: string;

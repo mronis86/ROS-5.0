@@ -9,6 +9,8 @@ import { canSelectOperatorRole } from '../services/auth-service';
 import RoleSelectionModal from '../components/RoleSelectionModal';
 import { sessionRoleLabel } from '../lib/sessionRoleLabels';
 import { parseBoardAgenda, rowsLookTimed, type BoardAgendaRow } from '../lib/boardAgenda';
+import { MEETING_HUB_LABEL } from '../types/Event';
+import { versionedFileName } from '../lib/cueFileVersions';
 
 type SessionRole = 'VIEWER' | 'EDITOR' | 'OPERATOR';
 
@@ -32,6 +34,11 @@ type BoardAsset = {
   extracted_text?: string | null;
   uploaded_by_name?: string | null;
   created_at?: string;
+  version?: number;
+  versionCount?: number;
+  versionedName?: string;
+  isCurrent?: boolean;
+  converted_from_id?: string | null;
 };
 
 type BoardData = {
@@ -41,6 +48,8 @@ type BoardData = {
   agenda_items?: BoardAgendaRow[];
   conference_setup?: string;
   food_beverage?: string;
+  public_control_enabled?: boolean;
+  public_token?: string | null;
   assets: BoardAsset[];
 };
 
@@ -52,7 +61,7 @@ const ZONE_META: Record<BoardZone, { title: string; hint: string; accept: string
   },
   powerpoint: {
     title: 'PowerPoint',
-    hint: 'PPT, PPTX, or PDF decks',
+    hint: 'PPT, PPTX, or PDF decks — PDF can Make PowerPoint; same-name uploads version like ROS',
     accept: '.ppt,.pptx,.pdf',
   },
   display: {
@@ -61,6 +70,20 @@ const ZONE_META: Record<BoardZone, { title: string; hint: string; accept: string
     accept: 'image/*,video/*,.pdf',
   },
 };
+
+function isPdfAsset(asset: BoardAsset): boolean {
+  const name = String(asset.original_name || '').toLowerCase();
+  const mime = String(asset.mime_type || '').toLowerCase();
+  return name.endsWith('.pdf') || mime === 'application/pdf';
+}
+
+function assetDisplayName(asset: BoardAsset): string {
+  return (
+    asset.versionedName ||
+    versionedFileName(asset.original_name, asset.version, asset.versionCount) ||
+    asset.original_name
+  );
+}
 
 function formatBytes(n?: number | null): string {
   if (!n || n <= 0) return '';
@@ -97,6 +120,9 @@ const EventBoardPage: React.FC = () => {
   const [dragOverZone, setDragOverZone] = useState<BoardZone | null>(null);
   const [notesTab, setNotesTab] = useState<'agenda' | 'setup' | 'food' | 'av'>('agenda');
   const [notesQuery, setNotesQuery] = useState('');
+  const [convertingId, setConvertingId] = useState<string | null>(null);
+  const [usingId, setUsingId] = useState<string | null>(null);
+  const [publicBusy, setPublicBusy] = useState(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileInputRefs = useRef<Partial<Record<BoardZone, HTMLInputElement | null>>>({});
 
@@ -153,7 +179,7 @@ const EventBoardPage: React.FC = () => {
 
   useEffect(() => {
     if (!eventId) {
-      setError('No event selected. Open Event Board from the event list.');
+      setError(`No event selected. Open ${MEETING_HUB_LABEL} from the event list.`);
       setLoading(false);
       return;
     }
@@ -301,6 +327,88 @@ const EventBoardPage: React.FC = () => {
     }
   };
 
+  const convertPdfToPpt = async (asset: BoardAsset) => {
+    if (!eventId || !canEdit) return;
+    setConvertingId(asset.id);
+    setError(null);
+    try {
+      const res = await apiAuthFetch(
+        `${getApiBaseUrl()}/api/event-board/${encodeURIComponent(eventId)}/assets/${encodeURIComponent(asset.id)}/pdf-to-pptx`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-ROS-Role': userRole },
+          body: JSON.stringify({}),
+        }
+      );
+      if (!res) throw new Error('Not signed in');
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Could not create PowerPoint');
+      await loadBoard(eventId);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not create PowerPoint');
+    } finally {
+      setConvertingId(null);
+    }
+  };
+
+  const useAssetVersion = async (asset: BoardAsset) => {
+    if (!eventId || !canEdit) return;
+    setUsingId(asset.id);
+    setError(null);
+    try {
+      const res = await apiAuthFetch(
+        `${getApiBaseUrl()}/api/event-board/${encodeURIComponent(eventId)}/assets/${encodeURIComponent(asset.id)}/prefer`,
+        { method: 'POST', headers: { 'X-ROS-Role': userRole } }
+      );
+      if (!res) throw new Error('Not signed in');
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Could not switch version');
+      await loadBoard(eventId);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not switch version');
+    } finally {
+      setUsingId(null);
+    }
+  };
+
+  const publicControlUrl =
+    board?.public_control_enabled && board.public_token
+      ? `${window.location.origin}/meeting-hub/${encodeURIComponent(board.public_token)}`
+      : null;
+
+  const setPublicControl = async (enabled: boolean, rotate = false) => {
+    if (!eventId || !canEdit) return;
+    setPublicBusy(true);
+    setError(null);
+    try {
+      const res = await apiAuthFetch(
+        `${getApiBaseUrl()}/api/event-board/${encodeURIComponent(eventId)}/public-control`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-ROS-Role': userRole },
+          body: JSON.stringify({ enabled, rotate }),
+        }
+      );
+      if (!res) throw new Error('Not signed in');
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Could not update public control');
+      await loadBoard(eventId);
+      if (enabled && data.public_token) {
+        const url = `${window.location.origin}/meeting-hub/${encodeURIComponent(data.public_token)}`;
+        try {
+          await navigator.clipboard.writeText(url);
+        } catch {
+          /* ignore */
+        }
+        window.open(url, '_blank', 'noopener,noreferrer');
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not update public control');
+    } finally {
+      setPublicBusy(false);
+    }
+  };
+
   const applyRole = (role: string) => {
     const resolved = resolveSessionRole(role, user);
     setUserRole(resolved);
@@ -411,20 +519,45 @@ const EventBoardPage: React.FC = () => {
           {list.length === 0 ? (
             <li className="text-xs text-slate-500">No files yet.</li>
           ) : (
-            list.map((asset) => (
+            list.map((asset) => {
+              const versioned = (asset.versionCount || 1) > 1;
+              const displayName = assetDisplayName(asset);
+              return (
               <li
                 key={asset.id}
-                className="flex items-start justify-between gap-2 rounded-md border border-slate-700 bg-slate-950/50 px-2.5 py-2"
+                className={`flex items-start justify-between gap-2 rounded-md border px-2.5 py-2 ${
+                  asset.isCurrent === false && versioned
+                    ? 'border-slate-700 bg-slate-950/30 opacity-90'
+                    : 'border-slate-700 bg-slate-950/50'
+                }`}
               >
                 <div className="min-w-0">
-                  <p className="text-sm text-slate-100 truncate" title={asset.original_name}>
-                    {asset.original_name}
-                  </p>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <p className="text-sm text-slate-100 truncate" title={displayName}>
+                      {displayName}
+                    </p>
+                    {versioned ? (
+                      <span
+                        className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide ${
+                          asset.isCurrent
+                            ? 'bg-emerald-700 text-emerald-50'
+                            : 'bg-slate-600 text-slate-100'
+                        }`}
+                      >
+                        {asset.isCurrent ? `Current · v${asset.version}` : `Older · v${asset.version}`}
+                      </span>
+                    ) : null}
+                    {asset.converted_from_id ? (
+                      <span className="rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide bg-amber-900/70 text-amber-100">
+                        From PDF
+                      </span>
+                    ) : null}
+                  </div>
                   <p className="text-[11px] text-slate-500">
                     {[formatBytes(asset.size_bytes), asset.uploaded_by_name].filter(Boolean).join(' · ')}
                   </p>
                 </div>
-                <div className="flex shrink-0 items-center gap-1">
+                <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">
                   <button
                     type="button"
                     onClick={() => void openAsset(asset)}
@@ -432,6 +565,26 @@ const EventBoardPage: React.FC = () => {
                   >
                     Open
                   </button>
+                  {zone === 'powerpoint' && canEdit && isPdfAsset(asset) ? (
+                    <button
+                      type="button"
+                      disabled={!!convertingId}
+                      onClick={() => void convertPdfToPpt(asset)}
+                      className="rounded px-2 py-1 text-[11px] font-medium text-amber-200 hover:bg-slate-800 disabled:opacity-50"
+                    >
+                      {convertingId === asset.id ? 'Creating PPT…' : 'Make PowerPoint'}
+                    </button>
+                  ) : null}
+                  {canEdit && versioned && asset.isCurrent === false ? (
+                    <button
+                      type="button"
+                      disabled={!!usingId}
+                      onClick={() => void useAssetVersion(asset)}
+                      className="rounded px-2 py-1 text-[11px] font-medium text-violet-200 hover:bg-slate-800 disabled:opacity-50"
+                    >
+                      {usingId === asset.id ? 'Switching…' : 'Use this version'}
+                    </button>
+                  ) : null}
                   {zone === 'agenda' && asset.extracted_text && canEdit ? (
                     <button
                       type="button"
@@ -453,7 +606,8 @@ const EventBoardPage: React.FC = () => {
                   ) : null}
                 </div>
               </li>
-            ))
+            );
+            })
           )}
         </ul>
       </section>
@@ -476,7 +630,7 @@ const EventBoardPage: React.FC = () => {
         </div>
         <div className="flex items-center justify-center px-6 pt-16">
           <div className="max-w-md text-center space-y-3">
-            <p className="text-lg font-semibold text-white">Event Board</p>
+            <p className="text-lg font-semibold text-white">{MEETING_HUB_LABEL}</p>
             <p className="text-sm text-slate-400">{error || 'Open an event from the list.'}</p>
           </div>
         </div>
@@ -497,9 +651,9 @@ const EventBoardPage: React.FC = () => {
             ← Events
           </button>
           <div className="ml-6 min-w-0 flex items-center gap-2">
-            <h1 className="truncate text-sm font-semibold text-white">{event?.name || 'Event Board'}</h1>
+            <h1 className="truncate text-sm font-semibold text-white">{event?.name || MEETING_HUB_LABEL}</h1>
             <span className="shrink-0 rounded bg-emerald-800/80 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-100">
-              Board
+              Hub
             </span>
             <span className="hidden md:inline truncate text-xs text-slate-500">
               {[event?.date, event?.location].filter(Boolean).join(' · ')}
@@ -536,9 +690,70 @@ const EventBoardPage: React.FC = () => {
         ) : null}
 
         {loading ? (
-          <p className="text-slate-400 text-sm">Loading board…</p>
+          <p className="text-slate-400 text-sm">Loading {MEETING_HUB_LABEL}…</p>
         ) : (
           <>
+            <section className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border border-emerald-600/45 bg-emerald-950/55 px-3 py-1.5">
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-emerald-200">
+                Share
+              </span>
+              <span className="hidden sm:inline text-[11px] text-emerald-200/70">
+                Public agenda + decks · Bridge → Meeting Hub on room PC
+              </span>
+              <div className="ml-auto flex flex-wrap items-center gap-1.5">
+                {publicControlUrl ? (
+                  <>
+                    <a
+                      href={publicControlUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="rounded bg-emerald-800/70 px-2 py-0.5 text-[11px] font-semibold text-emerald-50 hover:bg-emerald-700/80"
+                    >
+                      Open
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => void navigator.clipboard.writeText(publicControlUrl)}
+                      className="rounded px-2 py-0.5 text-[11px] font-medium text-emerald-100/90 hover:bg-emerald-900/60"
+                    >
+                      Copy
+                    </button>
+                    {canEdit ? (
+                      <>
+                        <button
+                          type="button"
+                          disabled={publicBusy}
+                          onClick={() => void setPublicControl(true, true)}
+                          className="rounded px-2 py-0.5 text-[11px] font-medium text-emerald-200/80 hover:bg-emerald-900/60 disabled:opacity-50"
+                        >
+                          New link
+                        </button>
+                        <button
+                          type="button"
+                          disabled={publicBusy}
+                          onClick={() => void setPublicControl(false)}
+                          className="rounded px-2 py-0.5 text-[11px] font-medium text-red-300/90 hover:bg-emerald-900/60 disabled:opacity-50"
+                        >
+                          Disable
+                        </button>
+                      </>
+                    ) : null}
+                  </>
+                ) : canEdit ? (
+                  <button
+                    type="button"
+                    disabled={publicBusy}
+                    onClick={() => void setPublicControl(true)}
+                    className="rounded bg-emerald-800/70 px-2 py-0.5 text-[11px] font-semibold text-emerald-50 hover:bg-emerald-700/80 disabled:opacity-50"
+                  >
+                    Share &amp; open
+                  </button>
+                ) : (
+                  <span className="text-[11px] text-emerald-200/60">Off</span>
+                )}
+              </div>
+            </section>
+
             <div className="grid gap-4 md:grid-cols-3">
               {renderZone('agenda')}
               {renderZone('powerpoint')}

@@ -1,7 +1,7 @@
 {
   "name": "ros-powerpoint-bridge",
-  "version": "0.2.6",
-  "description": "Windows helper V2: Mode 1 stills fire ROS cues; Mode 2 ROS load opens cached PowerPoint",
+  "version": "0.2.7",
+  "description": "Windows helper V2: follow stills, ROS PPT Launcher, and Meeting Hub deck open",
   "private": true,
   "main": "electron/main.js",
   "devDependencies": {

@@ -64,8 +64,18 @@
         <div class="event-tabs" role="tablist" aria-label="Bridge mode">
           <button type="button" class="event-tab active" data-bridge-mode="follow" role="tab" aria-selected="true">PowerPoint Show with Timers</button>
           <button type="button" class="event-tab" data-bridge-mode="playback" role="tab" aria-selected="false">ROS PPT Launcher</button>
+          <button type="button" class="event-tab" data-bridge-mode="meetinghub" role="tab" aria-selected="false">Meeting Hub</button>
         </div>
         <p id="mode-hint" class="hint">Use PowerPoint with Run of Show. Pick one mode on this PC for the event.</p>
+      </section>
+
+      <section id="meetinghub-card" class="card" hidden>
+        <h2>Meeting Hub decks</h2>
+        <p class="hint">Loads current PowerPoint files uploaded on the event’s Meeting Hub (PDF→PPT and versioned decks included). Open downloads the current version and launches it in PowerPoint on this PC.</p>
+        <div class="row">
+          <button type="button" id="btn-hub-refresh" class="primary">Refresh decks</button>
+        </div>
+        <div id="hub-deck-list" class="cache-list"><p class="hint">Pick a Meeting Hub event, then Refresh decks.</p></div>
       </section>
 
       <section class="card">

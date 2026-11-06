@@ -5,6 +5,7 @@ const fs = require('fs');
 const { loadConfig, saveConfig } = require('./config-store');
 const { BridgeController } = require('./bridge-controller');
 const { PlaybackController } = require('./playback-controller');
+const { MeetingHubController } = require('./meeting-hub-controller');
 const { validateApi, listCalendarEvents } = require('./railway-client');
 const ppt = require('./ppt-com');
 const liveCapture = require('./live-capture');
@@ -44,9 +45,12 @@ function sendLiveCapture(status) {
 
 const follow = new BridgeController({ onStatus: sendStatus });
 const playback = new PlaybackController({ onStatus: sendStatus, cacheRoot });
+const meetingHub = new MeetingHubController();
 
 function activeController(mode) {
-  return mode === 'playback' ? playback : follow;
+  if (mode === 'playback') return playback;
+  if (mode === 'meetinghub') return meetingHub;
+  return follow;
 }
 
 function createWindow() {
@@ -125,6 +129,10 @@ ipcMain.handle('bridge:start', (_e, partial) => {
   if (cfg.bridgeMode === 'playback') {
     follow.stop();
     playback.start(cfg);
+  } else if (cfg.bridgeMode === 'meetinghub') {
+    follow.stop();
+    playback.stop();
+    meetingHub.config = cfg;
   } else {
     playback.stop();
     follow.start(cfg);
@@ -153,6 +161,34 @@ ipcMain.handle('playback:pick-folder', async () => {
   });
   if (picked.canceled || !picked.filePaths[0]) return current;
   return saveConfig({ syncFolder: picked.filePaths[0] });
+});
+ipcMain.handle('meetinghub:list', async (_e, partial) => {
+  const cfg = saveConfig(partial || {});
+  follow.stop();
+  playback.stop();
+  const status = await meetingHub.listDecks(cfg);
+  sendStatus(status);
+  return status;
+});
+ipcMain.handle('meetinghub:open', async (_e, payload) => {
+  const partial = payload?.config || payload || {};
+  const deckId = payload?.deckId || partial.deckId;
+  const cfg = saveConfig(partial);
+  follow.stop();
+  playback.stop();
+  try {
+    const status = await meetingHub.openDeckById(deckId, cfg);
+    sendStatus(status);
+    return status;
+  } catch (err) {
+    const status = {
+      ...meetingHub.status,
+      error: err.message || String(err),
+      lastAction: 'Open failed',
+    };
+    sendStatus(status);
+    throw err;
+  }
 });
 ipcMain.handle('live-capture:start', (_e, partial) => liveCapture.start(partial || {}));
 ipcMain.handle('live-capture:stop', () => liveCapture.stop());

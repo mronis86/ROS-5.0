@@ -16,6 +16,7 @@ import {
   eventLocationSearchText,
   isOffSiteLocation,
   eventAllowsBoardChoice,
+  MEETING_HUB_LABEL,
   normalizeWorkspaceMode,
   eventNeedsStreamDetails,
   parseEventStreamDetails,
@@ -1431,7 +1432,7 @@ const EventListPage: React.FC = () => {
                             ) : null}
                             {normalizeWorkspaceMode(event.workspaceMode, event.eventType) === 'board' ? (
                               <span className="ml-2 inline-flex items-center rounded bg-emerald-700/90 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white align-middle">
-                                Board
+                                Hub
                               </span>
                             ) : null}
                             {event.isQuickMode && (
@@ -1695,7 +1696,7 @@ const EventListPage: React.FC = () => {
                 <div className="col-span-2 rounded-lg border border-emerald-700/50 bg-emerald-950/30 p-3 space-y-2">
                   <p className="text-sm font-semibold text-emerald-100">How should this event run?</p>
                   <p className="text-xs text-slate-400">
-                    General Meeting and Hollow Square can use a timed Run of Show or an Event Board.
+                    General Meeting and Hollow Square can use a timed Run of Show or a {MEETING_HUB_LABEL}.
                   </p>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     <label
@@ -1732,7 +1733,7 @@ const EventListPage: React.FC = () => {
                         onChange={() => setFormData((prev) => ({ ...prev, workspaceMode: 'board' }))}
                       />
                       <span>
-                        <span className="block text-sm font-semibold text-white">Event Board</span>
+                        <span className="block text-sm font-semibold text-white">{MEETING_HUB_LABEL}</span>
                         <span className="block text-xs text-slate-400">Agenda, decks, display files, AV notes</span>
                       </span>
                     </label>
@@ -2036,7 +2037,7 @@ const EventListPage: React.FC = () => {
               {eventAllowsBoardChoice(editFormData.eventType) ? (
                 <div className="col-span-2 rounded-lg border border-emerald-700/50 bg-emerald-950/30 p-3 space-y-2">
                   <p className="text-sm font-semibold text-emerald-100">How should this event run?</p>
-                  <p className="text-xs text-slate-400">You can switch later between ROS and Event Board.</p>
+                  <p className="text-xs text-slate-400">You can switch later between ROS and {MEETING_HUB_LABEL}.</p>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     <label
                       className={`flex items-start gap-2 rounded-lg border px-3 py-2.5 cursor-pointer ${
@@ -2072,7 +2073,7 @@ const EventListPage: React.FC = () => {
                         onChange={() => setEditFormData((prev) => ({ ...prev, workspaceMode: 'board' }))}
                       />
                       <span>
-                        <span className="block text-sm font-semibold text-white">Event Board</span>
+                        <span className="block text-sm font-semibold text-white">{MEETING_HUB_LABEL}</span>
                         <span className="block text-xs text-slate-400">Agenda, decks, display files, AV notes</span>
                       </span>
                     </label>

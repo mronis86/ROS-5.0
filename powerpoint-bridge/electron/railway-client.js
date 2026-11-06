@@ -187,6 +187,14 @@ async function fetchPlaybackPreviews(apiBaseUrl, apiToken, eventId, fileId) {
   );
 }
 
+async function fetchMeetingHubDecks(apiBaseUrl, apiToken, eventId) {
+  return railwayFetch(
+    apiBaseUrl,
+    apiToken,
+    `/api/event-board/${encodeURIComponent(eventId)}/meeting-hub/decks`
+  );
+}
+
 async function fetchPlaybackPreviewImage(apiBaseUrl, apiToken, eventId, slideId) {
   const base = normalizeBaseUrl(apiBaseUrl);
   if (!base) throw new Error('API base URL is required');
@@ -221,4 +229,5 @@ module.exports = {
   uploadPlaybackPreviews,
   fetchPlaybackPreviews,
   fetchPlaybackPreviewImage,
+  fetchMeetingHubDecks,
 };
