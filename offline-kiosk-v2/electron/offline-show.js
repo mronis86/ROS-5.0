@@ -387,6 +387,35 @@ async function getStatus() {
   };
 }
 
+async function getPptBridgeStatus(eventId) {
+  const id = String(eventId || '').trim();
+  if (!id) {
+    return { ok: false, online: false, reason: 'no-event', message: 'Select an event first.' };
+  }
+  if (!(await isRunning())) {
+    return {
+      ok: false,
+      online: false,
+      reason: 'show-off',
+      message: 'Start Offline Show to check PPT Bridge.',
+    };
+  }
+  try {
+    const data = await requestJson(
+      `/api/kiosk/ppt-bridge-status?eventId=${encodeURIComponent(id)}`,
+      { timeoutMs: 12000 }
+    );
+    return data && typeof data === 'object' ? data : { ok: false, online: false, error: 'Bad response' };
+  } catch (e) {
+    return {
+      ok: false,
+      online: false,
+      eventId: id,
+      error: e instanceof Error ? e.message : 'PPT status failed',
+    };
+  }
+}
+
 module.exports = {
   OFFLINE_SHOW_URL,
   getStatus,
@@ -402,4 +431,5 @@ module.exports = {
   clearRailwayToken,
   syncFromCloud,
   prepareEvents,
+  getPptBridgeStatus,
 };

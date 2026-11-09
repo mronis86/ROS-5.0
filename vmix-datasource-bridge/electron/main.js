@@ -10,6 +10,12 @@ const {
   validateApi,
   vmix,
 } = require('./bridge-controller');
+const {
+  planSession,
+  sessionIsActive,
+  formatRemaining,
+  clampLiveHours,
+} = require('./session-schedule');
 
 const userDataRoot = path.join(process.env.LOCALAPPDATA || os.tmpdir(), 'ros-vmix-datasource');
 const chromiumCacheDir = path.join(userDataRoot, 'chromium-cache');
@@ -25,9 +31,71 @@ if (runningFromOneDrive || process.env.ROS_VMIX_DISABLE_GPU === '1' || process.p
 
 let mainWindow = null;
 let powerSaveId = null;
+let sessionExpireTimer = null;
 const bridge = new BridgeController({
   onStatus: (status) => sendToRenderer('bridge:status', status),
 });
+
+function getSessionState(cfg = loadConfig()) {
+  const endsAt = cfg.sessionEndsAt || '';
+  const active = sessionIsActive(endsAt);
+  return {
+    active,
+    mode: cfg.sessionMode || '',
+    hours: clampLiveHours(cfg.sessionHours),
+    endsAt: active ? endsAt : '',
+    label: active ? cfg.sessionLabel || '' : '',
+    remaining: active ? formatRemaining(endsAt) : '',
+  };
+}
+
+function clearSessionTimer() {
+  if (sessionExpireTimer) {
+    clearTimeout(sessionExpireTimer);
+    sessionExpireTimer = null;
+  }
+}
+
+async function endSession(reason) {
+  clearSessionTimer();
+  try {
+    await bridge.stop();
+  } catch {
+    /* ignore */
+  }
+  const cfg = saveConfig({
+    sessionMode: '',
+    sessionEndsAt: '',
+    sessionLabel: '',
+  });
+  const payload = {
+    ...getSessionState(cfg),
+    ended: true,
+    reason: reason || 'Session ended',
+  };
+  sendToRenderer('session:status', payload);
+  sendToRenderer('bridge:status', bridge.getStatus());
+  return payload;
+}
+
+function armSessionTimer(endsAtIso) {
+  clearSessionTimer();
+  const endsMs = Date.parse(String(endsAtIso || ''));
+  if (!Number.isFinite(endsMs)) return;
+  const delay = Math.max(0, endsMs - Date.now());
+  sessionExpireTimer = setTimeout(() => {
+    void endSession('Session time is up — bridge disconnected');
+  }, delay);
+}
+
+function requireActiveSession() {
+  const state = getSessionState();
+  if (state.active) return null;
+  return {
+    ok: false,
+    error: 'Choose how long you need the bridge first (Testing, Live Event, or Everyday).',
+  };
+}
 
 function resolveAppIcon() {
   const candidates = [
@@ -92,6 +160,8 @@ app.whenReady().then(() => {
   installApiAuth(session.defaultSession, config.apiBaseUrl, config.apiToken);
   powerSaveId = powerSaveBlocker.start('prevent-app-suspension');
   createWindow();
+  const existing = getSessionState(config);
+  if (existing.active) armSessionTimer(existing.endsAt);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -99,6 +169,7 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', async () => {
+  clearSessionTimer();
   await bridge.stop();
   if (powerSaveId != null && powerSaveBlocker.isStarted(powerSaveId)) {
     powerSaveBlocker.stop(powerSaveId);
@@ -146,7 +217,29 @@ ipcMain.handle('vmix:listDataSources', async (_event, partial) => {
   }
 });
 
+ipcMain.handle('session:get', () => getSessionState());
+ipcMain.handle('session:start', (_event, partial) => {
+  const plan = planSession({
+    mode: partial?.mode,
+    hours: partial?.hours,
+  });
+  if (!plan.ok) return { ok: false, error: plan.error };
+  const cfg = saveConfig({
+    sessionMode: plan.mode,
+    sessionHours: plan.hours != null ? plan.hours : loadConfig().sessionHours,
+    sessionEndsAt: plan.endsAt.toISOString(),
+    sessionLabel: plan.label,
+  });
+  armSessionTimer(cfg.sessionEndsAt);
+  const state = { ok: true, ...getSessionState(cfg) };
+  sendToRenderer('session:status', state);
+  return state;
+});
+ipcMain.handle('session:end', () => endSession('Session cleared'));
+
 ipcMain.handle('bridge:start', async (_event, partial) => {
+  const blocked = requireActiveSession();
+  if (blocked) return blocked;
   const config = saveConfig(partial || {});
   installApiAuth(session.defaultSession, config.apiBaseUrl, config.apiToken);
   return bridge.start(config);
@@ -154,11 +247,17 @@ ipcMain.handle('bridge:start', async (_event, partial) => {
 
 ipcMain.handle('bridge:stop', async () => bridge.stop());
 
-ipcMain.handle('bridge:resync', async () => bridge.resync());
+ipcMain.handle('bridge:resync', async () => {
+  const blocked = requireActiveSession();
+  if (blocked) return blocked;
+  return bridge.resync();
+});
 
 ipcMain.handle('bridge:status', () => bridge.getStatus());
 
 ipcMain.handle('bridge:cue', async (_event, payload) => {
+  const blocked = requireActiveSession();
+  if (blocked) return blocked;
   const itemId = payload?.itemId;
   const data = payload?.data || {};
   await bridge.applyCue(itemId, data);

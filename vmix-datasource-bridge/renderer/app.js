@@ -22,8 +22,11 @@ const els = {
   runPill: document.getElementById('run-pill'),
   autoStopPill: document.getElementById('auto-stop-pill'),
   autoStopModal: document.getElementById('auto-stop-modal'),
-  autoStopHours: document.getElementById('auto-stop-hours'),
-  autoStopMinutes: document.getElementById('auto-stop-minutes'),
+  sessionLiveHours: document.getElementById('session-live-hours'),
+  sessionHours: document.getElementById('sessionHours'),
+  sessionModalError: document.getElementById('session-modal-error'),
+  btnSession: document.getElementById('btn-session'),
+  btnSessionCancel: document.getElementById('btn-session-cancel'),
   autoStopNotice: document.getElementById('auto-stop-notice'),
   autoStopNoticeText: document.getElementById('auto-stop-notice-text'),
   stRailway: document.getElementById('st-railway'),
@@ -156,13 +159,10 @@ function setEventFilter(next) {
   });
   renderEventSelect();
 }
-/** @type {{ hours: number, minutes: number, never: boolean }} */
-let autoStopPrefs = { hours: 2, minutes: 0, never: false };
-
-let autoStopTimer = null;
-let autoStopEndsAt = null;
-let autoStopTick = null;
-let autoStopDurationLabel = '';
+let sessionActive = false;
+let sessionLabel = '';
+let pendingStartAfterSession = false;
+let sessionTickTimer = null;
 
 function showToast(message, isError = false) {
   els.toast.hidden = false;
@@ -193,94 +193,71 @@ function clampPoll(n) {
   return Math.min(60, Math.max(1, v));
 }
 
-function formatDuration(ms) {
-  const totalSec = Math.max(0, Math.ceil(ms / 1000));
-  const h = Math.floor(totalSec / 3600);
-  const m = Math.floor((totalSec % 3600) / 60);
-  const s = totalSec % 60;
-  if (h > 0) return `${h}h ${String(m).padStart(2, '0')}m`;
-  return `${m}m ${String(s).padStart(2, '0')}s`;
+function selectedSessionMode() {
+  const checked = document.querySelector('input[name="sessionMode"]:checked');
+  return checked ? checked.value : 'testing';
 }
 
-function formatAutoStopLabel(hours, minutes) {
-  const parts = [];
-  if (hours) parts.push(`${hours}h`);
-  if (minutes) parts.push(`${minutes}m`);
-  return parts.join(' ') || '0m';
+function syncSessionModeUi() {
+  const mode = selectedSessionMode();
+  if (els.sessionLiveHours) els.sessionLiveHours.hidden = mode !== 'live';
 }
 
-function clearAutoStopTimer() {
-  if (autoStopTimer) {
-    clearTimeout(autoStopTimer);
-    autoStopTimer = null;
-  }
-  if (autoStopTick) {
-    clearInterval(autoStopTick);
-    autoStopTick = null;
-  }
-  autoStopEndsAt = null;
-  autoStopDurationLabel = '';
+function applySession(state) {
+  sessionActive = !!(state && state.active);
+  sessionLabel = sessionActive ? state.label || '' : '';
   if (els.autoStopPill) {
-    els.autoStopPill.hidden = true;
-    els.autoStopPill.textContent = '';
+    if (sessionActive) {
+      els.autoStopPill.hidden = false;
+      const left = state.remaining || '';
+      els.autoStopPill.textContent = left
+        ? `${state.label || 'Session'} · ${left}`
+        : state.label || 'Session active';
+    } else {
+      els.autoStopPill.hidden = false;
+      els.autoStopPill.textContent = 'No session';
+    }
+  }
+  if (els.btnSessionCancel) els.btnSessionCancel.hidden = !sessionActive;
+  if (els.autoStopModal && sessionActive && !pendingStartAfterSession) {
+    els.autoStopModal.hidden = true;
   }
 }
 
-function updateAutoStopPill() {
-  if (!els.autoStopPill || !autoStopEndsAt) return;
-  const left = autoStopEndsAt - Date.now();
-  if (left <= 0) {
-    els.autoStopPill.textContent = 'Stopping…';
-    return;
+function openSessionModal({ force = false, startAfter = false } = {}) {
+  if (!els.autoStopModal) return;
+  pendingStartAfterSession = !!startAfter;
+  if (els.sessionModalError) els.sessionModalError.textContent = '';
+  syncSessionModeUi();
+  if (force || !sessionActive || startAfter) {
+    els.autoStopModal.hidden = false;
   }
-  els.autoStopPill.hidden = false;
-  els.autoStopPill.textContent = `Auto-stop ${formatDuration(left)}`;
 }
 
-async function performStop({ auto = false } = {}) {
-  const label = autoStopDurationLabel;
-  clearAutoStopTimer();
+function closeSessionModal() {
+  pendingStartAfterSession = false;
+  if (els.autoStopModal && sessionActive) els.autoStopModal.hidden = true;
+}
+
+async function refreshSession() {
+  if (!api.getSession) return { active: false };
+  const state = await api.getSession();
+  applySession(state);
+  return state;
+}
+
+async function performStop({ auto = false, reason = '' } = {}) {
   window.rosCueSocket?.stopCueSocket?.();
   await api.stopBridge();
   if (auto) {
-    els.autoStopNoticeText.textContent = label
-      ? `Polling stopped after ${label} to limit Neon / Railway cost.`
-      : 'Polling stopped after the auto-stop timer ended.';
+    els.autoStopNoticeText.textContent =
+      reason ||
+      (sessionLabel
+        ? `Bridge stopped after ${sessionLabel} to limit Neon / Railway cost.`
+        : 'Bridge stopped after the session timer ended.');
     els.autoStopNotice.hidden = false;
-    showToast('Auto-stopped — hit Start again when you need it', false);
+    showToast('Session ended — hit Start again when you need it', false);
   }
-}
-
-function scheduleAutoStop(hours, minutes) {
-  clearAutoStopTimer();
-  const ms = (Math.max(0, hours) * 60 + Math.max(0, minutes)) * 60 * 1000;
-  if (ms <= 0) return;
-  autoStopDurationLabel = formatAutoStopLabel(hours, minutes);
-  autoStopEndsAt = Date.now() + ms;
-  updateAutoStopPill();
-  autoStopTick = setInterval(updateAutoStopPill, 1000);
-  autoStopTimer = setTimeout(() => {
-    void performStop({ auto: true });
-  }, ms);
-}
-
-function initAutoStopHourOptions() {
-  els.autoStopHours.innerHTML = Array.from({ length: 25 }, (_, i) => {
-    return `<option value="${i}">${i}</option>`;
-  }).join('');
-}
-
-function openAutoStopModal() {
-  let hours = Number(autoStopPrefs.hours) || 0;
-  let minutes = Number(autoStopPrefs.minutes) || 0;
-  if (hours === 0 && minutes === 0) hours = 2;
-  els.autoStopHours.value = String(hours);
-  els.autoStopMinutes.value = String(minutes);
-  els.autoStopModal.hidden = false;
-}
-
-function closeAutoStopModal() {
-  els.autoStopModal.hidden = true;
 }
 
 function syncPollPresetButtons() {
@@ -315,9 +292,6 @@ function readForm() {
     vmixHost: els.vmixHost.value.trim() || '127.0.0.1',
     vmixPort: Number(els.vmixPort.value) || 8088,
     pollSeconds: clampPoll(els.pollSeconds.value),
-    autoStopHours: autoStopPrefs.hours,
-    autoStopMinutes: autoStopPrefs.minutes,
-    autoStopNever: autoStopPrefs.never === true,
     bindings: bindingState.map((b, i) => ({
       id: b.id || `b${i + 1}`,
       enabled: b.enabled !== false,
@@ -343,13 +317,14 @@ function fillForm(config) {
   els.vmixHost.value = config.vmixHost || '127.0.0.1';
   els.vmixPort.value = config.vmixPort || 8088;
   els.pollSeconds.value = clampPoll(config.pollSeconds ?? 1);
-  autoStopPrefs = {
-    hours: Math.min(24, Math.max(0, Number(config.autoStopHours) || 0)),
-    minutes: [0, 5, 10, 15, 20, 25, 30, 45].includes(Number(config.autoStopMinutes))
-      ? Number(config.autoStopMinutes)
-      : 0,
-    never: config.autoStopNever === true,
-  };
+  if (config.sessionMode) {
+    const radio = document.querySelector(`input[name="sessionMode"][value="${config.sessionMode}"]`);
+    if (radio) radio.checked = true;
+  }
+  if (els.sessionHours && config.sessionHours) {
+    els.sessionHours.value = String(Math.min(24, Math.max(1, Math.floor(Number(config.sessionHours) || 4))));
+  }
+  syncSessionModeUi();
   syncPollPresetButtons();
   bindingState =
     Array.isArray(config.bindings) && config.bindings.length
@@ -668,14 +643,9 @@ async function refreshDataSources() {
   }
 }
 
-async function startBridgeWithOptions({ never, hours, minutes }) {
-  autoStopPrefs = {
-    hours: never ? autoStopPrefs.hours : hours,
-    minutes: never ? autoStopPrefs.minutes : minutes,
-    never: !!never,
-  };
-  if (!never && hours === 0 && minutes === 0) {
-    showToast('Pick a time greater than 0, or choose Never auto-stop', true);
+async function startBridgeNow() {
+  if (!sessionActive) {
+    openSessionModal({ force: true, startAfter: true });
     return;
   }
 
@@ -683,10 +653,15 @@ async function startBridgeWithOptions({ never, hours, minutes }) {
   await api.saveConfig(readForm());
   const form = readForm();
   const result = await api.startBridge(form);
+  if (result && result.ok === false) {
+    showToast(result.error || result.message || 'Start failed', true);
+    if (/session/i.test(String(result.error || ''))) openSessionModal({ force: true, startAfter: true });
+    return;
+  }
   showToast(result.message || (result.ok ? 'Started' : 'Start failed'), !result.ok);
   if (!result.ok) return;
 
-  closeAutoStopModal();
+  closeSessionModal();
   setTab('live');
   const follow = result.socketFollow || {
     apiBaseUrl: form.apiBaseUrl,
@@ -694,24 +669,59 @@ async function startBridgeWithOptions({ never, hours, minutes }) {
     apiToken: form.apiToken,
   };
   window.rosCueSocket?.startCueSocket?.(follow);
+  await refreshSession();
+}
 
-  if (never) {
-    clearAutoStopTimer();
-    els.autoStopPill.hidden = false;
-    els.autoStopPill.textContent = 'No auto-stop';
-  } else {
-    scheduleAutoStop(hours, minutes);
+async function confirmSessionAndMaybeStart() {
+  if (!api.startSession) return;
+  if (els.sessionModalError) els.sessionModalError.textContent = '';
+  const mode = selectedSessionMode();
+  const hours = Number(els.sessionHours?.value || 4);
+  const result = await api.startSession({ mode, hours });
+  if (!result?.ok) {
+    if (els.sessionModalError) els.sessionModalError.textContent = result?.error || 'Could not start session';
+    return;
   }
+  applySession(result);
+  showToast(result.label || 'Session started');
+  const shouldStart = pendingStartAfterSession;
+  pendingStartAfterSession = false;
+  els.autoStopModal.hidden = true;
+  if (shouldStart) await startBridgeNow();
 }
 
 async function init() {
-  initAutoStopHourOptions();
   const config = await api.loadConfig();
   fillForm(config);
   updateCatalogBanner();
 
   api.onStatus(renderLive);
   renderLive(await api.getStatus());
+
+  const session = await refreshSession();
+  if (!session.active) openSessionModal({ force: true });
+  if (sessionTickTimer) clearInterval(sessionTickTimer);
+  sessionTickTimer = setInterval(() => {
+    if (sessionActive) void refreshSession();
+  }, 30_000);
+
+  if (api.onSession) {
+    api.onSession((state) => {
+      applySession(state);
+      if (state?.ended) {
+        window.rosCueSocket?.stopCueSocket?.();
+        els.autoStopNoticeText.textContent = state.reason || 'Bridge stopped after the session timer ended.';
+        els.autoStopNotice.hidden = false;
+        showToast(state.reason || 'Session ended — bridge stopped', false);
+        openSessionModal({ force: true });
+        void api.getStatus().then(renderLive).catch(() => {});
+      }
+    });
+  }
+
+  document.querySelectorAll('input[name="sessionMode"]').forEach((input) => {
+    input.addEventListener('change', syncSessionModeUi);
+  });
 
   document.querySelectorAll('.tab').forEach((tab) => {
     tab.addEventListener('click', () => setTab(tab.dataset.tab));
@@ -811,34 +821,36 @@ async function init() {
   });
 
   document.getElementById('btn-start').addEventListener('click', () => {
-    openAutoStopModal();
+    if (!sessionActive) {
+      openSessionModal({ force: true, startAfter: true });
+      return;
+    }
+    void startBridgeNow();
   });
+
+  if (els.btnSession) {
+    els.btnSession.addEventListener('click', () => openSessionModal({ force: true }));
+  }
 
   document.getElementById('btn-auto-stop-confirm').addEventListener('click', () => {
-    const hours = Number(els.autoStopHours.value) || 0;
-    const minutes = Number(els.autoStopMinutes.value) || 0;
-    void startBridgeWithOptions({ never: false, hours, minutes });
+    void confirmSessionAndMaybeStart();
   });
 
-  document.getElementById('btn-auto-stop-never').addEventListener('click', () => {
-    void startBridgeWithOptions({
-      never: true,
-      hours: autoStopPrefs.hours,
-      minutes: autoStopPrefs.minutes,
-    });
-  });
+  if (els.btnSessionCancel) {
+    els.btnSessionCancel.addEventListener('click', () => closeSessionModal());
+  }
 
   document.getElementById('btn-auto-stop-restart').addEventListener('click', () => {
     els.autoStopNotice.hidden = true;
-    openAutoStopModal();
+    openSessionModal({ force: true, startAfter: true });
   });
 
   els.autoStopModal.addEventListener('click', (e) => {
-    if (e.target === els.autoStopModal) closeAutoStopModal();
+    if (e.target === els.autoStopModal && sessionActive) closeSessionModal();
   });
 
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && !els.autoStopModal.hidden) closeAutoStopModal();
+    if (e.key === 'Escape' && !els.autoStopModal.hidden && sessionActive) closeSessionModal();
   });
 
   document.getElementById('btn-stop').addEventListener('click', async () => {
@@ -848,6 +860,11 @@ async function init() {
   });
 
   document.getElementById('btn-resync').addEventListener('click', async () => {
+    if (!sessionActive) {
+      openSessionModal({ force: true });
+      showToast('Choose a session length first', true);
+      return;
+    }
     const result = await api.resync();
     showToast(result.message || (result.ok ? 'Resync OK' : 'Resync failed'), !result.ok);
   });

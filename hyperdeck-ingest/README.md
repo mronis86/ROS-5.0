@@ -64,7 +64,7 @@ Always set **Target folder** (editor watch folder / share).
 
 ## Follow rules
 
-1. On launch, set the **Railway session timer** (how long the app keeps polling before disconnect).
+1. On launch, pick a **session** — Testing (2h), Live Event (1–24h, also stops at midnight), or Everyday (7:00 AM–9:00 PM). Change later with **Session…**.
 2. Load events, select one, click **Confirm event** to lock it.
 3. Optionally choose **Rehearsal or In Show** under the event (default is **In Show only**).
 4. Click **Start follow**.

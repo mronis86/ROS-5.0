@@ -13,7 +13,7 @@ import tkinter as tk
 from datetime import datetime
 from tkinter import filedialog, messagebox, ttk
 
-from config_store import AUTO_STOP_MINUTES, _clamp_auto_stop_hours, _clamp_auto_stop_minutes, load_config, save_config
+from config_store import _clamp_session_hours, load_config, save_config
 from copy_util import CopyError, copy_from_ftp, unique_dest
 from hyperdeck_client import ClipInfo, HyperDeckClient, HyperDeckError
 from event_days import (
@@ -36,6 +36,7 @@ from names import (
     item_needs_recording,
 )
 from ros_api import RosApi, RosApiError
+from session_schedule import format_remaining, plan_session, session_is_active
 
 BG = "#0f172a"
 CARD = "#1e293b"
@@ -93,7 +94,6 @@ class HyperDeckIngestApp:
         self._ui_kind = "stopped"
         self._session_timer_configured = False
         self.copied_keys = set(str(x) for x in (self.cfg.get("copied_keys") or []))
-        self._auto_stop_never = False
         self._auto_stop_ends_at: float | None = None
         self._auto_stop_label = ""
         self._auto_stop_tick = None
@@ -246,7 +246,7 @@ class HyperDeckIngestApp:
             side="left"
         )
         ttk.Button(self.header_actions, text="Stop", command=self.stop_follow).pack(side="left", padx=(6, 0))
-        ttk.Button(self.header_actions, text="Set timer", command=self.configure_auto_stop_defaults).pack(
+        ttk.Button(self.header_actions, text="Session…", command=self.configure_auto_stop_defaults).pack(
             side="left", padx=(6, 0)
         )
         ttk.Button(self.header_actions, text="Save", command=self._save).pack(side="left", padx=(6, 0))
@@ -965,20 +965,14 @@ class HyperDeckIngestApp:
             return f"{hours}h {minutes:02d}m"
         return f"{minutes}m {secs:02d}s"
 
-    def _auto_stop_label_text(self, hours: int, minutes: int) -> str:
-        parts = []
-        if hours:
-            parts.append(f"{hours}h")
-        if minutes:
-            parts.append(f"{minutes}m")
-        return " ".join(parts) or "0m"
-
     def _default_auto_stop_text(self) -> str:
-        if bool(self.cfg.get("auto_stop_never")):
-            return "Session timer: Never"
-        hours = int(self.cfg.get("auto_stop_hours") or 0)
-        minutes = int(self.cfg.get("auto_stop_minutes") or 0)
-        return f"Session timer: {self._auto_stop_label_text(hours, minutes)}"
+        label = str(self.cfg.get("session_label") or "").strip()
+        if label and session_is_active(self.cfg.get("session_ends_at")):
+            left = format_remaining(self.cfg.get("session_ends_at"))
+            return f"{label}" + (f" · {left}" if left else "")
+        if label:
+            return f"Last session: {label}"
+        return "No session"
 
     def _refresh_auto_stop_default_label(self) -> None:
         self.auto_stop_default_var.set(self._default_auto_stop_text())
@@ -992,50 +986,39 @@ class HyperDeckIngestApp:
             self._auto_stop_tick = None
         self._auto_stop_ends_at = None
         self._auto_stop_label = ""
-        self._auto_stop_never = False
         self.auto_stop_pill.pack_forget()
         self.auto_stop_pill.configure(text="")
 
     def _update_auto_stop_pill(self) -> None:
-        if self._auto_stop_never:
-            self.auto_stop_pill.configure(text="No auto-stop", bg="#334155")
+        if not self._auto_stop_ends_at:
+            self.auto_stop_pill.configure(text="No session", bg="#7f1d1d")
             if not self.auto_stop_pill.winfo_ismapped():
                 self.auto_stop_pill.pack(side="left", padx=(8, 0))
-            return
-        if not self._auto_stop_ends_at:
-            self.auto_stop_pill.pack_forget()
             return
         left_ms = self._auto_stop_ends_at - (time.time() * 1000)
         if left_ms <= 0:
             self.auto_stop_pill.configure(text="Stopping…", bg="#92400e")
         else:
+            label = self._auto_stop_label or "Session"
             self.auto_stop_pill.configure(
-                text=f"Session {self._format_duration(int(left_ms / 1000))}",
+                text=f"{label} · {self._format_duration(int(left_ms / 1000))}",
                 bg="#1e3a5f",
             )
         if not self.auto_stop_pill.winfo_ismapped():
             self.auto_stop_pill.pack(side="left", padx=(8, 0))
 
     def _tick_auto_stop_pill(self) -> None:
-        if not self._auto_stop_never and self._auto_stop_ends_at and time.time() * 1000 >= self._auto_stop_ends_at:
+        if self._auto_stop_ends_at and time.time() * 1000 >= self._auto_stop_ends_at:
             self.auto_stop_pill.configure(text="Stopping…", bg="#92400e")
             self._bg(self._session_expire)
             return
         self._update_auto_stop_pill()
         self._auto_stop_tick = self.root.after(1000, self._tick_auto_stop_pill)
 
-    def _schedule_auto_stop(self, hours: int, minutes: int, never: bool) -> None:
+    def _schedule_session_end(self, ends_at_ms: float, label: str) -> None:
         self._clear_auto_stop_timer()
-        self._auto_stop_never = never
-        if never:
-            self._update_auto_stop_pill()
-            self._auto_stop_tick = self.root.after(1000, self._tick_auto_stop_pill)
-            return
-        ms = (max(0, hours) * 60 + max(0, minutes)) * 60 * 1000
-        if ms <= 0:
-            return
-        self._auto_stop_label = self._auto_stop_label_text(hours, minutes)
-        self._auto_stop_ends_at = time.time() * 1000 + ms
+        self._auto_stop_label = label
+        self._auto_stop_ends_at = ends_at_ms
         self._update_auto_stop_pill()
         self._auto_stop_tick = self.root.after(1000, self._tick_auto_stop_pill)
 
@@ -1049,16 +1032,22 @@ class HyperDeckIngestApp:
         self._auto_stop_notice = ""
         self.notice_frame.pack_forget()
 
+    def _session_active(self) -> bool:
+        return bool(self._auto_stop_ends_at and time.time() * 1000 < self._auto_stop_ends_at)
+
     def _ask_auto_stop(
         self,
         *,
-        title: str = "Auto-stop timer",
-        subtitle: str = "Limits Railway polling if this PC is left running after the show.",
+        title: str = "How long do you need the bridge?",
+        subtitle: str = (
+            "When time is up, follow / polling stop automatically so Railway cost doesn’t keep running."
+        ),
+        allow_cancel: bool = True,
     ) -> dict | None:
-        hours = int(self.cfg.get("auto_stop_hours") or 2)
-        minutes = int(self.cfg.get("auto_stop_minutes") or 0)
-        if hours == 0 and minutes == 0:
-            hours = 2
+        mode_default = str(self.cfg.get("session_mode") or "testing").strip().lower()
+        if mode_default not in ("testing", "live", "everyday"):
+            mode_default = "testing"
+        hours_default = _clamp_session_hours(self.cfg.get("session_hours") or 4)
         result: dict | None = None
 
         dlg = tk.Toplevel(self.root)
@@ -1080,57 +1069,72 @@ class HyperDeckIngestApp:
             text=subtitle,
             bg=CARD,
             fg=MUTED,
-            wraplength=360,
+            wraplength=420,
             justify="left",
         ).pack(anchor="w", padx=16)
 
-        pick = tk.Frame(dlg, bg=CARD)
-        pick.pack(fill="x", padx=16, pady=12)
+        mode_var = tk.StringVar(value=mode_default)
+        hours_var = tk.StringVar(value=str(hours_default))
         field = "#0b1220"
-        hours_var = tk.StringVar(value=str(hours))
-        minutes_var = tk.StringVar(value=str(_clamp_auto_stop_minutes(minutes)))
-        tk.Label(pick, text="Hours", bg=CARD, fg=MUTED, font=("Segoe UI", 9)).grid(row=0, column=0, sticky="w")
-        hours_spin = tk.Spinbox(
-            pick,
-            from_=0,
-            to=24,
-            width=5,
-            textvariable=hours_var,
-            bg=field,
-            fg=FG,
-            buttonbackground=LINE,
-            readonlybackground=field,
-            highlightthickness=1,
-            highlightbackground=LINE,
-            insertbackground=FG,
-            font=("Segoe UI", 11),
+        options = tk.Frame(dlg, bg=CARD)
+        options.pack(fill="x", padx=16, pady=12)
+
+        def option_row(value: str, heading: str, hint: str) -> None:
+            row = tk.Frame(options, bg=field, highlightbackground=LINE, highlightthickness=1)
+            row.pack(fill="x", pady=4)
+            rb = tk.Radiobutton(
+                row,
+                text="",
+                variable=mode_var,
+                value=value,
+                bg=field,
+                activebackground=field,
+                selectcolor=field,
+                fg=FG,
+                highlightthickness=0,
+            )
+            rb.pack(side="left", padx=(8, 4), pady=10)
+            text = tk.Frame(row, bg=field)
+            text.pack(side="left", fill="x", expand=True, padx=(0, 10), pady=8)
+            tk.Label(text, text=heading, bg=field, fg=FG, font=("Segoe UI", 10, "bold"), anchor="w").pack(fill="x")
+            tk.Label(text, text=hint, bg=field, fg=MUTED, font=("Segoe UI", 8), wraplength=340, justify="left", anchor="w").pack(
+                fill="x"
+            )
+            row.bind("<Button-1>", lambda _e, v=value: mode_var.set(v))
+            text.bind("<Button-1>", lambda _e, v=value: mode_var.set(v))
+
+        option_row("testing", "Testing", "Runs for 2 hours, then disconnects.")
+        option_row("live", "Live Event", "Pick hours (up to 24). Also turns off at midnight either way.")
+
+        hours_frame = tk.Frame(options, bg=CARD)
+        hours_frame.pack(fill="x", padx=(28, 0), pady=(0, 4))
+        tk.Label(hours_frame, text="Live Event hours", bg=CARD, fg=MUTED, font=("Segoe UI", 9)).pack(side="left")
+        hours_menu = tk.OptionMenu(
+            hours_frame,
+            hours_var,
+            *[str(h) for h in (1, 2, 3, 4, 6, 8, 10, 12, 16, 20, 24)],
         )
-        hours_spin.grid(row=1, column=0, sticky="w", padx=(0, 12), pady=2)
-        tk.Label(pick, text="Minutes", bg=CARD, fg=MUTED, font=("Segoe UI", 9)).grid(row=0, column=1, sticky="w")
-        minutes_menu = tk.OptionMenu(
-            pick,
-            minutes_var,
-            *[str(m) for m in AUTO_STOP_MINUTES],
-        )
-        minutes_menu.configure(
+        hours_menu.configure(
             bg=field,
             fg=FG,
             activebackground=ACCENT,
             activeforeground="#ffffff",
             highlightthickness=0,
             relief="flat",
-            font=("Segoe UI", 11),
+            font=("Segoe UI", 10),
             width=6,
         )
-        minutes_menu["menu"].configure(
+        hours_menu["menu"].configure(
             bg=field,
             fg=FG,
             activebackground=ACCENT,
             activeforeground="#ffffff",
             relief="flat",
-            font=("Segoe UI", 11),
+            font=("Segoe UI", 10),
         )
-        minutes_menu.grid(row=1, column=1, sticky="w", pady=2)
+        hours_menu.pack(side="left", padx=(8, 0))
+
+        option_row("everyday", "Everyday", "Runs from 7:00 AM to 9:00 PM, then disconnects.")
 
         def finish(choice: dict | None) -> None:
             nonlocal result
@@ -1138,23 +1142,25 @@ class HyperDeckIngestApp:
             dlg.destroy()
 
         def confirm() -> None:
-            h = _clamp_auto_stop_hours(hours_var.get())
-            m = _clamp_auto_stop_minutes(minutes_var.get())
-            if h >= 24:
-                h, m = 24, 0
-            if h == 0 and m == 0:
-                messagebox.showinfo("Auto-stop", "Pick a time greater than 0, or choose Never auto-stop.", parent=dlg)
+            plan = plan_session(mode=mode_var.get(), hours=hours_var.get())
+            if not plan.get("ok"):
+                messagebox.showinfo("Session", plan.get("error") or "Could not start session.", parent=dlg)
                 return
-            finish({"never": False, "hours": h, "minutes": m})
+            finish(
+                {
+                    "mode": plan["mode"],
+                    "hours": plan.get("hours"),
+                    "ends_at": plan["ends_at"],
+                    "label": plan["label"],
+                }
+            )
 
         btns = tk.Frame(dlg, bg=CARD)
         btns.pack(fill="x", padx=16, pady=(4, 16))
-        ttk.Button(btns, text="Never auto-stop", command=lambda: finish({"never": True, "hours": hours, "minutes": minutes})).pack(
-            side="left"
-        )
-        ttk.Button(btns, text="Save timer", style="Accent.TButton", command=confirm).pack(side="right")
-        ttk.Button(btns, text="Cancel", command=lambda: finish(None)).pack(side="right", padx=(0, 6))
-        dlg.protocol("WM_DELETE_WINDOW", lambda: finish(None))
+        ttk.Button(btns, text="Start session", style="Accent.TButton", command=confirm).pack(side="right")
+        if allow_cancel:
+            ttk.Button(btns, text="Cancel", command=lambda: finish(None)).pack(side="right", padx=(0, 6))
+        dlg.protocol("WM_DELETE_WINDOW", lambda: finish(None) if allow_cancel else None)
         dlg.update_idletasks()
         x = self.root.winfo_rootx() + (self.root.winfo_width() - dlg.winfo_reqwidth()) // 2
         y = self.root.winfo_rooty() + 80
@@ -1163,48 +1169,59 @@ class HyperDeckIngestApp:
         return result
 
     def _apply_auto_stop_choice(self, choice: dict) -> None:
-        if choice.get("never"):
-            self.cfg["auto_stop_never"] = True
-        else:
-            self.cfg["auto_stop_never"] = False
-            self.cfg["auto_stop_hours"] = _clamp_auto_stop_hours(choice.get("hours"))
-            self.cfg["auto_stop_minutes"] = _clamp_auto_stop_minutes(choice.get("minutes"))
+        ends_at = choice.get("ends_at")
+        self.cfg["session_mode"] = str(choice.get("mode") or "")
+        if choice.get("hours") is not None:
+            self.cfg["session_hours"] = _clamp_session_hours(choice.get("hours"))
+        self.cfg["session_label"] = str(choice.get("label") or "")
+        self.cfg["session_ends_at"] = ends_at.isoformat(timespec="seconds") if hasattr(ends_at, "isoformat") else str(ends_at or "")
+        self.cfg["auto_stop_never"] = False
         self._session_timer_configured = True
         self._save()
         self._refresh_auto_stop_default_label()
         self._start_session_timer()
 
     def _start_session_timer(self) -> None:
-        hours = int(self.cfg.get("auto_stop_hours") or 2)
-        minutes = int(self.cfg.get("auto_stop_minutes") or 0)
-        never = bool(self.cfg.get("auto_stop_never"))
-        self._schedule_auto_stop(hours, minutes, never)
-        if never:
-            self.log("Session timer: no auto-stop until app restart", "ok")
-        else:
-            self.log(f"Session timer started: {self._auto_stop_label_text(hours, minutes)}", "ok")
+        ends_raw = self.cfg.get("session_ends_at")
+        label = str(self.cfg.get("session_label") or "Session")
+        if not session_is_active(ends_raw):
+            self._clear_auto_stop_timer()
+            self._refresh_auto_stop_default_label()
+            return
+        try:
+            from datetime import datetime as _dt
+
+            ends = _dt.fromisoformat(str(ends_raw).replace("Z", "+00:00"))
+            if ends.tzinfo is not None:
+                ends = ends.astimezone().replace(tzinfo=None)
+            ends_ms = ends.timestamp() * 1000
+        except Exception:
+            self._clear_auto_stop_timer()
+            return
+        self._schedule_session_end(ends_ms, label)
+        self.log(f"Session started: {label}", "ok")
 
     def _prompt_startup_session(self) -> None:
-        choice = self._ask_auto_stop(
-            title="Railway session timer",
-            subtitle=(
-                "Set how long this app should keep polling Railway before it disconnects. "
-                "You can change this later with Set timer."
-            ),
-        )
-        if choice is None:
+        if session_is_active(self.cfg.get("session_ends_at")):
             self._session_timer_configured = True
             self._refresh_auto_stop_default_label()
-            self.log("Using saved Railway session timer from settings.")
             self._start_session_timer()
+            self.log("Resumed saved session timer.")
             return
+        choice = self._ask_auto_stop(allow_cancel=False)
+        if choice is None:
+            # Fallback if dialog closed somehow — force testing 2h
+            plan = plan_session(mode="testing")
+            choice = {
+                "mode": plan["mode"],
+                "hours": plan["hours"],
+                "ends_at": plan["ends_at"],
+                "label": plan["label"],
+            }
         self._apply_auto_stop_choice(choice)
 
     def configure_auto_stop_defaults(self) -> None:
-        choice = self._ask_auto_stop(
-            title="Railway session timer",
-            subtitle="How long should this app keep polling Railway before disconnecting?",
-        )
+        choice = self._ask_auto_stop(allow_cancel=True)
         if choice is None:
             return
         self._apply_auto_stop_choice(choice)
@@ -1262,7 +1279,11 @@ class HyperDeckIngestApp:
             "poll_seconds": int(self.cfg.get("poll_seconds") or 1),
             "auto_stop_hours": int(self.cfg.get("auto_stop_hours") or 2),
             "auto_stop_minutes": int(self.cfg.get("auto_stop_minutes") or 0),
-            "auto_stop_never": bool(self.cfg.get("auto_stop_never")),
+            "auto_stop_never": False,
+            "session_mode": str(self.cfg.get("session_mode") or ""),
+            "session_hours": _clamp_session_hours(self.cfg.get("session_hours") or 4),
+            "session_ends_at": str(self.cfg.get("session_ends_at") or ""),
+            "session_label": str(self.cfg.get("session_label") or ""),
             "copied_keys": sorted(self.copied_keys),
         }
 
@@ -1763,6 +1784,12 @@ class HyperDeckIngestApp:
     def start_follow(self) -> None:
         if self.following:
             return
+        if not self._session_active():
+            choice = self._ask_auto_stop(allow_cancel=True)
+            if choice is None:
+                messagebox.showinfo("Session", "Choose a session length first (Testing, Live Event, or Everyday).")
+                return
+            self._apply_auto_stop_choice(choice)
         if not self.event_id_var.get().strip():
             messagebox.showinfo("Event", "Load events and select one first.")
             return
@@ -1801,9 +1828,7 @@ class HyperDeckIngestApp:
         )
         self.log(f"Follow started with {marked} Record-marked cue(s){day_bit} · {gate}", "ok")
         self.log(f"Show mode now: {self._show_mode}", "ok")
-        if self._auto_stop_never:
-            self.log("Polling until session timer expires or you click Stop", "ok")
-        elif self._auto_stop_ends_at:
+        if self._auto_stop_ends_at:
             left = max(0, int((self._auto_stop_ends_at - time.time() * 1000) / 1000))
             self.log(f"Session timer {self._format_duration(left)} remaining", "ok")
         else:
@@ -1835,15 +1860,22 @@ class HyperDeckIngestApp:
                     self.deck.disconnect()
                 except Exception:
                     pass
+                self.cfg["session_ends_at"] = ""
+                self.cfg["session_label"] = ""
+                try:
+                    save_config(self._snapshot_config())
+                except Exception:
+                    pass
                 self.root.after(0, lambda: self.status_deck.set("Disconnected"))
                 notice = (
-                    f"Railway session ended after {label}. Restart the app to poll again."
+                    f"Session ended after {label}. Choose Session… or Start again when you need it."
                     if label
-                    else "Railway session ended. Restart the app to poll again."
+                    else "Session ended. Choose Session… or Start again when you need it."
                 )
                 self.log(notice)
                 self.root.after(0, lambda: self._show_auto_stop_notice(notice))
                 self.root.after(0, self._clear_auto_stop_timer)
+                self.root.after(0, self._refresh_auto_stop_default_label)
             elif was_following:
                 self.log("Follow stopped")
             self.root.after(0, lambda: self._set_pill("stopped"))

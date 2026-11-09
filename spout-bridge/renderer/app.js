@@ -31,6 +31,18 @@ const statusSpoutDll = document.getElementById('status-spout-dll');
 const statusOutput = document.getElementById('status-output');
 const statusFps = document.getElementById('status-fps');
 const statusUrl = document.getElementById('status-url');
+const sessionPill = document.getElementById('session-pill');
+const sessionBtn = document.getElementById('session-btn');
+const sessionModal = document.getElementById('session-modal');
+const sessionLiveHours = document.getElementById('session-live-hours');
+const sessionHours = document.getElementById('sessionHours');
+const sessionModalError = document.getElementById('session-modal-error');
+const btnSessionStart = document.getElementById('btn-session-start');
+const btnSessionCancel = document.getElementById('btn-session-cancel');
+
+let sessionActive = false;
+let pendingStartAfterSession = false;
+let sessionTickTimer = null;
 
 function normalizeUrlInput(value) {
   let s = String(value || '').trim();
@@ -124,9 +136,105 @@ function setRunning(running) {
   if (!running) syncModeUi();
 }
 
+function selectedSessionMode() {
+  const checked = document.querySelector('input[name="sessionMode"]:checked');
+  return checked ? checked.value : 'testing';
+}
+
+function syncSessionModeUi() {
+  if (sessionLiveHours) sessionLiveHours.hidden = selectedSessionMode() !== 'live';
+}
+
+function applySession(state) {
+  sessionActive = !!(state && state.active);
+  if (sessionPill) {
+    if (sessionActive) {
+      sessionPill.classList.add('active');
+      const left = state.remaining || '';
+      sessionPill.textContent = left
+        ? `${state.label || 'Session'} · ${left}`
+        : state.label || 'Session active';
+    } else {
+      sessionPill.classList.remove('active');
+      sessionPill.textContent = 'No session';
+    }
+  }
+  if (btnSessionCancel) btnSessionCancel.hidden = !sessionActive;
+  if (sessionModal && sessionActive && !pendingStartAfterSession) {
+    sessionModal.hidden = true;
+  }
+}
+
+function openSessionModal({ force = false, startAfter = false } = {}) {
+  if (!sessionModal) return;
+  pendingStartAfterSession = !!startAfter;
+  if (sessionModalError) sessionModalError.textContent = '';
+  syncSessionModeUi();
+  if (force || !sessionActive || startAfter) sessionModal.hidden = false;
+}
+
+function closeSessionModal() {
+  pendingStartAfterSession = false;
+  if (sessionModal && sessionActive) sessionModal.hidden = true;
+}
+
+async function refreshSession() {
+  if (!window.rosLedSpout.getSession) return { active: false };
+  const state = await window.rosLedSpout.getSession();
+  applySession(state);
+  return state;
+}
+
+async function confirmSession() {
+  if (!window.rosLedSpout.startSession) return;
+  if (sessionModalError) sessionModalError.textContent = '';
+  const result = await window.rosLedSpout.startSession({
+    mode: selectedSessionMode(),
+    hours: Number(sessionHours?.value || 4),
+  });
+  if (!result?.ok) {
+    if (sessionModalError) sessionModalError.textContent = result?.error || 'Could not start session';
+    return;
+  }
+  applySession(result);
+  const shouldStart = pendingStartAfterSession;
+  pendingStartAfterSession = false;
+  if (sessionModal) sessionModal.hidden = true;
+  if (shouldStart) await startSpoutOutput();
+}
+
+async function startSpoutOutput() {
+  if (!sessionActive) {
+    openSessionModal({ force: true, startAfter: true });
+    return;
+  }
+  setLine(statusOutput, 'Output: starting…', 'muted');
+  const result = await window.rosLedSpout.startOutput(readForm());
+  if (result.ok) {
+    setRunning(true);
+    setLine(statusOutput, 'Output: running', 'ok');
+    setLine(statusUrl, result.url || '', 'muted');
+    await refreshSession();
+  } else {
+    setRunning(false);
+    setLine(statusOutput, `Output: failed — ${result.message || result.error || 'unknown error'}`, 'error');
+    if (/session/i.test(String(result.error || result.message || ''))) {
+      openSessionModal({ force: true, startAfter: true });
+    }
+  }
+}
+
 async function init() {
   const { config, spoutDll } = await window.rosLedSpout.loadConfig();
   fillForm(config);
+  if (config.sessionMode) {
+    const radio = document.querySelector(`input[name="sessionMode"][value="${config.sessionMode}"]`);
+    if (radio) radio.checked = true;
+  }
+  if (sessionHours && config.sessionHours) {
+    sessionHours.value = String(Math.min(24, Math.max(1, Math.floor(Number(config.sessionHours) || 4))));
+  }
+  syncSessionModeUi();
   setLine(
     statusSpoutDll,
     spoutDll ? `Spout DLL: ${spoutDll}` : 'Spout DLL: not found — see vendor/README.md',
@@ -135,6 +243,13 @@ async function init() {
 
   const out = await window.rosLedSpout.getOutputStatus();
   setRunning(!!out.running);
+
+  const session = await refreshSession();
+  if (!session.active) openSessionModal({ force: true });
+  if (sessionTickTimer) clearInterval(sessionTickTimer);
+  sessionTickTimer = setInterval(() => {
+    if (sessionActive) void refreshSession();
+  }, 30_000);
 }
 
 fields.sourceMode.addEventListener('change', syncModeUi);
@@ -210,16 +325,7 @@ bakeBtn.addEventListener('click', async () => {
 
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
-  setLine(statusOutput, 'Output: starting…', 'muted');
-  const result = await window.rosLedSpout.startOutput(readForm());
-  if (result.ok) {
-    setRunning(true);
-    setLine(statusOutput, 'Output: running', 'ok');
-    setLine(statusUrl, result.url || '', 'muted');
-  } else {
-    setRunning(false);
-    setLine(statusOutput, `Output: failed — ${result.message || 'unknown error'}`, 'error');
-  }
+  await startSpoutOutput();
 });
 
 stopBtn.addEventListener('click', async () => {
@@ -228,6 +334,24 @@ stopBtn.addEventListener('click', async () => {
   setLine(statusOutput, 'Output: stopped', 'muted');
   setLine(statusFps, '', 'muted');
 });
+
+document.querySelectorAll('input[name="sessionMode"]').forEach((input) => {
+  input.addEventListener('change', syncSessionModeUi);
+});
+if (sessionBtn) sessionBtn.addEventListener('click', () => openSessionModal({ force: true }));
+if (btnSessionStart) btnSessionStart.addEventListener('click', () => void confirmSession());
+if (btnSessionCancel) btnSessionCancel.addEventListener('click', () => closeSessionModal());
+if (window.rosLedSpout.onSession) {
+  window.rosLedSpout.onSession((state) => {
+    applySession(state);
+    if (state?.ended) {
+      setRunning(false);
+      setLine(statusOutput, state.reason || 'Session ended — Spout stopped', 'warn');
+      setLine(statusFps, '', 'muted');
+      openSessionModal({ force: true });
+    }
+  });
+}
 
 window.rosLedSpout.onBakeProgress((status) => {
   if (!status?.message) return;

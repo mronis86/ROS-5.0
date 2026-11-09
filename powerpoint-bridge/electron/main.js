@@ -7,6 +7,12 @@ const { BridgeController } = require('./bridge-controller');
 const { PlaybackController } = require('./playback-controller');
 const { MeetingHubController } = require('./meeting-hub-controller');
 const { validateApi, listCalendarEvents } = require('./railway-client');
+const {
+  planSession,
+  sessionIsActive,
+  formatRemaining,
+  clampLiveHours,
+} = require('./session-schedule');
 const ppt = require('./ppt-com');
 const liveCapture = require('./live-capture');
 
@@ -47,10 +53,82 @@ const follow = new BridgeController({ onStatus: sendStatus });
 const playback = new PlaybackController({ onStatus: sendStatus, cacheRoot });
 const meetingHub = new MeetingHubController();
 
+let sessionExpireTimer = null;
+
 function activeController(mode) {
   if (mode === 'playback') return playback;
   if (mode === 'meetinghub') return meetingHub;
   return follow;
+}
+
+function sendSession(payload) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('session:status', payload);
+  }
+}
+
+function getSessionState(cfg = loadConfig()) {
+  const endsAt = cfg.sessionEndsAt || '';
+  const active = sessionIsActive(endsAt);
+  return {
+    active,
+    mode: cfg.sessionMode || '',
+    hours: clampLiveHours(cfg.sessionHours),
+    endsAt: active ? endsAt : '',
+    label: active ? cfg.sessionLabel || '' : '',
+    remaining: active ? formatRemaining(endsAt) : '',
+  };
+}
+
+function clearSessionTimer() {
+  if (sessionExpireTimer) {
+    clearTimeout(sessionExpireTimer);
+    sessionExpireTimer = null;
+  }
+}
+
+function stopAllBridgeWork() {
+  follow.stop();
+  playback.stop();
+  void liveCapture.stop({ silent: true });
+}
+
+function endSession(reason) {
+  clearSessionTimer();
+  stopAllBridgeWork();
+  const cfg = saveConfig({
+    sessionMode: '',
+    sessionEndsAt: '',
+    sessionLabel: '',
+  });
+  const payload = {
+    ...getSessionState(cfg),
+    ended: true,
+    reason: reason || 'Session ended',
+  };
+  sendSession(payload);
+  sendStatus({
+    ...activeController(cfg.bridgeMode).status,
+    message: 'Stopped — session ended',
+    error: reason || 'Session ended',
+  });
+  return payload;
+}
+
+function armSessionTimer(endsAtIso) {
+  clearSessionTimer();
+  const endsMs = Date.parse(String(endsAtIso || ''));
+  if (!Number.isFinite(endsMs)) return;
+  const delay = Math.max(0, endsMs - Date.now());
+  sessionExpireTimer = setTimeout(() => {
+    endSession('Session time is up — bridge disconnected');
+  }, delay);
+}
+
+function requireActiveSession() {
+  const state = getSessionState();
+  if (state.active) return null;
+  return { ok: false, error: 'Choose how long you need the bridge first (Testing, Live Event, or Everyday).' };
 }
 
 function createWindow() {
@@ -84,14 +162,18 @@ app.whenReady().then(() => {
     /* ignore */
   }
   createWindow();
+  const existing = getSessionState();
+  if (existing.active) armSessionTimer(existing.endsAt);
 });
 app.on('window-all-closed', () => {
+  clearSessionTimer();
   follow.stop();
   playback.stop();
   void liveCapture.stop({ silent: true });
   if (process.platform !== 'darwin') app.quit();
 });
 app.on('before-quit', () => {
+  clearSessionTimer();
   void liveCapture.stop({ silent: true });
 });
 
@@ -120,11 +202,34 @@ ipcMain.handle('api:events', async (_e, partial) => {
 });
 ipcMain.handle('ppt:status', () => ppt.getStatus());
 ipcMain.handle('ppt:capture', async () => {
+  const blocked = requireActiveSession();
+  if (blocked) throw new Error(blocked.error);
   follow.stop();
   playback.stop();
   return follow.captureStills(loadConfig());
 });
+ipcMain.handle('session:get', () => getSessionState());
+ipcMain.handle('session:start', (_e, partial) => {
+  const plan = planSession({
+    mode: partial?.mode,
+    hours: partial?.hours,
+  });
+  if (!plan.ok) return { ok: false, error: plan.error };
+  const cfg = saveConfig({
+    sessionMode: plan.mode,
+    sessionHours: plan.hours != null ? plan.hours : loadConfig().sessionHours,
+    sessionEndsAt: plan.endsAt.toISOString(),
+    sessionLabel: plan.label,
+  });
+  armSessionTimer(cfg.sessionEndsAt);
+  const state = { ok: true, ...getSessionState(cfg) };
+  sendSession(state);
+  return state;
+});
+ipcMain.handle('session:end', () => endSession('Session cleared'));
 ipcMain.handle('bridge:start', (_e, partial) => {
+  const blocked = requireActiveSession();
+  if (blocked) return blocked;
   const cfg = saveConfig(partial || {});
   if (cfg.bridgeMode === 'playback') {
     follow.stop();
@@ -163,6 +268,8 @@ ipcMain.handle('playback:pick-folder', async () => {
   return saveConfig({ syncFolder: picked.filePaths[0] });
 });
 ipcMain.handle('meetinghub:list', async (_e, partial) => {
+  const blocked = requireActiveSession();
+  if (blocked) throw new Error(blocked.error);
   const cfg = saveConfig(partial || {});
   follow.stop();
   playback.stop();
@@ -171,6 +278,8 @@ ipcMain.handle('meetinghub:list', async (_e, partial) => {
   return status;
 });
 ipcMain.handle('meetinghub:open', async (_e, payload) => {
+  const blocked = requireActiveSession();
+  if (blocked) throw new Error(blocked.error);
   const partial = payload?.config || payload || {};
   const deckId = payload?.deckId || partial.deckId;
   const cfg = saveConfig(partial);
@@ -190,6 +299,10 @@ ipcMain.handle('meetinghub:open', async (_e, payload) => {
     throw err;
   }
 });
-ipcMain.handle('live-capture:start', (_e, partial) => liveCapture.start(partial || {}));
+ipcMain.handle('live-capture:start', (_e, partial) => {
+  const blocked = requireActiveSession();
+  if (blocked) return Promise.reject(new Error(blocked.error));
+  return liveCapture.start(partial || {});
+});
 ipcMain.handle('live-capture:stop', () => liveCapture.stop());
 ipcMain.handle('live-capture:status', () => liveCapture.getState());

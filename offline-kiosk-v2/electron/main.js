@@ -369,6 +369,18 @@ ipcMain.handle('kiosk:stopWebLinked', async () => {
 
 ipcMain.handle('kiosk:offlineShowStatus', async () => offlineShow.getStatus());
 
+ipcMain.handle('kiosk:pptBridgeStatus', async (_evt, payload) => {
+  try {
+    return await offlineShow.getPptBridgeStatus(payload?.eventId);
+  } catch (e) {
+    return {
+      ok: false,
+      online: false,
+      error: e instanceof Error ? e.message : 'PPT Bridge status failed',
+    };
+  }
+});
+
 ipcMain.handle('kiosk:getSession', () => getSessionState());
 ipcMain.handle('kiosk:startSession', (_evt, partial) => {
   const plan = planSession({

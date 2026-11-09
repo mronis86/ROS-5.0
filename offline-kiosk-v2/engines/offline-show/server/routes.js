@@ -20,7 +20,7 @@ const {
   setRailwayApiToken,
   clearRailwayApiToken,
 } = require('./railway-api-token');
-const { validateRailwayApiToken } = require('./railway-client');
+const { validateRailwayApiToken, railwayFetch } = require('./railway-client');
 const cloud = require('./cloud-data');
 const { pushReconnectSnapshotToRailway } = require('./cloud-reconnect-push');
 const { installCloudProxy } = require('./cloud-proxy');
@@ -33,6 +33,92 @@ function friendlyError(err) {
     return pre ? pre[1].trim() : 'Cloud server returned an unexpected error';
   }
   return msg.length > 240 ? `${msg.slice(0, 240)}…` : msg;
+}
+
+function itemLooksLikePpt(item) {
+  if (!item || typeof item !== 'object') return false;
+  if (item.hasPPT || item.has_ppt) return true;
+  const name = String(
+    item.pptFile || item.ppt_file || item.fileName || item.file_name || item.originalName || ''
+  ).toLowerCase();
+  return /\.(ppt|pptx|pps|ppsx)$/i.test(name);
+}
+
+function summarizeEventPptCues(items) {
+  const list = Array.isArray(items) ? items : [];
+  const cues = [];
+  for (const item of list) {
+    if (!itemLooksLikePpt(item)) continue;
+    const label =
+      String(item.cueNumber || item.cue || item.segmentName || item.segment_name || '').trim() ||
+      (item.id != null ? `Item ${item.id}` : 'PPT cue');
+    cues.push({
+      itemId: item.id != null ? Number(item.id) : null,
+      label,
+      fileName: String(item.pptFile || item.ppt_file || item.fileName || item.file_name || '').trim() || null,
+    });
+  }
+  return {
+    eventHasPpt: cues.length > 0,
+    pptCueCount: cues.length,
+    pptCues: cues.slice(0, 12),
+  };
+}
+
+function loadLocalEventPptSummary(db, eventId) {
+  const ids = new Set([String(eventId || '').trim()].filter(Boolean));
+  try {
+    const cal = db
+      .prepare('SELECT id, schedule_data FROM calendar_events WHERE id = ? LIMIT 1')
+      .get(eventId);
+    if (cal?.id) ids.add(String(cal.id));
+    const sd = typeof cal?.schedule_data === 'string' ? parseJson(cal.schedule_data, {}) : cal?.schedule_data;
+    if (sd && typeof sd === 'object' && sd.eventId) ids.add(String(sd.eventId));
+  } catch {
+    /* ignore */
+  }
+
+  for (const id of ids) {
+    try {
+      const row = db.prepare('SELECT schedule_items FROM run_of_show_data WHERE event_id = ? LIMIT 1').get(id);
+      if (!row) continue;
+      const items =
+        typeof row.schedule_items === 'string' ? parseJson(row.schedule_items, []) : row.schedule_items;
+      const summary = summarizeEventPptCues(items);
+      if (summary.pptCueCount > 0) return { ...summary, sourceEventId: id, source: 'local' };
+    } catch {
+      /* ignore */
+    }
+  }
+  return {
+    eventHasPpt: false,
+    pptCueCount: 0,
+    pptCues: [],
+    sourceEventId: eventId,
+    source: 'local',
+  };
+}
+
+function deckLooksOnEvent(deckName, pptSummary, preferredFiles) {
+  const deck = String(deckName || '').trim().toLowerCase();
+  if (!deck) return null;
+  const names = [];
+  for (const cue of pptSummary?.pptCues || []) {
+    if (cue.fileName) names.push(String(cue.fileName).toLowerCase());
+    if (cue.label) names.push(String(cue.label).toLowerCase());
+  }
+  for (const file of preferredFiles || []) {
+    if (file?.originalName) names.push(String(file.originalName).toLowerCase());
+    if (file?.cueLabel) names.push(String(file.cueLabel).toLowerCase());
+  }
+  if (!names.length) return pptSummary?.eventHasPpt ? null : false;
+  return names.some((n) => n && (deck.includes(n) || n.includes(deck) || deck.includes(pathBase(n))));
+}
+
+function pathBase(name) {
+  const s = String(name || '');
+  const slash = Math.max(s.lastIndexOf('/'), s.lastIndexOf('\\'));
+  return slash >= 0 ? s.slice(slash + 1) : s;
 }
 
 function registerRoutes(app, db, helpers) {
@@ -157,6 +243,177 @@ function registerRoutes(app, db, helpers) {
 
   app.get('/api/railway-api-token', (_req, res) => {
     res.json(getRailwayApiTokenStatus(db));
+  });
+
+  /**
+   * Kiosk Status: is the PPT Bridge / Launcher online for this event?
+   * Uses Railway Integration token (works even in LAN-only if a token is saved).
+   */
+  app.get('/api/kiosk/ppt-bridge-status', async (req, res) => {
+    const eventId = String(req.query.eventId || '').trim();
+    if (!eventId) {
+      return res.status(400).json({ ok: false, error: 'eventId is required' });
+    }
+    const tokenStatus = getRailwayApiTokenStatus(db);
+    if (!tokenStatus.configured) {
+      return res.json({
+        ok: true,
+        eventId,
+        online: false,
+        reason: 'no-token',
+        message: 'Add an Integration token to check PPT Bridge status.',
+      });
+    }
+    try {
+      const { data } = await railwayFetch(
+        'GET',
+        `/api/powerpoint/${encodeURIComponent(eventId)}/playback`
+      );
+      const session = data?.session || data || {};
+      const helperMode = String(session.helperMode || session.helper_mode || '')
+        .trim()
+        .toLowerCase();
+      const lastSeen = session.lastSeen || session.last_seen || null;
+      const lastSeenMs = lastSeen ? new Date(lastSeen).getTime() : 0;
+      const fresh = lastSeenMs > 0 && Date.now() - lastSeenMs <= 25_000;
+      // Playback sets connected=true; follow (Show with Timers) keeps connected=false but bumps last_seen.
+      const online = fresh && (session.connected === true || helperMode === 'follow' || helperMode === 'playback');
+      let modeLabel = '';
+      if (helperMode === 'playback') modeLabel = 'PPT Launcher';
+      else if (helperMode === 'follow') modeLabel = 'Show with Timers';
+      else if (online) modeLabel = 'PPT Bridge';
+
+      let eventName = '';
+      try {
+        const local = db
+          .prepare('SELECT name FROM calendar_events WHERE id = ? OR id LIKE ? LIMIT 1')
+          .get(eventId, `${eventId}%`);
+        eventName = local?.name || '';
+      } catch {
+        /* ignore */
+      }
+      if (!eventName) {
+        try {
+          const cal = await railwayFetch('GET', `/api/calendar-events/${encodeURIComponent(eventId)}`);
+          eventName = cal?.data?.name || '';
+        } catch {
+          /* ignore */
+        }
+      }
+
+      const lastSeenAgeMs =
+        lastSeenMs > 0 && Number.isFinite(lastSeenMs) ? Math.max(0, Date.now() - lastSeenMs) : null;
+      const cacheOk = Number(session.cacheOk ?? session.cache_ok) || 0;
+      const cacheTotal = Number(session.cacheTotal ?? session.cache_total) || 0;
+      const slideCount = Number(session.slideCount ?? session.slide_count) || 0;
+      const currentIndexRaw = session.currentIndex ?? session.current_index;
+      const currentIndex =
+        currentIndexRaw != null && currentIndexRaw !== '' ? Number(currentIndexRaw) : null;
+      const loadedCue = session.loadedCue || session.loaded_cue || null;
+      const preferredFiles = Array.isArray(data?.preferredFiles) ? data.preferredFiles : [];
+
+      let pptSummary = loadLocalEventPptSummary(db, eventId);
+      if (!pptSummary.eventHasPpt) {
+        try {
+          const ros = await railwayFetch(
+            'GET',
+            `/api/run-of-show-data/${encodeURIComponent(eventId)}`
+          );
+          const items = ros?.data?.schedule_items || ros?.data?.scheduleItems || [];
+          const remote = summarizeEventPptCues(items);
+          if (remote.pptCueCount > 0) {
+            pptSummary = { ...remote, sourceEventId: eventId, source: 'railway' };
+          }
+        } catch {
+          /* keep local summary */
+        }
+      }
+      if (!pptSummary.eventHasPpt && preferredFiles.length > 0) {
+        pptSummary = {
+          eventHasPpt: true,
+          pptCueCount: preferredFiles.length,
+          pptCues: preferredFiles.slice(0, 12).map((f) => ({
+            itemId: f.itemId != null ? Number(f.itemId) : null,
+            label: f.cueLabel || (f.itemId != null ? `Item ${f.itemId}` : 'PPT file'),
+            fileName: f.originalName || null,
+          })),
+          sourceEventId: eventId,
+          source: 'preferred-files',
+        };
+      }
+
+      // Only expose live deck/slide fields while the helper heartbeat is fresh.
+      // Stale rows still keep lastSeen so the UI can say "last heartbeat … ago".
+      const liveDeckName = online ? session.deckName || session.deck_name || null : null;
+      const liveSlideCount = online ? slideCount : 0;
+      const liveCurrentIndex = online && Number.isFinite(currentIndex) ? currentIndex : null;
+      const liveCurrentItemId = online
+        ? session.currentItemId != null
+          ? Number(session.currentItemId)
+          : session.current_item_id != null
+            ? Number(session.current_item_id)
+            : null
+        : null;
+      const deckOnEvent = online ? deckLooksOnEvent(liveDeckName, pptSummary, preferredFiles) : null;
+
+      return res.json({
+        ok: true,
+        eventId,
+        eventName: eventName || null,
+        online,
+        connected: session.connected === true,
+        helperMode: online ? helperMode || null : null,
+        modeLabel: online ? modeLabel || null : null,
+        lastSeen: lastSeen || null,
+        lastSeenAgeMs,
+        eventHasPpt: pptSummary.eventHasPpt,
+        pptCueCount: pptSummary.pptCueCount,
+        pptCues: pptSummary.pptCues,
+        deckOnEvent,
+        deckName: liveDeckName,
+        slideshowActive: online ? Boolean(session.slideshowActive || session.slideshow_active) : false,
+        slideCount: liveSlideCount,
+        currentIndex: liveCurrentIndex,
+        currentItemId: liveCurrentItemId,
+        cacheOk: online ? cacheOk : 0,
+        cacheTotal: online ? cacheTotal : 0,
+        cacheLabel: online && cacheTotal > 0 ? `${cacheOk}/${cacheTotal}` : null,
+        lastCommand: online ? session.lastCommand || session.last_command || null : null,
+        lastError: online ? session.lastError || session.last_error || null : null,
+        queuedCommand: online ? session.queuedCommand || session.queued_command || null : null,
+        liveCaptureActive: online
+          ? Boolean(session.liveCaptureActive || session.live_capture_active)
+          : false,
+        liveCaptureSource: online
+          ? session.liveCaptureSource || session.live_capture_source || null
+          : null,
+        cueFollowAuto: online
+          ? session.cueFollowAuto !== false && session.cue_follow_auto !== false
+          : true,
+        openMatch: online
+          ? String(session.openMatch || session.open_match || '').trim() || null
+          : null,
+        openStale: online ? Boolean(session.openStale || session.open_stale) : false,
+        loadedCueLabel: online
+          ? loadedCue?.cueNumber != null
+            ? `CUE ${loadedCue.cueNumber}`
+            : loadedCue?.itemId != null
+              ? `Item ${loadedCue.itemId}`
+              : null
+          : null,
+        message: online
+          ? `${modeLabel || 'PPT Bridge'} online`
+          : 'No PPT Bridge heartbeat for this event (last ~25s).',
+      });
+    } catch (e) {
+      const status = e?.status || 500;
+      return res.status(status >= 400 && status < 600 ? status : 502).json({
+        ok: false,
+        eventId,
+        online: false,
+        error: e instanceof Error ? e.message : 'Failed to reach Railway PPT status',
+      });
+    }
   });
 
   app.put('/api/railway-api-token', async (req, res) => {

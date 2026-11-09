@@ -13,6 +13,7 @@ const LOCAL_EXACT = new Set([
   '/api/reconnect-push',
   '/api/lan-info',
   '/api/railway-api-token',
+  '/api/kiosk/ppt-bridge-status',
 ]);
 
 const LOCAL_PREFIXES = ['/api/dev/'];

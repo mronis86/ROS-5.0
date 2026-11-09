@@ -64,11 +64,25 @@ class BridgeController {
     if (!this.running) return;
     try {
       const live = await ppt.getLive();
+      // Always keep a Railway heartbeat while Show with Timers is running, even if
+      // PowerPoint is closed — otherwise the kiosk looks "offline" after ~25s.
+      try {
+        await reportPlaybackLive(this.config.apiBaseUrl, this.config.apiToken, this.config.eventId, {
+          helperMode: 'follow',
+        });
+      } catch {
+        /* Launcher page can still show this bridge is in the other mode */
+      }
+
       if (!live || live.ok === false) {
         this.emit({
           powerpoint: false,
           slideshowActive: false,
-          message: live?.error || 'PowerPoint not found',
+          deckName: '',
+          slideCount: 0,
+          currentSlideId: null,
+          currentIndex: null,
+          message: live?.error || 'Waiting for PowerPoint',
           error: live?.error || '',
         });
         this.scheduleNext(1500);
@@ -105,13 +119,6 @@ class BridgeController {
         deckName: live.deckName,
         slideCount,
       });
-      try {
-        await reportPlaybackLive(this.config.apiBaseUrl, this.config.apiToken, this.config.eventId, {
-          helperMode: 'follow',
-        });
-      } catch {
-        /* Launcher page can still show this helper is in the other mode */
-      }
       if (result?.fired) {
         this.emit({
           lastAction: `${result.action || 'fired'} → item ${result.itemId || '?'}`,

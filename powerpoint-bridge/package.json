@@ -1,6 +1,6 @@
 {
   "name": "ros-powerpoint-bridge",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "description": "Windows helper V2: follow stills, ROS PPT Launcher, and Meeting Hub deck open",
   "private": true,
   "main": "electron/main.js",

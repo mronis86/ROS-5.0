@@ -20,6 +20,10 @@ const DEFAULTS = {
   prerenderPackPath: '',
   prerenderBakeRootPath: '',
   offlineShowUrl: 'http://127.0.0.1:3004',
+  sessionMode: '',
+  sessionHours: 4,
+  sessionEndsAt: '',
+  sessionLabel: '',
 };
 
 function configPath() {
@@ -44,6 +48,14 @@ function saveConfig(partial) {
   if (next.apiBaseUrl) {
     next.apiBaseUrl = require('./auth-session').normalizeBaseUrl(next.apiBaseUrl);
   }
+  {
+    const mode = String(next.sessionMode || '').trim().toLowerCase();
+    next.sessionMode =
+      mode === 'testing' || mode === 'live' || mode === 'everyday' ? mode : '';
+  }
+  next.sessionHours = Math.min(24, Math.max(1, parseInt(String(next.sessionHours ?? 4), 10) || 4));
+  next.sessionEndsAt = String(next.sessionEndsAt || '').trim();
+  next.sessionLabel = String(next.sessionLabel || '').trim();
   fs.mkdirSync(path.dirname(configPath()), { recursive: true });
   fs.writeFileSync(configPath(), JSON.stringify(next, null, 2), 'utf8');
   return next;

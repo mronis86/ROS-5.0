@@ -30,10 +30,15 @@ const DEFAULTS = {
   vmixHost: '127.0.0.1',
   vmixPort: 8088,
   pollSeconds: 1,
-  /** Last auto-stop choice shown in the Start modal (cost guard). */
+  /** @deprecated kept for older configs; sessionMode replaces Start modal timer. */
   autoStopHours: 2,
   autoStopMinutes: 0,
   autoStopNever: false,
+  /** 'testing' | 'live' | 'everyday' | '' */
+  sessionMode: '',
+  sessionHours: 4,
+  sessionEndsAt: '',
+  sessionLabel: '',
   bindings: [{ ...DEFAULT_BINDING }],
 };
 
@@ -88,6 +93,14 @@ function saveConfig(partial) {
     ? Number(next.autoStopMinutes)
     : 0;
   next.autoStopNever = next.autoStopNever === true;
+  {
+    const mode = String(next.sessionMode || '').trim().toLowerCase();
+    next.sessionMode =
+      mode === 'testing' || mode === 'live' || mode === 'everyday' ? mode : '';
+  }
+  next.sessionHours = Math.min(24, Math.max(1, parseInt(String(next.sessionHours ?? 4), 10) || 4));
+  next.sessionEndsAt = String(next.sessionEndsAt || '').trim();
+  next.sessionLabel = String(next.sessionLabel || '').trim();
   next.bindings = next.bindings.map((b, i) => ({
     ...DEFAULT_BINDING,
     ...b,

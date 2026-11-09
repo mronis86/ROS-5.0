@@ -9,6 +9,9 @@ contextBridge.exposeInMainWorld('rosLedSpout', {
   getOutputStatus: () => ipcRenderer.invoke('output:status'),
   pickPrerenderPack: () => ipcRenderer.invoke('dialog:pickPrerenderPack'),
   bakePack: (partial) => ipcRenderer.invoke('pack:bake', partial),
+  getSession: () => ipcRenderer.invoke('session:get'),
+  startSession: (partial) => ipcRenderer.invoke('session:start', partial),
+  endSession: () => ipcRenderer.invoke('session:end'),
   onBakeProgress: (callback) => {
     const handler = (_event, payload) => callback(payload);
     ipcRenderer.on('pack:bake-progress', handler);
@@ -18,5 +21,10 @@ contextBridge.exposeInMainWorld('rosLedSpout', {
     const handler = (_event, payload) => callback(payload);
     ipcRenderer.on('output:status', handler);
     return () => ipcRenderer.removeListener('output:status', handler);
+  },
+  onSession: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on('session:status', handler);
+    return () => ipcRenderer.removeListener('session:status', handler);
   },
 });

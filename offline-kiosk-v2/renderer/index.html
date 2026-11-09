@@ -56,6 +56,9 @@
       <button type="button" class="tab" role="tab" aria-selected="false" data-tab="remoteop">
         RemoteOp Multiview
       </button>
+      <button type="button" class="tab" role="tab" aria-selected="false" data-tab="ppt">
+        PPT Bridge
+      </button>
       <button type="button" class="tab is-active" role="tab" aria-selected="true" data-tab="status">
         Status
       </button>
@@ -190,19 +193,52 @@
 
       <section class="tab-panel" id="panel-remoteop" role="tabpanel" hidden>
         <div class="remoteop-picker" id="remoteopPicker">
-          <div class="section-intro">
-            <h2>RemoteOp Multiview</h2>
-            <p>Pick the source first. The page loads in this kiosk after you choose.</p>
-          </div>
-          <div class="remoteop-choice">
-            <button type="button" class="launch-card" id="pickVdoBtn" data-remote="vdo">
-              <span class="launch-name">VDO.Ninja</span>
-              <span class="launch-desc">Peer / room multiview and camera push.</span>
-            </button>
-            <button type="button" class="launch-card" id="pickMeshcastBtn" data-remote="meshcast">
-              <span class="launch-name">Meshcast</span>
-              <span class="launch-desc">Meshcast 2.0 (app.meshcast.io).</span>
-            </button>
+          <div class="remoteop-picker-inner">
+            <div class="section-intro">
+              <h2>RemoteOp Multiview</h2>
+              <p>Pick a source — it opens full-window in this tab.</p>
+            </div>
+
+            <div class="remoteop-choice">
+              <button type="button" class="launch-card launch-card-vdo" id="pickVdoBtn" data-remote="vdo">
+                <span class="launch-logo" aria-hidden="true">
+                  <img src="./assets/vdo-ninja-32.png" alt="" width="44" height="44" />
+                </span>
+                <span class="launch-copy">
+                  <span class="launch-name">VDO.Ninja</span>
+                  <span class="launch-desc">Rooms, peer links, camera push</span>
+                </span>
+                <span class="launch-go" aria-hidden="true">Open</span>
+              </button>
+              <button type="button" class="launch-card launch-card-meshcast" id="pickMeshcastBtn" data-remote="meshcast">
+                <span class="launch-logo" aria-hidden="true">
+                  <img src="./assets/meshcast.svg" alt="" width="44" height="44" />
+                </span>
+                <span class="launch-copy">
+                  <span class="launch-name">Meshcast</span>
+                  <span class="launch-desc">Hosted multiview · app.meshcast.io</span>
+                </span>
+                <span class="launch-go" aria-hidden="true">Open</span>
+              </button>
+            </div>
+
+            <ol class="remoteop-steps" aria-label="How to use RemoteOp">
+              <li>
+                <span class="remoteop-step-num">1</span>
+                <span class="remoteop-step-title">Pick</span>
+                <span class="remoteop-step-text">VDO or Meshcast</span>
+              </li>
+              <li>
+                <span class="remoteop-step-num">2</span>
+                <span class="remoteop-step-title">Join</span>
+                <span class="remoteop-step-text">Room or invite link</span>
+              </li>
+              <li>
+                <span class="remoteop-step-num">3</span>
+                <span class="remoteop-step-title">Switch</span>
+                <span class="remoteop-step-text">Anytime from the top bar</span>
+              </li>
+            </ol>
           </div>
         </div>
 
@@ -234,6 +270,78 @@
         </div>
       </section>
 
+      <section class="tab-panel" id="panel-ppt" role="tabpanel" hidden>
+        <div class="ppt-page">
+          <div class="section-intro">
+            <h2>PPT Bridge</h2>
+            <p>Is PPT Bridge online for this event, and does the event have PPT cues?</p>
+          </div>
+
+          <div class="ppt-hero" id="pptHero" data-state="skip" aria-live="polite">
+            <div class="ppt-hero-main">
+              <p class="ppt-status-word" id="pptStatusWord">—</p>
+              <p class="ppt-hero-label" id="pptHeroLabel">Checking…</p>
+              <p class="ppt-hero-detail" id="pptHeroDetail">Waiting for PPT Bridge status.</p>
+            </div>
+            <div class="ppt-hero-actions">
+              <span class="ppt-mode-pill" id="pptModePill">—</span>
+              <button type="button" class="ghost-btn" id="refreshPptBtn">Recheck</button>
+            </div>
+          </div>
+
+          <div class="ppt-primary">
+            <div class="ppt-primary-row">
+              <span>Event</span>
+              <strong id="pptEventValue">—</strong>
+            </div>
+            <div class="ppt-primary-row">
+              <span>Event PPTs</span>
+              <strong id="pptEventPptsValue">—</strong>
+            </div>
+            <div class="ppt-primary-row">
+              <span>Open file</span>
+              <strong id="pptDeckValue">—</strong>
+            </div>
+            <div class="ppt-primary-row">
+              <span>Show</span>
+              <strong id="pptShowValue">—</strong>
+            </div>
+            <div class="ppt-primary-row">
+              <span>Slide</span>
+              <strong id="pptSlideValue">—</strong>
+            </div>
+          </div>
+
+          <details class="ppt-more" id="pptMoreDetails">
+            <summary>More detail</summary>
+            <dl class="ppt-detail-list">
+              <div>
+                <dt>Heartbeat</dt>
+                <dd id="pptHeartbeatValue">—</dd>
+              </div>
+              <div>
+                <dt>Last seen</dt>
+                <dd id="pptLastSeenValue">—</dd>
+              </div>
+              <div>
+                <dt>Cache</dt>
+                <dd id="pptCacheValue">—</dd>
+              </div>
+              <div>
+                <dt>Last command</dt>
+                <dd id="pptCommandValue">—</dd>
+              </div>
+              <div>
+                <dt>Cue follow</dt>
+                <dd id="pptCueValue">—</dd>
+              </div>
+            </dl>
+          </details>
+
+          <p class="note ppt-error-note" id="pptErrorNote" hidden></p>
+        </div>
+      </section>
+
       <section class="tab-panel is-active" id="panel-status" role="tabpanel">
         <div class="status-dash">
           <div class="status-hero" id="statusHero" data-state="off">
@@ -257,8 +365,9 @@
             <div class="svc" data-svc="railway"><span class="svc-dot"></span><strong>Railway</strong><em id="svcRailway">—</em></div>
             <div class="svc" data-svc="neon"><span class="svc-dot"></span><strong>Neon</strong><em id="svcNeon">—</em></div>
             <div class="svc" data-svc="lan"><span class="svc-dot"></span><strong>Local LAN</strong><em id="svcLan">—</em></div>
-            <div class="svc" data-svc="token"><span class="svc-dot"></span><strong>API token</strong><em id="svcToken">—</em></div>
+            <div class="svc" data-svc="ppt"><span class="svc-dot"></span><strong>PPT Bridge</strong><em id="svcPpt">—</em></div>
           </div>
+          <p class="note status-ppt-note" id="pptBridgeNote" hidden></p>
 
           <div class="perf-panel" id="perfPanel" data-level="ok" aria-live="polite">
             <div class="perf-head">
@@ -323,6 +432,10 @@
               />
               <button type="button" class="ghost-btn" id="saveTokenBtn" disabled>Save</button>
             </div>
+            <div class="token-status-line" id="tokenStatusLine" data-state="skip" aria-live="polite">
+              <span class="token-status-label">API token</span>
+              <span class="token-status-value" id="svcToken">—</span>
+            </div>
             <p class="status-token-note" id="tokenStatusNote">Start Offline Show to manage Cloud / token.</p>
           </div>
 
@@ -343,6 +456,11 @@
                 <span class="session-card-kicker">RemoteOp</span>
                 <span class="session-card-value" id="statusCamera">Not open</span>
                 <span class="session-card-hint" id="statusCameraHint">Open VDO or Meshcast</span>
+              </button>
+              <button type="button" class="session-card" data-goto="ppt" id="sessionPptCard" data-state="empty">
+                <span class="session-card-kicker">PPT Bridge</span>
+                <span class="session-card-value" id="statusPptCard">—</span>
+                <span class="session-card-hint" id="statusPptCardHint">Open PPT Bridge tab</span>
               </button>
             </div>
           </div>

@@ -46,6 +46,14 @@ const els = {
   meetingHubCard: document.getElementById('meetinghub-card'),
   hubDeckList: document.getElementById('hub-deck-list'),
   btnHubRefresh: document.getElementById('btn-hub-refresh'),
+  sessionPill: document.getElementById('session-pill'),
+  btnSession: document.getElementById('btn-session'),
+  sessionModal: document.getElementById('session-modal'),
+  sessionLiveHours: document.getElementById('session-live-hours'),
+  sessionHours: document.getElementById('sessionHours'),
+  sessionModalError: document.getElementById('session-modal-error'),
+  btnSessionStart: document.getElementById('btn-session-start'),
+  btnSessionCancel: document.getElementById('btn-session-cancel'),
 };
 
 let loadedEvents = [];
@@ -543,6 +551,74 @@ function applyStatus(status) {
   }
 }
 
+let sessionActive = false;
+let sessionTickTimer = null;
+
+function selectedSessionMode() {
+  const checked = document.querySelector('input[name="sessionMode"]:checked');
+  return checked ? checked.value : 'testing';
+}
+
+function syncSessionModeUi() {
+  const mode = selectedSessionMode();
+  if (els.sessionLiveHours) els.sessionLiveHours.hidden = mode !== 'live';
+}
+
+function applySession(state) {
+  sessionActive = !!(state && state.active);
+  if (els.sessionPill) {
+    els.sessionPill.hidden = false;
+    if (sessionActive) {
+      els.sessionPill.classList.remove('expired');
+      const left = state.remaining || '';
+      els.sessionPill.textContent = left
+        ? `${state.label || 'Session'} · ${left}`
+        : state.label || 'Session active';
+    } else {
+      els.sessionPill.classList.add('expired');
+      els.sessionPill.textContent = 'No session';
+    }
+  }
+  if (els.btnSessionCancel) els.btnSessionCancel.hidden = !sessionActive;
+  if (els.sessionModal && sessionActive) {
+    els.sessionModal.hidden = true;
+  }
+}
+
+function openSessionModal({ force = false } = {}) {
+  if (!els.sessionModal) return;
+  if (els.sessionModalError) els.sessionModalError.textContent = '';
+  syncSessionModeUi();
+  if (force || !sessionActive) {
+    els.sessionModal.hidden = false;
+  }
+}
+
+function closeSessionModal() {
+  if (els.sessionModal && sessionActive) els.sessionModal.hidden = true;
+}
+
+async function refreshSession() {
+  if (!api.getSession) return;
+  const state = await api.getSession();
+  applySession(state);
+  if (!state.active) openSessionModal({ force: true });
+}
+
+async function confirmSession() {
+  if (!api.startSession) return;
+  if (els.sessionModalError) els.sessionModalError.textContent = '';
+  const mode = selectedSessionMode();
+  const hours = Number(els.sessionHours?.value || 4);
+  const result = await api.startSession({ mode, hours });
+  if (!result?.ok) {
+    if (els.sessionModalError) els.sessionModalError.textContent = result?.error || 'Could not start session';
+    return;
+  }
+  applySession(result);
+  toast(result.label || 'Session started');
+}
+
 async function load() {
   const cfg = await api.loadConfig();
   els.apiBaseUrl.value = cfg.apiBaseUrl || '';
@@ -568,6 +644,14 @@ async function load() {
   if (els.forceEditMode) {
     els.forceEditMode.checked = cfg.forceEditMode !== false;
   }
+  if (cfg.sessionMode) {
+    const radio = document.querySelector(`input[name="sessionMode"][value="${cfg.sessionMode}"]`);
+    if (radio) radio.checked = true;
+  }
+  if (els.sessionHours && cfg.sessionHours) {
+    els.sessionHours.value = String(Math.min(24, Math.max(1, Math.floor(Number(cfg.sessionHours) || 4))));
+  }
+  syncSessionModeUi();
   if (cfg.eventId) {
     const opt = document.createElement('option');
     opt.value = cfg.eventId;
@@ -578,6 +662,11 @@ async function load() {
   applyStatus(await api.getStatus());
   applyLiveCapture(await api.getLiveCapture());
   fillDaySelect();
+  await refreshSession();
+  if (sessionTickTimer) clearInterval(sessionTickTimer);
+  sessionTickTimer = setInterval(() => {
+    if (sessionActive) void refreshSession();
+  }, 30_000);
 }
 
 document.getElementById('btn-save').onclick = async () => {
@@ -679,14 +768,49 @@ if (els.btnPickFolder) {
   };
 }
 
+document.querySelectorAll('input[name="sessionMode"]').forEach((input) => {
+  input.addEventListener('change', syncSessionModeUi);
+});
+
+if (els.btnSession) {
+  els.btnSession.onclick = () => openSessionModal({ force: true });
+}
+if (els.btnSessionStart) {
+  els.btnSessionStart.onclick = () => void confirmSession();
+}
+if (els.btnSessionCancel) {
+  els.btnSessionCancel.onclick = () => closeSessionModal();
+}
+if (api.onSession) {
+  api.onSession((state) => {
+    applySession(state);
+    if (state?.ended) {
+      toast(state.reason || 'Session ended — bridge stopped');
+      openSessionModal({ force: true });
+      void api.getLiveCapture().then(applyLiveCapture).catch(() => {});
+      void api.getStatus().then(applyStatus).catch(() => {});
+    }
+  });
+}
+
 document.getElementById('btn-start').onclick = async () => {
+  if (!sessionActive) {
+    openSessionModal({ force: true });
+    toast('Choose a session length first');
+    return;
+  }
   const cfg = formConfig();
   if (!cfg.eventId) {
     els.apiMsg.textContent = 'Pick an event first.';
     return;
   }
   if (cfg.bridgeMode === 'meetinghub') {
-    await api.startBridge(cfg);
+    const started = await api.startBridge(cfg);
+    if (started && started.ok === false) {
+      els.stError.textContent = started.error || 'Could not start';
+      openSessionModal({ force: true });
+      return;
+    }
     await refreshHubDecks();
     return;
   }
@@ -699,7 +823,11 @@ document.getElementById('btn-start').onclick = async () => {
       return;
     }
   }
-  await api.startBridge(cfg);
+  const started = await api.startBridge(cfg);
+  if (started && started.ok === false) {
+    els.stError.textContent = started.error || 'Could not start';
+    openSessionModal({ force: true });
+  }
 };
 
 document.getElementById('btn-stop').onclick = () => api.stopBridge();
@@ -715,12 +843,18 @@ document.querySelectorAll('[data-capture-source]').forEach((btn) => {
 if (els.btnLiveStart) {
   els.btnLiveStart.onclick = async () => {
     try {
+      if (!sessionActive) {
+        openSessionModal({ force: true });
+        toast('Choose a session length first');
+        return;
+      }
       await api.saveConfig(formConfig());
       if (els.livecapError) els.livecapError.textContent = '';
       applyLiveCapture(await api.startLiveCapture(formConfig()));
       toast('Live capture started');
     } catch (err) {
       if (els.livecapError) els.livecapError.textContent = err.message || String(err);
+      if (/session/i.test(String(err?.message || ''))) openSessionModal({ force: true });
     }
   };
 }

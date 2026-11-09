@@ -4493,7 +4493,6 @@ export default function AdminPage() {
               </span>
               <span className="block mt-1 text-sm text-slate-400">
                 Master switch for the whole site. Off by default until you are ready to use checklists.
-                After turning this on, enable Pre-Flight on each event from the Event List (Admin column).
               </span>
             </span>
           </label>

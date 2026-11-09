@@ -50,9 +50,6 @@ type EventListMobileViewProps = {
   displaySyncSavingId?: string | null;
   onToggleDisplaySync?: (event: Event) => void;
   onConfigureExtendControls?: (event: Event) => void;
-  onTogglePreflightChecklist?: (event: Event) => void;
-  preflightSavingId?: string | null;
-  preflightFeatureEnabled?: boolean;
 };
 
 const EventListMobileView: React.FC<EventListMobileViewProps> = ({
@@ -88,9 +85,6 @@ const EventListMobileView: React.FC<EventListMobileViewProps> = ({
   displaySyncSavingId = null,
   onToggleDisplaySync,
   onConfigureExtendControls,
-  onTogglePreflightChecklist,
-  preflightSavingId = null,
-  preflightFeatureEnabled = false,
 }) => {
   const [sortKey, setSortKey] = useState<MobileSortKey>(() => (activeTab === 'past' ? 'date_desc' : 'date_asc'));
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -410,28 +404,6 @@ const EventListMobileView: React.FC<EventListMobileViewProps> = ({
                         >
                           <span>Extend Event Controls</span>
                           <span>{event.extendEventControlsEnabled ? 'On' : 'Off'}</span>
-                        </button>
-                      ) : null}
-                      {isAdminUser && activeTab !== 'quickMode' && onTogglePreflightChecklist ? (
-                        <button
-                          type="button"
-                          onClick={() => onTogglePreflightChecklist(event)}
-                          disabled={preflightSavingId === event.id}
-                          className={`inline-flex min-h-[36px] w-full items-center justify-between gap-2 rounded-md border px-3 py-2 text-xs font-semibold disabled:opacity-50 ${
-                            event.preflightChecklistEnabled
-                              ? preflightFeatureEnabled
-                                ? 'border-emerald-600/70 bg-emerald-950/40 text-emerald-200'
-                                : 'border-amber-600/60 bg-amber-950/40 text-amber-200'
-                              : 'border-slate-600 bg-slate-800 text-slate-300'
-                          }`}
-                          title={
-                            preflightFeatureEnabled
-                              ? 'Pre-Flight for this event'
-                              : 'Global Pre-Flight is Off in Admin'
-                          }
-                        >
-                          <span>Pre-Flight Checklist</span>
-                          <span>{event.preflightChecklistEnabled ? 'On' : 'Off'}</span>
                         </button>
                       ) : null}
                       <EventListRowActions

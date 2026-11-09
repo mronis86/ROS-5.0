@@ -19,6 +19,13 @@ const DEFAULTS = {
   focusTarget: 'off',
   /** When true, force Enable Editing for Protected View / security notification bars. */
   forceEditMode: true,
+  /** 'testing' | 'live' | 'everyday' | '' */
+  sessionMode: '',
+  /** Live Event duration hours (1–24). */
+  sessionHours: 4,
+  /** ISO end time for the current bridge session. */
+  sessionEndsAt: '',
+  sessionLabel: '',
 };
 
 function configPath() {

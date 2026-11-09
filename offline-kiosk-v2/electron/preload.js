@@ -29,6 +29,7 @@ contextBridge.exposeInMainWorld('kiosk', {
     ipcRenderer.invoke('kiosk:weblinkedGetPreviewFrame', payload || {}),
   weblinkedSendInput: (payload) => ipcRenderer.invoke('kiosk:weblinkedSendInput', payload),
   weblinkedStatus: () => ipcRenderer.invoke('kiosk:weblinkedStatus'),
+  pptBridgeStatus: (payload) => ipcRenderer.invoke('kiosk:pptBridgeStatus', payload || {}),
   getSystemHealth: () => ipcRenderer.invoke('kiosk:getSystemHealth'),
   startWebLinked: (payload) => ipcRenderer.invoke('kiosk:startWebLinked', payload),
   stopWebLinked: () => ipcRenderer.invoke('kiosk:stopWebLinked'),

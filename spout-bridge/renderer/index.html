@@ -10,8 +10,16 @@
   <body>
     <div class="app">
       <header>
-        <h1>ROS LED Spout</h1>
-        <p class="subtitle">Live LED page → Spout, or offline lossless animation pack → Spout</p>
+        <div class="header-row">
+          <div>
+            <h1>ROS LED Spout</h1>
+            <p class="subtitle">Live LED page → Spout, or offline lossless animation pack → Spout</p>
+          </div>
+          <div class="header-session">
+            <span id="session-pill" class="session-pill">No session</span>
+            <button type="button" id="session-btn" class="btn secondary">Session…</button>
+          </div>
+        </div>
       </header>
 
       <section class="panel workflow-panel">
@@ -145,6 +153,60 @@
         </p>
       </footer>
     </div>
+
+    <div id="session-modal" class="modal" hidden>
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="session-modal-title">
+        <h2 id="session-modal-title">How long do you need Spout?</h2>
+        <p class="hint">
+          When time is up, Spout output stops automatically so this PC does not keep streaming.
+        </p>
+        <div class="session-options" role="radiogroup" aria-label="Session length">
+          <label class="session-option">
+            <input type="radio" name="sessionMode" value="testing" checked />
+            <span>
+              <strong>Testing</strong>
+              <span class="hint">Runs for 2 hours, then stops.</span>
+            </span>
+          </label>
+          <label class="session-option">
+            <input type="radio" name="sessionMode" value="live" />
+            <span>
+              <strong>Live Event</strong>
+              <span class="hint">Pick hours (up to 24). Also turns off at midnight either way.</span>
+            </span>
+          </label>
+          <label id="session-live-hours" class="session-hours" hidden>
+            Hours
+            <select id="sessionHours">
+              <option value="1">1 hour</option>
+              <option value="2">2 hours</option>
+              <option value="3">3 hours</option>
+              <option value="4" selected>4 hours</option>
+              <option value="6">6 hours</option>
+              <option value="8">8 hours</option>
+              <option value="10">10 hours</option>
+              <option value="12">12 hours</option>
+              <option value="16">16 hours</option>
+              <option value="20">20 hours</option>
+              <option value="24">24 hours</option>
+            </select>
+          </label>
+          <label class="session-option">
+            <input type="radio" name="sessionMode" value="everyday" />
+            <span>
+              <strong>Everyday</strong>
+              <span class="hint">Runs from 7:00 AM to 9:00 PM, then stops.</span>
+            </span>
+          </label>
+        </div>
+        <p id="session-modal-error" class="error"></p>
+        <div class="actions session-actions">
+          <button type="button" id="btn-session-cancel" class="btn secondary" hidden>Cancel</button>
+          <button type="button" id="btn-session-start" class="btn primary">Start session</button>
+        </div>
+      </div>
+    </div>
+
     <script src="app.js"></script>
   </body>
 </html>

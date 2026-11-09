@@ -14,6 +14,7 @@
         <span id="auto-stop-pill" class="pill timer" hidden></span>
       </div>
       <div class="top-actions">
+        <button type="button" id="btn-session" class="secondary">Session…</button>
         <button type="button" id="btn-start" class="primary">Start</button>
         <button type="button" id="btn-stop">Stop</button>
         <button type="button" id="btn-resync">Resync</button>
@@ -116,7 +117,7 @@
           </div>
 
           <div class="card">
-            <h2>Cue poll &amp; auto-stop</h2>
+            <h2>Cue poll &amp; session</h2>
             <label>
               Poll interval (seconds)
               <input id="pollSeconds" type="number" min="1" max="60" step="1" />
@@ -130,7 +131,7 @@
             <p class="hint">
               How often to check Railway <code>active-timers</code> (hits Neon each time).
               <strong>1s</strong> = most responsive · higher = lower monthly cost.
-              Optional browser Socket.IO can still push cues faster when the network allows it.
+              Session length (Testing / Live Event / Everyday) auto-stops the bridge when time is up.
             </p>
           </div>
         </div>
@@ -156,41 +157,64 @@
     <p id="toast" class="toast" hidden></p>
 
     <div id="auto-stop-modal" class="modal" hidden>
-      <div class="modal-card" role="dialog" aria-labelledby="auto-stop-title">
-        <h3 id="auto-stop-title">Auto-stop timer</h3>
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="auto-stop-title">
+        <h3 id="auto-stop-title">How long do you need the bridge?</h3>
         <p class="hint">
-          Stops cue polling automatically so Neon / Railway cost doesn’t keep running if you forget Stop.
+          When time is up, cue polling and Socket.IO stop automatically so Railway / Neon cost doesn’t keep running.
         </p>
-        <div class="auto-stop-pickers">
-          <label>
-            Hours
-            <select id="auto-stop-hours"></select>
+
+        <div class="session-options" role="radiogroup" aria-label="Session length">
+          <label class="session-option">
+            <input type="radio" name="sessionMode" value="testing" checked />
+            <span>
+              <strong>Testing</strong>
+              <span class="hint">Runs for 2 hours, then disconnects.</span>
+            </span>
           </label>
-          <label>
-            Minutes
-            <select id="auto-stop-minutes">
-              <option value="0">0</option>
-              <option value="5">5</option>
-              <option value="10">10</option>
-              <option value="15">15</option>
-              <option value="20">20</option>
-              <option value="25">25</option>
-              <option value="30">30</option>
-              <option value="45">45</option>
+          <label class="session-option">
+            <input type="radio" name="sessionMode" value="live" />
+            <span>
+              <strong>Live Event</strong>
+              <span class="hint">Pick hours (up to 24). Also turns off at midnight either way.</span>
+            </span>
+          </label>
+          <label id="session-live-hours" class="session-hours" hidden>
+            Hours
+            <select id="sessionHours">
+              <option value="1">1 hour</option>
+              <option value="2">2 hours</option>
+              <option value="3">3 hours</option>
+              <option value="4" selected>4 hours</option>
+              <option value="6">6 hours</option>
+              <option value="8">8 hours</option>
+              <option value="10">10 hours</option>
+              <option value="12">12 hours</option>
+              <option value="16">16 hours</option>
+              <option value="20">20 hours</option>
+              <option value="24">24 hours</option>
             </select>
           </label>
+          <label class="session-option">
+            <input type="radio" name="sessionMode" value="everyday" />
+            <span>
+              <strong>Everyday</strong>
+              <span class="hint">Runs from 7:00 AM to 9:00 PM, then disconnects.</span>
+            </span>
+          </label>
         </div>
+
+        <p id="session-modal-error" class="error"></p>
         <div class="row modal-actions">
-          <button type="button" id="btn-auto-stop-never" class="secondary">Never auto-stop</button>
-          <button type="button" id="btn-auto-stop-confirm" class="primary">Start with timer</button>
+          <button type="button" id="btn-session-cancel" class="secondary" hidden>Cancel</button>
+          <button type="button" id="btn-auto-stop-confirm" class="primary">Start session</button>
         </div>
       </div>
     </div>
 
     <div id="auto-stop-notice" class="banner-notice" hidden>
       <div>
-        <strong>Auto-stopped</strong>
-        <span id="auto-stop-notice-text">Polling stopped after the timer ended.</span>
+        <strong>Session ended</strong>
+        <span id="auto-stop-notice-text">Bridge stopped after the session timer ended.</span>
       </div>
       <button type="button" id="btn-auto-stop-restart" class="primary">Start again</button>
     </div>

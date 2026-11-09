@@ -11,8 +11,10 @@
       <div class="brand">
         <h1>ROS PowerPoint Bridge V2</h1>
         <span id="run-pill" class="pill stopped">Stopped</span>
+        <span id="session-pill" class="pill session" hidden>No session</span>
       </div>
       <div class="top-actions">
+        <button type="button" id="btn-session" class="secondary">Session…</button>
         <button type="button" id="btn-start" class="primary">Start follow</button>
         <button type="button" id="btn-stop">Stop</button>
         <button type="button" id="btn-sync" class="secondary" hidden>Sync decks</button>
@@ -147,6 +149,62 @@
       </section>
     </main>
     <div id="toast" hidden></div>
+
+    <div id="session-modal" class="modal" hidden>
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="session-modal-title">
+        <h2 id="session-modal-title">How long do you need the bridge?</h2>
+        <p class="hint">
+          When time is up, follow / launcher / live capture stop automatically so the PC does not stay connected.
+        </p>
+
+        <div class="session-options" role="radiogroup" aria-label="Session length">
+          <label class="session-option">
+            <input type="radio" name="sessionMode" value="testing" checked />
+            <span>
+              <strong>Testing</strong>
+              <span class="hint">Runs for 2 hours, then disconnects.</span>
+            </span>
+          </label>
+          <label class="session-option">
+            <input type="radio" name="sessionMode" value="live" />
+            <span>
+              <strong>Live Event</strong>
+              <span class="hint">Pick hours (up to 24). Also turns off at midnight either way.</span>
+            </span>
+          </label>
+          <label id="session-live-hours" class="session-hours" hidden>
+            Hours
+            <select id="sessionHours">
+              <option value="1">1 hour</option>
+              <option value="2">2 hours</option>
+              <option value="3">3 hours</option>
+              <option value="4" selected>4 hours</option>
+              <option value="6">6 hours</option>
+              <option value="8">8 hours</option>
+              <option value="10">10 hours</option>
+              <option value="12">12 hours</option>
+              <option value="16">16 hours</option>
+              <option value="20">20 hours</option>
+              <option value="24">24 hours</option>
+            </select>
+          </label>
+          <label class="session-option">
+            <input type="radio" name="sessionMode" value="everyday" />
+            <span>
+              <strong>Everyday</strong>
+              <span class="hint">Runs from 7:00 AM to 9:00 PM, then disconnects.</span>
+            </span>
+          </label>
+        </div>
+
+        <p id="session-modal-error" class="error"></p>
+        <div class="row session-actions">
+          <button type="button" id="btn-session-start" class="primary">Start session</button>
+          <button type="button" id="btn-session-cancel" hidden>Cancel</button>
+        </div>
+      </div>
+    </div>
+
     <script src="app.js"></script>
   </body>
 </html>

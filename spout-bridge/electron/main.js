@@ -8,6 +8,12 @@ const { OutputManager } = require('./output-manager');
 const { resolveDllPath } = require('./spout-sender');
 const { loadManifest } = require('./prerender-pack');
 const { bakeLedPrerenderPack } = require('./bake-pack');
+const {
+  planSession,
+  sessionIsActive,
+  formatRemaining,
+  clampLiveHours,
+} = require('./session-schedule');
 
 // Writable paths outside OneDrive — avoids "Unable to move the cache" on Desktop sync folders.
 const userDataRoot = path.join(process.env.LOCALAPPDATA || os.tmpdir(), 'ros-led-spout');
@@ -26,7 +32,69 @@ app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
 app.commandLine.appendSwitch('disable-background-timer-throttling');
 
 let configWindow = null;
+let sessionExpireTimer = null;
 const outputManager = new OutputManager();
+
+function getSessionState(cfg = loadConfig()) {
+  const endsAt = cfg.sessionEndsAt || '';
+  const active = sessionIsActive(endsAt);
+  return {
+    active,
+    mode: cfg.sessionMode || '',
+    hours: clampLiveHours(cfg.sessionHours),
+    endsAt: active ? endsAt : '',
+    label: active ? cfg.sessionLabel || '' : '',
+    remaining: active ? formatRemaining(endsAt) : '',
+  };
+}
+
+function clearSessionTimer() {
+  if (sessionExpireTimer) {
+    clearTimeout(sessionExpireTimer);
+    sessionExpireTimer = null;
+  }
+}
+
+async function endSession(reason) {
+  clearSessionTimer();
+  try {
+    await outputManager.stop();
+  } catch {
+    /* ignore */
+  }
+  const cfg = saveConfig({
+    sessionMode: '',
+    sessionEndsAt: '',
+    sessionLabel: '',
+  });
+  const payload = {
+    ...getSessionState(cfg),
+    ended: true,
+    reason: reason || 'Session ended',
+  };
+  sendToRenderer('session:status', payload);
+  sendToRenderer('output:status', { running: false, message: 'Stopped — session ended' });
+  return payload;
+}
+
+function armSessionTimer(endsAtIso) {
+  clearSessionTimer();
+  const endsMs = Date.parse(String(endsAtIso || ''));
+  if (!Number.isFinite(endsMs)) return;
+  const delay = Math.max(0, endsMs - Date.now());
+  sessionExpireTimer = setTimeout(() => {
+    void endSession('Session time is up — Spout stopped');
+  }, delay);
+}
+
+function requireActiveSession() {
+  const state = getSessionState();
+  if (state.active) return null;
+  return {
+    ok: false,
+    error: 'Choose how long you need Spout first (Testing, Live Event, or Everyday).',
+  };
+}
 
 function createConfigWindow() {
   configWindow = new BrowserWindow({
@@ -64,6 +132,8 @@ app.whenReady().then(() => {
   const config = loadConfig();
   installApiAuth(session.defaultSession, config.apiBaseUrl, config.apiToken);
   createConfigWindow();
+  const existing = getSessionState(config);
+  if (existing.active) armSessionTimer(existing.endsAt);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createConfigWindow();
@@ -71,6 +141,7 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', async () => {
+  clearSessionTimer();
   await outputManager.stop();
   if (process.platform !== 'darwin') app.quit();
 });
@@ -95,7 +166,29 @@ ipcMain.handle('api:validate', async (_event, partial) => {
   return outputManager.validateApi(config);
 });
 
+ipcMain.handle('session:get', () => getSessionState());
+ipcMain.handle('session:start', (_event, partial) => {
+  const plan = planSession({
+    mode: partial?.mode,
+    hours: partial?.hours,
+  });
+  if (!plan.ok) return { ok: false, error: plan.error };
+  const cfg = saveConfig({
+    sessionMode: plan.mode,
+    sessionHours: plan.hours != null ? plan.hours : loadConfig().sessionHours,
+    sessionEndsAt: plan.endsAt.toISOString(),
+    sessionLabel: plan.label,
+  });
+  armSessionTimer(cfg.sessionEndsAt);
+  const state = { ok: true, ...getSessionState(cfg) };
+  sendToRenderer('session:status', state);
+  return state;
+});
+ipcMain.handle('session:end', () => endSession('Session cleared'));
+
 ipcMain.handle('output:start', async (_event, partial) => {
+  const blocked = requireActiveSession();
+  if (blocked) return blocked;
   const config = saveConfig(partial || {});
   installApiAuth(session.defaultSession, config.apiBaseUrl, config.apiToken);
   try {

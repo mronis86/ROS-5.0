@@ -13,9 +13,17 @@ contextBridge.exposeInMainWorld('rosVmixBridge', {
   getStatus: () => ipcRenderer.invoke('bridge:status'),
   reportCue: (itemId, data) => ipcRenderer.invoke('bridge:cue', { itemId, data }),
   reportSocketStatus: (status) => ipcRenderer.send('bridge:socketStatus', status),
+  getSession: () => ipcRenderer.invoke('session:get'),
+  startSession: (partial) => ipcRenderer.invoke('session:start', partial),
+  endSession: () => ipcRenderer.invoke('session:end'),
   onStatus: (callback) => {
     const handler = (_event, payload) => callback(payload);
     ipcRenderer.on('bridge:status', handler);
     return () => ipcRenderer.removeListener('bridge:status', handler);
+  },
+  onSession: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on('session:status', handler);
+    return () => ipcRenderer.removeListener('session:status', handler);
   },
 });

@@ -345,3 +345,139 @@ footer {
 footer code {
   color: #cbd5e1;
 }
+
+.header-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.header-session {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.35rem;
+  flex-shrink: 0;
+}
+
+.session-pill {
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  background: #7f1d1d;
+  color: #fecaca;
+  max-width: 11rem;
+  text-align: right;
+}
+
+.session-pill.active {
+  background: #1e3a5f;
+  color: #bfdbfe;
+}
+
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(2, 6, 23, 0.72);
+}
+
+.modal[hidden] {
+  display: none !important;
+}
+
+.modal-card {
+  width: min(28rem, 100%);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 1.1rem 1.15rem 1.2rem;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+}
+
+.modal-card h2 {
+  margin: 0 0 0.35rem;
+  font-size: 1.05rem;
+}
+
+.modal-card .hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.session-options {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0.9rem 0 0.65rem;
+}
+
+.session-option {
+  display: flex;
+  gap: 0.65rem;
+  align-items: flex-start;
+  margin: 0;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #0f172a;
+  cursor: pointer;
+}
+
+.session-option:has(input:checked) {
+  border-color: var(--accent);
+  background: rgba(34, 211, 238, 0.08);
+}
+
+.session-option input {
+  width: auto;
+  margin: 0.15rem 0 0;
+  accent-color: var(--accent);
+}
+
+.session-option strong {
+  display: block;
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
+.session-option .hint {
+  display: block;
+  margin-top: 0.15rem;
+}
+
+.session-hours {
+  margin: 0 0 0.2rem 1.7rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.session-hours select {
+  display: block;
+  width: 100%;
+  margin-top: 0.3rem;
+  padding: 0.45rem 0.55rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #0f172a;
+  color: var(--text);
+}
+
+.session-actions {
+  margin-top: 0.75rem;
+  margin-bottom: 0;
+}
+
+.modal-card .error {
+  color: var(--danger);
+  font-size: 0.82rem;
+  min-height: 1.1em;
+  margin: 0.2rem 0 0;
+}

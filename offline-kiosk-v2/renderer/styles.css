@@ -284,6 +284,268 @@ body {
   color: #94a3b8;
 }
 
+.status-ppt-note {
+  margin: 0.35rem 0 0;
+  padding: 0 0.15rem;
+  color: #94a3b8;
+  font-size: 0.8rem;
+}
+
+.ppt-page {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  width: 100%;
+  max-width: 42rem;
+  margin: 0 auto;
+  text-align: center;
+}
+
+.ppt-page .section-intro {
+  text-align: center;
+}
+
+.ppt-page .section-intro p {
+  margin-left: auto;
+  margin-right: auto;
+  max-width: 32rem;
+}
+
+.ppt-hero {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  padding: 1.25rem 1.35rem;
+  border-radius: 0.75rem;
+  border: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.ppt-hero-main {
+  flex: 1 1 16rem;
+  text-align: center;
+}
+
+.ppt-hero[data-state='ok'] {
+  border-color: #059669;
+  background: #052e1f;
+}
+
+.ppt-hero[data-state='bad'] {
+  border-color: #dc2626;
+  background: #450a0a;
+}
+
+.ppt-hero[data-state='skip'] {
+  border-color: #475569;
+}
+
+.ppt-status-word {
+  margin: 0 0 0.2rem;
+  font-size: 1.55rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #94a3b8;
+}
+
+.ppt-hero[data-state='ok'] .ppt-status-word {
+  color: #34d399;
+}
+
+.ppt-hero[data-state='bad'] .ppt-status-word {
+  color: #f87171;
+}
+
+.ppt-hero-label {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+  color: #f1f5f9;
+}
+
+.ppt-hero-detail {
+  margin: 0.35rem 0 0;
+  font-size: 0.85rem;
+  color: #94a3b8;
+  line-height: 1.4;
+}
+
+.ppt-hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.65rem;
+}
+
+.ppt-mode-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.35rem 0.7rem;
+  border-radius: 999px;
+  border: 1px solid #334155;
+  background: #0f172a;
+  color: #cbd5e1;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.ppt-hero[data-state='ok'] .ppt-mode-pill {
+  border-color: rgba(52, 211, 153, 0.35);
+  color: #a7f3d0;
+}
+
+.ppt-primary {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  background: var(--panel);
+  overflow: hidden;
+  text-align: left;
+}
+
+.ppt-primary-row {
+  display: grid;
+  grid-template-columns: 5.5rem minmax(0, 1fr);
+  gap: 0.75rem;
+  align-items: baseline;
+  padding: 0.85rem 1rem;
+  border-top: 1px solid #243244;
+}
+
+.ppt-primary-row:first-child {
+  border-top: 0;
+}
+
+.ppt-primary-row span {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.ppt-primary-row strong {
+  font-size: 0.95rem;
+  font-weight: 650;
+  color: #f1f5f9;
+  word-break: break-word;
+}
+
+.ppt-more {
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  background: var(--panel);
+  text-align: left;
+  overflow: hidden;
+}
+
+.ppt-more summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 0.8rem 1rem;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #cbd5e1;
+  user-select: none;
+}
+
+.ppt-more summary::-webkit-details-marker {
+  display: none;
+}
+
+.ppt-more summary::after {
+  content: 'Show';
+  float: right;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #64748b;
+}
+
+.ppt-more[open] summary::after {
+  content: 'Hide';
+}
+
+.ppt-detail-list {
+  margin: 0;
+  padding: 0 1rem 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  border-top: 1px solid #243244;
+  padding-top: 0.85rem;
+}
+
+.ppt-detail-list > div {
+  display: grid;
+  grid-template-columns: 7rem minmax(0, 1fr);
+  gap: 0.65rem;
+  align-items: baseline;
+}
+
+.ppt-detail-list dt {
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.ppt-detail-list dd {
+  margin: 0;
+  font-size: 0.85rem;
+  color: #e2e8f0;
+  word-break: break-word;
+}
+
+.ppt-error-note {
+  color: #fecaca;
+}
+
+.token-status-line {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin-top: 0.45rem;
+  padding: 0.45rem 0.65rem;
+  border-radius: 0.5rem;
+  border: 1px solid #334155;
+  background: #0f172a;
+  font-size: 0.8rem;
+}
+
+.token-status-label {
+  font-weight: 600;
+  color: #cbd5e1;
+}
+
+.token-status-value {
+  font-weight: 700;
+  color: #94a3b8;
+}
+
+.token-status-line[data-state='ok'] {
+  border-color: rgba(52, 211, 153, 0.35);
+}
+
+.token-status-line[data-state='ok'] .token-status-value {
+  color: #34d399;
+}
+
+.token-status-line[data-state='bad'] {
+  border-color: rgba(248, 113, 113, 0.35);
+}
+
+.token-status-line[data-state='bad'] .token-status-value {
+  color: #f87171;
+}
+
 .status-toolbar {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -1038,39 +1300,172 @@ body {
 }
 
 #panel-remoteop.is-active .remoteop-picker {
-  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  flex: 1;
+  overflow: auto;
+  padding: 1.25rem 1.25rem 2rem;
+  text-align: center;
+}
+
+.remoteop-picker-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.15rem;
+  width: min(100%, 56rem);
+  margin: 0 auto;
+}
+
+.remoteop-picker .section-intro {
+  text-align: center;
+  width: min(100%, 42rem);
+}
+
+.remoteop-picker .section-intro p {
+  margin-left: auto;
+  margin-right: auto;
 }
 
 .remoteop-choice {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 1rem;
-  max-width: none;
-  width: min(100%, 56rem);
+  width: 100%;
+  margin: 0 auto;
 }
 
 .launch-card {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 0.35rem;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.9rem;
   text-align: left;
   border: 1px solid var(--line);
-  border-radius: 0.75rem;
+  border-radius: 0.85rem;
   background: var(--panel);
   color: var(--text);
   font: inherit;
-  padding: 1rem 1.1rem;
+  padding: 1.1rem 1.15rem;
   cursor: pointer;
+  min-height: 5.75rem;
+  transition: border-color 0.15s ease, background 0.15s ease, transform 0.15s ease;
 }
+
+.launch-logo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 3.25rem;
+  height: 3.25rem;
+  border-radius: 0.75rem;
+  border: 1px solid #334155;
+  background: #0f172a;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.launch-logo img {
+  width: 2.1rem;
+  height: 2.1rem;
+  object-fit: contain;
+  display: block;
+}
+
+.launch-card-vdo .launch-logo {
+  background: #111827;
+}
+
+.launch-card-meshcast .launch-logo {
+  background: #16161d;
+}
+
+.launch-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.launch-go {
+  align-self: center;
+  padding: 0.3rem 0.65rem;
+  border-radius: 999px;
+  border: 1px solid #334155;
+  background: #0f172a;
+  color: #cbd5e1;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.remoteop-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+  width: 100%;
+  margin: 0.15rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.remoteop-steps li {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  margin: 0;
+  min-height: 6.25rem;
+  padding: 1rem 0.85rem;
+  border-radius: 0.75rem;
+  border: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.remoteop-step-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 999px;
+  border: 1px solid #475569;
+  background: #0f172a;
+  color: #e2e8f0;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.remoteop-step-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #f1f5f9;
+}
+
+.remoteop-step-text {
+  font-size: 0.78rem;
+  line-height: 1.35;
+  color: var(--muted);
+}
+
 
 .launch-card:hover {
   border-color: var(--accent);
   background: #243447;
+  transform: translateY(-1px);
+}
+
+.launch-card:hover .launch-go {
+  border-color: var(--accent);
+  color: #fff;
 }
 
 .launch-name {
-  font-size: 1rem;
+  font-size: 1.05rem;
   font-weight: 700;
   color: #fff;
 }
@@ -1155,8 +1550,17 @@ body {
 }
 
 @media (max-width: 700px) {
-  .remoteop-choice {
+  .remoteop-choice,
+  .remoteop-steps {
     grid-template-columns: 1fr;
+  }
+
+  .launch-card {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .launch-go {
+    display: none;
   }
 }
 

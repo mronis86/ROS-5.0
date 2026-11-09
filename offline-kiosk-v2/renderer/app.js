@@ -285,7 +285,12 @@ const state = {
   tokenConfigured: false,
   tokenPrefix: '',
   connectivity: null,
+  /** @type {Record<string, any> | null} */
+  pptBridge: null,
 };
+
+let pptBridgePollTimer = null;
+let pptBridgeFetchSeq = 0;
 
 function wlSourceId(rowOrId) {
   const id = typeof rowOrId === 'string' ? rowOrId : rowOrId?.id;
@@ -326,6 +331,12 @@ function $$(sel) {
 
 function selectedEvent() {
   return state.events.find((e) => e.id === state.eventId) || null;
+}
+
+/** PPT Bridge heartbeats use the calendar UUID, not the logical ROS event-… id. */
+function pptStatusEventId() {
+  const ev = selectedEvent();
+  return String(ev?.calendarId || state.eventId || '').trim();
 }
 
 function findDisplay(id) {
@@ -565,10 +576,342 @@ function setSvc(id, stateName, text) {
     neon: 'svcNeon',
     lan: 'svcLan',
     token: 'svcToken',
+    ppt: 'svcPpt',
   };
+  if (id === 'token') {
+    const line = $('#tokenStatusLine');
+    if (line) line.dataset.state = stateName || 'skip';
+  }
   const valueEl = $(`#${map[id]}`);
   if (el) el.dataset.state = stateName || 'skip';
   if (valueEl) valueEl.textContent = text;
+}
+
+function formatPptAge(ms) {
+  if (ms == null || !Number.isFinite(ms)) return '—';
+  if (ms < 1000) return 'just now';
+  const sec = Math.round(ms / 1000);
+  if (sec < 60) return `${sec}s ago`;
+  const min = Math.floor(sec / 60);
+  const rem = sec % 60;
+  if (min < 60) return rem ? `${min}m ${rem}s ago` : `${min}m ago`;
+  return `${Math.floor(min / 60)}h ago`;
+}
+
+function setPptText(id, text) {
+  const el = $(id);
+  if (el) el.textContent = text;
+}
+
+function renderPptBridgeTab(view) {
+  const hero = $('#pptHero');
+  if (hero) hero.dataset.state = view.state || 'skip';
+  setPptText('#pptStatusWord', view.statusWord || '—');
+  setPptText('#pptHeroLabel', view.label || '—');
+  setPptText('#pptHeroDetail', view.detail || '');
+  setPptText('#pptModePill', view.mode || '—');
+  setPptText('#pptEventValue', view.event || '—');
+  setPptText('#pptEventPptsValue', view.eventPpts || '—');
+  setPptText('#pptDeckValue', view.deck || '—');
+  setPptText('#pptShowValue', view.show || '—');
+  setPptText('#pptSlideValue', view.slide || '—');
+  setPptText('#pptHeartbeatValue', view.heartbeat || '—');
+  setPptText('#pptLastSeenValue', view.lastSeen || '—');
+  setPptText('#pptCacheValue', view.cache || '—');
+  setPptText('#pptCommandValue', view.command || '—');
+  setPptText('#pptCueValue', view.cue || '—');
+
+  const err = $('#pptErrorNote');
+  if (err) {
+    if (view.error) {
+      err.hidden = false;
+      err.textContent = view.error;
+    } else {
+      err.hidden = true;
+      err.textContent = '';
+    }
+  }
+
+  const card = $('#sessionPptCard');
+  if (card) card.dataset.state = view.state === 'ok' ? 'ready' : view.state === 'bad' ? 'warn' : 'empty';
+  setPptText('#statusPptCard', view.cardValue || view.statusWord || view.label || '—');
+  setPptText('#statusPptCardHint', view.cardHint || 'Open PPT Bridge tab');
+}
+
+function renderPptBridgeStatus() {
+  const note = $('#pptBridgeNote');
+  const ppt = state.pptBridge;
+  const ev = selectedEvent();
+
+  const blankTab = (partial) => {
+    renderPptBridgeTab({
+      state: 'skip',
+      statusWord: '—',
+      label: '—',
+      detail: '',
+      mode: '—',
+      event: '—',
+      eventPpts: '—',
+      deck: '—',
+      show: '—',
+      slide: '—',
+      heartbeat: '—',
+      lastSeen: '—',
+      cache: '—',
+      command: '—',
+      cue: '—',
+      cardValue: '—',
+      cardHint: 'Open PPT Bridge tab',
+      ...partial,
+    });
+  };
+
+  if (!state.offlineShowRunning) {
+    setSvc('ppt', 'skip', '—');
+    if (note) {
+      note.hidden = true;
+      note.textContent = '';
+    }
+    blankTab({
+      statusWord: 'Off',
+      label: 'Offline Show not started',
+      detail: 'Start Offline Show on Status first.',
+      cardValue: 'Show off',
+      cardHint: 'Start Offline Show first',
+    });
+    return;
+  }
+  if (!state.eventId) {
+    setSvc('ppt', 'skip', 'Pick event');
+    if (note) {
+      note.hidden = false;
+      note.textContent = 'Select an event on the Event tab to see PPT Bridge status.';
+    }
+    blankTab({
+      statusWord: 'Wait',
+      label: 'Pick an event',
+      detail: 'Select an event on the Event tab.',
+      cardValue: 'Pick event',
+      cardHint: 'Needs a selected event',
+    });
+    return;
+  }
+  if (!ppt) {
+    setSvc('ppt', 'skip', 'Checking…');
+    if (note) {
+      note.hidden = false;
+      note.textContent = `Checking PPT Bridge for ${ev?.name || state.eventId}…`;
+    }
+    blankTab({
+      statusWord: '…',
+      label: 'Checking…',
+      detail: `Looking up ${ev?.name || state.eventId}.`,
+      event: ev?.name || state.eventId,
+      cardValue: 'Checking…',
+      cardHint: 'Polling Railway',
+    });
+    return;
+  }
+  if (ppt.reason === 'no-token' || (!state.tokenConfigured && ppt.online !== true)) {
+    setSvc('ppt', 'skip', 'Need token');
+    if (note) {
+      note.hidden = false;
+      note.textContent = ppt.message || 'Save an Integration token to check PPT Bridge on Railway.';
+    }
+    blankTab({
+      statusWord: 'Token',
+      label: 'Need Integration token',
+      detail: 'Save a token on Status to check Railway.',
+      event: ppt.eventName || ev?.name || state.eventId,
+      cardValue: 'Need token',
+      cardHint: 'Save token on Status',
+      error: ppt.message || null,
+    });
+    return;
+  }
+  if (ppt.error && ppt.online !== true) {
+    setSvc('ppt', 'bad', 'Error');
+    if (note) {
+      note.hidden = false;
+      note.textContent = ppt.error;
+    }
+    blankTab({
+      state: 'bad',
+      statusWord: 'Error',
+      label: 'Could not check PPT Bridge',
+      detail: ppt.error,
+      event: ppt.eventName || ev?.name || state.eventId,
+      cardValue: 'Error',
+      cardHint: ppt.error,
+      error: ppt.error,
+    });
+    return;
+  }
+
+  const eventLabel = ppt.eventName || ev?.name || state.eventId;
+  const mode = ppt.modeLabel || (ppt.online ? 'PPT Bridge' : 'No bridge');
+  const age = formatPptAge(ppt.lastSeenAgeMs);
+  const lastSeenText = ppt.lastSeen
+    ? (() => {
+        try {
+          return new Date(ppt.lastSeen).toLocaleTimeString();
+        } catch {
+          return String(ppt.lastSeen);
+        }
+      })()
+    : 'Never';
+
+  if (ppt.online) {
+    setSvc('ppt', 'ok', 'Online');
+    if (note) {
+      note.hidden = false;
+      const deck = ppt.deckName ? ` · ${ppt.deckName}` : '';
+      note.textContent = `${mode} online · ${eventLabel}${deck}`;
+    }
+  } else {
+    setSvc('ppt', 'bad', 'Offline');
+    if (note) {
+      note.hidden = false;
+      note.textContent = `No PPT Bridge online for ${eventLabel} (last ~25s).`;
+    }
+  }
+
+  const live = ppt.online === true;
+  const eventHasPpt = ppt.eventHasPpt === true || Number(ppt.pptCueCount) > 0;
+  const pptCount = Number(ppt.pptCueCount) || 0;
+  const eventPptsLine = eventHasPpt
+    ? pptCount === 1
+      ? 'Yes · 1 PPT cue'
+      : `Yes · ${pptCount} PPT cues`
+    : 'No PPT cues on this event';
+
+  const slideParts = [];
+  if (live && ppt.currentIndex != null && Number.isFinite(Number(ppt.currentIndex))) {
+    slideParts.push(`#${Number(ppt.currentIndex) + 1}`);
+  }
+  if (live && ppt.slideCount > 0) slideParts.push(`of ${ppt.slideCount}`);
+  const slideValue = live
+    ? slideParts.length
+      ? slideParts.join(' ')
+      : ppt.slideCount > 0
+        ? `${ppt.slideCount} slides`
+        : '—'
+    : '—';
+
+  let showLine = '—';
+  if (live) {
+    if (ppt.slideshowActive) showLine = 'Slideshow running';
+    else showLine = 'Connected · idle';
+    if (ppt.liveCaptureActive) {
+      showLine += ppt.liveCaptureSource ? ` · live capture (${ppt.liveCaptureSource})` : ' · live capture';
+    }
+  }
+
+  const cueLine = live
+    ? ppt.loadedCueLabel
+      ? `${ppt.loadedCueLabel}${ppt.cueFollowAuto === false ? ' · manual' : ' · auto'}`
+      : ppt.cueFollowAuto === false
+        ? 'Manual'
+        : 'Auto'
+    : '—';
+
+  let deckLine = '—';
+  if (live && ppt.deckName) {
+    if (ppt.deckOnEvent === false) deckLine = `${ppt.deckName} · not from this event`;
+    else if (!eventHasPpt) deckLine = `${ppt.deckName} · event has no PPT cues`;
+    else deckLine = ppt.deckName;
+  } else if (live) {
+    deckLine = 'No deck open';
+  }
+
+  const warnings = [];
+  if (!live) {
+    warnings.push(
+      'No fresh bridge heartbeat. On the bridge PC: confirm Show with Timers / Launcher is linked to this event. Older builds go quiet when PowerPoint is closed — update Bridge V2.'
+    );
+  }
+  if (!eventHasPpt) {
+    warnings.push('This event has no PPT cues in the run of show.');
+  }
+  if (live && ppt.deckName && (ppt.deckOnEvent === false || !eventHasPpt)) {
+    warnings.push('Open file does not match this event’s PPT cues (may be leftover from another show).');
+  }
+  if (ppt.lastError && !live) warnings.push(String(ppt.lastError));
+  if (live && ppt.openStale) warnings.push('Open deck looks stale vs sync folder.');
+  if (live && ppt.queuedCommand) {
+    warnings.push(`Queued: ${typeof ppt.queuedCommand === 'string' ? ppt.queuedCommand : 'command pending'}`);
+  }
+
+  renderPptBridgeTab({
+    state: live ? 'ok' : 'bad',
+    statusWord: live ? 'Online' : 'Offline',
+    label: live ? mode : 'PPT Bridge offline',
+    detail: live
+      ? `${eventHasPpt ? eventPptsLine : 'No event PPT cues'} · seen ${age}`
+      : ppt.lastSeen
+        ? `Last seen ${age}. Bridge must be running on the event (open PowerPoint is optional on newer Bridge builds).`
+        : 'No bridge heartbeat yet for this event.',
+    mode: live ? mode : '—',
+    event: eventLabel,
+    eventPpts: eventPptsLine,
+    deck: deckLine,
+    show: showLine,
+    slide: slideValue,
+    lastSeen: lastSeenText,
+    heartbeat: live ? `Fresh · ${age}` : ppt.lastSeen ? `Stale · ${age}` : 'None',
+    cache: live
+      ? ppt.cacheLabel || (ppt.cacheTotal > 0 ? `${ppt.cacheOk}/${ppt.cacheTotal}` : '—')
+      : '—',
+    command: live && ppt.lastCommand ? ppt.lastCommand : '—',
+    cue: cueLine,
+    cardValue: live ? 'Online' : 'Offline',
+    cardHint: eventHasPpt ? eventPptsLine : 'No event PPTs',
+    error: warnings.length ? warnings.join(' · ') : null,
+  });
+}
+
+async function refreshPptBridgeStatus() {
+  if (!window.kiosk?.pptBridgeStatus) {
+    state.pptBridge = { online: false, error: 'PPT status not available in this build.' };
+    renderPptBridgeStatus();
+    return;
+  }
+  if (!state.offlineShowRunning || !state.eventId) {
+    state.pptBridge = null;
+    renderPptBridgeStatus();
+    return;
+  }
+  const seq = ++pptBridgeFetchSeq;
+  const askedId = pptStatusEventId();
+  try {
+    const result = await window.kiosk.pptBridgeStatus({ eventId: askedId });
+    // Ignore stale responses after the user switches events.
+    if (seq !== pptBridgeFetchSeq || pptStatusEventId() !== askedId) return;
+    state.pptBridge = result && typeof result === 'object' ? result : { online: false, error: 'Bad response' };
+  } catch (e) {
+    if (seq !== pptBridgeFetchSeq || pptStatusEventId() !== askedId) return;
+    state.pptBridge = {
+      online: false,
+      error: e instanceof Error ? e.message : 'PPT status failed',
+    };
+  }
+  renderPptBridgeStatus();
+}
+
+function startPptBridgePoll() {
+  stopPptBridgePoll();
+  void refreshPptBridgeStatus();
+  const ms = state.tab === 'ppt' ? 5_000 : 12_000;
+  pptBridgePollTimer = window.setInterval(() => {
+    void refreshPptBridgeStatus();
+  }, ms);
+}
+
+function stopPptBridgePoll() {
+  if (pptBridgePollTimer) {
+    clearInterval(pptBridgePollTimer);
+    pptBridgePollTimer = null;
+  }
 }
 
 function pillState(pill) {
@@ -604,6 +947,8 @@ function renderConnectivity() {
   );
 
   const c = state.connectivity;
+  renderPptBridgeStatus();
+
   if (!running) {
     setSvc('internet', 'skip', '—');
     setSvc('railway', 'skip', '—');
@@ -790,6 +1135,7 @@ async function refreshConnectivityOnly() {
     applyConnectivity({ connectivity: result.connectivity, token: result.connectivity.railwayApiToken });
   }
   renderConnectivity();
+  void refreshPptBridgeStatus();
 }
 
 async function setTab(tabId) {
@@ -821,6 +1167,11 @@ async function setTab(tabId) {
     startPerfHealthLoop();
   } else {
     stopPerfHealthLoop();
+  }
+  if (tabId === 'ppt' || tabId === 'status' || (state.offlineShowRunning && state.eventId)) {
+    startPptBridgePoll();
+  } else {
+    stopPptBridgePoll();
   }
   if (tabId === 'displays') {
     void refreshWebLinkedStatus();
@@ -887,8 +1238,11 @@ function renderEventBrowser() {
     selectBtn.textContent = ev.id === state.eventId ? 'Selected' : 'Select';
     selectBtn.addEventListener('click', () => {
       state.eventId = ev.id;
+      state.pptBridge = null;
       syncEventChrome();
       renderEventBrowser();
+      renderPptBridgeStatus();
+      startPptBridgePoll();
     });
     actions.appendChild(selectBtn);
     list.appendChild(tr);
@@ -2392,6 +2746,7 @@ async function connectOfflineShow() {
       setEventNote('Token present — turning Cloud on…');
       await applyMode('cloud-connected');
     }
+    startPptBridgePoll();
   } finally {
     state.busy = false;
     if (btn) btn.disabled = false;
@@ -2418,8 +2773,11 @@ async function disconnectOfflineShow() {
     state.events = [];
     state.eventId = '';
     state.connectivity = null;
+    state.pptBridge = null;
+    stopPptBridgePoll();
     renderEventBrowser();
     syncEventChrome();
+    renderPptBridgeStatus();
   } finally {
     state.busy = false;
     if (btn) btn.disabled = false;
@@ -2494,6 +2852,7 @@ async function bootstrap() {
   $('#startWebLinkedBtn')?.addEventListener('click', () => void startWebLinkedEngine());
   $('#stopWebLinkedBtn')?.addEventListener('click', () => void stopWebLinkedEngine());
   $('#refreshWebLinkedBtn')?.addEventListener('click', () => void refreshWebLinkedStatus());
+  $('#refreshPptBtn')?.addEventListener('click', () => void refreshPptBridgeStatus());
   $('#wlSettingsCancelBtn')?.addEventListener('click', () => closeSimpleWlSettings());
   $('#wlSettingsApplyBtn')?.addEventListener('click', () => void applySimpleWlSettings());
   $('#wlSettingsOverlay')?.addEventListener('click', (e) => {
@@ -2573,6 +2932,7 @@ async function bootstrap() {
       state.offlineShowRunning = true;
       setEventNote('Offline Show already running — checking cloud / loading events…');
       await refreshEventsFromShow();
+      startPptBridgePoll();
     }
   } catch {
     /* ignore */

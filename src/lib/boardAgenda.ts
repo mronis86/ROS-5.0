@@ -1,8 +1,107 @@
+import { parseTimeToMinutes } from './agenda-parser';
+
 export type BoardAgendaRow = {
   time: string;
   subject: string;
   info: string;
 };
+
+export type TimedAgendaSlot = {
+  index: number;
+  row: BoardAgendaRow;
+  startMin: number;
+  endMin: number | null;
+};
+
+export type AgendaPositionEstimate = {
+  status: 'before' | 'during' | 'after' | 'unknown';
+  current: TimedAgendaSlot | null;
+  next: TimedAgendaSlot | null;
+  nowMin: number;
+};
+
+/** Pull start (and optional end) clock minutes from a board agenda time cell. */
+export function parseAgendaRowBounds(time: string): { startMin: number; endMin: number | null } | null {
+  const raw = String(time || '').trim();
+  if (!raw) return null;
+  const parts = raw.split(/\s*[-–—to]+\s*/i).map((p) => p.trim()).filter(Boolean);
+  const startMin = parseTimeToMinutes(parts[0] || '');
+  if (startMin == null) return null;
+  const endMin = parts[1] ? parseTimeToMinutes(parts[1]) : null;
+  return { startMin, endMin: endMin != null && endMin > startMin ? endMin : null };
+}
+
+export function buildTimedAgendaSlots(rows: BoardAgendaRow[]): TimedAgendaSlot[] {
+  const slots: TimedAgendaSlot[] = [];
+  rows.forEach((row, index) => {
+    const bounds = parseAgendaRowBounds(row.time);
+    if (!bounds) return;
+    slots.push({
+      index,
+      row,
+      startMin: bounds.startMin,
+      endMin: bounds.endMin,
+    });
+  });
+  for (let i = 0; i < slots.length; i++) {
+    if (slots[i].endMin == null && i + 1 < slots.length) {
+      slots[i].endMin = slots[i + 1].startMin;
+    }
+  }
+  return slots;
+}
+
+export function minutesOfDay(date: Date = new Date()): number {
+  return date.getHours() * 60 + date.getMinutes() + date.getSeconds() / 60;
+}
+
+/** Estimate where the meeting should be based on wall-clock vs agenda times. */
+export function estimateAgendaPosition(
+  rows: BoardAgendaRow[],
+  now: Date = new Date()
+): AgendaPositionEstimate {
+  const nowMin = minutesOfDay(now);
+  const slots = buildTimedAgendaSlots(rows);
+  if (!slots.length) {
+    return { status: 'unknown', current: null, next: null, nowMin };
+  }
+  if (nowMin < slots[0].startMin) {
+    return { status: 'before', current: null, next: slots[0], nowMin };
+  }
+  const last = slots[slots.length - 1];
+  const lastEnd = last.endMin != null ? last.endMin : last.startMin + 30;
+  if (nowMin >= lastEnd) {
+    return { status: 'after', current: null, next: null, nowMin };
+  }
+  for (let i = 0; i < slots.length; i++) {
+    const slot = slots[i];
+    const end = slot.endMin != null ? slot.endMin : (slots[i + 1]?.startMin ?? slot.startMin + 30);
+    if (nowMin >= slot.startMin && nowMin < end) {
+      return {
+        status: 'during',
+        current: slot,
+        next: slots[i + 1] || null,
+        nowMin,
+      };
+    }
+  }
+  // Between items (gap) — treat as approaching the next start.
+  for (let i = 0; i < slots.length; i++) {
+    if (nowMin < slots[i].startMin) {
+      return {
+        status: 'during',
+        current: i > 0 ? slots[i - 1] : null,
+        next: slots[i],
+        nowMin,
+      };
+    }
+  }
+  return { status: 'after', current: last, next: null, nowMin };
+}
+
+export function formatClockLabel(date: Date = new Date()): string {
+  return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
 
 const TIME_RANGE =
   /(\d{1,2}\s*:\s*\d{2}(?:\s*:\s*\d{2})?\s*(?:a\.?\s*m\.?|p\.?\s*m\.?)?)\s*[-–—to]+\s*(\d{1,2}\s*:\s*\d{2}(?:\s*:\s*\d{2})?\s*(?:a\.?\s*m\.?|p\.?\s*m\.?)?)/i;

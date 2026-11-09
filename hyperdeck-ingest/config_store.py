@@ -33,10 +33,15 @@ DEFAULTS: dict[str, Any] = {
     "auto_stop_hours": 2,
     "auto_stop_minutes": 0,
     "auto_stop_never": False,
+    "session_mode": "",
+    "session_hours": 4,
+    "session_ends_at": "",
+    "session_label": "",
     "copied_keys": [],
 }
 
 AUTO_STOP_MINUTES = (0, 5, 10, 15, 20, 25, 30, 45)
+SESSION_MODES = ("testing", "live", "everyday")
 
 
 def config_dir() -> str:
@@ -79,6 +84,10 @@ def load_config() -> dict[str, Any]:
     data["auto_stop_hours"] = _clamp_auto_stop_hours(data.get("auto_stop_hours"))
     data["auto_stop_minutes"] = _clamp_auto_stop_minutes(data.get("auto_stop_minutes"))
     data["auto_stop_never"] = data.get("auto_stop_never") is True
+    data["session_mode"] = _normalize_session_mode(data.get("session_mode"))
+    data["session_hours"] = _clamp_session_hours(data.get("session_hours"))
+    data["session_ends_at"] = str(data.get("session_ends_at") or "").strip()
+    data["session_label"] = str(data.get("session_label") or "").strip()
     data["record_during_rehearsal"] = data.get("record_during_rehearsal") is True
     try:
         data["selected_day"] = max(1, int(data.get("selected_day") or 1))
@@ -108,6 +117,10 @@ def save_config(data: dict[str, Any]) -> dict[str, Any]:
     merged["auto_stop_hours"] = _clamp_auto_stop_hours(merged.get("auto_stop_hours"))
     merged["auto_stop_minutes"] = _clamp_auto_stop_minutes(merged.get("auto_stop_minutes"))
     merged["auto_stop_never"] = merged.get("auto_stop_never") is True
+    merged["session_mode"] = _normalize_session_mode(merged.get("session_mode"))
+    merged["session_hours"] = _clamp_session_hours(merged.get("session_hours"))
+    merged["session_ends_at"] = str(merged.get("session_ends_at") or "").strip()
+    merged["session_label"] = str(merged.get("session_label") or "").strip()
     merged["record_during_rehearsal"] = merged.get("record_during_rehearsal") is True
     try:
         merged["selected_day"] = max(1, int(merged.get("selected_day") or 1))
@@ -123,6 +136,19 @@ def save_config(data: dict[str, Any]) -> dict[str, Any]:
         json.dump(merged, fh, indent=2)
     os.replace(tmp, path)
     return merged
+
+
+def _normalize_session_mode(value: Any) -> str:
+    mode = str(value or "").strip().lower()
+    return mode if mode in SESSION_MODES else ""
+
+
+def _clamp_session_hours(value: Any) -> int:
+    try:
+        hours = int(value)
+    except (TypeError, ValueError):
+        hours = 4
+    return min(24, max(1, hours))
 
 
 def _clamp_auto_stop_hours(value: Any) -> int:
