@@ -11,6 +11,8 @@ import {
   DISPLAY_SESSION_MAX_LABEL,
   DISPLAY_SESSION_PICK_TIME_ALERT,
 } from '../lib/displaySession';
+import { useEventDisplaySyncGate } from '../hooks/useEventDisplaySyncGate';
+import DisplaySyncPausedBanner from '../components/DisplaySyncPausedBanner';
 import { normalizeVoiceIgnoreLineIndexes } from '../lib/teleprompter-voice-alignment';
 import {
   formatCueMarker,
@@ -228,6 +230,7 @@ const ScriptsFollowPage: React.FC = () => {
   const [reconnectKey, setReconnectKey] = useState(0);
   /** False after auto-disconnect until user reconnects — blocks socket reconnect. */
   const connectionEnabledRef = useRef(true);
+  const { displaySyncEnabledRef, displaySyncPaused } = useEventDisplaySyncGate(eventId ?? undefined);
   
   const scriptRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -252,10 +255,14 @@ const ScriptsFollowPage: React.FC = () => {
     }
 
     const timeout = setTimeout(() => {
+      let timeText = '';
+      if (hours > 0) timeText += `${hours}h `;
+      if (minutes > 0) timeText += `${minutes}m`;
       console.log('⏰ Scripts Follow: Auto-disconnecting after timer');
       connectionEnabledRef.current = false;
       socketClient.disconnect(eventId);
       setIsWebSocketConnected(false);
+      setDisconnectDuration(timeText.trim());
       setShowDisconnectNotification(true);
     }, totalMinutes * 60 * 1000);
     
@@ -307,11 +314,11 @@ const ScriptsFollowPage: React.FC = () => {
 
   // Show disconnect timer modal only on first connect
   useEffect(() => {
-    if (eventId && !hasShownModalOnce && connectionEnabledRef.current) {
+    if (eventId && !hasShownModalOnce && connectionEnabledRef.current && !displaySyncPaused) {
       setShowDisconnectModal(true);
       setHasShownModalOnce(true);
     }
-  }, [eventId, hasShownModalOnce]);
+  }, [displaySyncPaused, eventId, hasShownModalOnce]);
 
   // Recalculate visible range when font size changes
   useEffect(() => {
@@ -348,12 +355,19 @@ const ScriptsFollowPage: React.FC = () => {
 
   // WebSocket setup for real-time scroll position sync
   useEffect(() => {
-    if (!eventId) return;
+    if (!eventId || displaySyncPaused) {
+      if (eventId && displaySyncPaused) {
+        socketClient.disconnect(eventId);
+        setIsWebSocketConnected(false);
+      }
+      return;
+    }
     connectionEnabledRef.current = true;
 
     console.log('🔌 Setting up WebSocket for Scripts Follow, role:', userRole);
 
     const followFromTimer = (data: any) => {
+      if (!connectionEnabledRef.current || !displaySyncEnabledRef.current) return;
       if (!followLoadedCuesRef.current || !eventId) return;
       if (data?.event_id && data.event_id !== eventId) return;
       const state = data?.timer_state;
@@ -372,7 +386,7 @@ const ScriptsFollowPage: React.FC = () => {
       });
     };
 
-    if (connectionEnabledRef.current) {
+    if (connectionEnabledRef.current && displaySyncEnabledRef.current) {
       socketClient.connect(eventId, { onTimerUpdated: followFromTimer });
     }
 
@@ -612,7 +626,7 @@ const ScriptsFollowPage: React.FC = () => {
 
     // Handle tab visibility changes - disconnect when hidden to save costs
     const handleVisibilityChange = () => {
-      if (!connectionEnabledRef.current) return;
+      if (!connectionEnabledRef.current || !displaySyncEnabledRef.current) return;
       if (document.hidden) {
         console.log('👁️ Scripts Follow: Tab hidden - disconnecting WebSocket to save costs');
         socketClient.disconnect(eventId);
@@ -644,7 +658,7 @@ const ScriptsFollowPage: React.FC = () => {
       }
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [eventId, userRole, reconnectKey]);
+  }, [displaySyncEnabledRef, displaySyncPaused, eventId, userRole, reconnectKey]);
 
   useEffect(() => {
     isEditingScriptRef.current = isEditingScript;
@@ -2276,11 +2290,16 @@ const ScriptsFollowPage: React.FC = () => {
         </div>
       )}
 
+      {displaySyncPaused ? <DisplaySyncPausedBanner /> : null}
       {/* Disconnect Timer Modal */}
-      {showDisconnectModal && <DisconnectTimerModal onConfirm={handleDisconnectTimerConfirm} onNever={handleNeverDisconnect} />}
+      {showDisconnectModal && !displaySyncPaused && (
+        <DisconnectTimerModal onConfirm={handleDisconnectTimerConfirm} onNever={handleNeverDisconnect} />
+      )}
       
       {/* Disconnect Notification */}
-      {showDisconnectNotification && <DisconnectNotification duration={disconnectDuration} onReconnect={handleReconnect} />}
+      {showDisconnectNotification && !displaySyncPaused && (
+        <DisconnectNotification duration={disconnectDuration} onReconnect={handleReconnect} />
+      )}
     </div>
   );
 };

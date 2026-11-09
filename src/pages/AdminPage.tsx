@@ -427,6 +427,21 @@ interface RunningTimerRow {
   timerState: string;
 }
 
+interface HotDisplayClient {
+  ip: string;
+  eventId: string;
+  eventName: string;
+  kind: string;
+  path: string;
+  count: number;
+  perMinute: number;
+  clientHint: string;
+  refererHost?: string | null;
+  lastAt: string;
+  windowSeconds: number;
+  displaySyncEnabled: boolean;
+}
+
 export default function AdminPage() {
   const { user, loading: authLoading, accessStatus } = useAuth();
   const [unlocked, setUnlocked] = useState(false);
@@ -453,6 +468,9 @@ export default function AdminPage() {
   const [killDisplayEventId, setKillDisplayEventId] = useState('');
   const [killDisplayBusy, setKillDisplayBusy] = useState(false);
   const [killDisplayMessage, setKillDisplayMessage] = useState<string | null>(null);
+  const [hotDisplayClients, setHotDisplayClients] = useState<HotDisplayClient[]>([]);
+  const [hotDisplayLoading, setHotDisplayLoading] = useState(false);
+  const [hotDisplayError, setHotDisplayError] = useState<string | null>(null);
   const [disconnectingUserId, setDisconnectingUserId] = useState<string | null>(null);
   const [signingOutKey, setSigningOutKey] = useState<string | null>(null);
   const [backupConfig, setBackupConfig] = useState<{ enabled: boolean; folderId: string; lastRunAt: string | null; lastStatus: string | null; needsMigration?: boolean; hasServiceAccount?: boolean }>({ enabled: false, folderId: '', lastRunAt: null, lastStatus: null });
@@ -2379,12 +2397,46 @@ export default function AdminPage() {
     }
   }, [lockAdminSession]);
 
+  const fetchHotDisplayTraffic = useCallback(async () => {
+    setHotDisplayLoading(true);
+    setHotDisplayError(null);
+    try {
+      const res = await adminFetch('/api/admin/hot-display-traffic');
+      if (res.status === 401) {
+        lockAdminSession('Invalid admin key. Enter the correct key to continue.');
+        setHotDisplayError('Unauthorized');
+        setHotDisplayClients([]);
+        return;
+      }
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setHotDisplayError((err as { error?: string }).error || `HTTP ${res.status}`);
+        setHotDisplayClients([]);
+        return;
+      }
+      const data = (await res.json().catch(() => ({}))) as { clients?: HotDisplayClient[] };
+      setHotDisplayClients(Array.isArray(data.clients) ? data.clients : []);
+    } catch (e) {
+      setHotDisplayError(e instanceof Error ? e.message : 'Request failed');
+      setHotDisplayClients([]);
+    } finally {
+      setHotDisplayLoading(false);
+    }
+  }, [lockAdminSession]);
+
   useEffect(() => {
     if (!unlocked) return;
     fetchRunningTimers();
     const interval = setInterval(fetchRunningTimers, 15_000);
     return () => clearInterval(interval);
   }, [unlocked, fetchRunningTimers]);
+
+  useEffect(() => {
+    if (!unlocked) return;
+    fetchHotDisplayTraffic();
+    const interval = setInterval(fetchHotDisplayTraffic, 10_000);
+    return () => clearInterval(interval);
+  }, [unlocked, fetchHotDisplayTraffic]);
 
   const stopTimerForEvent = useCallback(async (eventId: string) => {
     setStoppingEventId(eventId);
@@ -2405,12 +2457,13 @@ export default function AdminPage() {
     }
   }, [fetchRunningTimers]);
 
-  const pauseDisplaySyncForEvent = useCallback(async (resume = false) => {
-    const id = killDisplayEventId.trim();
+  const pauseDisplaySyncForEvent = useCallback(async (resume = false, eventIdOverride?: string) => {
+    const id = (eventIdOverride || killDisplayEventId).trim();
     if (!/^[0-9a-f-]{36}$/i.test(id)) {
       setKillDisplayMessage('Paste the event UUID from the alert path (…/active-timers/<eventId>).');
       return;
     }
+    if (eventIdOverride) setKillDisplayEventId(id);
     setKillDisplayBusy(true);
     setKillDisplayMessage(null);
     try {
@@ -2427,14 +2480,15 @@ export default function AdminPage() {
       setKillDisplayMessage(
         resume
           ? `Display sync RE-ENABLED for ${id}. Follower pages can connect again after refresh.`
-          : `Display sync PAUSED for ${id}. Green Room / Photo / Ops / Clock should stop polling within ~20s (or immediately if still on socket).`
+          : `Display sync PAUSED for ${id}. Green Room / Photo / Ops / Clock / PPT / Full Screen should stop polling within ~20s (or immediately if still on socket).`
       );
+      await fetchHotDisplayTraffic();
     } catch (e) {
       setKillDisplayMessage(e instanceof Error ? e.message : 'Request failed');
     } finally {
       setKillDisplayBusy(false);
     }
-  }, [killDisplayEventId]);
+  }, [fetchHotDisplayTraffic, killDisplayEventId]);
 
   const handlePasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -3533,11 +3587,80 @@ export default function AdminPage() {
           )}
 
           <div className="mt-8 pt-6 border-t border-slate-700/80">
-            <h3 className="text-base font-semibold text-white mb-1">Kill display API traffic</h3>
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-1">
+              <h3 className="text-base font-semibold text-white">Hot display API traffic</h3>
+              <button
+                type="button"
+                onClick={() => void fetchHotDisplayTraffic()}
+                disabled={hotDisplayLoading}
+                className="px-3 py-1.5 bg-slate-600 hover:bg-slate-500 disabled:opacity-50 text-white text-sm rounded-lg transition-colors"
+              >
+                {hotDisplayLoading ? 'Refreshing…' : 'Refresh'}
+              </button>
+            </div>
             <p className="text-slate-500 text-sm mb-3">
-              For ops emails about stale Edge/OBS tabs hitting <span className="font-mono text-slate-400">/api/active-timers/&lt;eventId&gt;</span>:
-              paste that event UUID and pause Display sync. Follower pages stop polling; you can also turn Displays off from the Event List.
+              Live pollers over the last ~60s (IP, browser/OBS, event, requests/min). Pause Displays stops follower pages for that event — no UUID paste needed.
               Server also auto-quarantines repeated unauthorized SPA hits (429) after ~25 tries.
+            </p>
+            {hotDisplayError && (
+              <div className="mb-3 px-4 py-2 rounded-lg bg-amber-900/30 border border-amber-700/50 text-amber-200 text-sm">
+                {hotDisplayError}
+              </div>
+            )}
+            {hotDisplayLoading && hotDisplayClients.length === 0 && !hotDisplayError ? (
+              <p className="text-slate-400 text-sm mb-4">Loading…</p>
+            ) : hotDisplayClients.length === 0 ? (
+              <p className="text-slate-400 text-sm mb-4">No noisy display polls right now.</p>
+            ) : (
+              <ul className="space-y-2 mb-4">
+                {hotDisplayClients.map((row) => (
+                  <li
+                    key={`${row.ip}-${row.eventId}-${row.kind}`}
+                    className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-700/80 bg-slate-800/60 px-4 py-3"
+                  >
+                    <div className="min-w-0">
+                      <div className="font-medium text-white truncate">{row.eventName}</div>
+                      <div className="text-slate-400 text-xs mt-0.5 flex flex-wrap gap-x-2 gap-y-1">
+                        <span className="font-mono text-slate-300">{row.ip}</span>
+                        <span>{row.clientHint}</span>
+                        <span className="font-mono">{row.kind}</span>
+                        <span className={row.perMinute >= 30 ? 'text-amber-300 font-semibold' : ''}>
+                          {row.perMinute}/min
+                        </span>
+                        {row.displaySyncEnabled === false && (
+                          <span className="text-amber-200">Displays paused</span>
+                        )}
+                        {row.refererHost && <span className="truncate max-w-[12rem]">{row.refererHost}</span>}
+                      </div>
+                    </div>
+                    <div className="shrink-0 flex items-center gap-1.5">
+                      {row.displaySyncEnabled === false ? (
+                        <button
+                          type="button"
+                          disabled={killDisplayBusy}
+                          onClick={() => void pauseDisplaySyncForEvent(true, row.eventId)}
+                          className="px-2.5 py-1.5 bg-slate-600 hover:bg-slate-500 disabled:opacity-50 text-white text-xs rounded-lg"
+                        >
+                          Resume
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled={killDisplayBusy}
+                          onClick={() => void pauseDisplaySyncForEvent(false, row.eventId)}
+                          className="px-2.5 py-1.5 bg-amber-700 hover:bg-amber-600 disabled:opacity-50 text-white text-xs font-medium rounded-lg"
+                        >
+                          Pause Displays
+                        </button>
+                      )}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <h3 className="text-base font-semibold text-white mb-1">Kill by event UUID</h3>
+            <p className="text-slate-500 text-sm mb-3">
+              Fallback if the hot list is empty (e.g. right after a Railway restart clears in-memory counters).
             </p>
             <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
               <input

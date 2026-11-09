@@ -9,6 +9,11 @@ import PptPendingDeckBanner, { type PptPendingDeckUpdate } from '../components/P
 import PptClockFeedControls from '../components/PptClockFeedControls';
 import { usePptClockPublisher } from '../hooks/usePptClockPublisher';
 import { isPptVdoViewUrl } from '../lib/pptClockFeed';
+import { useEventDisplaySyncGate } from '../hooks/useEventDisplaySyncGate';
+import DisplaySyncPausedBanner from '../components/DisplaySyncPausedBanner';
+
+/** Socket is primary; HTTP is a slow safety net (was 1s and flooded Railway). */
+const PPT_PLAYBACK_HTTP_POLL_MS = 10_000;
 
 type LoadedCue = {
   itemId: number | null;
@@ -293,6 +298,10 @@ const PowerPointPlaybackPage: React.FC = () => {
   const [searchParams] = useSearchParams();
   const eventId = searchParams.get('eventId') || '';
   const eventName = searchParams.get('eventName') || 'Event';
+  const { displaySyncEnabledRef, displaySyncPaused, followerSyncAllowed } = useEventDisplaySyncGate(
+    eventId || undefined
+  );
+  const statusInFlightRef = useRef(false);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -358,14 +367,14 @@ const PowerPointPlaybackPage: React.FC = () => {
   }, [eventId]);
 
   const loadRosCue = useCallback(async () => {
-    if (!eventId) return;
+    if (!eventId || !followerSyncAllowed()) return;
     try {
       const timer = await DatabaseService.getActiveTimer(eventId);
       setRosCue(rosCueFromTimer(timer));
     } catch {
       setRosCue(null);
     }
-  }, [eventId]);
+  }, [eventId, followerSyncAllowed]);
 
   const loadStatus = useCallback(async (withManifest = false) => {
     if (!eventId) {
@@ -373,6 +382,12 @@ const PowerPointPlaybackPage: React.FC = () => {
       setLoading(false);
       return;
     }
+    if (!followerSyncAllowed()) {
+      setLoading(false);
+      return;
+    }
+    if (statusInFlightRef.current) return;
+    statusInFlightRef.current = true;
     try {
       const fetches: Promise<Response>[] = [
         fetch(`${getApiBaseUrl()}/api/powerpoint/${encodeURIComponent(eventId)}/playback`, {
@@ -397,15 +412,17 @@ const PowerPointPlaybackPage: React.FC = () => {
     } catch (e: any) {
       setError(e?.message || 'Failed to load playback status');
     } finally {
+      statusInFlightRef.current = false;
       setLoading(false);
     }
-  }, [applyPlayback, eventId]);
+  }, [applyPlayback, eventId, followerSyncAllowed]);
 
   useEffect(() => {
+    if (displaySyncPaused) return;
     void loadStatus(true);
     void loadCues();
     void loadRosCue();
-  }, [loadCues, loadRosCue, loadStatus]);
+  }, [displaySyncPaused, loadCues, loadRosCue, loadStatus]);
 
   useEffect(() => {
     if (readPptDay(eventId)) return;
@@ -413,32 +430,36 @@ const PowerPointPlaybackPage: React.FC = () => {
   }, [eventId, session?.calendarDay]);
 
   useEffect(() => {
-    if (!eventId) return;
+    if (!eventId || displaySyncPaused) return;
     const poll = window.setInterval(() => {
+      if (!displaySyncEnabledRef.current) return;
       void loadStatus();
       void loadRosCue();
-    }, 1000);
+    }, PPT_PLAYBACK_HTTP_POLL_MS);
     const seen = window.setInterval(() => setSeenTick((n) => n + 1), 1000);
     return () => {
       window.clearInterval(poll);
       window.clearInterval(seen);
     };
-  }, [eventId, loadRosCue, loadStatus]);
+  }, [displaySyncEnabledRef, displaySyncPaused, eventId, loadRosCue, loadStatus]);
 
   useEffect(() => {
-    if (!eventId) return;
+    if (!eventId || displaySyncPaused) return;
     socketClient.connect(
       eventId,
       {
-        onPptPlaybackStatus: (data) => applyPlayback(data),
+        onPptPlaybackStatus: (data) => {
+          if (!displaySyncEnabledRef.current) return;
+          applyPlayback(data);
+        },
         onTimerUpdated: (data) => {
+          if (!displaySyncEnabledRef.current) return;
           setRosCue(rosCueFromTimer(data));
-          void loadStatus();
           void loadCues();
         },
         onActiveTimersUpdated: (data) => {
+          if (!displaySyncEnabledRef.current) return;
           setRosCue(rosCueFromTimer(data));
-          void loadStatus();
         },
         onTimerStopped: () => setRosCue(null),
         onTimersStopped: () => setRosCue(null),
@@ -448,7 +469,7 @@ const PowerPointPlaybackPage: React.FC = () => {
     return () => {
       socketClient.disconnect(eventId, 'powerpoint-playback-page');
     };
-  }, [applyPlayback, eventId, loadCues, loadStatus]);
+  }, [applyPlayback, displaySyncEnabledRef, displaySyncPaused, eventId, loadCues]);
 
   const sendCommand = useCallback(
     async (
@@ -718,6 +739,7 @@ const PowerPointPlaybackPage: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100">
+      {displaySyncPaused ? <DisplaySyncPausedBanner /> : null}
       <header className="sticky top-0 z-20 flex flex-wrap items-center justify-between gap-3 border-b border-slate-700 bg-slate-900/95 px-4 py-3">
         <div className="min-w-0">
           <h1 className="text-lg font-semibold text-white">ROS PPT Launcher</h1>

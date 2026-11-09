@@ -10,7 +10,9 @@ import GuestCueDetailModal from '../components/guest/GuestCueDetailModal';
 import AppLogo from '../components/AppLogo';
 import AppBrandTitle from '../components/AppBrandTitle';
 import DisplaySessionDisconnectOverlays from '../components/DisplaySessionDisconnectOverlays';
+import DisplaySyncPausedBanner from '../components/DisplaySyncPausedBanner';
 import { useDisplaySessionDisconnect } from '../hooks/useDisplaySessionDisconnect';
+import { useEventDisplaySyncGate } from '../hooks/useEventDisplaySyncGate';
 import { creativeDisplaySessionStorageKey } from '../lib/creativeDisplaySession';
 import { GUEST_VISIBLE_COLUMNS, ROS_PROGRAM_TYPES } from '../lib/guestRosHelpers';
 import {
@@ -149,6 +151,7 @@ const CreativeEventPage: React.FC = () => {
       void loadScheduleRef.current(true);
     },
   });
+  const { displaySyncEnabledRef, displaySyncPaused } = useEventDisplaySyncGate(eventId || undefined);
 
   const setZoom = useCallback((value: number) => {
     const clamped = Math.max(
@@ -223,7 +226,7 @@ const CreativeEventPage: React.FC = () => {
   const loadSchedule = useCallback(
     async (isRefresh = false) => {
       if (!eventId) return;
-      if (isRefresh && !connectionEnabledRef.current) return;
+      if (isRefresh && (!connectionEnabledRef.current || !displaySyncEnabledRef.current)) return;
       if (isRefresh) setRefreshing(true);
       else setLoading(true);
       setError(null);
@@ -243,7 +246,7 @@ const CreativeEventPage: React.FC = () => {
         setRefreshing(false);
       }
     },
-    [eventId]
+    [connectionEnabledRef, displaySyncEnabledRef, eventId]
   );
 
   useEffect(() => {
@@ -612,9 +615,15 @@ const CreativeEventPage: React.FC = () => {
               <button
                 type="button"
                 onClick={() => void loadSchedule(true)}
-                disabled={refreshing || sessionDisconnected}
+                disabled={refreshing || sessionDisconnected || displaySyncPaused}
                 className="rounded-lg border border-slate-600 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-800 disabled:opacity-50"
-                title={sessionDisconnected ? 'Reconnect to refresh the schedule' : undefined}
+                title={
+                  displaySyncPaused
+                    ? 'Displays paused for this event'
+                    : sessionDisconnected
+                      ? 'Reconnect to refresh the schedule'
+                      : undefined
+                }
               >
                 {refreshing ? 'Refreshing…' : 'Refresh'}
               </button>
@@ -899,9 +908,10 @@ const CreativeEventPage: React.FC = () => {
         onClose={() => setDetailItemId(null)}
       />
 
+      {displaySyncPaused ? <DisplaySyncPausedBanner /> : null}
       <DisplaySessionDisconnectOverlays
-        showModal={showDisconnectModal}
-        showNotification={showDisconnectNotification}
+        showModal={showDisconnectModal && !displaySyncPaused}
+        showNotification={showDisconnectNotification && !displaySyncPaused}
         disconnectDuration={disconnectDuration}
         onConfirm={handleDisconnectTimerConfirm}
         onNever={handleNeverDisconnect}

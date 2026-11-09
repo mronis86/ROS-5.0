@@ -1366,6 +1366,7 @@ const PhotoViewPage: React.FC = () => {
     if (!event?.id) return;
     
     const loadActiveTimerState = async () => {
+      if (!connectionEnabledRef.current || !displaySyncEnabledRef.current) return;
       try {
         console.log('🔄 PhotoView: Loading active timer state on mount...');
         const activeTimerResponse = await apiAuthFetch(`${getApiBaseUrl()}/api/active-timers/${event.id}`);

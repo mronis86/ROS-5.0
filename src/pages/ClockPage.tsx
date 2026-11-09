@@ -394,6 +394,7 @@ const ClockPage: React.FC = () => {
         eventId={eventId}
         supabaseMessage={supabaseMessage}
         scheduleItems={scheduleItems}
+        networkEnabled={!showDisconnectNotification && !displaySyncPaused}
       />
 
         {/* Event Selector - left side below CURRENT TIME, fixed so it doesn't move on scroll; overflow-visible so dropdown can expand */}

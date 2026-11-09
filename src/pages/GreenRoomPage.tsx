@@ -959,6 +959,7 @@ const GreenRoomPage: React.FC = () => {
   // Load active timer data
   const loadActiveTimer = useCallback(async () => {
     if (!event?.id) return;
+    if (!connectionEnabledRef.current || !displaySyncEnabledRef.current) return;
 
     try {
       const activeTimer = await DatabaseService.getActiveTimer(event.id);
@@ -979,7 +980,7 @@ const GreenRoomPage: React.FC = () => {
     } catch (error) {
       console.error('❌ Error loading active timer:', error);
     }
-  }, [event?.id, applyActiveTimerPayload]);
+  }, [event?.id, applyActiveTimerPayload, displaySyncEnabledRef]);
 
   useEffect(() => {
     loadActiveTimerRef.current = loadActiveTimer;

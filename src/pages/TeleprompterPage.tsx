@@ -33,6 +33,8 @@ import {
   DISPLAY_SESSION_MAX_LABEL,
   DISPLAY_SESSION_PICK_TIME_ALERT,
 } from '../lib/displaySession';
+import { useEventDisplaySyncGate } from '../hooks/useEventDisplaySyncGate';
+import DisplaySyncPausedBanner from '../components/DisplaySyncPausedBanner';
 
 type UserRole = 'SCROLLER' | 'VIEWER';
 
@@ -126,6 +128,7 @@ const TeleprompterPage: React.FC = () => {
   const [clockFeedActive, setClockFeedActive] = useState(false);
   /** False after auto-disconnect until user reconnects — blocks socket reconnect. */
   const connectionEnabledRef = useRef(true);
+  const { displaySyncEnabledRef, displaySyncPaused } = useEventDisplaySyncGate(eventId ?? undefined);
   const clockFeedActiveRef = useRef(false);
   const userRoleRef = useRef<UserRole>('VIEWER');
 
@@ -285,10 +288,14 @@ const TeleprompterPage: React.FC = () => {
     }
 
     const timeout = setTimeout(() => {
+      let timeText = '';
+      if (hours > 0) timeText += `${hours}h `;
+      if (minutes > 0) timeText += `${minutes}m`;
       console.log('⏰ Teleprompter: Auto-disconnecting after timer');
       connectionEnabledRef.current = false;
       socketClient.disconnect(eventId || '');
       setIsWebSocketConnected(false);
+      setDisconnectDuration(timeText.trim());
       setShowDisconnectNotification(true);
     }, totalMinutes * 60 * 1000);
     
@@ -394,11 +401,11 @@ const TeleprompterPage: React.FC = () => {
 
   // Show disconnect timer modal only on first connect
   useEffect(() => {
-    if (eventId && !hasShownModalOnce && connectionEnabledRef.current) {
+    if (eventId && !hasShownModalOnce && connectionEnabledRef.current && !displaySyncPaused) {
       setShowDisconnectModal(true);
       setHasShownModalOnce(true);
     }
-  }, [eventId, hasShownModalOnce]);
+  }, [displaySyncPaused, eventId, hasShownModalOnce]);
   
   const loadScriptFromDatabase = async () => {
     if (!eventId) return;
@@ -460,7 +467,13 @@ const TeleprompterPage: React.FC = () => {
   
   // WebSocket connection
   useEffect(() => {
-    if (!eventId) return;
+    if (!eventId || displaySyncPaused) {
+      if (eventId && displaySyncPaused) {
+        socketClient.disconnect(eventId);
+        setIsWebSocketConnected(false);
+      }
+      return;
+    }
     connectionEnabledRef.current = true;
     
     console.log('📡 Connecting to WebSocket for teleprompter...');
@@ -471,6 +484,7 @@ const TeleprompterPage: React.FC = () => {
         setIsWebSocketConnected(connected);
       },
       onTimerUpdated: (data: any) => {
+        if (!connectionEnabledRef.current || !displaySyncEnabledRef.current) return;
         if (!followLoadedCuesRef.current || !eventId) return;
         if (data?.event_id && data.event_id !== eventId) return;
         const state = data?.timer_state;
@@ -490,12 +504,12 @@ const TeleprompterPage: React.FC = () => {
       },
     };
     
-    if (connectionEnabledRef.current) {
+    if (connectionEnabledRef.current && displaySyncEnabledRef.current) {
       socketClient.connect(eventId, callbacks);
     }
     
     const handleVisibilityChange = () => {
-      if (!connectionEnabledRef.current) return;
+      if (!connectionEnabledRef.current || !displaySyncEnabledRef.current) return;
       if (document.hidden) {
         // Keep socket while feeding Clock / Fullscreen Timer from this scroller
         if (clockFeedActiveRef.current || userRoleRef.current === 'SCROLLER') {
@@ -517,7 +531,7 @@ const TeleprompterPage: React.FC = () => {
       socketClient.disconnect(eventId);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [eventId, reconnectKey]);
+  }, [displaySyncEnabledRef, displaySyncPaused, eventId, reconnectKey]);
   
   // When Scripts Follow loads a script for this event, update local script text
   useEffect(() => {
@@ -3364,11 +3378,16 @@ const TeleprompterPage: React.FC = () => {
         </div>
       )}
 
+      {displaySyncPaused ? <DisplaySyncPausedBanner /> : null}
       {/* Disconnect Timer Modal */}
-      {showDisconnectModal && <DisconnectTimerModal onConfirm={handleDisconnectTimerConfirm} onNever={handleNeverDisconnect} />}
+      {showDisconnectModal && !displaySyncPaused && (
+        <DisconnectTimerModal onConfirm={handleDisconnectTimerConfirm} onNever={handleNeverDisconnect} />
+      )}
       
       {/* Disconnect Notification */}
-      {showDisconnectNotification && <DisconnectNotification duration={disconnectDuration} onReconnect={handleReconnect} />}
+      {showDisconnectNotification && !displaySyncPaused && (
+        <DisconnectNotification duration={disconnectDuration} onReconnect={handleReconnect} />
+      )}
 
       <TeleprompterSttDiagnosticsModal
         open={showSttDiagnostics}

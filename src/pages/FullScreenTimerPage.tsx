@@ -16,6 +16,8 @@ import {
   isOperatorAltTimer,
   mapOperatorCountdownRow,
 } from '../lib/operatorCountdown';
+import { useEventDisplaySyncGate } from '../hooks/useEventDisplaySyncGate';
+import DisplaySyncPausedBanner from '../components/DisplaySyncPausedBanner';
 
 const FullScreenTimerPage: React.FC = () => {
   const location = useLocation();
@@ -53,9 +55,10 @@ const FullScreenTimerPage: React.FC = () => {
   const [disconnectDuration, setDisconnectDuration] = useState('');
   const [disconnectTimer, setDisconnectTimer] = useState<NodeJS.Timeout | null>(null);
   const [hasShownModalOnce, setHasShownModalOnce] = useState(false);
-  /** False after auto-disconnect until user reconnects — blocks socket reconnect. */
+  /** False after auto-disconnect until user reconnects — blocks socket reconnect + HTTP polls. */
   const connectionEnabledRef = useRef(true);
   const [reconnectKey, setReconnectKey] = useState(0);
+  const { displaySyncEnabledRef, displaySyncPaused } = useEventDisplaySyncGate(eventId ?? undefined);
 
   useEffect(() => {
     if (eventIdFromUrl !== null && eventIdFromUrl !== eventId) {
@@ -286,7 +289,7 @@ const FullScreenTimerPage: React.FC = () => {
       }
     };
 
-    if (connectionEnabledRef.current) {
+    if (connectionEnabledRef.current && displaySyncEnabledRef.current) {
       socketClient.connect(eventId, callbacks, 'fullScreen');
     }
 
@@ -361,7 +364,7 @@ const FullScreenTimerPage: React.FC = () => {
     }
 
     const handleVisibilityChange = () => {
-      if (!connectionEnabledRef.current) return;
+      if (!connectionEnabledRef.current || !displaySyncEnabledRef.current) return;
       if (document.hidden) {
         console.log('👁️ FullScreenTimer: Tab hidden - disconnecting WebSocket to save costs');
         socketClient.getSocket()?.off('cueCardsClockSync', onCueCardsClockSync);
@@ -391,11 +394,13 @@ const FullScreenTimerPage: React.FC = () => {
     };
   }, [eventId, reconnectKey]);
 
-  // Poll Op Timer so Full Screen still picks it up if WS is missed
+  // Poll Op Timer so Full Screen still picks it up if WS is missed.
+  // Must respect session disconnect + Admin Pause Displays (was still pinging after timer expired).
   useEffect(() => {
-    if (!eventId) return;
+    if (!eventId || displaySyncPaused) return;
     let cancelled = false;
     const poll = async () => {
+      if (!connectionEnabledRef.current || !displaySyncEnabledRef.current) return;
       try {
         const operatorRow = await DatabaseService.getOperatorCountdown(eventId);
         if (cancelled) return;
@@ -427,7 +432,7 @@ const FullScreenTimerPage: React.FC = () => {
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [eventId]);
+  }, [displaySyncEnabledRef, displaySyncPaused, eventId, reconnectKey]);
 
   // Update timer data from parent window if available
   useEffect(() => {
@@ -514,6 +519,7 @@ const FullScreenTimerPage: React.FC = () => {
 
   return (
     <>
+      {displaySyncPaused ? <DisplaySyncPausedBanner /> : null}
       <FullScreenTimer
         isRunning={isRunning}
         elapsedTime={elapsedTime}
@@ -531,6 +537,7 @@ const FullScreenTimerPage: React.FC = () => {
         cueClockFeed={cueClockFeed}
         teleprompterClockFeed={teleprompterClockFeed}
         pptClockFeed={pptClockFeed}
+        networkEnabled={!showDisconnectNotification && !displaySyncPaused}
       />
       
       {/* Disconnect Timer Modal */}

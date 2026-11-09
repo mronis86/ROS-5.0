@@ -39,6 +39,8 @@ interface DsmClockProps {
   eventId?: string; // Add eventId for Supabase message loading
   supabaseMessage?: TimerMessage | null; // Add supabaseMessage prop
   scheduleItems?: any[]; // Run-of-show items; when active cue has timerDisplay === 'timeOfDay', show large time-of-day instead of countdown
+  /** When false (session disconnect / Displays paused), stop sockets + HTTP polls. */
+  networkEnabled?: boolean;
   mainTimer?: {
     cue: string;
     segmentName: string;
@@ -72,6 +74,7 @@ const DsmClock: React.FC<DsmClockProps> = ({
   eventId,
   supabaseMessage = null,
   scheduleItems,
+  networkEnabled = true,
   mainTimer = null,
   secondaryTimer = null,
   force16x9Ref = true,
@@ -395,12 +398,15 @@ const DsmClock: React.FC<DsmClockProps> = ({
 
   // WebSocket mode: Fetch timer data via WebSocket when supabaseOnly is true
   useEffect(() => {
-    if (!supabaseOnly || !eventId) {
+    if (!supabaseOnly || !eventId || !networkEnabled) {
       // Clear any existing WebSocket connections (handled in cleanup)
       // Reset timer tracking when exiting WebSocket mode
       setLastActiveTimerId(null);
       setLastActiveItemId(null);
       setLastActiveStartTime(null);
+      if (eventId && !networkEnabled) {
+        socketClient.disconnect(eventId, 'clock');
+      }
       
       // WebSocket provides real-time updates, no drift detection cleanup needed
       
@@ -861,7 +867,7 @@ const DsmClock: React.FC<DsmClockProps> = ({
       socketClient.getSocket()?.off('pptClockSync', onPptClockSync);
       socketClient.disconnect(eventId, 'clock');
     };
-  }, [eventId]); // Removed supabaseOnly since it's always true in this component
+  }, [eventId, networkEnabled]); // Removed supabaseOnly since it's always true in this component
 
   // Reset sim secondary clock when toggled on from page chrome
   useEffect(() => {
@@ -889,7 +895,7 @@ const DsmClock: React.FC<DsmClockProps> = ({
 
   // Poll Op Timer so Clock still picks it up if a WS handler was dropped
   useEffect(() => {
-    if (!supabaseOnly || !eventId) return;
+    if (!supabaseOnly || !eventId || !networkEnabled) return;
     let cancelled = false;
 
     const poll = async () => {
@@ -924,7 +930,7 @@ const DsmClock: React.FC<DsmClockProps> = ({
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [supabaseOnly, eventId]);
+  }, [supabaseOnly, eventId, networkEnabled]);
 
   // REMOVED: Duplicate timer effect that was causing flickering
   // The timer progress effect above (lines 74-134) handles all timer updates

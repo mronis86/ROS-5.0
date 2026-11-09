@@ -56,6 +56,8 @@ interface FullScreenTimerProps {
   } | null;
   teleprompterClockFeed?: TeleprompterClockFeed | null;
   pptClockFeed?: PptClockFeed | null;
+  /** When false (session disconnect / Displays paused), stop hybrid HTTP polls. */
+  networkEnabled?: boolean;
 }
 
 const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
@@ -75,6 +77,7 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
   cueClockFeed = null,
   teleprompterClockFeed = null,
   pptClockFeed = null,
+  networkEnabled = true,
 }) => {
   const [timerProgress, setTimerProgress] = useState<{ elapsed: number; total: number }>({
     elapsed: elapsedTime,
@@ -336,7 +339,7 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
 
   // Hybrid mode: Fetch timer data from Supabase when supabaseOnly is true
   useEffect(() => {
-    if (!supabaseOnly || !eventId) {
+    if (!supabaseOnly || !eventId || !networkEnabled) {
       // Clear any existing polling
       if (hybridPolling) {
         clearInterval(hybridPolling);
@@ -558,7 +561,7 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
       clearInterval(interval);
       setHybridPolling(null);
     };
-  }, [supabaseOnly, eventId]);
+  }, [supabaseOnly, eventId, networkEnabled]);
 
   // Update secondary / operator ALT timer every second
   useEffect(() => {

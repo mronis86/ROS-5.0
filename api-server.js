@@ -87,7 +87,15 @@ const {
 const { registerAppDownloadRoutes } = require('./lib/app-downloads');
 const { registerSpeakerRoutes, ensureSpeakersSchema } = require('./lib/speakers');
 const { buildPlatformMaintenanceReport, startPlatformMaintenanceAlerts } = require('./lib/platform-maintenance');
-const { loadDisplaySyncEnabled, setDisplaySyncEnabled } = require('./lib/display-sync');
+const { loadDisplaySyncEnabled } = require('./lib/display-sync');
+const {
+  setDisplaySyncEnabledCached,
+  createDisplaySyncPollGuard,
+} = require('./lib/display-sync-cache');
+const {
+  createDisplayPollTrackerMiddleware,
+  snapshotDisplayPollTraffic,
+} = require('./lib/display-poll-tracker');
 const {
   setPreflightChecklistEnabled,
 } = require('./lib/preflight-feature');
@@ -1085,6 +1093,8 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.use(morgan('combined'));
 app.use(express.json({ limit: '20mb' }));
+app.use(createDisplayPollTrackerMiddleware());
+app.use(createDisplaySyncPollGuard(pool));
 
 // API auth: resolves Bearer/query tokens; enforces REQUIRE_API_AUTH when legacy mode is off
 applyAuthRateLimits(app, pool);
@@ -1293,7 +1303,7 @@ function buildRailwayHealthMeta() {
     env: process.env.NODE_ENV || 'development',
     powerpointRoutes: true,
     // Bump when master should trigger a Railway autodeploy smoke check.
-    apiRevision: 'hub-20261106b',
+    apiRevision: 'display-kill-20261108a',
   };
 }
 
@@ -1377,6 +1387,42 @@ app.get('/api/admin/platform-maintenance', async (req, res) => {
   } catch (err) {
     console.error('[platform-maintenance]', err);
     res.status(500).json({ error: err.message || 'Failed to build platform maintenance report' });
+  }
+});
+
+app.get('/api/admin/hot-display-traffic', async (req, res) => {
+  if (!requireAdminAccess(req, res)) return;
+  try {
+    const rows = snapshotDisplayPollTraffic();
+    const eventIds = [...new Set(rows.map((r) => r.eventId).filter(Boolean))];
+    let idToName = new Map();
+    let idToSync = new Map();
+    if (eventIds.length > 0) {
+      const r = await pool.query(
+        `SELECT id, name, schedule_data
+         FROM calendar_events
+         WHERE id::text = ANY($1)`,
+        [eventIds]
+      );
+      idToName = new Map(r.rows.map((row) => [String(row.id).toLowerCase(), row.name || 'Unknown']));
+      idToSync = new Map(
+        r.rows.map((row) => {
+          const sd = row.schedule_data && typeof row.schedule_data === 'object' ? row.schedule_data : {};
+          return [String(row.id).toLowerCase(), sd.displaySyncEnabled !== false];
+        })
+      );
+    }
+    res.json({
+      windowSeconds: 60,
+      clients: rows.map((row) => ({
+        ...row,
+        eventName: idToName.get(row.eventId) || `Event ${row.eventId.slice(0, 8)}…`,
+        displaySyncEnabled: idToSync.has(row.eventId) ? idToSync.get(row.eventId) : true,
+      })),
+    });
+  } catch (err) {
+    console.error('[admin hot-display-traffic] error:', err);
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -4416,7 +4462,7 @@ app.patch('/api/calendar-events/:id/display-sync', async (req, res) => {
       return res.status(400).json({ error: 'displaySyncEnabled (boolean) is required' });
     }
 
-    const result = await setDisplaySyncEnabled(pool, id, displaySyncEnabled);
+    const result = await setDisplaySyncEnabledCached(pool, id, displaySyncEnabled);
     if (!result.ok) {
       return res.status(result.status || 500).json({ error: result.error || 'Update failed' });
     }

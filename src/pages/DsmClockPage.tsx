@@ -445,6 +445,7 @@ const DsmClockPage: React.FC = () => {
         eventId={eventId}
         supabaseMessage={supabaseMessage}
         scheduleItems={scheduleItems}
+        networkEnabled={!showDisconnectNotification && !displaySyncPaused}
         force16x9Ref={force16x9Ref}
         simSecondary={simSecondary}
         simOvertime={simOvertime}

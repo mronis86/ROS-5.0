@@ -10,7 +10,9 @@ import CreativePdfCueViewer from '../components/CreativePdfCueViewer';
 import ContentReviewCommentsPanel from '../components/ContentReviewCommentsPanel';
 import ContentReviewAssigneesModal from '../components/ContentReviewAssigneesModal';
 import DisplaySessionDisconnectOverlays from '../components/DisplaySessionDisconnectOverlays';
+import DisplaySyncPausedBanner from '../components/DisplaySyncPausedBanner';
 import { useDisplaySessionDisconnect } from '../hooks/useDisplaySessionDisconnect';
+import { useEventDisplaySyncGate } from '../hooks/useEventDisplaySyncGate';
 import { creativeDisplaySessionStorageKey } from '../lib/creativeDisplaySession';
 import {
   fetchContentReviewAssignees,
@@ -1264,6 +1266,9 @@ const ContentReviewPage: React.FC = () => {
     eventId,
     persistSessionKey: creativeSessionStorageKey,
   });
+  const { displaySyncEnabledRef, displaySyncPaused } = useEventDisplaySyncGate(
+    creativeContributor ? eventId : undefined
+  );
 
   useEffect(() => {
     if (!eventId || !canManageReviewTeam) return;
@@ -1576,6 +1581,10 @@ const ContentReviewPage: React.FC = () => {
   useEffect(() => {
     if (!eventId) return;
     if (creativeContributor && !creativeSessionConnectionRef.current) return;
+    if (creativeContributor && (displaySyncPaused || !displaySyncEnabledRef.current)) {
+      socketClient.disconnect(eventId);
+      return;
+    }
 
     socketClient.connect(eventId, {
       onRunOfShowDataUpdated: (data) => applyRemoteScheduleRef.current(data),
@@ -1677,6 +1686,8 @@ const ContentReviewPage: React.FC = () => {
   }, [
     creativeContributor,
     creativeSessionReconnectKey,
+    displaySyncEnabledRef,
+    displaySyncPaused,
     eventId,
     driverName,
     startRowLockHeartbeat,
@@ -1687,7 +1698,7 @@ const ContentReviewPage: React.FC = () => {
     if (!creativeContributor || !eventId) return;
 
     const handleVisibilityChange = () => {
-      if (!creativeSessionConnectionRef.current) return;
+      if (!creativeSessionConnectionRef.current || !displaySyncEnabledRef.current) return;
       if (document.hidden) {
         const editingId = localEditingRowIdRef.current;
         if (editingId != null && driverIdRef.current && driverIdRef.current !== 'guest') {
@@ -1757,6 +1768,7 @@ const ContentReviewPage: React.FC = () => {
   }, [
     creativeContributor,
     creativeSessionReconnectKey,
+    displaySyncEnabledRef,
     eventId,
     driverName,
     startRowLockHeartbeat,
@@ -5896,10 +5908,11 @@ const ContentReviewPage: React.FC = () => {
         </div>
       ) : null}
 
+      {creativeContributor && displaySyncPaused ? <DisplaySyncPausedBanner /> : null}
       {creativeContributor ? (
         <DisplaySessionDisconnectOverlays
-          showModal={showCreativeDisconnectModal}
-          showNotification={showCreativeDisconnectNotification}
+          showModal={showCreativeDisconnectModal && !displaySyncPaused}
+          showNotification={showCreativeDisconnectNotification && !displaySyncPaused}
           disconnectDuration={creativeDisconnectDuration}
           onConfirm={handleCreativeDisconnectTimerConfirm}
           onNever={handleCreativeNeverDisconnect}

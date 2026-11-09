@@ -10,6 +10,8 @@ import {
   DISPLAY_SESSION_MAX_LABEL,
   DISPLAY_SESSION_PICK_TIME_ALERT,
 } from '../lib/displaySession';
+import { useEventDisplaySyncGate } from '../hooks/useEventDisplaySyncGate';
+import DisplaySyncPausedBanner from '../components/DisplaySyncPausedBanner';
 import {
   formatNameForTwoLines,
   formatSpeakerLocation,
@@ -252,6 +254,7 @@ const MicManagerPage: React.FC = () => {
   const [reconnectKey, setReconnectKey] = useState(0);
   /** False after auto-disconnect until user reconnects — blocks API refresh and socket reconnect. */
   const connectionEnabledRef = useRef(true);
+  const { displaySyncEnabledRef, displaySyncPaused } = useEventDisplaySyncGate(event?.id);
 
   const assignmentsRef = useRef(assignments);
   const eventIdRef = useRef(event?.id);
@@ -448,7 +451,7 @@ const MicManagerPage: React.FC = () => {
     const eventId = event.id;
 
     const refreshActive = async () => {
-      if (!connectionEnabledRef.current) return;
+      if (!connectionEnabledRef.current || !displaySyncEnabledRef.current) return;
       try {
         const active = await DatabaseService.getActiveTimer(eventId);
         if (!cancelled) applyActiveTimer(active);
@@ -472,7 +475,9 @@ const MicManagerPage: React.FC = () => {
         applyActiveTimer(running);
       },
       onRunOfShowDataUpdated: () => {
-        if (eventIdRef.current && connectionEnabledRef.current) void loadSchedule(eventIdRef.current);
+        if (eventIdRef.current && connectionEnabledRef.current && displaySyncEnabledRef.current) {
+          void loadSchedule(eventIdRef.current);
+        }
       },
       onShowModeUpdate: (data: {
         event_id: string;
@@ -488,21 +493,25 @@ const MicManagerPage: React.FC = () => {
         if (data.lockedStartTimes !== undefined) {
           setLockedStartTimes(parseLockedStartTimes(data.lockedStartTimes));
         }
-        if (eventIdRef.current && connectionEnabledRef.current) void loadSchedule(eventIdRef.current);
+        if (eventIdRef.current && connectionEnabledRef.current && displaySyncEnabledRef.current) {
+          void loadSchedule(eventIdRef.current);
+        }
       },
       onResetAllStates: () => {
         setCueActualStarts({});
         setLockedStartTimes({});
         setOvertimeMinutes({});
         setShowStartOvertime(0);
-        if (eventIdRef.current && connectionEnabledRef.current) void loadSchedule(eventIdRef.current);
+        if (eventIdRef.current && connectionEnabledRef.current && displaySyncEnabledRef.current) {
+          void loadSchedule(eventIdRef.current);
+        }
       },
       onMicAssignmentsUpdate: (data: any) => {
         if (!data || data.event_id !== eventIdRef.current) return;
         setAssignments(parseMicAssignmentsPayload(data).assignments);
       },
       onInitialSync: async () => {
-        if (!eventIdRef.current || !connectionEnabledRef.current) return;
+        if (!eventIdRef.current || !connectionEnabledRef.current || !displaySyncEnabledRef.current) return;
         await loadSchedule(eventIdRef.current);
         await loadAssignments(eventIdRef.current);
         await refreshActive();
@@ -510,18 +519,18 @@ const MicManagerPage: React.FC = () => {
     };
     socketCallbacksRef.current = callbacks;
 
-    if (connectionEnabledRef.current) {
+    if (connectionEnabledRef.current && displaySyncEnabledRef.current) {
       void refreshActive();
       socketClient.connect(eventId, callbacks);
     }
 
-    if (!hasShownModalOnce && connectionEnabledRef.current) {
+    if (!hasShownModalOnce && connectionEnabledRef.current && displaySyncEnabledRef.current) {
       setShowDisconnectModal(true);
       setHasShownModalOnce(true);
     }
 
     const handleVisibilityChange = () => {
-      if (!connectionEnabledRef.current) return;
+      if (!connectionEnabledRef.current || !displaySyncEnabledRef.current) return;
       if (document.hidden) {
         socketClient.disconnect(eventId);
       } else if (!socketClient.isConnected()) {
@@ -871,6 +880,7 @@ const MicManagerPage: React.FC = () => {
 
   return (
     <>
+      {displaySyncPaused ? <DisplaySyncPausedBanner /> : null}
     <div className="min-h-screen bg-slate-900 text-white">
       {/* Sticky countdown / controls — stays visible while scrolling */}
       <div className="sticky top-0 z-40 bg-slate-900 shadow-[0_10px_20px_rgba(0,0,0,0.4)]">
