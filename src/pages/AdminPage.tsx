@@ -433,10 +433,16 @@ interface HotDisplayClient {
   eventName: string;
   kind: string;
   path: string;
+  page?: string | null;
+  stationLabel?: string | null;
+  userEmail?: string | null;
+  userName?: string | null;
+  userId?: string | null;
   count: number;
   perMinute: number;
   clientHint: string;
   refererHost?: string | null;
+  refererPath?: string | null;
   lastAt: string;
   windowSeconds: number;
   displaySyncEnabled: boolean;
@@ -3639,7 +3645,8 @@ export default function AdminPage() {
               </button>
             </div>
             <p className="text-slate-500 text-sm mb-3">
-              Live pollers over the last ~60s (IP, browser/OBS, event, requests/min). Pause Displays stops follower pages for that event — no UUID paste needed.
+              Live pollers over the last ~60s (page, station nickname, signed-in user, IP, browser/OBS, requests/min).
+              Pause Displays stops follower pages for that event. Browsers cannot send the real PC hostname — operators set a station nickname on the disconnect modal.
               Server also auto-quarantines repeated unauthorized SPA hits (429) after ~25 tries, and auto-pauses Displays for events whose last day is 14+ days ago.
             </p>
             <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-slate-700/80 bg-slate-900/50 px-3 py-2 text-sm text-slate-300">
@@ -3672,11 +3679,25 @@ export default function AdminPage() {
               <ul className="space-y-2 mb-4">
                 {hotDisplayClients.map((row) => (
                   <li
-                    key={`${row.ip}-${row.eventId}-${row.kind}`}
+                    key={`${row.ip}-${row.eventId}-${row.kind}-${row.page || ''}-${row.stationLabel || ''}-${row.userEmail || ''}`}
                     className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-700/80 bg-slate-800/60 px-4 py-3"
                   >
                     <div className="min-w-0">
                       <div className="font-medium text-white truncate">{row.eventName}</div>
+                      <div className="text-slate-200 text-sm mt-0.5 flex flex-wrap gap-x-2 gap-y-1">
+                        <span className="font-semibold text-sky-300">{row.page || row.kind}</span>
+                        {row.stationLabel && (
+                          <span className="text-emerald-300" title="Station nickname for this browser">
+                            {row.stationLabel}
+                          </span>
+                        )}
+                        {(row.userName || row.userEmail) && (
+                          <span className="text-violet-200" title={row.userEmail || undefined}>
+                            {row.userName || row.userEmail}
+                            {row.userName && row.userEmail ? ` · ${row.userEmail}` : ''}
+                          </span>
+                        )}
+                      </div>
                       <div className="text-slate-400 text-xs mt-0.5 flex flex-wrap gap-x-2 gap-y-1">
                         <span className="font-mono text-slate-300">{row.ip}</span>
                         <span>{row.clientHint}</span>
@@ -3688,6 +3709,9 @@ export default function AdminPage() {
                           <span className="text-amber-200">Displays paused</span>
                         )}
                         {row.refererHost && <span className="truncate max-w-[12rem]">{row.refererHost}</span>}
+                        {row.refererPath && row.refererPath !== '/' && (
+                          <span className="truncate max-w-[14rem] font-mono text-slate-500">{row.refererPath}</span>
+                        )}
                       </div>
                     </div>
                     <div className="shrink-0 flex items-center gap-1.5">

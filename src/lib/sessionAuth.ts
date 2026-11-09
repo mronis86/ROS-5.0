@@ -1,3 +1,5 @@
+import { displayClientIdentityHeaders } from './displayClientIdentity';
+
 export const API_TOKEN_KEY = 'ros_api_token';
 export const ROS_SESSION_ENDED_EVENT = 'ros-session-ended';
 
@@ -53,7 +55,12 @@ export function authHeaders(): Record<string, string> {
 
 /** JSON API requests from the signed-in web app (includes ros_nsess / legacy session token). */
 export function apiJsonHeaders(extra?: Record<string, string>): Record<string, string> {
-  return { 'Content-Type': 'application/json', ...authHeaders(), ...extra };
+  return {
+    'Content-Type': 'application/json',
+    ...displayClientIdentityHeaders(),
+    ...authHeaders(),
+    ...extra,
+  };
 }
 
 function shouldStopPolling(res: Response, body?: { stopPolling?: boolean } | null): boolean {
@@ -72,6 +79,9 @@ function shouldStopPolling(res: Response, body?: { stopPolling?: boolean } | nul
 export async function apiAuthFetch(url: string, init: RequestInit = {}): Promise<Response | null> {
   if (!getApiAccessToken()) return null;
   const headers = new Headers(init.headers || {});
+  Object.entries(displayClientIdentityHeaders()).forEach(([k, v]) => {
+    if (!headers.has(k)) headers.set(k, v);
+  });
   const auth = authHeaders();
   Object.entries(auth).forEach(([k, v]) => headers.set(k, v));
   if (!headers.has('Content-Type') && init.body != null) {

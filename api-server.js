@@ -1087,7 +1087,15 @@ async function regenerateUpstashCache(eventId, runOfShowData) {
 app.set('trust proxy', 1);
 app.use(helmet());
 // In development allow any origin (so other computers on LAN can POST e.g. to /api/auth/check-domain)
-const ADMIN_CORS_HEADERS = ['Content-Type', 'Authorization', 'X-Admin-Key', 'X-Admin-Pin', 'X-ROS-Role'];
+const ADMIN_CORS_HEADERS = [
+  'Content-Type',
+  'Authorization',
+  'X-Admin-Key',
+  'X-Admin-Pin',
+  'X-ROS-Role',
+  'X-ROS-Client-Page',
+  'X-ROS-Display-Label',
+];
 const RATE_LIMIT_CORS_HEADERS = ['RateLimit-Limit', 'RateLimit-Remaining', 'RateLimit-Reset', 'Retry-After'];
 const corsOptions = {
   origin: isProduction ? true : true,
@@ -1098,13 +1106,14 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.use(morgan('combined'));
 app.use(express.json({ limit: '20mb' }));
-app.use(createDisplayPollTrackerMiddleware());
 app.use(createDisplaySyncPollGuard(pool));
 
 // API auth: resolves Bearer/query tokens; enforces REQUIRE_API_AUTH when legacy mode is off
 applyAuthRateLimits(app, pool);
 installOpsAlerts(app, pool);
 app.use(createApiAuthMiddleware(pool, apiAuthConfig));
+// After auth so hot-traffic rows can include signed-in user email/name
+app.use(createDisplayPollTrackerMiddleware());
 registerAuthRoutes(app, pool, { requireAdminAuth });
 registerUserReportRoutes(app, pool);
 registerAppSettingsRoutes(app, pool, { requireAdminAccess });
@@ -1308,7 +1317,7 @@ function buildRailwayHealthMeta() {
     env: process.env.NODE_ENV || 'development',
     powerpointRoutes: true,
     // Bump when master should trigger a Railway autodeploy smoke check.
-    apiRevision: 'display-kill-20261108b',
+    apiRevision: 'display-kill-20261108c',
   };
 }
 

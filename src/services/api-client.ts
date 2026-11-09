@@ -1,5 +1,6 @@
 // API Client for communicating with our Express API server
 // Always use Railway (local API option disabled).
+import { displayClientIdentityHeaders } from '../lib/displayClientIdentity';
 import { authHeaders, clearApiAccessTokenOnAuthFailure } from '../lib/sessionAuth';
 
 const RAILWAY_API_URL = 'https://ros-50-production.up.railway.app';
@@ -118,6 +119,7 @@ class ApiClient {
       ...options,
       headers: {
         'Content-Type': 'application/json',
+        ...displayClientIdentityHeaders(),
         ...authHeaders(),
         ...options.headers,
       },

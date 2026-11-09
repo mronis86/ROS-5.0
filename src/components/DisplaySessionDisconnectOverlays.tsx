@@ -1,5 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  getDisplayStationLabel,
+  setDisplayStationLabel,
+} from '../lib/displayClientIdentity';
+import {
   DISPLAY_SESSION_MAX_HINT,
   DISPLAY_SESSION_MAX_LABEL,
 } from '../lib/displaySession';
@@ -15,6 +19,9 @@ export const DisplaySessionDisconnectModal: React.FC<DisplaySessionDisconnectMod
 }) => {
   const [hours, setHours] = useState(2);
   const [minutes, setMinutes] = useState(0);
+  const [stationLabel, setStationLabel] = useState(() => getDisplayStationLabel());
+
+  const persistStation = () => setDisplayStationLabel(stationLabel);
 
   const minuteValues = [0, 5, 10, 15, 20, 25, 30];
   const hoursRef = useRef<HTMLDivElement>(null);
@@ -103,17 +110,40 @@ export const DisplaySessionDisconnectModal: React.FC<DisplaySessionDisconnectMod
           </div>
         </div>
 
+        <div className="mb-8">
+          <label className="mb-2 block text-center text-sm font-medium uppercase tracking-wider text-slate-300">
+            Station name (optional)
+          </label>
+          <input
+            type="text"
+            value={stationLabel}
+            onChange={(e) => setStationLabel(e.target.value)}
+            placeholder="e.g. FOH laptop, Booth PC, OBS-1"
+            maxLength={64}
+            className="w-full rounded-xl border border-slate-600 bg-slate-900 px-4 py-3 text-center text-lg text-slate-100 placeholder:text-slate-600"
+          />
+          <p className="mt-2 text-center text-xs text-slate-500">
+            Browsers cannot send the real PC name. This nickname shows on Admin hot traffic for this browser.
+          </p>
+        </div>
+
         <div className="flex gap-4">
           <button
             type="button"
-            onClick={() => onConfirm(hours, minutes)}
+            onClick={() => {
+              persistStation();
+              onConfirm(hours, minutes);
+            }}
             className="flex-1 rounded-xl bg-blue-600 px-8 py-4 text-lg font-medium text-white transition hover:-translate-y-0.5 hover:bg-blue-700 hover:shadow-lg hover:shadow-blue-600/40"
           >
             Start Timer
           </button>
           <button
             type="button"
-            onClick={onNever}
+            onClick={() => {
+              persistStation();
+              onNever();
+            }}
             className="flex-1 rounded-xl bg-slate-600 px-8 py-4 text-lg font-medium text-slate-200 transition hover:-translate-y-0.5 hover:bg-slate-500 hover:shadow-lg hover:shadow-slate-600/30"
           >
             {DISPLAY_SESSION_MAX_LABEL}
