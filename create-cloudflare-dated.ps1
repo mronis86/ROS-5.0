@@ -108,11 +108,16 @@ Get-ChildItem $UploadDir -File -Recurse | Where-Object { $_.Length -gt $MaxFileB
     Write-Host "Removed oversized: $rel"
 }
 
-# Always rebuild the main Companion download so Pages does not ship a stale module zip
+# Rebuild Companion download when possible; keep existing zip if OneDrive locks npm.
 Write-Host 'Rebuilding companion-module-runofshow-full.zip...'
 & node (Join-Path $ProjectRoot 'scripts\zip-companion-module-full.js')
 if ($LASTEXITCODE -ne 0) {
-    throw "zip-companion-module-full.js failed with exit $LASTEXITCODE"
+    $existingCompanion = Join-Path $publicDir 'companion-module-runofshow-full.zip'
+    if (Test-Path $existingCompanion) {
+        Write-Host "WARNING: companion full zip rebuild failed (exit $LASTEXITCODE); using existing public copy."
+    } else {
+        throw "zip-companion-module-full.js failed with exit $LASTEXITCODE"
+    }
 }
 
 $OptionalZips = @(

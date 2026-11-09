@@ -53,6 +53,8 @@ public/ros-civics-vmix-bridge.zip
 public/ros-vmix-datasource-bridge.zip
 public/powerpoint-bridge.zip
 public/ros-hyperdeck-ingest.zip
+public/ros-offline-kiosk-portable.zip
+public/powerpoint-bridge-v2.zip
 
 # IDE files
 .vscode/
