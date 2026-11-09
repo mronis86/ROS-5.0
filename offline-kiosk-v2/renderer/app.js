@@ -404,6 +404,99 @@ async function refreshWebLinkedStatus() {
   renderWebLinkedStatus();
 }
 
+function formatWebLinkedDiagnosticsText(result) {
+  return [
+    '=== ROS Offline Kiosk · WebLinked diagnostics ===',
+    `When: ${new Date().toISOString()}`,
+    '',
+    '--- diagnostics ---',
+    JSON.stringify(result?.diagnostics || result?.status?.diagnostics || {}, null, 2),
+    '',
+    '--- status ---',
+    JSON.stringify(
+      {
+        ok: result?.status?.ok,
+        running: result?.status?.running,
+        error: result?.status?.error,
+        baseUrl: result?.status?.baseUrl,
+        exe: result?.status?.exe,
+        logPath: result?.status?.logPath || result?.log?.path,
+      },
+      null,
+      2
+    ),
+    '',
+    `--- log (${result?.log?.path || 'n/a'}) ---`,
+    result?.log?.text || result?.error || '(empty)',
+    '',
+  ].join('\n');
+}
+
+let wlLogCacheText = '';
+
+async function fetchWebLinkedDiagnostics() {
+  if (!window.kiosk?.weblinkedDiagnostics) return null;
+  return window.kiosk.weblinkedDiagnostics();
+}
+
+async function fillWebLinkedLogViewer(result) {
+  const pathEl = $('#wlLogPath');
+  const bodyEl = $('#wlLogBody');
+  if (!pathEl || !bodyEl) return;
+  const payload = result || (await fetchWebLinkedDiagnostics());
+  if (!payload) {
+    pathEl.textContent = 'Diagnostics unavailable outside Electron.';
+    bodyEl.textContent = '';
+    wlLogCacheText = '';
+    return;
+  }
+  const path =
+    payload?.log?.path ||
+    payload?.diagnostics?.logPath ||
+    payload?.status?.logPath ||
+    '(no log path)';
+  pathEl.textContent = path;
+  wlLogCacheText = formatWebLinkedDiagnosticsText(payload);
+  bodyEl.textContent = wlLogCacheText;
+  bodyEl.scrollTop = bodyEl.scrollHeight;
+}
+
+async function openWebLinkedLogViewer() {
+  const overlay = $('#wlLogOverlay');
+  if (!overlay) return;
+  overlay.hidden = false;
+  const bodyEl = $('#wlLogBody');
+  if (bodyEl) bodyEl.textContent = 'Loading…';
+  await fillWebLinkedLogViewer();
+}
+
+function closeWebLinkedLogViewer() {
+  const overlay = $('#wlLogOverlay');
+  if (overlay) overlay.hidden = true;
+}
+
+async function copyWebLinkedDiagnostics() {
+  if (!window.kiosk?.weblinkedDiagnostics) {
+    setDisplayNote('Diagnostics only available in the Electron kiosk.');
+    return;
+  }
+  setDisplayNote('Collecting WebLinked log…');
+  const result = await fetchWebLinkedDiagnostics();
+  const text = formatWebLinkedDiagnosticsText(result);
+  wlLogCacheText = text;
+  try {
+    await navigator.clipboard.writeText(text);
+    setDisplayNote(
+      `WebLinked log copied. File also at: ${result?.log?.path || result?.diagnostics?.logPath || 'see clipboard'}`
+    );
+  } catch {
+    setDisplayNote(
+      `Could not copy clipboard. Use View log — path: ${result?.log?.path || result?.diagnostics?.logPath || '(unknown)'}`
+    );
+    await openWebLinkedLogViewer();
+  }
+}
+
 async function startWebLinkedEngine() {
   if (!window.kiosk?.startWebLinked) {
     setDisplayNote('Start WebLinked is only available in the Electron kiosk.');
@@ -426,17 +519,22 @@ async function startWebLinkedEngine() {
     error: result?.ok ? '' : result?.error || 'Start failed',
     starting: false,
     stopping: false,
+    logPath: result?.logPath || null,
   };
   renderWebLinkedStatus();
-  setDisplayNote(
-    result?.ok
-      ? force
+  if (result?.ok) {
+    setDisplayNote(
+      force
         ? `WebLinked restarted · ${result.baseUrl || ':7655'}`
         : result.alreadyRunning
           ? 'WebLinked already running.'
           : `WebLinked started · ${result.baseUrl || ':7655'}`
-      : result?.error || 'Could not start WebLinked.'
-  );
+    );
+  } else {
+    const logHint = result?.logPath ? ' · opening log…' : '';
+    setDisplayNote((result?.error || 'Could not start WebLinked.') + logHint);
+    if (window.kiosk?.weblinkedDiagnostics) void openWebLinkedLogViewer();
+  }
 }
 
 async function stopWebLinkedEngine() {
@@ -2853,6 +2951,22 @@ async function bootstrap() {
   $('#startWebLinkedBtn')?.addEventListener('click', () => void startWebLinkedEngine());
   $('#stopWebLinkedBtn')?.addEventListener('click', () => void stopWebLinkedEngine());
   $('#refreshWebLinkedBtn')?.addEventListener('click', () => void refreshWebLinkedStatus());
+  $('#viewWebLinkedLogBtn')?.addEventListener('click', () => void openWebLinkedLogViewer());
+  $('#copyWebLinkedLogBtn')?.addEventListener('click', () => void copyWebLinkedDiagnostics());
+  $('#wlLogCloseBtn')?.addEventListener('click', () => closeWebLinkedLogViewer());
+  $('#wlLogRefreshBtn')?.addEventListener('click', () => void fillWebLinkedLogViewer());
+  $('#wlLogCopyBtn')?.addEventListener('click', async () => {
+    const text = wlLogCacheText || formatWebLinkedDiagnosticsText(await fetchWebLinkedDiagnostics());
+    try {
+      await navigator.clipboard.writeText(text);
+      setDisplayNote('WebLinked log copied.');
+    } catch {
+      setDisplayNote('Could not copy — select text in the log viewer instead.');
+    }
+  });
+  $('#wlLogOverlay')?.addEventListener('click', (e) => {
+    if (e.target?.id === 'wlLogOverlay') closeWebLinkedLogViewer();
+  });
   $('#refreshPptBtn')?.addEventListener('click', () => void refreshPptBridgeStatus());
   $('#wlSettingsCancelBtn')?.addEventListener('click', () => closeSimpleWlSettings());
   $('#wlSettingsApplyBtn')?.addEventListener('click', () => void applySimpleWlSettings());

@@ -3,7 +3,8 @@ const fs = require('fs');
 const http = require('http');
 const path = require('path');
 const os = require('os');
-const { weblinkedRoot, isPackaged } = require('./runtime-paths');
+const { weblinkedRoot, isPackaged, resourcesRoot } = require('./runtime-paths');
+const { wlLog, wlWarn, wlError, logPath, readTail } = require('./kiosk-log');
 
 /**
  * Sinor WebLinked-SDI defaults HTTP control to :7655.
@@ -194,6 +195,35 @@ async function isRunning() {
   return Boolean(await resolveBase({ force: true }));
 }
 
+function missingRuntimeError() {
+  const root = bundledRoot();
+  if (isPackaged()) {
+    return `WebLinked runtime missing under ${root}. Re-download Offline Kiosk Portable (not the small install zip).`;
+  }
+  return `WebLinked runtime not found in ${root}. The small install zip does not include WebLinked — use Offline Kiosk Portable, or on a build PC run: npm run sync:weblinked`;
+}
+
+function collectDiagnostics() {
+  const root = bundledRoot();
+  const exe = findExe();
+  const libcef = path.join(root, 'libcef.dll');
+  const locales = path.join(root, 'locales', 'en-US.pak');
+  return {
+    packaged: isPackaged(),
+    resourcesRoot: resourcesRoot(),
+    weblinkedRoot: root,
+    exe,
+    exeExists: Boolean(exe && fs.existsSync(exe)),
+    libcefExists: fs.existsSync(libcef),
+    localesExists: fs.existsSync(locales),
+    engineAlive: engineProcessAlive(),
+    resolvedBase,
+    enginePid,
+    logPath: logPath('weblinked'),
+    candidates: candidateExePaths().map((p) => ({ path: p, exists: fs.existsSync(p) })),
+  };
+}
+
 async function getStatus() {
   const exe = findExe();
   const base = await resolveBase({ force: true });
@@ -205,9 +235,9 @@ async function getStatus() {
       port: null,
       exe,
       startedByKiosk,
-      error: exe
-        ? 'WebLinked installed/bundled but not running'
-        : 'WebLinked not found — run npm run sync:weblinked (from WebLinked-SDI build\\Release)',
+      logPath: logPath('weblinked'),
+      diagnostics: collectDiagnostics(),
+      error: exe ? 'WebLinked installed/bundled but not running' : missingRuntimeError(),
     };
   }
   const port = Number(new URL(base).port) || null;
@@ -225,6 +255,7 @@ async function getStatus() {
     exe,
     startedByKiosk,
     sources,
+    logPath: logPath('weblinked'),
   };
 }
 
@@ -249,14 +280,38 @@ function killOrphanEngines() {
   resolvedBase = null;
 }
 
-function spawnEngine(exe) {
-  const port = String(defaultHttpPortForExe(exe));
+function spawnEngineDirect(exe, port) {
+  const args = [
+    '--port',
+    String(port),
+    '--no-open',
+    '--headless',
+    '--disable-direct-composition',
+  ];
+  wlLog('spawn direct', { exe, cwd: path.dirname(exe), args });
+  const child = spawn(exe, args, {
+    cwd: path.dirname(exe),
+    windowsHide: true,
+    stdio: 'ignore',
+    detached: true,
+    shell: false,
+  });
+  child.unref();
+  if (!child.pid) {
+    throw new Error('Direct spawn returned no PID');
+  }
+  enginePid = child.pid;
+  startedByKiosk = true;
+  return { pid: child.pid, port: Number(port), method: 'direct' };
+}
+
+function spawnEnginePowerShell(exe, port) {
   // Hidden Start-Process is the reliable way to hide CONSOLE-subsystem apps on Windows.
   // Keep DirectComposition off (AMD spam / focus fights) but do NOT disable GPU
   // compositing — that left CEF with paints=0 so NDI/SDI stayed black.
   const argList = [
     '--port',
-    port,
+    String(port),
     '--no-open',
     '--headless',
     '--disable-direct-composition',
@@ -269,6 +324,8 @@ function spawnEngine(exe) {
     `$p = Start-Process -FilePath ${psQuote(exe)} -WorkingDirectory ${psQuote(path.dirname(exe))} -ArgumentList @(${argList}) -WindowStyle Hidden -PassThru`,
     `Write-Output $p.Id`,
   ].join('; ');
+
+  wlLog('spawn powershell', { exe, cwd: path.dirname(exe), port });
 
   return new Promise((resolve, reject) => {
     const child = spawn(
@@ -295,7 +352,7 @@ function spawnEngine(exe) {
       if (Number.isFinite(pid) && pid > 0) {
         enginePid = pid;
         startedByKiosk = true;
-        resolve({ pid, port: Number(port) });
+        resolve({ pid, port: Number(port), method: 'powershell' });
         return;
       }
       reject(
@@ -306,6 +363,26 @@ function spawnEngine(exe) {
       );
     });
   });
+}
+
+async function spawnEngine(exe) {
+  const port = defaultHttpPortForExe(exe);
+  try {
+    return await spawnEnginePowerShell(exe, port);
+  } catch (psErr) {
+    wlWarn('PowerShell spawn failed — trying direct', {
+      error: psErr instanceof Error ? psErr.message : String(psErr),
+    });
+    try {
+      return spawnEngineDirect(exe, port);
+    } catch (directErr) {
+      const msg = [
+        psErr instanceof Error ? psErr.message : String(psErr),
+        directErr instanceof Error ? directErr.message : String(directErr),
+      ].join(' | ');
+      throw new Error(msg);
+    }
+  }
 }
 
 async function waitUntilReady(timeoutMs = 90000) {
@@ -319,22 +396,29 @@ async function waitUntilReady(timeoutMs = 90000) {
 
 async function startWebLinked({ force = false } = {}) {
   if (startInFlight) {
+    wlLog('start joined in-flight request');
     return startInFlight;
   }
 
   startInFlight = (async () => {
+    const diag = collectDiagnostics();
+    wlLog('start begin', { force, ...diag });
+
     if (!force && (await isRunning())) {
       const status = await getStatus();
+      wlLog('already running', { baseUrl: status.baseUrl });
       return { ok: true, alreadyRunning: true, ...status };
     }
 
     const exe = findExe();
     if (!exe) {
+      const error = missingRuntimeError();
+      wlError('exe missing', diag);
       return {
         ok: false,
-        error: isPackaged()
-          ? 'WebLinked runtime missing from this portable build (engines\\weblinked). Re-download the full Offline Kiosk package.'
-          : 'WebLinked runtime not found. From offline-kiosk-v2 run: npm run sync:weblinked (uses Desktop\\WebLinked-SDI\\build\\Release).',
+        error,
+        logPath: logPath('weblinked'),
+        diagnostics: diag,
       };
     }
 
@@ -345,32 +429,43 @@ async function startWebLinked({ force = false } = {}) {
     let launched;
     try {
       launched = await spawnEngine(exe);
+      wlLog('spawn ok', launched);
     } catch (e) {
+      const error = e instanceof Error ? e.message : 'Failed to start WebLinked';
+      wlError('spawn failed', { error, exe });
       return {
         ok: false,
-        error: e instanceof Error ? e.message : 'Failed to start WebLinked',
+        error,
         exe,
+        logPath: logPath('weblinked'),
+        diagnostics: collectDiagnostics(),
       };
     }
 
     // CEF cold-starts slowly the first time after unzip / AV scan — give it time.
     let ready = await waitUntilReady(90000);
     if (!ready && engineProcessAlive()) {
+      wlWarn('API not ready yet but process alive — extending wait');
       ready = await waitUntilReady(45000);
     }
     if (!ready) {
       const alive = engineProcessAlive();
+      const error = alive
+        ? `WebLinked process is up but control API did not answer on :${CANDIDATE_PORTS.join(' / :')} yet — wait a few seconds and press Start again (or check AV blocking CEF).`
+        : `WebLinked failed to stay running after launch (exe=${path.basename(exe)}). Check ${logPath('weblinked')}`;
+      wlError('start timeout', { alive, exe, launched, diagnostics: collectDiagnostics() });
       return {
         ok: false,
-        error: alive
-          ? `WebLinked process is up but control API did not answer on :${CANDIDATE_PORTS.join(' / :')} yet — wait a few seconds and press Start again (or check AV blocking CEF).`
-          : `WebLinked failed to stay running after launch (exe=${path.basename(exe)}).`,
+        error,
         exe,
         enginePid: launched?.pid || enginePid,
+        logPath: logPath('weblinked'),
+        diagnostics: collectDiagnostics(),
       };
     }
 
     const status = await getStatus();
+    wlLog('start ok', { baseUrl: status.baseUrl, method: launched?.method, pid: launched?.pid });
     return {
       ok: true,
       alreadyRunning: false,
@@ -385,6 +480,10 @@ async function startWebLinked({ force = false } = {}) {
   } finally {
     startInFlight = null;
   }
+}
+
+function getWebLinkedLog() {
+  return readTail('weblinked');
 }
 
 async function ensureRunning() {
@@ -1158,4 +1257,6 @@ module.exports = {
   listSources,
   sanitizeSourceId,
   hasKind,
+  collectDiagnostics,
+  getWebLinkedLog,
 };

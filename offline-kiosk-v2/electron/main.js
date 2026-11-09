@@ -340,6 +340,24 @@ ipcMain.handle('kiosk:weblinkedStatus', async () => {
   }
 });
 
+ipcMain.handle('kiosk:weblinkedDiagnostics', async () => {
+  try {
+    const status = await weblinked.getStatus();
+    const log = weblinked.getWebLinkedLog();
+    return {
+      ok: true,
+      status,
+      diagnostics: weblinked.collectDiagnostics(),
+      log,
+    };
+  } catch (e) {
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : 'WebLinked diagnostics failed',
+    };
+  }
+});
+
 ipcMain.handle('kiosk:startWebLinked', async (_evt, payload) => {
   try {
     const result = await weblinked.startWebLinked({ force: Boolean(payload?.force) });

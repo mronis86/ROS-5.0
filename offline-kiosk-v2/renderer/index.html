@@ -140,6 +140,12 @@
           <button type="button" class="primary-btn" id="startWebLinkedBtn">Start WebLinked</button>
           <button type="button" class="ghost-btn" id="stopWebLinkedBtn">Stop WebLinked</button>
           <button type="button" class="ghost-btn" id="refreshWebLinkedBtn">Recheck</button>
+          <button type="button" class="ghost-btn" id="viewWebLinkedLogBtn" title="Show WebLinked start log on screen">
+            View log
+          </button>
+          <button type="button" class="ghost-btn" id="copyWebLinkedLogBtn" title="Copy WebLinked diagnostics + log for support">
+            Copy log
+          </button>
         </div>
 
         <div class="wl-live-preview" id="wlLivePreview">
@@ -527,6 +533,24 @@
         <div class="confirm-actions wl-settings-actions">
           <button type="button" class="ghost-btn" id="wlSettingsCancelBtn">Close</button>
           <button type="button" class="primary-btn" id="wlSettingsApplyBtn">Apply</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="confirm-overlay" id="wlLogOverlay" hidden>
+      <div
+        class="confirm-dialog wl-log-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="wlLogTitle"
+      >
+        <h3 id="wlLogTitle">WebLinked log</h3>
+        <p class="wl-log-path" id="wlLogPath">—</p>
+        <pre class="wl-log-body" id="wlLogBody" tabindex="0">Loading…</pre>
+        <div class="confirm-actions">
+          <button type="button" class="ghost-btn" id="wlLogRefreshBtn">Refresh</button>
+          <button type="button" class="ghost-btn" id="wlLogCopyBtn">Copy</button>
+          <button type="button" class="primary-btn" id="wlLogCloseBtn">Close</button>
         </div>
       </div>
     </div>
