@@ -442,6 +442,15 @@ interface HotDisplayClient {
   displaySyncEnabled: boolean;
 }
 
+interface DisplayAutoPauseStatus {
+  at?: string | null;
+  paused?: number;
+  scanned?: number;
+  ageDays?: number;
+  eventIds?: string[];
+  error?: string | null;
+}
+
 export default function AdminPage() {
   const { user, loading: authLoading, accessStatus } = useAuth();
   const [unlocked, setUnlocked] = useState(false);
@@ -471,6 +480,8 @@ export default function AdminPage() {
   const [hotDisplayClients, setHotDisplayClients] = useState<HotDisplayClient[]>([]);
   const [hotDisplayLoading, setHotDisplayLoading] = useState(false);
   const [hotDisplayError, setHotDisplayError] = useState<string | null>(null);
+  const [displayAutoPause, setDisplayAutoPause] = useState<DisplayAutoPauseStatus | null>(null);
+  const [autoPauseBusy, setAutoPauseBusy] = useState(false);
   const [disconnectingUserId, setDisconnectingUserId] = useState<string | null>(null);
   const [signingOutKey, setSigningOutKey] = useState<string | null>(null);
   const [backupConfig, setBackupConfig] = useState<{ enabled: boolean; folderId: string; lastRunAt: string | null; lastStatus: string | null; needsMigration?: boolean; hasServiceAccount?: boolean }>({ enabled: false, folderId: '', lastRunAt: null, lastStatus: null });
@@ -2414,8 +2425,12 @@ export default function AdminPage() {
         setHotDisplayClients([]);
         return;
       }
-      const data = (await res.json().catch(() => ({}))) as { clients?: HotDisplayClient[] };
+      const data = (await res.json().catch(() => ({}))) as {
+        clients?: HotDisplayClient[];
+        autoPause?: DisplayAutoPauseStatus;
+      };
       setHotDisplayClients(Array.isArray(data.clients) ? data.clients : []);
+      setDisplayAutoPause(data.autoPause || null);
     } catch (e) {
       setHotDisplayError(e instanceof Error ? e.message : 'Request failed');
       setHotDisplayClients([]);
@@ -2423,6 +2438,31 @@ export default function AdminPage() {
       setHotDisplayLoading(false);
     }
   }, [lockAdminSession]);
+
+  const runAutoPauseStaleDisplays = useCallback(async () => {
+    setAutoPauseBusy(true);
+    setKillDisplayMessage(null);
+    try {
+      const res = await adminFetch('/api/admin/auto-pause-stale-displays', { method: 'POST' });
+      const data = (await res.json().catch(() => ({}))) as DisplayAutoPauseStatus & {
+        error?: string;
+        ok?: boolean;
+      };
+      if (!res.ok) {
+        setKillDisplayMessage(data.error || `Auto-pause failed (${res.status})`);
+        return;
+      }
+      setDisplayAutoPause(data);
+      setKillDisplayMessage(
+        `Auto-pause ran: paused ${data.paused ?? 0} event(s) older than ${data.ageDays ?? 14} days (scanned ${data.scanned ?? 0}).`
+      );
+      await fetchHotDisplayTraffic();
+    } catch (e) {
+      setKillDisplayMessage(e instanceof Error ? e.message : 'Auto-pause failed');
+    } finally {
+      setAutoPauseBusy(false);
+    }
+  }, [fetchHotDisplayTraffic]);
 
   useEffect(() => {
     if (!unlocked) return;
@@ -3600,8 +3640,25 @@ export default function AdminPage() {
             </div>
             <p className="text-slate-500 text-sm mb-3">
               Live pollers over the last ~60s (IP, browser/OBS, event, requests/min). Pause Displays stops follower pages for that event — no UUID paste needed.
-              Server also auto-quarantines repeated unauthorized SPA hits (429) after ~25 tries.
+              Server also auto-quarantines repeated unauthorized SPA hits (429) after ~25 tries, and auto-pauses Displays for events whose last day is 14+ days ago.
             </p>
+            <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-slate-700/80 bg-slate-900/50 px-3 py-2 text-sm text-slate-300">
+              <span>
+                Auto-pause 14d+:{' '}
+                {displayAutoPause?.at
+                  ? `last ran ${new Date(displayAutoPause.at).toLocaleString()} · paused ${displayAutoPause.paused ?? 0}`
+                  : 'waiting for first run (~2 min after API boot)'}
+                {displayAutoPause?.error ? ` · error: ${displayAutoPause.error}` : ''}
+              </span>
+              <button
+                type="button"
+                disabled={autoPauseBusy}
+                onClick={() => void runAutoPauseStaleDisplays()}
+                className="ml-auto px-2.5 py-1 bg-amber-800/80 hover:bg-amber-700 disabled:opacity-50 text-amber-50 text-xs font-medium rounded-lg"
+              >
+                {autoPauseBusy ? 'Running…' : 'Run auto-pause now'}
+              </button>
+            </div>
             {hotDisplayError && (
               <div className="mb-3 px-4 py-2 rounded-lg bg-amber-900/30 border border-amber-700/50 text-amber-200 text-sm">
                 {hotDisplayError}

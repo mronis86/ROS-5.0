@@ -97,6 +97,11 @@ const {
   snapshotDisplayPollTraffic,
 } = require('./lib/display-poll-tracker');
 const {
+  autoPauseStaleDisplaySync,
+  getDisplaySyncAutoPauseStatus,
+  startDisplaySyncAutoPause,
+} = require('./lib/display-sync-auto-pause');
+const {
   setPreflightChecklistEnabled,
 } = require('./lib/preflight-feature');
 const {
@@ -1303,7 +1308,7 @@ function buildRailwayHealthMeta() {
     env: process.env.NODE_ENV || 'development',
     powerpointRoutes: true,
     // Bump when master should trigger a Railway autodeploy smoke check.
-    apiRevision: 'display-kill-20261108a',
+    apiRevision: 'display-kill-20261108b',
   };
 }
 
@@ -1414,6 +1419,7 @@ app.get('/api/admin/hot-display-traffic', async (req, res) => {
     }
     res.json({
       windowSeconds: 60,
+      autoPause: getDisplaySyncAutoPauseStatus(),
       clients: rows.map((row) => ({
         ...row,
         eventName: idToName.get(row.eventId) || `Event ${row.eventId.slice(0, 8)}…`,
@@ -1422,6 +1428,17 @@ app.get('/api/admin/hot-display-traffic', async (req, res) => {
     });
   } catch (err) {
     console.error('[admin hot-display-traffic] error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/auto-pause-stale-displays', async (req, res) => {
+  if (!requireAdminAccess(req, res)) return;
+  try {
+    const report = await autoPauseStaleDisplaySync(pool, { broadcastUpdate });
+    res.json({ ok: true, ...report });
+  } catch (err) {
+    console.error('[admin auto-pause-stale-displays] error:', err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -12514,6 +12531,7 @@ server.listen(PORT, '0.0.0.0', async () => {
     console.log('🚨 Ops alerts: API errors and security events will email admins');
     startPlatformMaintenanceAlerts(pool);
   }
+  startDisplaySyncAutoPause(pool, { broadcastUpdate });
   console.log(`💡 Tip: Use 'ipconfig' (Windows) or 'ifconfig' (Mac/Linux) to find your IP address`);
   if (process.env.NEON_DATABASE_URL) {
     try {
