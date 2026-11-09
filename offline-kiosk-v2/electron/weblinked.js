@@ -263,6 +263,41 @@ function psQuote(s) {
   return `'${String(s).replace(/'/g, "''")}'`;
 }
 
+/** Clear Mark-of-the-Web so SmartScreen / MOTW does not hang first launch. */
+function unblockWebLinkedRuntime(exePath) {
+  const dir = path.dirname(exePath);
+  wlLog('unblock runtime', { dir });
+  try {
+    execFileSync(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-WindowStyle',
+        'Hidden',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-Command',
+        `Get-ChildItem -LiteralPath ${psQuote(dir)} -Recurse -File -ErrorAction SilentlyContinue | Unblock-File -ErrorAction SilentlyContinue`,
+      ],
+      { windowsHide: true, stdio: 'ignore', timeout: 15000 }
+    );
+  } catch (e) {
+    wlWarn('unblock failed (continuing)', {
+      error: e instanceof Error ? e.message : String(e),
+    });
+  }
+  // Also strip Zone.Identifier ADS if present on the exe / libcef.
+  for (const name of [path.basename(exePath), 'libcef.dll', 'chrome_elf.dll']) {
+    const zone = `${path.join(dir, name)}:Zone.Identifier`;
+    try {
+      if (fs.existsSync(zone)) fs.unlinkSync(zone);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
 /** sinor-weblinked.exe is a CONSOLE-subsystem binary — Node spawn still flashes a terminal. */
 function killOrphanEngines() {
   for (const image of ['sinor-weblinked.exe', 'weblinked.exe']) {
@@ -305,10 +340,9 @@ function spawnEngineDirect(exe, port) {
   return { pid: child.pid, port: Number(port), method: 'direct' };
 }
 
-function spawnEnginePowerShell(exe, port) {
-  // Hidden Start-Process is the reliable way to hide CONSOLE-subsystem apps on Windows.
-  // Keep DirectComposition off (AMD spam / focus fights) but do NOT disable GPU
-  // compositing — that left CEF with paints=0 so NDI/SDI stayed black.
+function spawnEnginePowerShell(exe, port, { timeoutMs = 8000 } = {}) {
+  // Hidden Start-Process hides CONSOLE-subsystem flash. Keep DirectComposition off
+  // but do NOT disable GPU compositing — that left CEF with paints=0 (black NDI/SDI).
   const argList = [
     '--port',
     String(port),
@@ -325,7 +359,7 @@ function spawnEnginePowerShell(exe, port) {
     `Write-Output $p.Id`,
   ].join('; ');
 
-  wlLog('spawn powershell', { exe, cwd: path.dirname(exe), port });
+  wlLog('spawn powershell', { exe, cwd: path.dirname(exe), port, timeoutMs });
 
   return new Promise((resolve, reject) => {
     const child = spawn(
@@ -340,14 +374,34 @@ function spawnEnginePowerShell(exe, port) {
 
     let stdout = '';
     let stderr = '';
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      try {
+        child.kill();
+      } catch {
+        /* ignore */
+      }
+      reject(new Error(`PowerShell Start-Process timed out after ${timeoutMs}ms (often MOTW/SmartScreen)`));
+    }, timeoutMs);
+
     child.stdout.on('data', (chunk) => {
       stdout += String(chunk);
     });
     child.stderr.on('data', (chunk) => {
       stderr += String(chunk);
     });
-    child.on('error', reject);
+    child.on('error', (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(err);
+    });
     child.on('close', (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
       const pid = Number(String(stdout).trim().split(/\r?\n/).pop());
       if (Number.isFinite(pid) && pid > 0) {
         enginePid = pid;
@@ -367,18 +421,22 @@ function spawnEnginePowerShell(exe, port) {
 
 async function spawnEngine(exe) {
   const port = defaultHttpPortForExe(exe);
+  unblockWebLinkedRuntime(exe);
+
+  // Portable downloads often hang forever in PowerShell Start-Process (MOTW).
+  // Prefer direct CreateProcess; fall back to short-timeout PowerShell for console hide.
   try {
-    return await spawnEnginePowerShell(exe, port);
-  } catch (psErr) {
-    wlWarn('PowerShell spawn failed — trying direct', {
-      error: psErr instanceof Error ? psErr.message : String(psErr),
+    return spawnEngineDirect(exe, port);
+  } catch (directErr) {
+    wlWarn('Direct spawn failed — trying PowerShell', {
+      error: directErr instanceof Error ? directErr.message : String(directErr),
     });
     try {
-      return spawnEngineDirect(exe, port);
-    } catch (directErr) {
+      return await spawnEnginePowerShell(exe, port, { timeoutMs: 8000 });
+    } catch (psErr) {
       const msg = [
-        psErr instanceof Error ? psErr.message : String(psErr),
         directErr instanceof Error ? directErr.message : String(directErr),
+        psErr instanceof Error ? psErr.message : String(psErr),
       ].join(' | ');
       throw new Error(msg);
     }
@@ -387,8 +445,18 @@ async function spawnEngine(exe) {
 
 async function waitUntilReady(timeoutMs = 90000) {
   const start = Date.now();
+  let lastBeat = 0;
   while (Date.now() - start < timeoutMs) {
     if (await isRunning()) return true;
+    const elapsed = Date.now() - start;
+    if (elapsed - lastBeat >= 5000) {
+      lastBeat = elapsed;
+      wlLog('waiting for API', {
+        elapsedMs: elapsed,
+        alive: engineProcessAlive(),
+        ports: CANDIDATE_PORTS,
+      });
+    }
     await sleep(500);
   }
   return false;

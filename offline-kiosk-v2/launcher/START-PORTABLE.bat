@@ -24,5 +24,9 @@ if not exist "%~dp0resources\engines\weblinked\sinor-weblinked.exe" (
   )
 )
 
+REM Clear Mark-of-the-Web from downloaded zips so WebLinked/CEF is not blocked/hung.
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "Get-ChildItem -LiteralPath '%~dp0resources\engines\weblinked' -Recurse -File -ErrorAction SilentlyContinue | Unblock-File -ErrorAction SilentlyContinue" >nul 2>&1
+
 start "" "%EXE%"
 endlocal
