@@ -1,0 +1,38 @@
+{
+  "name": "ros-offline-kiosk-v2",
+  "version": "0.1.0",
+  "description": "Offline Kiosk V2 — operator shell for LAN Offline Show, displays, and camera push",
+  "private": true,
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "electron .",
+    "sync:offline-show": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/sync-offline-show.ps1",
+    "sync:weblinked": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/sync-weblinked.ps1",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder --win portable"
+  },
+  "devDependencies": {
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.sinor.ros.offlinekiosk",
+    "productName": "ROS Offline Kiosk",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "electron/**/*",
+      "renderer/**/*",
+      "engines/offline-show/**/*",
+      "!engines/offline-show/data/**",
+      "engines/weblinked/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "portable"
+      ]
+    }
+  }
+}

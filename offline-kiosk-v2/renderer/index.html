@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SINOR Track · Offline Kiosk</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <div class="brand">
+        <img class="brand-logo" src="./assets/sinor-track.png" alt="SINOR Track" />
+        <div class="brand-text">
+          <h1>SINOR Track</h1>
+          <p>System Independent Network Of Rundowns</p>
+        </div>
+      </div>
+
+      <div class="header-conn" id="connBar" role="status" aria-live="polite">
+        <span class="conn-bar-host" id="connBarHost">127.0.0.1:3004</span>
+        <button
+          type="button"
+          class="conn-bar-mode"
+          id="connBarModeBtn"
+          data-mode="off"
+          title="Change Cloud / LAN on Status, or click to toggle"
+        >
+          Not started
+        </button>
+        <div class="conn-bar-pills" id="connBarPills">
+          <span class="conn-bar-pill is-skip">Internet</span>
+          <span class="conn-bar-pill is-skip">Railway</span>
+          <span class="conn-bar-pill is-skip">Neon</span>
+          <span class="conn-bar-pill is-skip">Local LAN</span>
+        </div>
+      </div>
+
+      <div class="header-meta">
+        <p class="header-user">Offline Kiosk</p>
+        <p class="header-sub" id="headerSub">No event selected</p>
+        <p class="header-ver" id="footerMeta"></p>
+      </div>
+    </header>
+
+    <nav class="tabs" role="tablist" aria-label="Kiosk sections">
+      <button type="button" class="tab" role="tab" aria-selected="false" data-tab="event">
+        Event
+      </button>
+      <button type="button" class="tab" role="tab" aria-selected="false" data-tab="displays">
+        Displays
+      </button>
+      <button type="button" class="tab" role="tab" aria-selected="false" data-tab="remoteop">
+        RemoteOp Multiview
+      </button>
+      <button type="button" class="tab is-active" role="tab" aria-selected="true" data-tab="status">
+        Status
+      </button>
+    </nav>
+
+    <main class="content">
+      <section class="tab-panel" id="panel-event" role="tabpanel" hidden>
+        <div class="event-list-page">
+          <div class="event-list-hero">
+            <h2>Event List Calendar</h2>
+            <p>Manage your events and schedules</p>
+          </div>
+
+          <div class="event-browser" id="eventBrowser">
+            <div class="event-tab-row">
+              <div class="event-scope" role="tablist" aria-label="Event scope">
+                <button type="button" class="scope-chip is-active" data-scope="upcoming" id="scopeUpcoming">
+                  Upcoming Events
+                </button>
+                <button type="button" class="scope-chip" data-scope="past" id="scopePast">Past Events</button>
+              </div>
+            </div>
+
+            <div class="event-search-wrap">
+              <div class="event-search-panel">
+                <div class="event-search-row">
+                  <span class="event-search-caption">Search:</span>
+                  <input
+                    id="eventSearch"
+                    class="event-search"
+                    type="search"
+                    placeholder="Search events by name or location…"
+                    autocomplete="off"
+                  />
+                  <button type="button" class="ghost-btn event-refresh-btn" id="refreshEventsBtn">
+                    Refresh
+                  </button>
+                </div>
+                <p class="event-search-hint">Events don’t auto-refresh. Click Refresh to check for new events.</p>
+              </div>
+            </div>
+
+            <div class="event-table-shell">
+              <div class="event-table-wrap">
+                <table class="event-table" aria-label="Events">
+                  <thead>
+                    <tr>
+                      <th class="col-name">Event Name</th>
+                      <th class="col-date">Date</th>
+                      <th class="col-loc">Location</th>
+                      <th class="col-type">Type</th>
+                      <th class="col-tz">Timezone</th>
+                      <th class="col-actions">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody id="eventList"></tbody>
+                </table>
+                <p class="note event-empty" id="eventListEmpty" hidden>No events match.</p>
+              </div>
+              <p class="note event-load-note" id="eventStatusNote"></p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="tab-panel" id="panel-displays" role="tabpanel" hidden>
+        <div class="section-intro">
+          <h2>Displays</h2>
+          <p>
+            Stage Timer, Photo View, Operator Large, and Custom URL — plus extra slots up to 8.
+            Select an event to fill Stage Timer / Photo / Ops Large URLs. Stage Timer can default to
+            <strong>Clock</strong> or <strong>DSM</strong>. <strong>Preview</strong> is the live 16:9
+            WebLinked feed; <strong>Settings</strong> for outputs.
+          </p>
+        </div>
+        <div class="weblinked-status" id="weblinkedStatus" data-state="unknown">
+          <span class="weblinked-dot"></span>
+          <span id="weblinkedStatusText">Checking WebLinked…</span>
+          <button type="button" class="primary-btn" id="startWebLinkedBtn">Start WebLinked</button>
+          <button type="button" class="ghost-btn" id="stopWebLinkedBtn">Stop WebLinked</button>
+          <button type="button" class="ghost-btn" id="refreshWebLinkedBtn">Recheck</button>
+        </div>
+
+        <div class="wl-live-preview" id="wlLivePreview">
+          <div class="wl-live-preview-bar">
+            <strong>Live preview</strong>
+            <label class="wl-check wl-interactive-toggle" title="Clicks and keys go to the live page">
+              <input type="checkbox" id="wlInteractiveToggle" /> click the page
+            </label>
+            <span class="wl-live-preview-meta" id="wlLivePreviewMeta">WebLinked output · 16:9</span>
+            <span class="spacer"></span>
+            <button type="button" class="ghost-btn" id="wlLivePreviewLargerBtn">Larger</button>
+          </div>
+          <div class="wl-live-preview-slot" id="wlLivePreviewSlot">
+            <canvas
+              id="wlLivePreviewCanvas"
+              width="480"
+              height="270"
+              tabindex="0"
+              aria-label="WebLinked live preview"
+            ></canvas>
+          </div>
+          <p class="wl-settings-hint" id="wlInteractiveHint" hidden>
+            Clicks and typing go to the live page. <strong>This is the on-air picture.</strong>
+          </p>
+          <p class="wl-settings-hint" id="wlLivePreviewHint">
+            Same picture as NDI / SDI / Spout. Card <strong>Preview</strong> loads that URL here;
+            <strong>Larger</strong> expands it.
+          </p>
+        </div>
+
+        <p class="note" id="displayNote" hidden></p>
+        <div class="display-list-toolbar">
+          <span class="display-list-count" id="displayListCount">0 / 8</span>
+          <button type="button" class="ghost-btn" id="addDisplayBtn">Add URL</button>
+        </div>
+        <div class="output-list" id="displayList" role="list"></div>
+      </section>
+
+    <div id="wlPreviewOverlay" class="wl-preview-overlay" hidden>
+      <div class="wl-preview-overlay-bar">
+        <strong>Live preview</strong>
+        <label class="wl-check wl-interactive-toggle" title="Clicks and keys go to the live page">
+          <input type="checkbox" id="wlInteractiveTogglePop" checked /> click the page
+        </label>
+        <span class="note" id="wlPreviewOverlayNote">Click and type here to control the page.</span>
+        <span class="spacer"></span>
+        <button type="button" class="primary-btn" id="wlPreviewOverlayCloseBtn">Close</button>
+      </div>
+      <div class="wl-live-preview-slot wl-preview-overlay-slot" id="wlPreviewOverlaySlot"></div>
+    </div>
+
+      <section class="tab-panel" id="panel-remoteop" role="tabpanel" hidden>
+        <div class="remoteop-picker" id="remoteopPicker">
+          <div class="section-intro">
+            <h2>RemoteOp Multiview</h2>
+            <p>Pick the source first. The page loads in this kiosk after you choose.</p>
+          </div>
+          <div class="remoteop-choice">
+            <button type="button" class="launch-card" id="pickVdoBtn" data-remote="vdo">
+              <span class="launch-name">VDO.Ninja</span>
+              <span class="launch-desc">Peer / room multiview and camera push.</span>
+            </button>
+            <button type="button" class="launch-card" id="pickMeshcastBtn" data-remote="meshcast">
+              <span class="launch-name">Meshcast</span>
+              <span class="launch-desc">Meshcast 2.0 (app.meshcast.io).</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="remoteop-live" id="remoteopLive" hidden>
+          <div class="remoteop-subtabs" role="tablist" aria-label="RemoteOp source">
+            <button
+              type="button"
+              class="remoteop-subtab is-active"
+              role="tab"
+              aria-selected="true"
+              data-remote="vdo"
+            >
+              VDO.Ninja
+            </button>
+            <button
+              type="button"
+              class="remoteop-subtab"
+              role="tab"
+              aria-selected="false"
+              data-remote="meshcast"
+            >
+              Meshcast
+            </button>
+            <button type="button" class="ghost-btn remoteop-change" id="remoteopChangeBtn">
+              Change source
+            </button>
+          </div>
+          <div class="remoteop-embed-host" id="remoteEmbedHost" aria-label="RemoteOp page"></div>
+        </div>
+      </section>
+
+      <section class="tab-panel is-active" id="panel-status" role="tabpanel">
+        <div class="status-dash">
+          <div class="status-hero" id="statusHero" data-state="off">
+            <div class="status-hero-main">
+              <p class="status-hero-label" id="statusHeroLabel">Offline Show not started</p>
+              <p class="status-hero-detail" id="statusHeroDetail">Start the show to check Internet, Railway, Neon, and LAN.</p>
+            </div>
+            <div class="status-hero-actions">
+              <span id="sessionPill" class="session-pill">No session</span>
+              <button type="button" class="ghost-btn" id="sessionBtn">Session…</button>
+              <button type="button" class="primary-btn" id="startShowBtn">Start Offline Show</button>
+              <button type="button" class="ghost-btn" id="refreshConnBtn" hidden>Recheck</button>
+              <button type="button" class="ghost-btn" id="syncCloudBtn" hidden>Sync</button>
+            </div>
+          </div>
+
+          <div class="status-services" id="statusServices" aria-live="polite">
+            <div class="svc" data-svc="show"><span class="svc-dot"></span><strong>Show</strong><em id="svcShow">Off</em></div>
+            <div class="svc" data-svc="mode"><span class="svc-dot"></span><strong>Mode</strong><em id="svcMode">—</em></div>
+            <div class="svc" data-svc="internet"><span class="svc-dot"></span><strong>Internet</strong><em id="svcInternet">—</em></div>
+            <div class="svc" data-svc="railway"><span class="svc-dot"></span><strong>Railway</strong><em id="svcRailway">—</em></div>
+            <div class="svc" data-svc="neon"><span class="svc-dot"></span><strong>Neon</strong><em id="svcNeon">—</em></div>
+            <div class="svc" data-svc="lan"><span class="svc-dot"></span><strong>Local LAN</strong><em id="svcLan">—</em></div>
+            <div class="svc" data-svc="token"><span class="svc-dot"></span><strong>API token</strong><em id="svcToken">—</em></div>
+          </div>
+
+          <div class="perf-panel" id="perfPanel" data-level="ok" aria-live="polite">
+            <div class="perf-head">
+              <div class="perf-head-main">
+                <p class="perf-kicker">System load</p>
+                <p class="perf-label" id="perfLabel">Checking…</p>
+                <p class="perf-tip" id="perfTip">Sampling CPU and memory for this kiosk.</p>
+              </div>
+              <button type="button" class="ghost-btn" id="refreshPerfBtn">Recheck load</button>
+            </div>
+            <div class="perf-meters">
+              <div class="perf-meter">
+                <div class="perf-meter-row">
+                  <span>CPU</span>
+                  <strong id="perfCpuValue">—</strong>
+                </div>
+                <div class="perf-track" aria-hidden="true"><i id="perfCpuBar" style="width:0%"></i></div>
+              </div>
+              <div class="perf-meter">
+                <div class="perf-meter-row">
+                  <span>RAM</span>
+                  <strong id="perfRamValue">—</strong>
+                </div>
+                <div class="perf-track" aria-hidden="true"><i id="perfRamBar" style="width:0%"></i></div>
+              </div>
+            </div>
+            <div class="perf-stats">
+              <div class="perf-stat">
+                <span>WebLinked</span>
+                <strong id="perfWl">—</strong>
+              </div>
+              <div class="perf-stat">
+                <span>Armed cards</span>
+                <strong id="perfArmed">0</strong>
+              </div>
+              <div class="perf-stat">
+                <span>Kiosk stack</span>
+                <strong id="perfStack">—</strong>
+              </div>
+              <div class="perf-stat">
+                <span>Offline Show</span>
+                <strong id="perfShow">—</strong>
+              </div>
+            </div>
+          </div>
+
+          <div class="status-toolbar" id="connPanel">
+            <div class="conn-mode" role="group" aria-label="Connectivity mode">
+              <button type="button" class="mode-chip" id="modeLanBtn" data-mode="lan-only" disabled>LAN only</button>
+              <button type="button" class="mode-chip" id="modeCloudBtn" data-mode="cloud-connected" disabled>
+                Cloud on
+              </button>
+            </div>
+            <div class="token-row">
+              <input
+                id="railwayTokenInput"
+                class="token-input"
+                type="password"
+                placeholder="ros_itok_… Integration token"
+                autocomplete="off"
+                disabled
+              />
+              <button type="button" class="ghost-btn" id="saveTokenBtn" disabled>Save</button>
+            </div>
+            <p class="status-token-note" id="tokenStatusNote">Start Offline Show to manage Cloud / token.</p>
+          </div>
+
+          <div class="session-jump" aria-label="Session shortcuts">
+            <p class="session-jump-label">Session</p>
+            <div class="session-jump-grid">
+              <button type="button" class="session-card" data-goto="event" id="sessionEventCard" data-state="empty">
+                <span class="session-card-kicker">Event</span>
+                <span class="session-card-value" id="statusEvent">No event</span>
+                <span class="session-card-hint" id="statusEventHint">Pick a calendar event</span>
+              </button>
+              <button type="button" class="session-card" data-goto="displays" id="sessionDisplaysCard" data-state="empty">
+                <span class="session-card-kicker">Displays</span>
+                <span class="session-card-value" id="statusOutputs">Standby</span>
+                <span class="session-card-hint" id="statusOutputsHint">Nothing armed to WebLinked</span>
+              </button>
+              <button type="button" class="session-card" data-goto="remoteop" id="sessionRemoteCard" data-state="empty">
+                <span class="session-card-kicker">RemoteOp</span>
+                <span class="session-card-value" id="statusCamera">Not open</span>
+                <span class="session-card-hint" id="statusCameraHint">Open VDO or Meshcast</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <div class="confirm-overlay" id="wlSettingsOverlay" hidden>
+      <div
+        class="confirm-dialog wl-settings-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="wlSettingsTitle"
+      >
+        <h3 id="wlSettingsTitle">Display settings</h3>
+        <p class="wl-settings-lead" id="wlSettingsLead">
+          Per-card WebLinked options. Each display keeps its own NDI names and outputs.
+          Page URL stays on the card.
+        </p>
+
+        <p class="wl-settings-label">Resolution &amp; frame rate</p>
+        <div class="wl-format-row">
+          <select id="wlRasterSelect" class="wl-settings-select" aria-label="Resolution">
+            <option value="720">720</option>
+            <option value="1080" selected>1080</option>
+            <option value="2160">2160</option>
+          </select>
+          <select id="wlRateSelect" class="wl-settings-select" aria-label="Frame rate"></select>
+        </div>
+
+        <label class="wl-settings-label" for="wlPreviewFactor">Preview quality</label>
+        <select id="wlPreviewFactor" class="wl-settings-select">
+          <option value="1">Full (heaviest)</option>
+          <option value="2">High</option>
+          <option value="4" selected>Medium</option>
+          <option value="8">Light</option>
+        </select>
+        <p class="wl-settings-hint">
+          Sharpness of the live 16:9 canvas only. SDI / NDI / Spout stay full raster.
+        </p>
+
+        <p class="wl-settings-label">Outputs</p>
+        <div class="wl-output-toggles">
+          <label class="wl-check"><input type="checkbox" id="wlOutNdi" /> NDI</label>
+          <label class="wl-check"><input type="checkbox" id="wlOutShared" /> Spout</label>
+          <label class="wl-check"><input type="checkbox" id="wlOutScreen" /> Screen</label>
+          <label class="wl-check"><input type="checkbox" id="wlOutDeckLink" /> SDI (Blackmagic)</label>
+          <label class="wl-check"><input type="checkbox" id="wlOutOmt" /> OMT</label>
+        </div>
+
+        <label class="wl-settings-label" for="wlSharedName">Spout name</label>
+        <input id="wlSharedName" class="wl-settings-input" type="text" value="WebLinked" maxlength="64" />
+
+        <div id="wlNdiSection" class="wl-ndi-section">
+          <div class="wl-ndi-head">
+            <p class="wl-settings-label">NDI senders</p>
+            <button type="button" class="ghost-btn wl-ndi-add" id="wlNdiAddBtn">Add NDI</button>
+          </div>
+          <div id="wlNdiList" class="wl-ndi-list"></div>
+          <p class="wl-settings-hint">Turn on NDI above, then name each sender.</p>
+        </div>
+
+        <p class="note" id="wlSettingsNote"></p>
+        <div class="confirm-actions wl-settings-actions">
+          <button type="button" class="ghost-btn" id="wlSettingsCancelBtn">Close</button>
+          <button type="button" class="primary-btn" id="wlSettingsApplyBtn">Apply</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="confirm-overlay" id="confirmOverlay" hidden>
+      <div class="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+        <h3 id="confirmTitle">Confirm</h3>
+        <p id="confirmMessage"></p>
+        <div class="confirm-actions">
+          <button type="button" class="ghost-btn" id="confirmCancelBtn">Cancel</button>
+          <button type="button" class="primary-btn" id="confirmOkBtn">Confirm</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="confirm-overlay" id="sessionModal" hidden>
+      <div class="confirm-dialog session-dialog" role="dialog" aria-modal="true" aria-labelledby="sessionModalTitle">
+        <h3 id="sessionModalTitle">How long do you need Offline Show?</h3>
+        <p class="session-subtitle">
+          When time is up, Offline Show and WebLinked stop automatically so this machine does not stay connected.
+        </p>
+        <div class="session-options" role="radiogroup" aria-label="Session length">
+          <label class="session-option">
+            <input type="radio" name="sessionMode" value="testing" checked />
+            <span>
+              <strong>Testing</strong>
+              <em>Runs for 2 hours, then stops.</em>
+            </span>
+          </label>
+          <label class="session-option">
+            <input type="radio" name="sessionMode" value="live" />
+            <span>
+              <strong>Live Event</strong>
+              <em>Pick hours (up to 24). Also turns off at midnight either way.</em>
+            </span>
+          </label>
+          <label id="sessionLiveHours" class="session-hours" hidden>
+            Hours
+            <select id="sessionHours">
+              <option value="1">1 hour</option>
+              <option value="2">2 hours</option>
+              <option value="3">3 hours</option>
+              <option value="4" selected>4 hours</option>
+              <option value="6">6 hours</option>
+              <option value="8">8 hours</option>
+              <option value="10">10 hours</option>
+              <option value="12">12 hours</option>
+              <option value="16">16 hours</option>
+              <option value="20">20 hours</option>
+              <option value="24">24 hours</option>
+            </select>
+          </label>
+          <label class="session-option">
+            <input type="radio" name="sessionMode" value="everyday" />
+            <span>
+              <strong>Everyday</strong>
+              <em>Runs from 7:00 AM to 9:00 PM, then stops.</em>
+            </span>
+          </label>
+        </div>
+        <p class="session-error" id="sessionModalError"></p>
+        <div class="confirm-actions">
+          <button type="button" class="ghost-btn" id="sessionCancelBtn" hidden>Cancel</button>
+          <button type="button" class="primary-btn" id="sessionStartBtn">Start session</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

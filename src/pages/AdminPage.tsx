@@ -3646,7 +3646,8 @@ export default function AdminPage() {
             </div>
             <p className="text-slate-500 text-sm mb-3">
               Live pollers over the last ~60s (page, station nickname, signed-in user, IP, browser/OBS, requests/min).
-              Pause Displays stops follower pages for that event. Browsers cannot send the real PC hostname — operators set a station nickname on the disconnect modal.
+              Pause Displays stops follower pages for that event. Resume-check polls (`display-sync`) for already-paused events are hidden here — Pause already worked.
+              Browsers cannot send the real PC hostname — operators set a station nickname on the disconnect modal.
               Server also auto-quarantines repeated unauthorized SPA hits (429) after ~25 tries, and auto-pauses Displays for events whose last day is 14+ days ago.
             </p>
             <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-slate-700/80 bg-slate-900/50 px-3 py-2 text-sm text-slate-300">

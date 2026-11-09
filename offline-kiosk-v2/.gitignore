@@ -1,0 +1,17 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+
+# Bundled Offline Show runtime (source is tracked under engines/offline-show)
+engines/offline-show/node_modules/
+engines/offline-show/data/
+engines/offline-show/ui/dist/
+engines/offline-show/*.db
+engines/offline-show/*.db-wal
+engines/offline-show/*.db-shm
+
+# Bundled WebLinked binary payload (synced from Desktop\WebLinked-SDI\build\Release)
+engines/weblinked/**
+!engines/weblinked/README.md
+!engines/weblinked/.gitkeep

@@ -32,27 +32,53 @@ export function useEventDisplaySyncGate(eventId: string | undefined, options: Op
   useEffect(() => {
     if (!eventId) return;
     let cancelled = false;
+    let intervalId: number | null = null;
     displaySyncEnabledRef.current = true;
     setDisplaySyncPaused(false);
     setDisplaySyncChecked(false);
 
+    const ACTIVE_POLL_MS = 20_000;
+    // When paused, tabs only need a slow resume check — 20s looks like kill-list spam.
+    const PAUSED_POLL_MS = 90_000;
+    // Background Chrome tabs still run timers; don't keep pinging Railway while hidden.
+    const HIDDEN_POLL_MS = 120_000;
+
+    const pollMs = (enabled: boolean) => {
+      if (typeof document !== 'undefined' && document.hidden) return HIDDEN_POLL_MS;
+      return enabled ? ACTIVE_POLL_MS : PAUSED_POLL_MS;
+    };
+
+    const schedule = (enabled: boolean) => {
+      if (intervalId != null) window.clearInterval(intervalId);
+      intervalId = window.setInterval(() => {
+        void load();
+      }, pollMs(enabled));
+    };
+
     const load = async () => {
       try {
         const enabled = await DatabaseService.getDisplaySyncEnabled(eventId);
-        if (!cancelled) applyDisplaySyncEnabled(enabled, { disconnect: !enabled });
+        if (cancelled) return;
+        applyDisplaySyncEnabled(enabled, { disconnect: !enabled });
+        schedule(enabled);
       } catch {
         /* keep previous */
       }
     };
     void load();
-    // Keep polling publicly so pause still reaches tabs that lost auth
-    const id = window.setInterval(() => {
-      void load();
-    }, 20000);
+    schedule(true);
+
+    const onVisibility = () => {
+      // Immediate check when the operator focuses the tab again (e.g. after Admin Resume).
+      if (!document.hidden) void load();
+      else schedule(displaySyncEnabledRef.current);
+    };
+    document.addEventListener('visibilitychange', onVisibility);
 
     return () => {
       cancelled = true;
-      window.clearInterval(id);
+      if (intervalId != null) window.clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', onVisibility);
     };
   }, [eventId, applyDisplaySyncEnabled]);
 

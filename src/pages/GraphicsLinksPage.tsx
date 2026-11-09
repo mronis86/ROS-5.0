@@ -114,6 +114,25 @@ const DOWNLOAD_TOOLS = [
     metaClass: 'text-red-400/70',
     btn: 'bg-red-600 hover:bg-red-500',
   },
+  {
+    id: 'offline-kiosk',
+    title: 'Offline Kiosk V2',
+    blurb: 'Operator shell for Offline Show, displays, and RemoteOp on the show laptop',
+    meta: 'Windows · unzip + START.bat · Node.js',
+    href: '/offline-kiosk-v2.zip',
+    filename: 'offline-kiosk-v2.zip',
+    details: [
+      'Status / Event / Displays / RemoteOp tabs',
+      'Bundled Offline Show engine (LAN + Cloud)',
+      'WebLinked binaries optional: npm run sync:weblinked',
+    ],
+    row: 'bg-teal-950/70 border-teal-700',
+    bar: 'bg-teal-500',
+    titleClass: 'text-teal-100',
+    blurbClass: 'text-teal-300/80',
+    metaClass: 'text-teal-400/70',
+    btn: 'bg-teal-700 hover:bg-teal-600',
+  },
 ] as const;
 
 const GraphicsLinksPage: React.FC = () => {

@@ -1317,7 +1317,7 @@ function buildRailwayHealthMeta() {
     env: process.env.NODE_ENV || 'development',
     powerpointRoutes: true,
     // Bump when master should trigger a Railway autodeploy smoke check.
-    apiRevision: 'display-kill-20261108c',
+    apiRevision: 'display-kill-20261108d',
   };
 }
 
@@ -1426,14 +1426,22 @@ app.get('/api/admin/hot-display-traffic', async (req, res) => {
         })
       );
     }
+    // Hide display-sync resume-check polls for events already paused — those are expected
+    // (tabs checking "can I resume?") and look like kill-list noise when Pause already worked.
+    const clients = rows
+      .map((row) => {
+        const displaySyncEnabled = idToSync.has(row.eventId) ? idToSync.get(row.eventId) : true;
+        return {
+          ...row,
+          eventName: idToName.get(row.eventId) || `Event ${row.eventId.slice(0, 8)}…`,
+          displaySyncEnabled,
+        };
+      })
+      .filter((row) => !(row.kind === 'display-sync' && row.displaySyncEnabled === false));
     res.json({
       windowSeconds: 60,
       autoPause: getDisplaySyncAutoPauseStatus(),
-      clients: rows.map((row) => ({
-        ...row,
-        eventName: idToName.get(row.eventId) || `Event ${row.eventId.slice(0, 8)}…`,
-        displaySyncEnabled: idToSync.has(row.eventId) ? idToSync.get(row.eventId) : true,
-      })),
+      clients,
     });
   } catch (err) {
     console.error('[admin hot-display-traffic] error:', err);

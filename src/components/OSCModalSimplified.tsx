@@ -155,6 +155,19 @@ const OSCModalSimplified: React.FC<OSCModalSimplifiedProps> = ({
                 </div>
               </div>
 
+              <div className="text-center mb-4">
+                <a
+                  href="/offline-kiosk-v2.zip"
+                  download="offline-kiosk-v2.zip"
+                  className="block bg-cyan-800 hover:bg-cyan-700 text-white text-sm py-3 px-6 rounded text-center transition-colors font-semibold"
+                >
+                  Offline Kiosk V2 (Windows)
+                </a>
+                <div className="text-xs text-cyan-200 mt-2">
+                  Operator shell • Offline Show + Displays + RemoteOp • Unzip, START.bat (Node required)
+                </div>
+              </div>
+
               <details className="mt-1 rounded-lg border border-slate-600/80 bg-slate-800/40 group">
                 <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden px-3 py-2.5 text-sm text-slate-300 hover:text-white select-none flex items-center justify-between gap-2">
                   <span>Legacy desktop apps (Python &amp; Electron)</span>

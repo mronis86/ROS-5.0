@@ -1,0 +1,2139 @@
+import React, { useState } from 'react';
+import { CUE_RECORDING_MARK_WARNING, CUE_RECORDING_HOVER_TITLE, CUE_RECORDING_HOVER_BODY, itemMarkedByComms, resolveRecordingSource } from '../lib/cueRecording';
+import { stampScheduleCheckboxes } from '../lib/scheduleCheckboxMerge';
+import {
+  formatSettleCueNoteText,
+  prependSettleCueNote,
+  formatStageDirectionNoteText,
+  prependStageDirectionNote,
+} from '../lib/audioCallouts';
+import { shotTypeManualEditPatch, shotTypePatchFromSpeakers, parseSpeakersForShotType } from '../lib/shotTypeFromSpeakers';
+import { getAutoShotTypeFromSpeakers } from '../lib/branding';
+import { programTypeSurfaceStyle } from '../lib/rosProgramTypeSplit';
+import { boostNotesContrastHtml } from '../lib/notesContrast';
+import StageDirectionModal from '../components/StageDirectionModal';
+import StartTimeColumnCell from '../components/StartTimeColumnCell';
+import { SegmentSpellingChip, useSegmentNameSpelling } from '../components/SegmentSpellingFlag';
+import { addSpellingOk, misspelledSegmentWords, replaceSegmentWord } from '../lib/segmentNameSpellcheck';
+import { isShowBreakProgramType } from '../lib/showBreak';
+import { scrollColumnBoxStyle } from '../lib/rosColumnOrder';
+import {
+  DSM_LAYOUT_OPTIONS,
+  effectiveDsmLayoutMode,
+  suggestedDsmLayoutMode,
+  type DsmLayoutMode,
+} from '../lib/dsmClockLayout';
+
+export interface ScheduleRowProps {
+  item: any;
+  index: number;
+  className?: string;
+  style?: React.CSSProperties;
+  rowHeight?: number;
+  columnWidths: any;
+  visibleColumns: any;
+  indentedCues: any;
+  overtimeMinutes: any;
+  startCueId: any;
+  showStartOvertime: number;
+  cumulativeOvertime: number; // Precomputed cumulative overtime for this row
+  programTypes: string[];
+  programTypeColors: any;
+  shotTypes: string[];
+  currentUserRole: string;
+  setSchedule: Function;
+  handleUserEditing: Function;
+  handleModalEditing: Function;
+  handleModalClosed: Function;
+  logChangeDebounced: Function;
+  logChange?: Function;
+  saveToAPI?: Function;
+  /** When row notes change via chip buttons while Notes modal may be open. */
+  onNotesChipUpdated?: (itemId: number, notesHtml: string) => void;
+  /** Immediate Neon persist for REC checkbox (avoids debounced full-schedule race on navigate away). */
+  persistCueRecording?: (itemId: number, needsRecording: boolean, source: 'comms' | 'ros') => void | Promise<void>;
+  /** Immediate Neon persist for PPT / Q&A / Public (same path as REC). */
+  persistScheduleCheckboxes?: (
+    itemId: number,
+    fields: {
+      hasPPT?: boolean;
+      hasQA?: boolean;
+      needsRecording?: boolean;
+      isPublic?: boolean;
+      source?: 'comms' | 'ros';
+    }
+  ) => void | Promise<void>;
+  /** Exclusive next-Mitti-play checkbox. */
+  persistMittiWatch?: (itemId: number, enabled: boolean) => void | Promise<void>;
+  persistAvWatch?: (itemId: number, enabled: boolean) => void | Promise<void>;
+  /** Per-row DSM enable + layout mode (Full / LED / VID / PPT). */
+  persistDsmCue?: (
+    itemId: number,
+    patch: { enabled?: boolean; mode?: DsmLayoutMode; modeManual?: boolean }
+  ) => void | Promise<void>;
+  calculateStartTimeWithOvertime?: (index: number) => string | number;
+  calculateStartTime?: (index: number) => string | number;
+  onEditTimedMarker?: (itemId: number) => void;
+  setEditingNotesItem?: Function;
+  setShowNotesModal?: Function;
+  setEditingVoItemId?: Function;
+  setShowVoModal?: Function;
+  setTempVoCues?: Function;
+  setEditingVogItemId?: Function;
+  setShowVogModal?: Function;
+  setViewingAssetsItem?: Function;
+  setShowViewAssetsModal?: Function;
+  setViewingSpeakersItem?: Function;
+  setShowViewSpeakersModal?: Function;
+  /** When set for VIEWER/OPERATOR, segment name opens a detail popup instead of a disabled input. */
+  onViewSegmentDetail?: (itemId: number) => void;
+  setEditingAssetsItem?: Function;
+  setShowAssetsModal?: Function;
+  setEditingParticipantsItem?: Function;
+  setShowParticipantsModal?: Function;
+  displaySpeakers?: Function;
+  setEditingSpeakersItem?: Function;
+  setShowSpeakersModal?: Function;
+  getSpeakersHeight?: Function;
+  displaySpeakersText?: Function;
+  customColumns?: any[];
+  visibleCustomColumns?: Record<string, boolean>;
+  customColumnWidths?: Record<string, number>;
+  /** CSS flex `order` values for scroll columns (from Filter Columns reorder). */
+  columnFlexOrder?: Record<string, number>;
+  getRowHeight?: Function;
+  asFragment?: boolean;
+  showMode?: 'rehearsal' | 'in-show'; // Rehearsal: Start column shows scheduled only, no overtime badge. In-Show: show overtime.
+  originalDuration?: { durationHours: number; durationMinutes: number; durationSeconds: number } | null;
+  showWasUnderDuration?: boolean; // When true (Track was durations checked), show "was X min" under duration when current differs from original
+  /** Frozen Start time from Enter In-Show — WAS under Start stays on this. */
+  lockedStartTime?: string | null;
+  /** In-Show: when this cue actually started running — "ran" under Start. */
+  actualStartLabel?: string | null;
+  /** Uploaded platform files for this cue (not stored in the assets text field). */
+  platformFileCount?: number;
+  isRowDimmed?: boolean;
+  /** Lock held by another editor — row is read-only for everyone else. */
+  rowLock?: { userId: string; userName: string } | null;
+  currentUserId?: string;
+  onRowEditStart?: (rowId: number) => void;
+  onRowEditEnd?: (rowId: number) => void;
+  /** When true, checking REC shows a warning (regular users — not Comms/Admin). */
+  confirmRecordingMark?: boolean;
+  /** When true, marks made on this ROS use the Comms source (COMMS badge). */
+  isCommsUser?: boolean;
+  /** Segment Name: single-line truncate vs multi-line wrap (header click toggles). */
+  segmentNameDisplayMode?: 'single' | 'wrap';
+  /**
+   * off = hide spelling (guest/director).
+   * creative = always show; Keep + Ask ROS.
+   * ros = show only when Creative pushed the row for a check.
+   */
+  segmentSpellingMode?: 'off' | 'creative' | 'ros';
+  onSegmentSpellingPatch?: (
+    itemId: number,
+    patch: { segmentSpellingOk?: string[]; segmentSpellingAskRos?: boolean }
+  ) => void;
+  /** Show Break banner: next session cue, e.g. "CUE 16". */
+  resumeCueLabel?: string;
+  /** Show Break Start mirrors this next-session cue. */
+  resumeStartMirror?: {
+    itemId: number;
+    index: number;
+    lockedStartTime?: string | null;
+    actualStartLabel?: string | null;
+    cumulativeOvertime?: number;
+    clockLabel?: string;
+  } | null;
+}
+
+const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
+  item,
+  index,
+  className,
+  style,
+  rowHeight,
+  columnWidths,
+  visibleColumns,
+  indentedCues,
+  overtimeMinutes,
+  startCueId,
+  showStartOvertime,
+  cumulativeOvertime,
+  programTypes,
+  programTypeColors,
+  shotTypes,
+  currentUserRole,
+  setSchedule,
+  handleUserEditing,
+  handleModalEditing,
+  handleModalClosed,
+  logChangeDebounced,
+  logChange,
+  saveToAPI,
+  onNotesChipUpdated,
+  persistCueRecording,
+  persistScheduleCheckboxes,
+  persistMittiWatch,
+  persistAvWatch,
+  persistDsmCue,
+  calculateStartTimeWithOvertime,
+  calculateStartTime,
+  onEditTimedMarker,
+  setEditingNotesItem,
+  setShowNotesModal,
+  setEditingVoItemId,
+  setShowVoModal,
+  setTempVoCues,
+  setEditingVogItemId,
+  setShowVogModal,
+  setViewingAssetsItem,
+  setShowViewAssetsModal,
+  setViewingSpeakersItem,
+  setShowViewSpeakersModal,
+  onViewSegmentDetail,
+  setEditingAssetsItem,
+  setShowAssetsModal,
+  setEditingParticipantsItem,
+  setShowParticipantsModal,
+  displaySpeakers,
+  setEditingSpeakersItem,
+  setShowSpeakersModal,
+  getSpeakersHeight,
+  displaySpeakersText,
+  customColumns,
+  visibleCustomColumns,
+  customColumnWidths,
+  columnFlexOrder,
+  getRowHeight,
+  asFragment,
+  showMode = 'in-show',
+  originalDuration,
+  showWasUnderDuration = false,
+  lockedStartTime = null,
+  actualStartLabel = null,
+  platformFileCount = 0,
+  isRowDimmed = false,
+  rowLock = null,
+  currentUserId,
+  onRowEditStart,
+  onRowEditEnd,
+  confirmRecordingMark = false,
+  isCommsUser = false,
+  segmentNameDisplayMode = 'single',
+  segmentSpellingMode = 'off',
+  onSegmentSpellingPatch,
+  resumeCueLabel = '',
+  resumeStartMirror = null,
+}) => {
+  const segmentWrap = segmentNameDisplayMode === 'wrap';
+  // One height measure per row render (shared by all custom-column cells)
+  const measuredRowHeight = getRowHeight
+    ? getRowHeight(
+        item.notes,
+        item.speakersText,
+        item.speakers,
+        item.customFields,
+        customColumns,
+        item.voCues?.length ?? 0,
+        item.segmentName
+      )
+    : undefined;
+  const customFieldCellHeight = measuredRowHeight
+    ? (`calc(${measuredRowHeight} - 2rem)` as any)
+    : undefined;
+  const isLockedByOther = Boolean(rowLock && currentUserId && rowLock.userId !== currentUserId);
+  const lockLabel = rowLock?.userName ? `${rowLock.userName} is editing` : 'Someone is editing';
+  const [lockBadgePos, setLockBadgePos] = React.useState({ scrollLeft: 0, viewWidth: 0 });
+  const [showStageDirectionModal, setShowStageDirectionModal] = useState(false);
+  const misspelledSegment = useSegmentNameSpelling(item.segmentName || '', item.segmentSpellingOk);
+  const showSegmentSpelling =
+    misspelledSegment.length > 0 &&
+    (segmentSpellingMode === 'creative' ||
+      (segmentSpellingMode === 'ros' && !!item.segmentSpellingAskRos));
+  const canFixSegmentSpelling =
+    segmentSpellingMode === 'ros' && currentUserRole === 'EDITOR' && !isLockedByOther;
+  const canAskRosSpelling = segmentSpellingMode === 'creative' && !isLockedByOther;
+
+  const applySpellingItemPatch = (patch: Record<string, unknown>, message: string) => {
+    if (onSegmentSpellingPatch) {
+      onSegmentSpellingPatch(item.id, patch);
+      return;
+    }
+    setSchedule((prev: any[]) =>
+      prev.map((scheduleItem) =>
+        scheduleItem.id === item.id ? { ...scheduleItem, ...patch } : scheduleItem
+      )
+    );
+    logChangeDebounced(`segmentSpelling_${item.id}`, 'FIELD_UPDATE', message, {
+      changeType: 'FIELD_CHANGE',
+      itemId: item.id,
+      itemName: item.segmentName,
+      fieldName: 'segmentSpelling',
+      details: patch,
+    });
+  };
+
+  const confirmSegmentSpelling = (word: string) => {
+    if (isLockedByOther) return;
+    const nextOk = addSpellingOk(item.segmentSpellingOk, word);
+    const stillBad = misspelledSegmentWords(item.segmentName || '', nextOk);
+    applySpellingItemPatch(
+      {
+        segmentSpellingOk: nextOk,
+        segmentSpellingAskRos: stillBad.length ? !!item.segmentSpellingAskRos : false,
+      },
+      `Reviewed spelling "${word}" in "${item.segmentName}"`
+    );
+  };
+
+  const fixSegmentSpelling = (from: string, to: string) => {
+    if (!canFixSegmentSpelling) return;
+    const nextName = replaceSegmentWord(item.segmentName || '', from, to);
+    if (nextName === item.segmentName) return;
+    const stillBad = misspelledSegmentWords(nextName, item.segmentSpellingOk);
+    const oldValue = item.segmentName;
+    setSchedule((prev: any[]) =>
+      prev.map((scheduleItem) =>
+        scheduleItem.id === item.id
+          ? {
+              ...scheduleItem,
+              segmentName: nextName,
+              segmentSpellingAskRos: stillBad.length ? !!item.segmentSpellingAskRos : false,
+            }
+          : scheduleItem
+      )
+    );
+    logChangeDebounced(
+      `segmentName_${item.id}`,
+      'FIELD_UPDATE',
+      `Updated segment name for "${oldValue}" to "${nextName}"`,
+      {
+        changeType: 'FIELD_CHANGE',
+        itemId: item.id,
+        itemName: nextName,
+        fieldName: 'segmentName',
+        oldValue,
+        newValue: nextName,
+        details: { fieldType: 'text', spellingFix: { from, to } },
+      }
+    );
+  };
+
+  const askRosSegmentSpelling = () => {
+    if (!canAskRosSpelling) return;
+    applySpellingItemPatch(
+      { segmentSpellingAskRos: !item.segmentSpellingAskRos },
+      item.segmentSpellingAskRos
+        ? `Cleared spelling ask for "${item.segmentName}"`
+        : `Asked ROS to check spelling on "${item.segmentName}"`
+    );
+  };
+
+  // Keep the lock name badge centered in the visible horizontal viewport when columns are scrolled
+  React.useEffect(() => {
+    if (!isLockedByOther) {
+      setLockBadgePos({ scrollLeft: 0, viewWidth: 0 });
+      return;
+    }
+    const scroller = document.getElementById('main-scroll-container');
+    if (!scroller) return;
+
+    const sync = () => {
+      setLockBadgePos({
+        scrollLeft: scroller.scrollLeft || 0,
+        viewWidth: scroller.clientWidth || 0,
+      });
+    };
+    sync();
+    scroller.addEventListener('scroll', sync, { passive: true });
+    window.addEventListener('resize', sync);
+    return () => {
+      scroller.removeEventListener('scroll', sync);
+      window.removeEventListener('resize', sync);
+    };
+  }, [isLockedByOther]);
+
+  const cellFill = isRowDimmed
+    ? 'bg-slate-950/70 border-slate-700/60 text-slate-500'
+    : 'bg-slate-700 border-slate-600 text-white';
+  const cellFillInteractive = isRowDimmed
+    ? 'bg-slate-950/70 border-slate-700/60 text-slate-500 cursor-pointer hover:bg-slate-900/80'
+    : 'bg-slate-700 border-slate-600 text-white cursor-pointer hover:bg-slate-600';
+  const cellFocus = isRowDimmed
+    ? 'bg-slate-950/70 border-slate-600/50 text-slate-500 focus:border-slate-500/55'
+    : 'bg-slate-700 border-slate-500 text-white focus:border-blue-500';
+
+  // Helper functions
+  const handleSelectFocus = () => {
+    if (isLockedByOther) return;
+    onRowEditStart?.(item.id);
+    handleModalEditing();
+  };
+
+  const handleSelectBlur = () => {
+    // Same settle path as typing: wait briefly for native dropdown, then start the 5s idle unlock
+    setTimeout(() => {
+      handleModalClosed();
+    }, 200);
+  };
+
+  const claimRowLock = () => {
+    if (isLockedByOther) return;
+    onRowEditStart?.(item.id);
+  };
+
+  const alertIfLocked = (e?: { preventDefault?: () => void; stopPropagation?: () => void }) => {
+    if (!isLockedByOther) return false;
+    e?.preventDefault?.();
+    e?.stopPropagation?.();
+    alert(lockLabel);
+    return true;
+  };
+
+  const beginCellEdit = () => {
+    if (alertIfLocked()) return false;
+    claimRowLock();
+    handleUserEditing();
+    return true;
+  };
+
+  const canEditRecording = currentUserRole !== 'VIEWER';
+  const flexOrder = (key: string): number => columnFlexOrder?.[key] ?? 999;
+  const colBox = (width: number, key: string) => scrollColumnBoxStyle(width, flexOrder(key));
+  /** Delay banner must sit after Start, Type, and Duration — not at flex order 0. */
+  const splitBannerOrder =
+    Math.max(
+      visibleColumns.start ? flexOrder('start') : 0,
+      visibleColumns.programType ? flexOrder('programType') : 0,
+      visibleColumns.duration ? flexOrder('duration') : 0
+    ) + 1;
+  /** Show Break keeps a Duration-width spacer, then banner for the remaining columns. */
+  const showBreakBannerOrder = splitBannerOrder;
+  /** Exact width of columns the Delay/Show Break banner replaces — keeps row scroll width = header. */
+  const bannerReplacementWidth = (() => {
+    let w = 0;
+    if (visibleColumns.segmentName) w += Number(columnWidths.segmentName) || 0;
+    if (visibleColumns.shotType) w += Number(columnWidths.shotType) || 0;
+    if (visibleColumns.pptQA) w += Number(columnWidths.pptQA) || 0;
+    if (visibleColumns.recording) w += Number(columnWidths.recording) || 0;
+    if (visibleColumns.mittiWatch) w += 88;
+    if (visibleColumns.avWatch) w += 72;
+    if (visibleColumns.dsm) w += 148;
+    if (visibleColumns.notes) w += Number(columnWidths.notes) || 0;
+    if (visibleColumns.vog !== false) w += Number(columnWidths.vog) || 100;
+    if (visibleColumns.assets) w += Number(columnWidths.assets) || 0;
+    if (visibleColumns.speakers) w += Number(columnWidths.speakers) || 0;
+    if (visibleColumns.public) w += Number(columnWidths.public) || 0;
+    if (visibleColumns.timer) w += Number(columnWidths.timer) || 0;
+    if (visibleColumns.participants) w += Number(columnWidths.participants) || 0;
+    if (Array.isArray(customColumns)) {
+      for (const column of customColumns) {
+        if (visibleCustomColumns?.[column.id] === false) continue;
+        w += Number(customColumnWidths?.[column.id]) || 256;
+      }
+    }
+    return w;
+  })();
+
+  const setNeedsRecording = (next: boolean) => {
+    if (!beginCellEdit()) return;
+    if (!canEditRecording) {
+      alert('Viewers cannot mark cues for recording. Please change your role to EDITOR or OPERATOR.');
+      return;
+    }
+    const oldValue = !!item.needsRecording;
+    if (oldValue === next) return;
+    if (next && confirmRecordingMark) {
+      if (!window.confirm(CUE_RECORDING_MARK_WARNING)) return;
+    }
+    const recordingSource = resolveRecordingSource(next, {
+      isCommsUser,
+      previous: item.recordingSource,
+    });
+    setSchedule((prev: any[]) => prev.map(scheduleItem =>
+      scheduleItem.id === item.id
+        ? stampScheduleCheckboxes(
+            {
+              ...scheduleItem,
+              needsRecording: next,
+              recordingSource,
+            },
+            ['needsRecording', 'recordingSource']
+          )
+        : scheduleItem
+    ));
+    logChangeDebounced(
+      `needsRecording_${item.id}`,
+      'FIELD_UPDATE',
+      `Updated recording flag for "${item.segmentName}" from ${oldValue ? 'TRUE' : 'FALSE'} to ${next ? 'TRUE' : 'FALSE'}${
+        next && isCommsUser ? ' (COMMS)' : ''
+      }`,
+      {
+        changeType: 'FIELD_CHANGE',
+        itemId: item.id,
+        itemName: item.segmentName,
+        fieldName: 'needsRecording',
+        oldValue: oldValue ? 'TRUE' : 'FALSE',
+        newValue: next ? 'TRUE' : 'FALSE',
+        details: {
+          fieldType: 'checkbox',
+          booleanChange: true,
+          recordingSource,
+        }
+      }
+    );
+    // Persist immediately (dedicated PATCH) — debounced full-schedule save alone can be lost on navigate away
+    void Promise.resolve(
+      persistCueRecording?.(item.id, next, recordingSource === 'comms' ? 'comms' : 'ros')
+    ).catch((err) => console.warn('persistCueRecording failed:', err));
+  };
+
+  const Content = (
+    <>
+      {isLockedByOther && (
+        <>
+          {/* Strong full-row lock overlay — schedule fields only; timer controls are outside this row */}
+          <div
+            className="absolute inset-0 z-20 pointer-events-none rounded-sm"
+            style={{
+              background:
+                'repeating-linear-gradient(-45deg, rgba(245, 158, 11, 0.22), rgba(245, 158, 11, 0.22) 10px, rgba(251, 191, 36, 0.12) 10px, rgba(251, 191, 36, 0.12) 20px)',
+              boxShadow: 'inset 0 0 0 3px rgba(245, 158, 11, 0.95)',
+            }}
+            aria-hidden
+          />
+          {/* Centered in the visible row viewport; follows horizontal scroll */}
+          <div
+            className="absolute z-30 pointer-events-none flex items-center justify-center max-w-[min(720px,90vw)]"
+            style={{
+              left: lockBadgePos.scrollLeft + lockBadgePos.viewWidth / 2,
+              top: '50%',
+              transform: 'translate(-50%, -50%)',
+            }}
+            title={lockLabel}
+          >
+            <span
+              className="inline-flex items-center gap-4 px-6 py-3.5 rounded-xl text-2xl font-black shadow-2xl"
+              style={{
+                backgroundColor: '#fbbf24',
+                color: '#000000',
+                border: '3px solid #ffffff',
+                boxShadow: '0 4px 14px rgba(0,0,0,0.55), 0 0 0 2px #b45309',
+                minWidth: 280,
+              }}
+            >
+              <span
+                className="inline-flex items-center justify-center flex-shrink-0 rounded-lg"
+                style={{
+                  width: 48,
+                  height: 48,
+                  backgroundColor: '#000000',
+                  color: '#fbbf24',
+                  fontSize: 28,
+                  lineHeight: 1,
+                }}
+                aria-hidden
+              >
+                🔒
+              </span>
+              <span className="leading-tight whitespace-nowrap">{lockLabel}</span>
+            </span>
+          </div>
+        </>
+      )}
+      {/* Start time — skipped when pinned beside CUE (stickyStartColumn) */}
+      {visibleColumns.start ? (
+        <StartTimeColumnCell
+          itemId={resumeStartMirror?.itemId ?? item.id}
+          index={resumeStartMirror?.index ?? index}
+          width={columnWidths.start}
+          isIndented={
+            !resumeStartMirror &&
+            !isShowBreakProgramType(item.programType) &&
+            Boolean(indentedCues[item.id] || item.isIndented || item.isTimedMarker)
+          }
+          showMode={showMode}
+          overtimeMinutes={overtimeMinutes}
+          startCueId={startCueId}
+          showStartOvertime={showStartOvertime}
+          cumulativeOvertime={resumeStartMirror?.cumulativeOvertime ?? cumulativeOvertime}
+          lockedStartTime={resumeStartMirror?.lockedStartTime ?? lockedStartTime}
+          actualStartLabel={resumeStartMirror?.actualStartLabel ?? actualStartLabel}
+          calculateStartTime={calculateStartTime}
+          calculateStartTimeWithOvertime={calculateStartTimeWithOvertime}
+          isTimedMarker={!resumeStartMirror && item.isTimedMarker === true}
+          markerTimeMode={item.markerTimeMode === 'absolute' ? 'absolute' : 'offset'}
+          onEditTimedMarker={
+            !resumeStartMirror && item.isTimedMarker && onEditTimedMarker
+              ? () => onEditTimedMarker(item.id)
+              : undefined
+          }
+          style={colBox(columnWidths.start, 'start')}
+        />
+      ) : null}
+      {/* Program type column (moved directly after Start) */}
+      {visibleColumns.programType && (
+        <div
+          className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
+          style={colBox(columnWidths.programType, 'programType')}
+        >
+          <div
+            className="w-full"
+            onMouseDown={(e) => {
+              if (!isLockedByOther) return;
+              e.preventDefault();
+              e.stopPropagation();
+              alert(lockLabel);
+            }}
+          >
+          <select
+            value={item.programType || ''}
+            onFocus={handleSelectFocus}
+            onBlur={handleSelectBlur}
+            onChange={(e) => {
+              if (isLockedByOther) {
+                alert(lockLabel);
+                return;
+              }
+              claimRowLock();
+              handleUserEditing();
+              if (currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') {
+                alert('Only EDITORs can edit program type. Please change your role to EDITOR.');
+                return;
+              }
+              const oldValue = item.programType;
+              const programType = e.target.value;
+              const autoShot =
+                getAutoShotTypeFromSpeakers()
+                  ? shotTypePatchFromSpeakers(parseSpeakersForShotType(item.speakersText), {
+                      manualOverride: !!item.shotTypeManualOverride,
+                      programType,
+                    })
+                  : {};
+              const autoDsm =
+                !item.dsmModeManual
+                  ? {
+                      dsmMode: suggestedDsmLayoutMode({
+                        programType,
+                        hasPPT: !!item.hasPPT,
+                      }),
+                    }
+                  : {};
+              setSchedule((prev: any[]) => prev.map(scheduleItem =>
+                scheduleItem.id === item.id
+                  ? {
+                      ...scheduleItem,
+                      programType,
+                      ...autoShot,
+                      ...autoDsm,
+                      ...(isShowBreakProgramType(programType)
+                        ? { durationHours: 0, durationMinutes: 0, durationSeconds: 0 }
+                        : {}),
+                    }
+                  : scheduleItem
+              ));
+              if (autoDsm.dsmMode && item.dsmEnabled && persistDsmCue) {
+                void persistDsmCue(item.id, { mode: autoDsm.dsmMode, modeManual: false });
+              }
+              logChangeDebounced(
+                `programType_${item.id}`,
+                'FIELD_UPDATE',
+                `Updated program type for "${item.segmentName}" from "${oldValue}" to "${e.target.value}"`,
+                {
+                  changeType: 'FIELD_CHANGE',
+                  itemId: item.id,
+                  itemName: item.segmentName,
+                  fieldName: 'programType',
+                  oldValue: oldValue,
+                  newValue: e.target.value,
+                  details: { fieldType: 'select', optionChange: true }
+                }
+              );
+              // Same as typing: 5s idle via handleModalClosed → finishEditingSession (unlock + blur)
+              handleModalClosed();
+            }}
+            disabled={isLockedByOther || currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'}
+            className={`w-full px-3 py-2 border-2 rounded text-base transition-colors ${cellFocus}`}
+            style={{ 
+              ...(isRowDimmed
+                ? { backgroundColor: 'rgba(59, 20, 96, 0.65)' }
+                : !item.programType
+                  ? { backgroundColor: '#1e293b' }
+                  : programTypeSurfaceStyle(item.programType, programTypeColors)),
+              color: isRowDimmed
+                ? '#ada3bf'
+                : (!item.programType
+                    ? '#94a3b8'
+                    : (item.programType === 'Sub Cue' || item.programType === 'KILLED' ? '#000000' : '#ffffff')),
+              textDecoration: item.programType === 'KILLED' ? 'line-through' : 'none',
+              borderStyle: !item.programType && !isRowDimmed ? 'dashed' : undefined,
+              borderColor: !item.programType && !isRowDimmed ? '#64748b' : undefined,
+            }}
+            title={
+              isLockedByOther
+                ? lockLabel
+                : currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'
+                  ? 'Only EDITORs can edit program type'
+                  : !item.programType
+                    ? 'Select a content type for this cue'
+                    : 'Select program type'
+            }
+          >
+            <option value="" style={{ backgroundColor: '#1e293b', color: '#94a3b8' }}>
+              Select content type…
+            </option>
+            {programTypes.map(type => (
+              <option key={type} value={type} style={{ 
+                backgroundColor: programTypeColors[type] || '#374151', 
+                color: type === 'Sub Cue' || type === 'KILLED' ? '#000000' : '#ffffff',
+                textDecoration: type === 'KILLED' ? 'line-through' : 'none'
+              }}>
+                {type}
+              </option>
+            ))}
+          </select>
+          </div>
+        </div>
+      )}
+      {/* Duration column (after Program Type) */}
+      {visibleColumns.duration && item.isTimedMarker ? (
+        <div
+          className="px-4 py-2 border-r border-slate-600 flex flex-col items-center justify-center flex-shrink-0"
+          style={colBox(columnWidths.duration, 'duration')}
+          title="Timed markers have no duration — they mark a time inside the parent cue"
+        >
+          <span className="text-sky-300/90 font-mono text-lg font-bold">—</span>
+          <span className="text-[10px] uppercase tracking-wide text-sky-500">no dur</span>
+        </div>
+      ) : null}
+      {visibleColumns.duration && isShowBreakProgramType(item.programType) && (
+        <div
+          className="border-r border-slate-600 flex-shrink-0"
+          style={colBox(columnWidths.duration, 'duration')}
+          aria-hidden
+        />
+      )}
+      {visibleColumns.duration && !item.isTimedMarker && !isShowBreakProgramType(item.programType) && (() => {
+        const durationChanged = showWasUnderDuration && originalDuration &&
+          (item.durationHours !== originalDuration.durationHours ||
+           item.durationMinutes !== originalDuration.durationMinutes ||
+           item.durationSeconds !== originalDuration.durationSeconds);
+        return (
+        <div 
+          className={`px-4 py-2 border-r border-slate-600 flex flex-col items-center justify-center flex-shrink-0 gap-0.5 ${durationChanged ? 'bg-amber-800/50 ring-2 ring-amber-400 rounded-md' : ''}`}
+          style={{ ...colBox(columnWidths.duration, 'duration'), minHeight: durationChanged ? 'auto' : undefined }}
+          title={durationChanged ? 'Duration changed from original' : undefined}
+        >
+          <div
+            className="flex items-center gap-2"
+            onMouseDown={(e) => {
+              if (!isLockedByOther) return;
+              e.preventDefault();
+              e.stopPropagation();
+              alert(lockLabel);
+            }}
+          >
+            <input 
+              type="number" 
+              min="0" 
+              max="23" 
+              value={item.durationHours}
+              onFocus={() => {
+                if (isLockedByOther) return;
+                claimRowLock();
+                handleUserEditing();
+              }}
+              onChange={(e) => {
+                if (isLockedByOther) {
+                  alert(lockLabel);
+                  return;
+                }
+                handleUserEditing();
+                if (currentUserRole === 'VIEWER') {
+                  alert('Only EDITORs and OPERATORs can edit duration. Please change your role to EDITOR or OPERATOR.');
+                  return;
+                }
+                const oldValue = item.durationHours;
+                const newValue = parseInt(e.target.value) || 0;
+                setSchedule((prev: any[]) => prev.map(scheduleItem => 
+                  scheduleItem.id === item.id 
+                    ? { ...scheduleItem, durationHours: newValue }
+                    : scheduleItem
+                ));
+                logChangeDebounced(
+                  `durationHours_${item.id}`,
+                  'FIELD_UPDATE',
+                  `Updated duration hours for "${item.segmentName}" from ${oldValue} to ${newValue}`,
+                  {
+                    changeType: 'FIELD_CHANGE',
+                    itemId: item.id,
+                    itemName: item.segmentName,
+                    fieldName: 'durationHours',
+                    oldValue: oldValue,
+                    newValue: newValue,
+                    details: { fieldType: 'number', timeChange: newValue - oldValue }
+                  }
+                );
+              }}
+              disabled={isLockedByOther || currentUserRole === 'VIEWER'}
+              className={`w-14 px-2 py-2 border rounded text-center text-lg font-mono font-bold transition-colors ${cellFill}`}
+              title={isLockedByOther ? lockLabel : currentUserRole === 'VIEWER' ? 'Only EDITORs and OPERATORs can edit duration' : 'Edit hours'}
+            />
+            <span className="text-slate-400 text-xl font-bold">:</span>
+            <input 
+              type="number" 
+              min="0" 
+              max="59" 
+              value={item.durationMinutes}
+              onFocus={() => {
+                if (isLockedByOther) return;
+                claimRowLock();
+                handleUserEditing();
+              }}
+              onChange={(e) => {
+                if (isLockedByOther) {
+                  alert(lockLabel);
+                  return;
+                }
+                handleUserEditing();
+                if (currentUserRole === 'VIEWER') {
+                  alert('Only EDITORs and OPERATORs can edit duration. Please change your role to EDITOR or OPERATOR.');
+                  return;
+                }
+                const oldValue = item.durationMinutes;
+                const newValue = parseInt(e.target.value) || 0;
+                setSchedule((prev: any[]) => prev.map(scheduleItem => 
+                  scheduleItem.id === item.id 
+                    ? { ...scheduleItem, durationMinutes: newValue }
+                    : scheduleItem
+                ));
+                logChangeDebounced(
+                  `durationMinutes_${item.id}`,
+                  'FIELD_UPDATE',
+                  `Updated duration minutes for "${item.segmentName}" from ${oldValue} to ${newValue}`,
+                  {
+                    changeType: 'FIELD_CHANGE',
+                    itemId: item.id,
+                    itemName: item.segmentName,
+                    fieldName: 'durationMinutes',
+                    oldValue: oldValue,
+                    newValue: newValue,
+                    details: { fieldType: 'number', timeChange: newValue - oldValue }
+                  }
+                );
+              }}
+              disabled={isLockedByOther || currentUserRole === 'VIEWER'}
+              className={`w-14 px-2 py-2 border rounded text-center text-lg font-mono font-bold transition-colors ${cellFill}`}
+              title={isLockedByOther ? lockLabel : currentUserRole === 'VIEWER' ? 'Only EDITORs and OPERATORs can edit duration' : 'Edit minutes'}
+            />
+            <span className="text-slate-400 text-xl font-bold">:</span>
+            <input 
+              type="number" 
+              min="0" 
+              max="59" 
+              value={item.durationSeconds}
+              onFocus={() => {
+                if (isLockedByOther) return;
+                claimRowLock();
+                handleUserEditing();
+              }}
+              onChange={(e) => {
+                if (isLockedByOther) {
+                  alert(lockLabel);
+                  return;
+                }
+                handleUserEditing();
+                if (currentUserRole === 'VIEWER') {
+                  alert('Only EDITORs and OPERATORs can edit duration. Please change your role to EDITOR or OPERATOR.');
+                  return;
+                }
+                const oldValue = item.durationSeconds;
+                const newValue = parseInt(e.target.value) || 0;
+                setSchedule((prev: any[]) => prev.map(scheduleItem => 
+                  scheduleItem.id === item.id 
+                    ? { ...scheduleItem, durationSeconds: newValue }
+                    : scheduleItem
+                ));
+                logChangeDebounced(
+                  `durationSeconds_${item.id}`,
+                  'FIELD_UPDATE',
+                  `Updated duration seconds for "${item.segmentName}" from ${oldValue} to ${newValue}`,
+                  {
+                    changeType: 'FIELD_CHANGE',
+                    itemId: item.id,
+                    itemName: item.segmentName,
+                    fieldName: 'durationSeconds',
+                    oldValue: oldValue,
+                    newValue: newValue,
+                    details: { fieldType: 'number', timeChange: newValue - oldValue }
+                  }
+                );
+              }}
+              disabled={isLockedByOther || currentUserRole === 'VIEWER'}
+              className={`w-14 px-2 py-2 border rounded text-center text-lg font-mono font-bold transition-colors ${cellFill}`}
+              title={isLockedByOther ? lockLabel : currentUserRole === 'VIEWER' ? 'Only EDITORs and OPERATORs can edit duration' : 'Edit seconds'}
+            />
+          </div>
+          {durationChanged && (() => {
+            const h = originalDuration!.durationHours ?? 0;
+            const m = originalDuration!.durationMinutes ?? 0;
+            const s = originalDuration!.durationSeconds ?? 0;
+            const totalSec = h * 3600 + m * 60 + s;
+            const wasText = totalSec >= 3600 ? `${h}h ${m}m` : totalSec >= 60 ? `${m} min` : `${s} sec`;
+            return (
+              <div className="text-amber-300 text-base font-semibold text-center w-full" style={{ lineHeight: 1.2 }}>
+                was {wasText}
+              </div>
+            );
+          })()}
+        </div>
+        );
+      })()}
+      {item.programType === 'Delay Block' ? (
+        <div
+          className="flex items-center justify-between gap-6 overflow-hidden border-r border-violet-400/60 px-6 py-2"
+          style={scrollColumnBoxStyle(bannerReplacementWidth, splitBannerOrder)}
+        >
+          {[0, 1, 2].map((marker) => (
+            <span
+              key={marker}
+              className="min-w-0 flex-1 truncate whitespace-nowrap rounded-lg border-2 border-violet-300/80 bg-violet-900/80 px-4 py-2 text-center text-base font-bold tracking-wider text-violet-50 shadow-md"
+            >
+              ⏱ SEGMENT DELAY • ALL FOLLOWING START TIMES SHIFTED ⏱
+            </span>
+          ))}
+        </div>
+      ) : isShowBreakProgramType(item.programType) ? (
+        <div
+          className="flex items-center gap-3 overflow-hidden border-r border-cyan-400/60 px-3 py-2"
+          style={scrollColumnBoxStyle(bannerReplacementWidth, showBreakBannerOrder)}
+        >
+          {[0, 1, 2, 3, 4, 5].map((marker) => (
+            <span
+              key={marker}
+              className="min-w-0 flex-1 truncate whitespace-nowrap rounded-lg border-2 border-cyan-300/80 bg-cyan-950/80 px-3 py-2 text-center text-sm font-bold tracking-wide text-cyan-50 shadow-md"
+            >
+              Show Break Starts Here - {resumeCueLabel || 'Cue'}
+            </span>
+          ))}
+        </div>
+      ) : (
+      <>
+      {/* Segment name column (after Duration) */}
+      {visibleColumns.segmentName && (
+        <div 
+          className={`px-3 py-2 border-r border-slate-600 flex flex-col items-stretch justify-center flex-shrink-0 relative min-w-0 ${
+            segmentWrap ? 'justify-start' : ''
+          }`}
+          style={colBox(columnWidths.segmentName, 'segmentName')}
+        >
+          {(currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') && onViewSegmentDetail ? (
+            <button
+              type="button"
+              onClick={() => onViewSegmentDetail(item.id)}
+              className={`w-full min-w-0 px-3 py-2 rounded text-base text-left transition-colors hover:ring-2 hover:ring-violet-400/60 ${
+                segmentWrap ? 'h-full self-stretch' : ''
+              } ${
+                item.needsRecording
+                  ? `${isRowDimmed ? 'bg-red-950/40 text-slate-300' : 'bg-red-950/50 text-white'} border-2 border-red-500 ring-2 ring-red-400/80`
+                  : cellFill
+              }`}
+              title="Click to view full segment name and copy"
+            >
+              {item.otherRoom ? (
+                <span
+                  className="mb-1 inline-flex max-w-full items-center truncate rounded px-2 py-0.5 text-xs font-black uppercase tracking-wider bg-amber-500 text-slate-950"
+                  title={`Happens in ${item.otherRoom} (not main program room)`}
+                >
+                  {item.otherRoom}
+                </span>
+              ) : null}
+              <span
+                className={`block text-left ${
+                  segmentWrap ? 'whitespace-pre-wrap break-words leading-snug' : 'truncate'
+                }`}
+              >
+                {item.segmentName || '—'}
+              </span>
+              <span className="block text-[10px] text-slate-400 mt-0.5 text-left">View / copy</span>
+            </button>
+          ) : (
+          <div className={`w-full min-w-0 flex flex-col gap-1 ${segmentWrap ? 'h-full flex-1' : ''}`}>
+            {item.otherRoom ? (
+              <span
+                className="self-start inline-flex max-w-full items-center truncate rounded px-2 py-0.5 text-xs font-black uppercase tracking-wider bg-amber-500 text-slate-950"
+                title={`Happens in ${item.otherRoom} (not main program room)`}
+              >
+                {item.otherRoom}
+              </span>
+            ) : null}
+            {item.isTimedMarker ? (
+              <span
+                className="self-start inline-flex items-center rounded px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-sky-700/80 text-sky-100"
+                title={
+                  item.markerTimeMode === 'absolute'
+                    ? 'Absolute timed marker — fixed clock time; grouped under the cue above'
+                    : 'Offset timed marker — slides with parent overtime; grouped under the cue above'
+                }
+              >
+                ↳ {item.markerTimeMode === 'absolute' ? 'Abs marker' : 'Offset marker'}
+              </span>
+            ) : null}
+            {segmentWrap ? (
+              <textarea
+                value={item.segmentName}
+                rows={Math.max(2, String(item.segmentName || '').split(/\r\n|\r|\n/).length)}
+                spellCheck
+                lang="en-US"
+                onFocus={() => beginCellEdit()}
+                onMouseDown={(e) => { if (alertIfLocked(e)) return; }}
+                onChange={(e) => {
+                  if (!beginCellEdit()) return;
+                  if (currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') {
+                    alert('Only EDITORs can edit segment names. Please change your role to EDITOR.');
+                    return;
+                  }
+                  const oldValue = item.segmentName;
+                  setSchedule((prev: any[]) => prev.map(scheduleItem => 
+                    scheduleItem.id === item.id 
+                      ? { ...scheduleItem, segmentName: e.target.value }
+                      : scheduleItem
+                  ));
+                  logChangeDebounced(
+                    `segmentName_${item.id}`,
+                    'FIELD_UPDATE',
+                    `Updated segment name for "${oldValue}" to "${e.target.value}"`,
+                    {
+                      changeType: 'FIELD_CHANGE',
+                      itemId: item.id,
+                      itemName: e.target.value,
+                      fieldName: 'segmentName',
+                      oldValue: oldValue,
+                      newValue: e.target.value,
+                      details: { fieldType: 'text', characterChange: e.target.value.length - oldValue.length }
+                    }
+                  );
+                }}
+                disabled={isLockedByOther || currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'}
+                className={`w-full flex-1 min-h-[2.75rem] px-3 py-2 rounded text-base text-left transition-colors resize-none whitespace-pre-wrap break-words leading-snug ${
+                  item.needsRecording
+                    ? `${isRowDimmed ? 'bg-red-950/40 text-slate-300' : 'bg-red-950/50 text-white'} border-2 border-red-500 ring-2 ring-red-400/80`
+                    : cellFill
+                }`}
+                placeholder={isLockedByOther ? lockLabel : currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR' ? 'Only EDITORs can edit' : 'Enter segment name'}
+                title={
+                  item.otherRoom
+                    ? `${item.segmentName || 'Segment'} · ${item.otherRoom}`
+                    : item.needsRecording
+                    ? 'Marked for recording'
+                    : isLockedByOther
+                      ? lockLabel
+                      : currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'
+                        ? 'Only EDITORs can edit segment names'
+                        : 'Edit segment name'
+                }
+              />
+            ) : (
+            <input
+              type="text"
+              value={item.segmentName}
+              spellCheck
+              lang="en-US"
+              onFocus={() => beginCellEdit()}
+              onMouseDown={(e) => { if (alertIfLocked(e)) return; }}
+              onChange={(e) => {
+                if (!beginCellEdit()) return;
+                if (currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') {
+                  alert('Only EDITORs can edit segment names. Please change your role to EDITOR.');
+                  return;
+                }
+                const oldValue = item.segmentName;
+                setSchedule((prev: any[]) => prev.map(scheduleItem => 
+                  scheduleItem.id === item.id 
+                    ? { ...scheduleItem, segmentName: e.target.value }
+                    : scheduleItem
+                ));
+                logChangeDebounced(
+                  `segmentName_${item.id}`,
+                  'FIELD_UPDATE',
+                  `Updated segment name for "${oldValue}" to "${e.target.value}"`,
+                  {
+                    changeType: 'FIELD_CHANGE',
+                    itemId: item.id,
+                    itemName: e.target.value,
+                    fieldName: 'segmentName',
+                    oldValue: oldValue,
+                    newValue: e.target.value,
+                    details: { fieldType: 'text', characterChange: e.target.value.length - oldValue.length }
+                  }
+                );
+              }}
+              disabled={isLockedByOther || currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'}
+              className={`w-full min-w-0 px-3 py-2 rounded text-base text-left transition-colors truncate ${
+                item.needsRecording
+                  ? `${isRowDimmed ? 'bg-red-950/40 text-slate-300' : 'bg-red-950/50 text-white'} border-2 border-red-500 ring-2 ring-red-400/80`
+                  : cellFill
+              }`}
+              placeholder={isLockedByOther ? lockLabel : currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR' ? 'Only EDITORs can edit' : 'Enter segment name'}
+              title={
+                item.otherRoom
+                  ? `${item.segmentName || 'Segment'} · ${item.otherRoom}`
+                  : item.needsRecording
+                  ? 'Marked for recording'
+                  : isLockedByOther
+                    ? lockLabel
+                    : currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'
+                      ? 'Only EDITORs can edit segment names'
+                      : 'Edit segment name'
+              }
+            />
+            )}
+          </div>
+          )}
+          {showSegmentSpelling ? (
+            <div className="mt-1">
+              <SegmentSpellingChip
+                words={misspelledSegment}
+                canFix={canFixSegmentSpelling}
+                canAskRos={canAskRosSpelling}
+                asked={!!item.segmentSpellingAskRos}
+                onConfirm={confirmSegmentSpelling}
+                onFix={fixSegmentSpelling}
+                onAskRos={askRosSegmentSpelling}
+              />
+            </div>
+          ) : null}
+        </div>
+      )}
+      {/* Shot type column (after Segment Name) */}
+      {visibleColumns.shotType && (
+        <div 
+          className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
+          style={{ ...colBox(columnWidths.shotType, 'shotType'), overflow: 'visible', zIndex: 1 }}
+        >
+          <div
+            className="w-full"
+            onMouseDown={(e) => { if (alertIfLocked(e)) return; }}
+          >
+          <select 
+            value={item.shotType}
+            onFocus={handleSelectFocus}
+            onBlur={handleSelectBlur}
+            onChange={(e) => {
+              if (!beginCellEdit()) return;
+              if (currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') {
+                alert('Only EDITORs can edit shot type. Please change your role to EDITOR.');
+                return;
+              }
+              const oldValue = item.shotType;
+              const patch = shotTypeManualEditPatch(e.target.value);
+              setSchedule((prev: any[]) => prev.map(scheduleItem => 
+                scheduleItem.id === item.id 
+                  ? { ...scheduleItem, ...patch }
+                  : scheduleItem
+              ));
+              logChangeDebounced(
+                `shotType_${item.id}`,
+                'FIELD_UPDATE', 
+                `Updated shot type for "${item.segmentName}" from "${oldValue}" to "${e.target.value}"`, 
+                {
+                  changeType: 'FIELD_CHANGE',
+                  itemId: item.id,
+                  itemName: item.segmentName,
+                  fieldName: 'shotType',
+                  oldValue: oldValue,
+                  newValue: e.target.value,
+                  details: {
+                    fieldType: 'select',
+                    optionChange: true,
+                    shotTypeManualOverride: patch.shotTypeManualOverride,
+                  }
+                }
+              );
+              handleModalClosed();
+            }}
+            disabled={isLockedByOther || currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'}
+            className={`w-full px-3 py-2 border-2 rounded text-base transition-colors ${cellFocus}${
+              item.shotTypeManualOverride ? ' border-amber-500/70' : ''
+            }`}
+            style={{ zIndex: 10, position: 'relative' }}
+            title={
+              isLockedByOther
+                ? lockLabel
+                : currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'
+                  ? 'Only EDITORs can edit shot type'
+                  : item.shotTypeManualOverride
+                    ? 'Manual override — speakers won’t change this. Clear shot type to unlock auto.'
+                    : 'Select shot type'
+            }
+          >
+            <option value="">Select Shot Type</option>
+            {shotTypes?.map?.((type: string) => (
+              <option key={type} value={type}>{type}</option>
+            ))}
+          </select>
+          </div>
+        </div>
+      )}
+      {/* PPT/QA column (after Shot Type) */}
+      {visibleColumns.pptQA && (
+        <div 
+          className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
+          style={colBox(columnWidths.pptQA, 'pptQA')}
+        >
+          <div
+            className="flex items-center gap-2"
+            onMouseDown={(e) => { if (alertIfLocked(e)) return; }}
+          >
+            <label className="flex items-center gap-1">
+              <input
+                type="checkbox"
+                checked={!!item.hasPPT}
+                onChange={(e) => {
+                  if (currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') {
+                    alert('Only EDITORs can edit PPT settings. Please change your role to EDITOR.');
+                    return;
+                  }
+                  if (!beginCellEdit()) return;
+                  const oldValue = !!item.hasPPT;
+                  const checked = e.target.checked;
+                  const autoDsm =
+                    !item.dsmModeManual
+                      ? {
+                          dsmMode: suggestedDsmLayoutMode({
+                            programType: item.programType,
+                            hasPPT: checked,
+                          }),
+                        }
+                      : {};
+                  setSchedule((prev: any[]) => prev.map(scheduleItem => 
+                    Number(scheduleItem.id) === Number(item.id)
+                      ? stampScheduleCheckboxes(
+                          { ...scheduleItem, hasPPT: checked, ...autoDsm },
+                          ['hasPPT']
+                        )
+                      : scheduleItem
+                  ));
+                  void Promise.resolve(
+                    persistScheduleCheckboxes?.(item.id, { hasPPT: checked })
+                  ).catch((err) => console.warn('persistScheduleCheckboxes hasPPT failed:', err));
+                  if (autoDsm.dsmMode && item.dsmEnabled && persistDsmCue) {
+                    void persistDsmCue(item.id, { mode: autoDsm.dsmMode, modeManual: false });
+                  }
+                  logChangeDebounced(
+                    `hasPPT_${item.id}`,
+                    'FIELD_UPDATE', 
+                    `Updated PPT status for "${item.segmentName}" from ${oldValue ? 'TRUE' : 'FALSE'} to ${checked ? 'TRUE' : 'FALSE'}`, 
+                    {
+                      changeType: 'FIELD_CHANGE',
+                      itemId: item.id,
+                      itemName: item.segmentName,
+                      fieldName: 'hasPPT',
+                      oldValue: oldValue ? 'TRUE' : 'FALSE',
+                      newValue: checked ? 'TRUE' : 'FALSE',
+                      details: { fieldType: 'checkbox', booleanChange: true }
+                    }
+                  );
+                }}
+                disabled={isLockedByOther || currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'}
+                className={`w-6 h-6 rounded border-2 ${isRowDimmed ? 'border-purple-600/50 bg-purple-950/70' : 'border-slate-400 bg-slate-700'}`}
+                title={isLockedByOther ? lockLabel : currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR' ? 'Only EDITORs can edit PPT settings' : 'Toggle PPT'}
+              />
+              <span className="text-base font-medium text-white">PPT</span>
+            </label>
+            <label className="flex items-center gap-1">
+              <input
+                type="checkbox"
+                checked={!!item.hasQA}
+                onChange={(e) => {
+                  if (currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') {
+                    alert('Only EDITORs can edit Q&A settings. Please change your role to EDITOR.');
+                    return;
+                  }
+                  if (!beginCellEdit()) return;
+                  const oldValue = !!item.hasQA;
+                  const checked = e.target.checked;
+                  setSchedule((prev: any[]) => prev.map(scheduleItem => 
+                    Number(scheduleItem.id) === Number(item.id)
+                      ? stampScheduleCheckboxes({ ...scheduleItem, hasQA: checked }, ['hasQA'])
+                      : scheduleItem
+                  ));
+                  void Promise.resolve(
+                    persistScheduleCheckboxes?.(item.id, { hasQA: checked })
+                  ).catch((err) => console.warn('persistScheduleCheckboxes hasQA failed:', err));
+                  logChangeDebounced(
+                    `hasQA_${item.id}`,
+                    'FIELD_UPDATE', 
+                    `Updated Q&A status for "${item.segmentName}" from ${oldValue ? 'TRUE' : 'FALSE'} to ${checked ? 'TRUE' : 'FALSE'}`, 
+                    {
+                      changeType: 'FIELD_CHANGE',
+                      itemId: item.id,
+                      itemName: item.segmentName,
+                      fieldName: 'hasQA',
+                      oldValue: oldValue ? 'TRUE' : 'FALSE',
+                      newValue: checked ? 'TRUE' : 'FALSE',
+                      details: { fieldType: 'checkbox', booleanChange: true }
+                    }
+                  );
+                }}
+                disabled={isLockedByOther || currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'}
+                className={`w-6 h-6 rounded border-2 ${isRowDimmed ? 'border-purple-600/50 bg-purple-950/70' : 'border-slate-400 bg-slate-700'}`}
+                title={isLockedByOther ? lockLabel : currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR' ? 'Only EDITORs can edit Q&A settings' : 'Toggle Q&A'}
+              />
+              <span className="text-base font-medium text-white">Q&A</span>
+            </label>
+          </div>
+        </div>
+      )}
+      {visibleColumns.recording && (
+        <div
+          className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 relative overflow-visible"
+          style={colBox(columnWidths.recording, 'recording')}
+        >
+          <label
+            className="group/rec-tip relative flex flex-col items-center gap-0.5"
+            onMouseDown={(e) => { if (alertIfLocked(e)) return; }}
+          >
+            <input
+              type="checkbox"
+              checked={!!item.needsRecording}
+              onChange={(e) => setNeedsRecording(e.target.checked)}
+              disabled={isLockedByOther || currentUserRole === 'VIEWER'}
+              className={`w-6 h-6 rounded border-2 ${item.needsRecording ? 'border-red-400 bg-red-700' : isRowDimmed ? 'border-purple-600/50 bg-purple-950/70' : 'border-slate-400 bg-slate-700'}`}
+              title={
+                isLockedByOther
+                  ? lockLabel
+                  : currentUserRole === 'VIEWER'
+                    ? 'Viewers cannot mark cues for recording'
+                    : itemMarkedByComms(item)
+                      ? 'Comms marked this cue for ASAP recording'
+                      : undefined
+              }
+            />
+            <span className={`text-xs font-black tracking-wide ${item.needsRecording ? 'text-red-400' : 'text-slate-300'}`}>REC</span>
+            {itemMarkedByComms(item) ? (
+              <span
+                className="rounded px-1 py-0.5 text-[9px] font-black tracking-wide bg-amber-500 text-slate-950"
+                title="Marked by Comms — ASAP request (not just export)"
+              >
+                COMMS
+              </span>
+            ) : null}
+            {!isLockedByOther && currentUserRole !== 'VIEWER' && !itemMarkedByComms(item) && (
+              <div
+                role="tooltip"
+                className="pointer-events-none absolute left-1/2 bottom-full z-[90] mb-2 w-96 -translate-x-1/2 rounded-md border-2 border-slate-500 bg-white px-5 py-4 text-left leading-snug text-black opacity-0 shadow-xl transition-opacity duration-150 group-hover/rec-tip:opacity-100 group-focus-within/rec-tip:opacity-100"
+              >
+                <div className="text-[22px] font-black text-black">{CUE_RECORDING_HOVER_TITLE}</div>
+                <div className="mt-2 text-[18px] font-bold text-neutral-900">{CUE_RECORDING_HOVER_BODY}</div>
+              </div>
+            )}
+          </label>
+        </div>
+      )}
+      {visibleColumns.mittiWatch && (
+        <div
+          className="px-2 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
+          style={colBox(88, 'mittiWatch')}
+        >
+          <label
+            className="flex flex-col items-center gap-0.5"
+            onMouseDown={(e) => { if (alertIfLocked(e)) return; }}
+          >
+            <input
+              type="checkbox"
+              checked={!!item.mittiWatch}
+              onChange={(e) => {
+                if (!beginCellEdit()) return;
+                void persistMittiWatch?.(item.id, e.target.checked);
+              }}
+              disabled={isLockedByOther || currentUserRole === 'VIEWER' || !persistMittiWatch}
+              className={`w-6 h-6 rounded border-2 ${
+                item.mittiWatch
+                  ? 'border-orange-300 bg-orange-600'
+                  : isRowDimmed
+                    ? 'border-purple-600/50 bg-purple-950/70'
+                    : 'border-slate-400 bg-slate-700'
+              }`}
+              title={
+                isLockedByOther
+                  ? lockLabel
+                  : 'Next Mitti play uses this cue. Checking this clears every other row.'
+              }
+            />
+            <span className={`text-[10px] font-black tracking-wide ${item.mittiWatch ? 'text-orange-300' : 'text-slate-400'}`}>
+              NEXT
+            </span>
+          </label>
+        </div>
+      )}
+      {visibleColumns.avWatch && (
+        <div
+          className="px-2 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
+          style={colBox(72, 'avWatch')}
+        >
+          <label
+            className="flex flex-col items-center gap-0.5"
+            onMouseDown={(e) => { if (alertIfLocked(e)) return; }}
+          >
+            <input
+              type="checkbox"
+              checked={!!item.avWatch}
+              onChange={(e) => {
+                if (!beginCellEdit()) return;
+                void persistAvWatch?.(item.id, e.target.checked);
+              }}
+              disabled={isLockedByOther || currentUserRole === 'VIEWER' || !persistAvWatch}
+              className={`w-6 h-6 rounded border-2 ${
+                item.avWatch
+                  ? 'border-sky-300 bg-sky-600'
+                  : isRowDimmed
+                    ? 'border-purple-600/50 bg-purple-950/70'
+                    : 'border-slate-400 bg-slate-700'
+              }`}
+              title={
+                isLockedByOther
+                  ? lockLabel
+                  : 'Next AV-Playout play uses this cue. Checking this clears every other AV row.'
+              }
+            />
+            <span className={`text-[10px] font-black tracking-wide ${item.avWatch ? 'text-sky-300' : 'text-slate-400'}`}>
+              NEXT
+            </span>
+          </label>
+        </div>
+      )}
+      {/* Notes column (after PPT/QA) — VO/BGM text is written into Notes; no chips */}
+      {visibleColumns.notes && (
+        <div 
+          className="px-4 py-2 border-r border-slate-600 flex flex-col items-stretch justify-center gap-1 flex-shrink-0 min-w-0 overflow-hidden transition-all duration-300 ease-in-out"
+          style={colBox(columnWidths.notes, 'notes')}
+        >
+          {!isLockedByOther && currentUserRole !== 'VIEWER' && (
+            <div className="flex flex-wrap items-center gap-1 self-start">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (alertIfLocked(e)) return;
+                  claimRowLock();
+                  handleModalEditing?.();
+                  setTempVoCues?.(Array.isArray(item.voCues) ? item.voCues.map((v: any) => ({ ...v })) : []);
+                  setEditingVoItemId?.(item.id);
+                  setShowVoModal?.(true);
+                }}
+                className="inline-flex items-center rounded border border-dashed border-slate-500/70 px-2 py-0.5 text-xs font-semibold text-slate-300 hover:border-amber-400 hover:text-amber-100 transition-colors"
+                title="Add VO or Background Music into Notes"
+              >
+                + VO / BGM
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (alertIfLocked(e)) return;
+                  if (currentUserRole === 'OPERATOR') {
+                    alert('Only EDITORs can add Stage Direction notes. Please change your role to EDITOR.');
+                    return;
+                  }
+                  claimRowLock();
+                  handleModalEditing?.();
+                  setShowStageDirectionModal(true);
+                }}
+                className="inline-flex items-center rounded border border-dashed border-violet-500/70 px-2 py-0.5 text-xs font-semibold text-violet-200 hover:border-violet-400 hover:text-violet-100 transition-colors"
+                title="Add Stage Direction into Notes"
+              >
+                + Stage Direction
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (currentUserRole === 'OPERATOR') {
+                    alert('Only EDITORs can add SettleCue notes. Please change your role to EDITOR.');
+                    return;
+                  }
+                  const cue = String(item.customFields?.cue || '').trim();
+                  if (!cue) {
+                    alert('Set a CUE number on this row first.');
+                    return;
+                  }
+                  const noteText = formatSettleCueNoteText(cue);
+                  const prevNotes = String(item.notes || '');
+                  if (prevNotes.includes(noteText)) {
+                    return;
+                  }
+                  if (!beginCellEdit()) return;
+                  const nextNotes = prependSettleCueNote(item.notes || '', cue);
+                  setSchedule((prev: any[]) =>
+                    prev.map((scheduleItem) =>
+                      scheduleItem.id === item.id
+                        ? { ...scheduleItem, notes: nextNotes }
+                        : scheduleItem
+                    )
+                  );
+                  onNotesChipUpdated?.(item.id, nextNotes);
+                  if (logChange) {
+                    logChange(
+                      'NOTES_UPDATE',
+                      `Added SettleCue note "${noteText}" on "${item.segmentName}"`,
+                      {
+                        changeType: 'FIELD_CHANGE',
+                        itemId: item.id,
+                        itemName: item.segmentName,
+                        fieldName: 'notes',
+                        details: { settleCue: noteText },
+                      }
+                    );
+                  } else {
+                    logChangeDebounced(
+                      'NOTES_UPDATE',
+                      `Added SettleCue note "${noteText}" on "${item.segmentName}"`,
+                      {
+                        changeType: 'FIELD_CHANGE',
+                        itemId: item.id,
+                        itemName: item.segmentName,
+                        fieldName: 'notes',
+                        details: { settleCue: noteText },
+                      }
+                    );
+                  }
+                  if (saveToAPI) saveToAPI();
+                }}
+                className="inline-flex items-center rounded border border-dashed border-blue-500/70 px-2 py-0.5 text-xs font-semibold text-blue-200 hover:border-blue-400 hover:text-blue-100 transition-colors"
+                title="Add Cue N.1 Settle Motion & Presenters into Notes"
+              >
+                + SettleCue
+              </button>
+            </div>
+          )}
+          <StageDirectionModal
+            open={showStageDirectionModal}
+            segmentName={item.segmentName}
+            onClose={() => {
+              setShowStageDirectionModal(false);
+              handleModalClosed?.();
+            }}
+            onAdd={(directionText) => {
+              const noteText = formatStageDirectionNoteText(directionText);
+              const prevNotes = String(item.notes || '');
+              if (prevNotes.includes(noteText)) {
+                return;
+              }
+              handleUserEditing?.();
+              const nextNotes = prependStageDirectionNote(item.notes || '', directionText);
+              setSchedule((prev: any[]) =>
+                prev.map((scheduleItem) =>
+                  scheduleItem.id === item.id
+                    ? { ...scheduleItem, notes: nextNotes }
+                    : scheduleItem
+                )
+              );
+              onNotesChipUpdated?.(item.id, nextNotes);
+              if (logChange) {
+                logChange(
+                  'NOTES_UPDATE',
+                  `Added Stage Direction "${noteText}" on "${item.segmentName}"`,
+                  {
+                    changeType: 'FIELD_CHANGE',
+                    itemId: item.id,
+                    itemName: item.segmentName,
+                    fieldName: 'notes',
+                    details: { stageDirection: noteText },
+                  }
+                );
+              } else {
+                logChangeDebounced(
+                  'NOTES_UPDATE',
+                  `Added Stage Direction "${noteText}" on "${item.segmentName}"`,
+                  {
+                    changeType: 'FIELD_CHANGE',
+                    itemId: item.id,
+                    itemName: item.segmentName,
+                    fieldName: 'notes',
+                    details: { stageDirection: noteText },
+                  }
+                );
+              }
+              if (saveToAPI) saveToAPI();
+            }}
+          />
+          <div
+            onClick={() => {
+              if (isLockedByOther) {
+                alert(lockLabel);
+                return;
+              }
+              if (currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') {
+                if (currentUserRole === 'OPERATOR' && item.notes) {
+                  alert(`Notes (View Only):\n\n${String(item.notes).replace(/<[^>]*>/g, '')}`);
+                  return;
+                }
+                alert('Only EDITORs can edit notes. Please change your role to EDITOR.');
+                return;
+              }
+              claimRowLock();
+              handleModalEditing();
+              setEditingNotesItem && setEditingNotesItem(item.id);
+              setShowNotesModal && setShowNotesModal(true);
+            }}
+            className={`w-full min-w-0 overflow-hidden px-3 py-2 border rounded text-base transition-colors text-white ${isLockedByOther ? 'bg-slate-700 border-slate-600 opacity-70 cursor-not-allowed' : 'bg-slate-700 border-slate-600 cursor-pointer hover:bg-slate-600'}`}
+            title={isLockedByOther ? lockLabel : currentUserRole === 'VIEWER' ? 'Viewers cannot edit notes' : currentUserRole === 'OPERATOR' ? 'Click to view notes (read-only)' : 'Click to edit notes'}
+          >
+            {item.notes ? (
+              <div 
+                className="text-left w-full min-w-0 notes-display text-white"
+                style={{ lineHeight: '1.45', overflow: 'hidden', overflowWrap: 'anywhere', wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}
+                dangerouslySetInnerHTML={{ 
+                  __html: boostNotesContrastHtml(
+                    String(item.notes)
+                      .replace(/\r\n/g, '<br>')
+                      .replace(/\r/g, '<br>')
+                      .replace(/\n/g, '<br>')
+                  )
+                }}
+              />
+            ) : (
+              <span className="text-slate-400">Click to edit notes...</span>
+            )}
+          </div>
+        </div>
+      )}
+      {/* VOG column (ElevenLabs text-to-speech) */}
+      {visibleColumns.vog !== false && (
+        <div
+          className="px-2 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
+          style={colBox(columnWidths.vog || 100, 'vog')}
+        >
+          <button
+            type="button"
+            className={`rounded-md px-2 py-1 text-xs font-semibold border ${
+              String(item.vogText || '').trim()
+                ? 'bg-violet-800/80 border-violet-500 text-white'
+                : 'bg-slate-700 border-slate-500 text-slate-200'
+            }`}
+            title={
+              String(item.vogText || '').trim()
+                ? `VOG script saved${item.vogVoiceName ? ` · ${item.vogVoiceName}` : ''}`
+                : 'Open VOG preview / download'
+            }
+            onClick={(e) => {
+              e.stopPropagation();
+              if (alertIfLocked(e)) return;
+              claimRowLock();
+              handleModalEditing?.();
+              setEditingVogItemId?.(item.id);
+              setShowVogModal?.(true);
+            }}
+          >
+            {String(item.vogText || '').trim() ? 'VOG ✓' : 'VOG'}
+          </button>
+        </div>
+      )}
+      {/* Assets column (after Notes) */}
+      {visibleColumns.assets && (
+        <div 
+          className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
+          style={colBox(columnWidths.assets, 'assets')}
+        >
+          <div
+            onClick={() => {
+              if (isLockedByOther) {
+                alert(lockLabel);
+                return;
+              }
+              const linkCount = item.assets
+                ? String(item.assets).split('||').filter((s: string) => s.trim()).length
+                : 0;
+              const hasAny = linkCount > 0 || platformFileCount > 0;
+              if (currentUserRole === 'VIEWER') {
+                if (hasAny && setViewingAssetsItem && setShowViewAssetsModal) {
+                  setViewingAssetsItem(item.id);
+                  setShowViewAssetsModal(true);
+                  return;
+                }
+                alert('No assets to view.');
+                return;
+              }
+              claimRowLock();
+              handleModalEditing();
+              setEditingAssetsItem && setEditingAssetsItem(item.id);
+              setShowAssetsModal && setShowAssetsModal(true);
+            }}
+            className={`w-full px-3 py-2 border rounded text-base transition-colors flex items-center justify-center ${isLockedByOther ? cellFill + ' opacity-70 cursor-not-allowed' : cellFillInteractive}`}
+            title={isLockedByOther ? lockLabel : currentUserRole === 'VIEWER' ? 'Click to view assets (read-only)' : 'Click to edit assets'}
+          >
+            {(() => {
+              const linkCount = item.assets
+                ? String(item.assets).split('||').filter((s: string) => s.trim()).length
+                : 0;
+              const total = linkCount + (platformFileCount || 0);
+              if (total > 0) {
+                return (
+                  <div className="text-center">
+                    <div className="text-sm font-medium">
+                      {total} Asset{total !== 1 ? 's' : ''}
+                    </div>
+                  </div>
+                );
+              }
+              return <span className="text-slate-400">Click to add assets...</span>;
+            })()}
+          </div>
+        </div>
+      )}
+      {/* Speakers column (after Assets) */}
+      {visibleColumns.speakers && (
+        <div 
+          className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 transition-all duration-300 ease-in-out"
+          style={colBox(columnWidths.speakers, 'speakers')}
+        >
+          <div
+            onClick={() => {
+              if (isLockedByOther) {
+                alert(lockLabel);
+                return;
+              }
+              if (currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') {
+                if (item.speakersText && setViewingSpeakersItem && setShowViewSpeakersModal) {
+                  setViewingSpeakersItem(item.id);
+                  setShowViewSpeakersModal(true);
+                  return;
+                }
+                if (item.speakersText) {
+                  alert(`Speakers (View Only):\n\n${displaySpeakersText ? displaySpeakersText(item.speakersText) : String(item.speakersText)}`);
+                  return;
+                }
+                alert('No speakers to view.');
+                return;
+              }
+              claimRowLock();
+              handleModalEditing();
+              setEditingSpeakersItem && setEditingSpeakersItem(item.id);
+              setShowSpeakersModal && setShowSpeakersModal(true);
+            }}
+            className={`w-full px-3 py-2 border rounded text-base transition-colors flex items-start justify-start ${isLockedByOther ? cellFill + ' opacity-70 cursor-not-allowed' : cellFillInteractive}`}
+            style={{ 
+              height: getSpeakersHeight ? getSpeakersHeight(item.speakersText) : undefined,
+              minHeight: getSpeakersHeight ? getSpeakersHeight(item.speakersText) : undefined,
+              wordWrap: 'break-word',
+              overflowWrap: 'break-word',
+              overflow: 'hidden',
+              paddingBottom: '1rem',
+              lineHeight: '1.6',
+              whiteSpace: 'pre-wrap'
+            }}
+            title={isLockedByOther ? lockLabel : currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR' ? 'Click to view speakers (read-only)' : 'Click to edit speakers'}
+          >
+            <div className="text-left w-full">
+              {(displaySpeakersText ? displaySpeakersText(item.speakersText || '') : String(item.speakersText || '')) || 'Click to add speakers...'}
+            </div>
+          </div>
+        </div>
+      )}
+      {visibleColumns.dsm && (
+        <div
+          className="px-1.5 py-2 border-r border-slate-600 flex items-center justify-center gap-1 flex-shrink-0"
+          style={colBox(148, 'dsm')}
+        >
+          <label
+            className="flex flex-col items-center gap-0.5"
+            onMouseDown={(e) => { if (alertIfLocked(e)) return; }}
+          >
+            <input
+              type="checkbox"
+              checked={!!item.dsmEnabled}
+              onChange={(e) => {
+                if (!beginCellEdit()) return;
+                const enabled = e.target.checked;
+                const mode = effectiveDsmLayoutMode(item);
+                void persistDsmCue?.(item.id, {
+                  enabled,
+                  mode,
+                  modeManual: !!item.dsmModeManual,
+                });
+              }}
+              disabled={isLockedByOther || currentUserRole === 'VIEWER' || !persistDsmCue}
+              className={`w-5 h-5 rounded border-2 ${
+                item.dsmEnabled
+                  ? 'border-emerald-300 bg-emerald-600'
+                  : isRowDimmed
+                    ? 'border-purple-600/50 bg-purple-950/70'
+                    : 'border-slate-400 bg-slate-700'
+              }`}
+              title={
+                isLockedByOther
+                  ? lockLabel
+                  : 'When checked, loading this cue sends the selected DSM layout to DSM Clock pages'
+              }
+            />
+          </label>
+          <select
+            value={effectiveDsmLayoutMode(item)}
+            onFocus={() => beginCellEdit()}
+            onBlur={handleSelectBlur}
+            onMouseDown={(e) => {
+              if (alertIfLocked(e)) return;
+              e.stopPropagation();
+            }}
+            onChange={(e) => {
+              if (!beginCellEdit()) return;
+              if (currentUserRole === 'VIEWER') {
+                alert('Only EDITORs and OPERATORs can change DSM mode.');
+                return;
+              }
+              const mode = e.target.value as DsmLayoutMode;
+              void persistDsmCue?.(item.id, {
+                enabled: !!item.dsmEnabled,
+                mode,
+                modeManual: true,
+              });
+            }}
+            onClick={(e) => e.stopPropagation()}
+            disabled={isLockedByOther || currentUserRole === 'VIEWER' || !persistDsmCue}
+            className={`min-w-0 flex-1 max-w-[104px] rounded border text-[10px] font-semibold py-1 px-1 disabled:opacity-70 disabled:cursor-not-allowed ${
+              item.dsmEnabled
+                ? 'border-emerald-500/70 bg-emerald-950/40 text-emerald-100'
+                : 'border-slate-500 bg-slate-800 text-slate-300'
+            }`}
+            title={
+              isLockedByOther
+                ? lockLabel
+                : 'DSM layout sent when this cue is loaded (auto: LED, Video→VID, PPT→PPT)'
+            }
+          >
+            {DSM_LAYOUT_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+      {/* Public column (after DSM) */}
+      {visibleColumns.public && (
+        <div 
+          className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
+          style={colBox(columnWidths.public, 'public')}
+        >
+          <input
+            type="checkbox"
+            checked={!!item.isPublic}
+            onMouseDown={(e) => { if (alertIfLocked(e)) return; }}
+            onChange={(e) => {
+              if (!beginCellEdit()) return;
+              if (currentUserRole === 'VIEWER') {
+                alert('Viewers cannot change public status. Please change your role to EDITOR or OPERATOR.');
+                return;
+              }
+              const oldValue = !!item.isPublic;
+              setSchedule((prev: any[]) => prev.map(scheduleItem => 
+                scheduleItem.id === item.id 
+                  ? stampScheduleCheckboxes({ ...scheduleItem, isPublic: e.target.checked }, ['isPublic'])
+                  : scheduleItem
+              ));
+              void Promise.resolve(
+                persistScheduleCheckboxes?.(item.id, { isPublic: e.target.checked })
+              ).catch((err) => console.warn('persistScheduleCheckboxes isPublic failed:', err));
+              logChangeDebounced(
+                `isPublic_${item.id}`,
+                'FIELD_UPDATE',
+                `Updated Public status for "${item.segmentName}" from ${oldValue ? 'TRUE' : 'FALSE'} to ${e.target.checked ? 'TRUE' : 'FALSE'}`,
+                {
+                  changeType: 'FIELD_CHANGE',
+                  itemId: item.id,
+                  itemName: item.segmentName,
+                  fieldName: 'isPublic',
+                  oldValue: oldValue ? 'TRUE' : 'FALSE',
+                  newValue: e.target.checked ? 'TRUE' : 'FALSE',
+                  details: { fieldType: 'checkbox', booleanChange: true }
+                }
+              );
+            }}
+            disabled={isLockedByOther || currentUserRole === 'VIEWER'}
+            className={`w-5 h-5 rounded border-2 text-blue-600 ${isRowDimmed ? 'border-purple-600/50 bg-purple-950/55' : 'border-slate-500 bg-slate-700'}`}
+            title={isLockedByOther ? lockLabel : currentUserRole === 'VIEWER' ? 'Viewers cannot change public status' : 'Toggle public visibility'}
+          />
+        </div>
+      )}
+      {/* Counter column: Countdown (default) or Time of Day for Clock page */}
+      {visibleColumns.timer && (
+        <div 
+          className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
+          style={colBox(columnWidths.timer, 'timer')}
+          onClick={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <select
+            value={item.timerDisplay === 'todOnly' ? 'todOnly' : item.timerDisplay === 'countUp' ? 'countUp' : (item.timerDisplay === 'timeOfDay' || item.useTimeOfDay === true) ? 'timeOfDay' : 'countdown'}
+            onFocus={() => beginCellEdit()}
+            onBlur={handleSelectBlur}
+            onMouseDown={(e) => {
+              if (alertIfLocked(e)) return;
+              e.stopPropagation();
+            }}
+            onChange={(e) => {
+              if (!beginCellEdit()) return;
+              if (currentUserRole === 'VIEWER') {
+                alert('Only EDITORs and OPERATORs can change Counter display. Please change your role.');
+                return;
+              }
+              const newValue = e.target.value as 'countdown' | 'countUp' | 'timeOfDay' | 'todOnly';
+              const oldValue = item.timerDisplay === 'todOnly' ? 'todOnly' : item.timerDisplay === 'countUp' ? 'countUp' : (item.timerDisplay === 'timeOfDay' || item.useTimeOfDay === true) ? 'timeOfDay' : 'countdown';
+              const useTimeOfDay = newValue === 'timeOfDay' || newValue === 'todOnly';
+              setSchedule((prev: any[]) => prev.map(scheduleItem => 
+                scheduleItem.id === item.id 
+                  ? { ...scheduleItem, timerDisplay: newValue, useTimeOfDay }
+                  : scheduleItem
+              ));
+              if (logChange) {
+                logChange('FIELD_UPDATE', `Updated Counter for "${item.segmentName}" from ${oldValue} to ${newValue}`, {
+                  changeType: 'FIELD_CHANGE',
+                  itemId: item.id,
+                  itemName: item.segmentName,
+                  fieldName: 'timerDisplay',
+                  oldValue: oldValue,
+                  newValue: newValue,
+                  details: { fieldType: 'select' }
+                });
+              }
+              handleUserEditing();
+              if (saveToAPI) {
+                saveToAPI();
+              }
+              // Don't unlock/blur immediately — same 5s idle as typing (handleUserEditing timeout)
+            }}
+            onClick={(e) => e.stopPropagation()}
+            className={`w-full min-w-0 max-w-full rounded border text-sm py-1 px-2 disabled:opacity-70 disabled:cursor-not-allowed ${cellFocus}`}
+            disabled={isLockedByOther || currentUserRole === 'VIEWER'}
+            title={isLockedByOther ? lockLabel : currentUserRole === 'VIEWER' ? 'Only EDITORs and OPERATORs can change' : 'Clock page: Countdown, Count Up, Time of Day, or TOD Only'}
+          >
+            <option value="countdown">Countdown</option>
+            <option value="countUp">Count Up</option>
+            <option value="timeOfDay">Time Of Day</option>
+            <option value="todOnly">TOD Only</option>
+          </select>
+        </div>
+      )}
+      {/* Participants column (after Public) */}
+      {visibleColumns.participants && (
+        <div 
+          className="px-4 py-2 border-r border-slate-600 flex items-start justify-center flex-shrink-0 transition-all duration-300 ease-in-out"
+          style={colBox(columnWidths.participants, 'participants')}
+        >
+          <div
+            onClick={() => {
+              if (isLockedByOther) {
+                alert(lockLabel);
+                return;
+              }
+              if (currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') {
+                if (currentUserRole === 'OPERATOR' && item.speakers) {
+                  alert(`Participants (View Only):\n\n${displaySpeakers ? displaySpeakers(item.speakers) : String(item.speakers)}`);
+                  return;
+                }
+                alert('Only EDITORs can edit participants. Please change your role to EDITOR.');
+                return;
+              }
+              claimRowLock();
+              handleModalEditing();
+              setEditingParticipantsItem && setEditingParticipantsItem(item.id);
+              setShowParticipantsModal && setShowParticipantsModal(true);
+            }}
+            className={`w-full px-3 py-2 border rounded text-base ${isLockedByOther ? cellFill + ' opacity-70 cursor-not-allowed' : cellFillInteractive}`}
+            title={isLockedByOther ? lockLabel : currentUserRole === 'VIEWER' ? 'Viewers cannot edit participants' : currentUserRole === 'OPERATOR' ? 'Click to view participants (read-only)' : 'Click to edit participants'}
+          >
+            {(displaySpeakers ? displaySpeakers(item.speakers || '') : String(item.speakers || '')) || 'Click to add participants...'}
+          </div>
+        </div>
+      )}
+      {/* Custom columns (render at the end) */}
+      {Array.isArray(customColumns) && customColumns.map((column: any) => (
+        visibleCustomColumns?.[column.id] !== false && (
+          <div 
+            key={column.id}
+            className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0 transition-all duration-300 ease-in-out"
+            style={{
+              ...colBox((customColumnWidths && customColumnWidths[column.id]) || 256, `custom:${column.id}`),
+              height: measuredRowHeight,
+            }}
+          >
+            <textarea
+              value={(item.customFields && item.customFields[column.name]) || ''}
+              onFocus={() => beginCellEdit()}
+              onMouseDown={(e) => { if (alertIfLocked(e)) return; }}
+              onChange={(e) => {
+                if (!beginCellEdit()) return;
+                const oldValue = (item.customFields && item.customFields[column.name]) || '';
+                setSchedule((prev: any[]) => prev.map(scheduleItem => 
+                  scheduleItem.id === item.id 
+                    ? { 
+                        ...scheduleItem, 
+                        customFields: { 
+                          ...scheduleItem.customFields,
+                          [column.name]: e.target.value
+                        }
+                      }
+                    : scheduleItem
+                ));
+                logChangeDebounced(
+                  `custom_${column.name}_${item.id}`,
+                  'FIELD_UPDATE',
+                  `Updated custom field "${column.name}" for "${item.segmentName}" from "${oldValue}" to "${e.target.value}"`,
+                  {
+                    changeType: 'FIELD_CHANGE',
+                    itemId: item.id,
+                    itemName: item.segmentName,
+                    fieldName: `custom_${column.name}`,
+                    oldValue: oldValue,
+                    newValue: e.target.value,
+                    details: { fieldType: 'custom_field', columnName: column.name, characterChange: e.target.value.length - oldValue.length }
+                  }
+                );
+              }}
+              disabled={isLockedByOther}
+              className={`w-full px-3 py-2 border rounded text-base resize-none ${cellFill}`}
+              style={{
+                height: customFieldCellHeight,
+                maxHeight: customFieldCellHeight,
+                overflow: 'hidden',
+                lineHeight: '1.6',
+                wordWrap: 'break-word',
+                overflowWrap: 'break-word'
+              }}
+              rows={Math.max(2, String((item.customFields && item.customFields[column.name]) || '').split('\n').length)}
+              placeholder={isLockedByOther ? lockLabel : `${column.name}...`}
+              title={isLockedByOther ? lockLabel : undefined}
+            />
+          </div>
+        )
+      ))}
+      </>
+      )}
+    </>
+  );
+
+  if (asFragment) {
+    return <>{Content}</> as any;
+  }
+
+  const mergedStyle = rowHeight !== undefined ? { ...(style || {}), height: rowHeight } : style;
+
+  return (
+    <div key={item.id} data-item-id={item.id} className={`${className || ''} relative`} style={mergedStyle}>
+      {Content}
+    </div>
+  );
+}, (prevProps, nextProps) => {
+  const prevItem = prevProps.item;
+  const nextItem = nextProps.item;
+
+  // Different items → re-render
+  if (prevItem?.id !== nextItem?.id) return false;
+
+  // Compare per-row flags/metrics that affect rendering
+  const rowId = nextItem?.id;
+  if ((prevProps.indentedCues?.[rowId] ?? false) !== (nextProps.indentedCues?.[rowId] ?? false)) return false;
+  if ((prevProps.overtimeMinutes?.[rowId] ?? 0) !== (nextProps.overtimeMinutes?.[rowId] ?? 0)) return false;
+
+  // Start cue changes that affect badges
+  if (prevProps.startCueId !== nextProps.startCueId) return false;
+  if (prevProps.showStartOvertime !== nextProps.showStartOvertime) return false;
+  if (prevProps.showMode !== nextProps.showMode) return false;
+  if (prevProps.showWasUnderDuration !== nextProps.showWasUnderDuration) return false;
+  if (prevProps.originalDuration !== nextProps.originalDuration) return false;
+
+  // Shallow-compare key item fields used in the row
+  const fieldsToCheck = [
+    'programType', 'shotType', 'segmentName', 'segmentSpellingOk', 'segmentSpellingAskRos',
+    'durationHours', 'durationMinutes', 'durationSeconds',
+    'notes', 'vogText', 'vogVoiceId', 'vogVoiceName', 'assets', 'speakers', 'speakersText',
+    'hasPPT', 'hasQA', 'needsRecording', 'recordingSource', 'otherRoom', 'isPublic',
+    'checkboxStamps', 'mittiWatch', 'avWatch', 'dsmEnabled', 'dsmMode', 'dsmModeManual',
+    'isTimedMarker', 'isIndented', 'markerTimeMode', 'markerOffsetSeconds', 'markerAbsoluteSeconds',
+    'breakStartTime',
+    'sessionStartTime',
+    'sectionStarted',
+    'isSessionStartCue',
+    'sessionStartOvertime',
+  ] as const;
+  for (const field of fieldsToCheck) {
+    if ((prevItem as any)?.[field] !== (nextItem as any)?.[field]) return false;
+  }
+  // Custom fields / VO chips drive row height growth — must invalidate memo
+  if (prevItem?.customFields !== nextItem?.customFields) return false;
+  if ((prevItem?.voCues?.length ?? 0) !== (nextItem?.voCues?.length ?? 0)) return false;
+  if (prevItem?.voCues !== nextItem?.voCues) return false;
+
+  // Re-render when visibility/width maps or theme/colors change (ref compare)
+  if (prevProps.visibleColumns !== nextProps.visibleColumns) return false;
+  if (prevProps.columnWidths !== nextProps.columnWidths) return false;
+  if (prevProps.columnFlexOrder !== nextProps.columnFlexOrder) return false;
+  if (prevProps.programTypes !== nextProps.programTypes) return false;
+  if (prevProps.programTypeColors !== nextProps.programTypeColors) return false;
+  if (prevProps.shotTypes !== nextProps.shotTypes) return false;
+
+  if (prevProps.confirmRecordingMark !== nextProps.confirmRecordingMark) return false;
+  if (prevProps.isCommsUser !== nextProps.isCommsUser) return false;
+  if (prevProps.segmentNameDisplayMode !== nextProps.segmentNameDisplayMode) return false;
+  if (prevProps.segmentSpellingMode !== nextProps.segmentSpellingMode) return false;
+  if (prevProps.onSegmentSpellingPatch !== nextProps.onSegmentSpellingPatch) return false;
+  if (prevProps.resumeCueLabel !== nextProps.resumeCueLabel) return false;
+  if ((prevProps.resumeStartMirror?.itemId ?? null) !== (nextProps.resumeStartMirror?.itemId ?? null)) return false;
+  if ((prevProps.resumeStartMirror?.index ?? -1) !== (nextProps.resumeStartMirror?.index ?? -1)) return false;
+  if ((prevProps.resumeStartMirror?.lockedStartTime ?? null) !== (nextProps.resumeStartMirror?.lockedStartTime ?? null)) return false;
+  if ((prevProps.resumeStartMirror?.actualStartLabel ?? null) !== (nextProps.resumeStartMirror?.actualStartLabel ?? null)) return false;
+  if ((prevProps.resumeStartMirror?.cumulativeOvertime ?? 0) !== (nextProps.resumeStartMirror?.cumulativeOvertime ?? 0)) return false;
+  if ((prevProps.resumeStartMirror?.clockLabel ?? '') !== (nextProps.resumeStartMirror?.clockLabel ?? '')) return false;
+
+  // Role changes can affect disabled states and styling
+  if (prevProps.currentUserRole !== nextProps.currentUserRole) return false;
+
+  // Stable handlers assumed via useCallback; if identities change, re-render
+  if (prevProps.setSchedule !== nextProps.setSchedule) return false;
+  if (prevProps.handleUserEditing !== nextProps.handleUserEditing) return false;
+  if (prevProps.handleModalEditing !== nextProps.handleModalEditing) return false;
+  if (prevProps.handleModalClosed !== nextProps.handleModalClosed) return false;
+  if (prevProps.logChangeDebounced !== nextProps.logChangeDebounced) return false;
+  if (prevProps.logChange !== nextProps.logChange) return false;
+  if (prevProps.saveToAPI !== nextProps.saveToAPI) return false;
+  if (prevProps.onNotesChipUpdated !== nextProps.onNotesChipUpdated) return false;
+  if (prevProps.persistCueRecording !== nextProps.persistCueRecording) return false;
+  if (prevProps.persistScheduleCheckboxes !== nextProps.persistScheduleCheckboxes) return false;
+  if (prevProps.setEditingNotesItem !== nextProps.setEditingNotesItem) return false;
+  if (prevProps.setShowNotesModal !== nextProps.setShowNotesModal) return false;
+  if (prevProps.setEditingVogItemId !== nextProps.setEditingVogItemId) return false;
+  if (prevProps.setShowVogModal !== nextProps.setShowVogModal) return false;
+  if (prevProps.setViewingAssetsItem !== nextProps.setViewingAssetsItem) return false;
+  if (prevProps.setShowViewAssetsModal !== nextProps.setShowViewAssetsModal) return false;
+  if (prevProps.setEditingAssetsItem !== nextProps.setEditingAssetsItem) return false;
+  if (prevProps.setShowAssetsModal !== nextProps.setShowAssetsModal) return false;
+  if (prevProps.setEditingParticipantsItem !== nextProps.setEditingParticipantsItem) return false;
+  if (prevProps.setShowParticipantsModal !== nextProps.setShowParticipantsModal) return false;
+  if (prevProps.displaySpeakers !== nextProps.displaySpeakers) return false;
+  if (prevProps.setEditingSpeakersItem !== nextProps.setEditingSpeakersItem) return false;
+  if (prevProps.setShowSpeakersModal !== nextProps.setShowSpeakersModal) return false;
+  if (prevProps.getSpeakersHeight !== nextProps.getSpeakersHeight) return false;
+  if (prevProps.displaySpeakersText !== nextProps.displaySpeakersText) return false;
+  if (prevProps.customColumns !== nextProps.customColumns) return false;
+  if (prevProps.visibleCustomColumns !== nextProps.visibleCustomColumns) return false;
+  if (prevProps.customColumnWidths !== nextProps.customColumnWidths) return false;
+  if (prevProps.getRowHeight !== nextProps.getRowHeight) return false;
+
+  // Cumulative overtime change could affect the badge display
+  if (prevProps.cumulativeOvertime !== nextProps.cumulativeOvertime) return false;
+  if ((prevProps.lockedStartTime ?? null) !== (nextProps.lockedStartTime ?? null)) return false;
+  if ((prevProps.actualStartLabel ?? null) !== (nextProps.actualStartLabel ?? null)) return false;
+  if (prevProps.isRowDimmed !== nextProps.isRowDimmed) return false;
+  if ((prevProps.rowLock?.userId ?? null) !== (nextProps.rowLock?.userId ?? null)) return false;
+  if ((prevProps.rowLock?.userName ?? '') !== (nextProps.rowLock?.userName ?? '')) return false;
+  if (prevProps.currentUserId !== nextProps.currentUserId) return false;
+  if (prevProps.onRowEditStart !== nextProps.onRowEditStart) return false;
+  if (prevProps.onRowEditEnd !== nextProps.onRowEditEnd) return false;
+
+  // No relevant changes → skip re-render
+  return true;
+});
+
+export default ScheduleRow;
