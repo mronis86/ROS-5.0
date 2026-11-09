@@ -622,9 +622,17 @@ function getWebLinkedLog() {
   return readTail('weblinked');
 }
 
+/**
+ * Require an already-running WebLinked. Never auto-starts the engine —
+ * operators must press Start WebLinked; Push / Preview / Settings only work after that.
+ */
 async function ensureRunning() {
   if (await isRunning()) return { ok: true, ...(await getStatus()) };
-  return startWebLinked();
+  return {
+    ok: false,
+    running: false,
+    error: 'WebLinked is not running. Start WebLinked on the Displays tab first.',
+  };
 }
 
 async function stopWebLinked() {

@@ -9,6 +9,8 @@ import EventListPage from './pages/EventListPage';
 import RunOfShowPage from './pages/RunOfShowPage';
 import QuickModePage from './pages/QuickModePage';
 import OfflineTimerPage from './pages/OfflineTimerPage';
+import PhotoViewPage from './pages/PhotoViewPage';
+import OperatorCueDisplayPage from './pages/OperatorCueDisplayPage';
 
 const App: React.FC = () => (
   <BrowserRouter>
@@ -17,11 +19,13 @@ const App: React.FC = () => (
         <AppHeaderCollapseProvider>
           <LiveSyncStatusProvider>
             <Routes>
-              {/* Full-screen timer displays — no header or connectivity bar */}
+              {/* Full-screen timer / display pages — no header or connectivity bar */}
               <Route path="/timer" element={<OfflineTimerPage />} />
               <Route path="/fullscreen-timer" element={<OfflineTimerPage />} />
               {/* DSM Clock URL used by kiosk Displays; shares OfflineTimer until dedicated DSM page is synced */}
               <Route path="/dsm-clock" element={<OfflineTimerPage />} />
+              <Route path="/photo-view" element={<PhotoViewPage />} />
+              <Route path="/operator-cue-display" element={<OperatorCueDisplayPage />} />
               <Route element={<OfflineAppShell />}>
                 <Route path="/" element={<EventListPage />} />
                 <Route path="/run-of-show" element={<RunOfShowPage />} />

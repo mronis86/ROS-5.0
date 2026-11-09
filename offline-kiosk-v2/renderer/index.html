@@ -156,6 +156,14 @@
             </label>
             <span class="wl-live-preview-meta" id="wlLivePreviewMeta">WebLinked output · 16:9</span>
             <span class="spacer"></span>
+            <button
+              type="button"
+              class="ghost-btn"
+              id="wlExitPageFullscreenBtn"
+              title="Leave the page’s own fullscreen (sends Esc to the active source)"
+            >
+              Exit fullscreen
+            </button>
             <button type="button" class="ghost-btn" id="wlLivePreviewLargerBtn">Larger</button>
           </div>
           <div class="wl-live-preview-slot" id="wlLivePreviewSlot">
@@ -169,6 +177,7 @@
           </div>
           <p class="wl-settings-hint" id="wlInteractiveHint" hidden>
             Clicks and typing go to the live page. <strong>This is the on-air picture.</strong>
+            Esc or <strong>Exit fullscreen</strong> leaves page fullscreen on that source.
           </p>
           <p class="wl-settings-hint" id="wlLivePreviewHint">
             Same picture as NDI / SDI / Spout. Card <strong>Preview</strong> loads that URL here;
@@ -190,8 +199,16 @@
         <label class="wl-check wl-interactive-toggle" title="Clicks and keys go to the live page">
           <input type="checkbox" id="wlInteractiveTogglePop" checked /> click the page
         </label>
-        <span class="note" id="wlPreviewOverlayNote">Click and type here to control the page.</span>
+        <span class="note" id="wlPreviewOverlayNote">Click and type here to control the page. Esc exits page fullscreen.</span>
         <span class="spacer"></span>
+        <button
+          type="button"
+          class="ghost-btn"
+          id="wlExitPageFullscreenBtnPop"
+          title="Leave the page’s own fullscreen (sends Esc to the active source)"
+        >
+          Exit fullscreen
+        </button>
         <button type="button" class="primary-btn" id="wlPreviewOverlayCloseBtn">Close</button>
       </div>
       <div class="wl-live-preview-slot wl-preview-overlay-slot" id="wlPreviewOverlaySlot"></div>

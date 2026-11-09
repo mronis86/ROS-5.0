@@ -7,6 +7,12 @@ import { Event } from '../types/Event';
 import { EventSelectorDropdown } from '../components/EventSelectorDropdown';
 import { fetchConnectivityStatus, type ConnectivitySnapshot } from '../services/connectivity-status';
 import { onCloudModeChange } from '../services/socket-client';
+import {
+  DISPLAY_SESSION_MAX_HOURS,
+  DISPLAY_SESSION_MAX_HINT,
+  DISPLAY_SESSION_MAX_LABEL,
+  DISPLAY_SESSION_PICK_TIME_ALERT,
+} from '../lib/displaySession';
 
 /** Stage / confidence monitor — syncs via show server Socket.IO (LAN or cloud-bridged). */
 const OfflineTimerPage: React.FC = () => {
@@ -342,7 +348,7 @@ const OfflineTimerPage: React.FC = () => {
     const totalMinutes = (hours * 60) + minutes;
     
     if (totalMinutes === 0) {
-      alert('Please select a time greater than 0, or use "Never Disconnect"');
+      alert(DISPLAY_SESSION_PICK_TIME_ALERT);
       return;
     }
     
@@ -374,12 +380,9 @@ const OfflineTimerPage: React.FC = () => {
     console.log(`⏰ ClockPage: Disconnect timer set to ${timeText.trim()}`);
   };
   
-  // Handle never disconnect
+  // Max session shortcut (replaces old "Never Disconnect")
   const handleNeverDisconnect = () => {
-    if (disconnectTimer) clearTimeout(disconnectTimer);
-    setDisconnectTimer(null);
-    setShowDisconnectModal(false);
-    console.log('⏰ ClockPage: Disconnect timer set to Never');
+    handleDisconnectTimerConfirm(DISPLAY_SESSION_MAX_HOURS, 0);
   };
   
   // Handle reconnect from notification
@@ -621,11 +624,11 @@ const DisconnectTimerModal: React.FC<{ onConfirm: (hours: number, mins: number) 
             onClick={onNever}
             className="flex-1 px-8 py-4 bg-slate-600 hover:bg-slate-500 rounded-xl text-slate-200 text-lg font-medium transition transform hover:-translate-y-0.5 hover:shadow-lg hover:shadow-slate-600/30"
           >
-            ∞ Never Disconnect
+            {DISPLAY_SESSION_MAX_LABEL}
           </button>
         </div>
         
-        <p className="mt-6 text-sm text-slate-500 text-center">⚠️ "Never" may increase database costs</p>
+        <p className="mt-6 text-sm text-slate-500 text-center">⚠️ {DISPLAY_SESSION_MAX_HINT}</p>
       </div>
     </div>
   );

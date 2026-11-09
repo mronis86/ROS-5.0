@@ -140,12 +140,23 @@ function ensureRemoteView() {
 
 function applyRemoteBounds(bounds) {
   if (!remoteView || !mainWindow || mainWindow.isDestroyed()) return;
-  const x = Math.max(0, Math.round(bounds?.x || 0));
-  const y = Math.max(0, Math.round(bounds?.y || 0));
-  const width = Math.max(1, Math.round(bounds?.width || 1));
-  const height = Math.max(1, Math.round(bounds?.height || 1));
+  // BrowserView coords are relative to the window content area (DIP).
+  // Clamp so VDO/Meshcast never paints past the kiosk chrome.
+  const content = mainWindow.getContentSize();
+  const maxW = Math.max(1, Math.round(content[0] || 1));
+  const maxH = Math.max(1, Math.round(content[1] || 1));
+  let x = Math.max(0, Math.round(bounds?.x || 0));
+  let y = Math.max(0, Math.round(bounds?.y || 0));
+  let width = Math.max(1, Math.round(bounds?.width || 1));
+  let height = Math.max(1, Math.round(bounds?.height || 1));
+  if (x >= maxW) x = Math.max(0, maxW - 1);
+  if (y >= maxH) y = Math.max(0, maxH - 1);
+  if (x + width > maxW) width = Math.max(1, maxW - x);
+  if (y + height > maxH) height = Math.max(1, maxH - y);
   remoteView.setBounds({ x, y, width, height });
-  remoteView.setAutoResize({ width: true, height: true });
+  // ResizeObserver in the renderer already pushes exact host bounds —
+  // auto-resize grows with the window and was overflowing past the panel.
+  remoteView.setAutoResize({ width: false, height: false, horizontal: false, vertical: false });
 }
 
 function showRemoteView(bounds) {

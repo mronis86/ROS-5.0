@@ -26,7 +26,7 @@ const DISPLAY_PRESETS = [
     name: 'Photo View',
     route: '/photo-view',
     desc: 'Speaker photos and cue context for photo ops.',
-    ready: false,
+    ready: true,
     preset: true,
   },
   {
@@ -34,7 +34,7 @@ const DISPLAY_PRESETS = [
     name: 'Operator Large',
     route: '/operator-cue-display',
     desc: 'Large-type cue board for floor / remote ops.',
-    ready: false,
+    ready: true,
     preset: true,
   },
   {
@@ -1154,12 +1154,16 @@ function hostBounds() {
   const host = $('#remoteEmbedHost');
   if (!host || host.offsetParent === null) return null;
   const r = host.getBoundingClientRect();
-  return {
-    x: Math.round(r.left),
-    y: Math.round(r.top),
-    width: Math.round(r.width),
-    height: Math.round(r.height),
-  };
+  // Keep the BrowserView inside the visible host (and the window).
+  const maxW = Math.max(1, Math.floor(window.innerWidth || r.width));
+  const maxH = Math.max(1, Math.floor(window.innerHeight || r.height));
+  let x = Math.max(0, Math.round(r.left));
+  let y = Math.max(0, Math.round(r.top));
+  let width = Math.max(1, Math.round(r.width));
+  let height = Math.max(1, Math.round(r.height));
+  if (x + width > maxW) width = Math.max(1, maxW - x);
+  if (y + height > maxH) height = Math.max(1, maxH - y);
+  return { x, y, width, height };
 }
 
 function pushEmbedBounds() {
@@ -1484,9 +1488,37 @@ function renderDisplays() {
       void togglePushWebLinked(row.id);
     });
 
+    const exitFsBtn = document.createElement('button');
+    exitFsBtn.type = 'button';
+    exitFsBtn.className = 'ghost-btn display-row-btn';
+    exitFsBtn.textContent = 'Exit FS';
+    exitFsBtn.title =
+      'Leave page fullscreen on this WebLinked source (same as Esc / Exit page fullscreen)';
+    exitFsBtn.disabled = !ready || !isDisplayArmed(row.id) || !state.weblinked?.running;
+    exitFsBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      void exitWlPageFullscreen(row.id);
+    });
+
     actions.appendChild(settingsBtn);
     actions.appendChild(previewBtn);
     actions.appendChild(pushBtn);
+    actions.appendChild(exitFsBtn);
+
+    const screenOn = Boolean(normalizeWlSettings(row.wlSettings, row).outputs?.screen);
+    if (screenOn && isDisplayArmed(row.id)) {
+      const exitScreenBtn = document.createElement('button');
+      exitScreenBtn.type = 'button';
+      exitScreenBtn.className = 'ghost-btn display-row-btn';
+      exitScreenBtn.textContent = 'Exit Screen';
+      exitScreenBtn.title = 'Turn off this card’s fullscreen Screen monitor output';
+      exitScreenBtn.disabled = !state.weblinked?.running;
+      exitScreenBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        void exitWlScreenOutput(row.id);
+      });
+      actions.appendChild(exitScreenBtn);
+    }
 
     if (!row.preset) {
       const removeBtn = document.createElement('button');
@@ -2030,6 +2062,71 @@ async function wlSendInput(event) {
   }
 }
 
+/** Leave Element.requestFullscreen on the active WebLinked source (Esc + Escape synth). */
+async function exitWlPageFullscreen(displayId = null) {
+  const id = displayId || state.previewDisplayId || primaryArmedDisplayId();
+  if (!window.kiosk?.weblinkedSendInput) {
+    setDisplayNote('Exit fullscreen only available in the Electron kiosk.');
+    return { ok: false };
+  }
+  if (!state.weblinked?.running) {
+    setDisplayNote('Start WebLinked first.');
+    return { ok: false };
+  }
+  const source = wlSourceId(id || 'main');
+  try {
+    const result = await window.kiosk.weblinkedSendInput({
+      type: 'exit_fullscreen',
+      source,
+    });
+    const row = findDisplay(id);
+    setDisplayNote(
+      result?.ok === false
+        ? result?.error || 'Could not exit page fullscreen.'
+        : `Exited page fullscreen · ${row?.name || source}`
+    );
+    return result?.ok === false ? result : { ok: true, ...(result || {}) };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Exit fullscreen failed';
+    setDisplayNote(msg);
+    return { ok: false, error: msg };
+  }
+}
+
+/** Turn off this card’s Screen (monitor) output — leaves NDI / Shared / URL alone. */
+async function exitWlScreenOutput(displayId) {
+  const row = findDisplay(displayId);
+  if (!row) return { ok: false, error: 'Display not found' };
+  if (!state.weblinked?.running) {
+    setDisplayNote('Start WebLinked first.');
+    return { ok: false };
+  }
+  if (!window.kiosk?.weblinkedApplySimpleSettings) {
+    setDisplayNote('Screen control only available in the Electron kiosk.');
+    return { ok: false };
+  }
+  const settings = normalizeWlSettings(row.wlSettings, row);
+  if (!settings.outputs.screen) {
+    setDisplayNote(`${row.name} Screen output is already off.`);
+    return { ok: true, skipped: true };
+  }
+  settings.outputs.screen = false;
+  row.wlSettings = settings;
+  saveDisplays();
+  const result = await window.kiosk.weblinkedApplySimpleSettings(
+    wlSettingsToPayload(settings, row, { save: false })
+  );
+  if (!result?.ok) {
+    setDisplayNote(result?.error || `Could not exit Screen on ${row.name}.`);
+    void refreshWebLinkedStatus();
+    return result;
+  }
+  renderDisplays();
+  setDisplayNote(`${row.name} Screen output off (NDI / feed unchanged).`);
+  void refreshWebLinkedStatus();
+  return result;
+}
+
 function flushWlMove() {
   wlMoveScheduled = false;
   if (wlPendingMove) {
@@ -2116,6 +2213,12 @@ function wireWlPreviewInput() {
     if (!wlInteractive) return;
     e.preventDefault();
     e.stopPropagation();
+    // Match WebLinked control page: Esc leaves Element.requestFullscreen
+    // (raw Escape alone is not enough in windowless CEF).
+    if (e.key === 'Escape') {
+      void exitWlPageFullscreen();
+      return;
+    }
     const modifiers = wlModifiersOf(e);
     const printable = e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey;
     const character = printable ? e.key.charCodeAt(0) : 0;
@@ -2147,6 +2250,11 @@ async function pullWlLivePreviewFrame() {
   if (document.hidden && wlPreviewPlace === 'dock') return;
   const panel = $('#panel-displays');
   if (wlPreviewPlace === 'dock' && panel?.hidden) return;
+  // Do not poke the engine while it is stopped — preview must not auto-start WebLinked.
+  if (!state.weblinked?.running) {
+    setWlLivePreviewMeta('Start WebLinked to see live preview');
+    return;
+  }
 
   wlPreviewBusy = true;
   try {
@@ -2211,6 +2319,10 @@ async function openDisplayPreview(id) {
   }
   if (row.preset && row.route !== 'custom' && !state.eventId) {
     setDisplayNote('Choose an event on the Event tab first.');
+    return;
+  }
+  if (!state.weblinked?.running) {
+    setDisplayNote('Start WebLinked first, then Preview or Push.');
     return;
   }
   const url = (row.url || pageUrlForDisplay(row) || '').trim();
@@ -2317,6 +2429,10 @@ async function togglePushWebLinked(id) {
 
   if (row.preset && row.route !== 'custom' && !state.eventId) {
     setDisplayNote('Choose an event on the Event tab first.');
+    return;
+  }
+  if (!state.weblinked?.running) {
+    setDisplayNote('Start WebLinked first, then Push.');
     return;
   }
   const url = (row.url || pageUrlForDisplay(row) || '').trim();
@@ -3048,6 +3164,8 @@ async function bootstrap() {
     setWlInteractive(true);
     placeWlLivePreview('overlay');
   });
+  $('#wlExitPageFullscreenBtn')?.addEventListener('click', () => void exitWlPageFullscreen());
+  $('#wlExitPageFullscreenBtnPop')?.addEventListener('click', () => void exitWlPageFullscreen());
   $('#wlPreviewOverlayCloseBtn')?.addEventListener('click', () => placeWlLivePreview('dock'));
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
@@ -3058,7 +3176,14 @@ async function bootstrap() {
       return;
     }
     const previewOverlay = $('#wlPreviewOverlay');
-    if (previewOverlay && !previewOverlay.hidden) placeWlLivePreview('dock');
+    if (previewOverlay && !previewOverlay.hidden) {
+      // Prefer leaving page fullscreen over closing the enlarged preview.
+      if (state.weblinked?.running && (state.previewDisplayId || primaryArmedDisplayId())) {
+        void exitWlPageFullscreen();
+        return;
+      }
+      placeWlLivePreview('dock');
+    }
   });
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden && state.tab === 'displays') startWlLivePreviewLoop();

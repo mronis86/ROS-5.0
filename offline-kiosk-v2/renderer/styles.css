@@ -1527,6 +1527,10 @@ body {
   flex-direction: column;
   flex: 1;
   min-height: 0;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .remoteop-live[hidden],
@@ -1591,8 +1595,13 @@ body {
 
 .remoteop-embed-host {
   flex: 1;
+  min-width: 0;
   min-height: 0;
+  margin: 0.65rem 0.85rem 0.85rem;
   background: #000;
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  overflow: hidden;
 }
 
 @media (max-width: 700px) {
