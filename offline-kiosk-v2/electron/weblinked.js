@@ -315,14 +315,80 @@ function killOrphanEngines() {
   resolvedBase = null;
 }
 
-function spawnEngineDirect(exe, port) {
-  const args = [
+function engineLaunchArgs(port) {
+  return [
     '--port',
     String(port),
     '--no-open',
     '--headless',
     '--disable-direct-composition',
   ];
+}
+
+function findRunningEnginePid() {
+  for (const image of ['sinor-weblinked.exe', 'weblinked.exe']) {
+    try {
+      const out = execFileSync(
+        'tasklist',
+        ['/FI', `IMAGENAME eq ${image}`, '/FO', 'CSV', '/NH'],
+        { windowsHide: true, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }
+      );
+      const line = String(out)
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .find((l) => l.toLowerCase().includes(image.toLowerCase()));
+      if (!line) continue;
+      // "sinor-weblinked.exe","1234","Session Name","Session#","Mem Usage"
+      const cols = line.split('","').map((c) => c.replace(/^"|"$/g, ''));
+      const pid = Number(cols[1]);
+      if (Number.isFinite(pid) && pid > 0) return pid;
+    } catch {
+      /* ignore */
+    }
+  }
+  return null;
+}
+
+/** Hidden launch for CONSOLE-subsystem exe (avoids terminal windows). */
+function spawnEngineVbsHidden(exe, port) {
+  const args = engineLaunchArgs(port).join(' ');
+  const cwd = path.dirname(exe);
+  const vbsPath = path.join(
+    os.tmpdir(),
+    `ros-wl-launch-${process.pid}-${Date.now()}.vbs`
+  );
+  // WindowStyle 0 = hidden. Quote paths for WScript.Shell.Run.
+  const runCmd = `"${exe}" ${args}`.replace(/"/g, '""');
+  const vbs = [
+    'On Error Resume Next',
+    'Dim sh',
+    'Set sh = CreateObject("WScript.Shell")',
+    // VBS treats \ as literal — only double quotes need escaping.
+    `sh.CurrentDirectory = "${cwd.replace(/"/g, '""')}"`,
+    `sh.Run "${runCmd}", 0, False`,
+  ].join('\r\n');
+  fs.writeFileSync(vbsPath, vbs, 'utf8');
+  wlLog('spawn vbs hidden', { exe, cwd, port, vbsPath });
+
+  const child = spawn('wscript.exe', ['//B', '//Nologo', vbsPath], {
+    windowsHide: true,
+    stdio: 'ignore',
+    detached: true,
+    shell: false,
+  });
+  child.unref();
+  setTimeout(() => {
+    try {
+      fs.unlinkSync(vbsPath);
+    } catch {
+      /* ignore */
+    }
+  }, 5000);
+  return { port: Number(port), method: 'vbs-hidden' };
+}
+
+function spawnEngineDirect(exe, port) {
+  const args = engineLaunchArgs(port);
   wlLog('spawn direct', { exe, cwd: path.dirname(exe), args });
   const child = spawn(exe, args, {
     cwd: path.dirname(exe),
@@ -341,25 +407,14 @@ function spawnEngineDirect(exe, port) {
 }
 
 function spawnEnginePowerShell(exe, port, { timeoutMs = 8000 } = {}) {
-  // Hidden Start-Process hides CONSOLE-subsystem flash. Keep DirectComposition off
-  // but do NOT disable GPU compositing — that left CEF with paints=0 (black NDI/SDI).
-  const argList = [
-    '--port',
-    String(port),
-    '--no-open',
-    '--headless',
-    '--disable-direct-composition',
-  ]
-    .map(psQuote)
-    .join(', ');
-
+  // No -PassThru: returns immediately after create (avoids MOTW hang on PassThru).
+  const argList = engineLaunchArgs(port).map(psQuote).join(', ');
   const script = [
     `$ErrorActionPreference = 'Stop'`,
-    `$p = Start-Process -FilePath ${psQuote(exe)} -WorkingDirectory ${psQuote(path.dirname(exe))} -ArgumentList @(${argList}) -WindowStyle Hidden -PassThru`,
-    `Write-Output $p.Id`,
+    `Start-Process -FilePath ${psQuote(exe)} -WorkingDirectory ${psQuote(path.dirname(exe))} -ArgumentList @(${argList}) -WindowStyle Hidden`,
   ].join('; ');
 
-  wlLog('spawn powershell', { exe, cwd: path.dirname(exe), port, timeoutMs });
+  wlLog('spawn powershell hidden', { exe, cwd: path.dirname(exe), port, timeoutMs });
 
   return new Promise((resolve, reject) => {
     const child = spawn(
@@ -372,7 +427,6 @@ function spawnEnginePowerShell(exe, port, { timeoutMs = 8000 } = {}) {
       }
     );
 
-    let stdout = '';
     let stderr = '';
     let settled = false;
     const timer = setTimeout(() => {
@@ -383,12 +437,9 @@ function spawnEnginePowerShell(exe, port, { timeoutMs = 8000 } = {}) {
       } catch {
         /* ignore */
       }
-      reject(new Error(`PowerShell Start-Process timed out after ${timeoutMs}ms (often MOTW/SmartScreen)`));
+      reject(new Error(`PowerShell Start-Process timed out after ${timeoutMs}ms`));
     }, timeoutMs);
 
-    child.stdout.on('data', (chunk) => {
-      stdout += String(chunk);
-    });
     child.stderr.on('data', (chunk) => {
       stderr += String(chunk);
     });
@@ -402,11 +453,8 @@ function spawnEnginePowerShell(exe, port, { timeoutMs = 8000 } = {}) {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      const pid = Number(String(stdout).trim().split(/\r?\n/).pop());
-      if (Number.isFinite(pid) && pid > 0) {
-        enginePid = pid;
-        startedByKiosk = true;
-        resolve({ pid, port: Number(port), method: 'powershell' });
+      if (code === 0) {
+        resolve({ port: Number(port), method: 'powershell-hidden' });
         return;
       }
       reject(
@@ -419,27 +467,47 @@ function spawnEnginePowerShell(exe, port, { timeoutMs = 8000 } = {}) {
   });
 }
 
+async function finalizeSpawn(launched, port) {
+  await sleep(400);
+  const pid = findRunningEnginePid() || launched?.pid || null;
+  if (pid) enginePid = pid;
+  startedByKiosk = true;
+  if (!engineProcessAlive()) {
+    throw new Error(`WebLinked did not stay running after ${launched?.method || 'launch'}`);
+  }
+  return { pid: enginePid, port: Number(port), method: launched?.method || 'unknown' };
+}
+
 async function spawnEngine(exe) {
   const port = defaultHttpPortForExe(exe);
   unblockWebLinkedRuntime(exe);
 
-  // Portable downloads often hang forever in PowerShell Start-Process (MOTW).
-  // Prefer direct CreateProcess; fall back to short-timeout PowerShell for console hide.
+  // Prefer hidden launchers so CONSOLE-subsystem sinor-weblinked.exe does not
+  // open terminal windows. Direct spawn is last resort (works but shows consoles).
+  const errors = [];
+
   try {
-    return spawnEngineDirect(exe, port);
-  } catch (directErr) {
-    wlWarn('Direct spawn failed — trying PowerShell', {
-      error: directErr instanceof Error ? directErr.message : String(directErr),
-    });
-    try {
-      return await spawnEnginePowerShell(exe, port, { timeoutMs: 8000 });
-    } catch (psErr) {
-      const msg = [
-        directErr instanceof Error ? directErr.message : String(directErr),
-        psErr instanceof Error ? psErr.message : String(psErr),
-      ].join(' | ');
-      throw new Error(msg);
-    }
+    const launched = spawnEngineVbsHidden(exe, port);
+    return await finalizeSpawn(launched, port);
+  } catch (e) {
+    errors.push(`vbs: ${e instanceof Error ? e.message : String(e)}`);
+    wlWarn('VBS hidden spawn failed', { error: errors[errors.length - 1] });
+  }
+
+  try {
+    const launched = await spawnEnginePowerShell(exe, port, { timeoutMs: 8000 });
+    return await finalizeSpawn(launched, port);
+  } catch (e) {
+    errors.push(`powershell: ${e instanceof Error ? e.message : String(e)}`);
+    wlWarn('PowerShell hidden spawn failed', { error: errors[errors.length - 1] });
+  }
+
+  try {
+    const launched = spawnEngineDirect(exe, port);
+    return await finalizeSpawn(launched, port);
+  } catch (e) {
+    errors.push(`direct: ${e instanceof Error ? e.message : String(e)}`);
+    throw new Error(errors.join(' | '));
   }
 }
 
