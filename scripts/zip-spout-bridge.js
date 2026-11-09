@@ -22,6 +22,10 @@ if (!fs.existsSync(publicDir)) {
 }
 
 const output = fs.createWriteStream(zipPath);
+output.on('error', (err) => {
+  console.warn(`Skipping ros-led-spout zip rewrite (${err.message}). Keeping the existing file.`);
+  process.exit(0);
+});
 const archive = archiver('zip', { zlib: { level: 9 } });
 
 archive.pipe(output);

@@ -61,6 +61,7 @@
     "zip:powerpoint-bridge": "node scripts/zip-powerpoint-bridge.js",
     "zip:offline-show": "node scripts/zip-offline-show.js",
     "zip:offline-kiosk": "node scripts/zip-offline-kiosk.js",
+    "publish:offline-kiosk-install": "node -e \"require('fs').copyFileSync('offline-kiosk-v2/launcher/install-offline-kiosk.bat','public/install-offline-kiosk.bat'); console.log('public/install-offline-kiosk.bat')\"",
     "zip:companion-full": "node scripts/zip-companion-module-full.js",
     "zip:companion-resolume": "node scripts/zip-companion-module-resolume-full.js",
     "zip:companion-mitti": "node scripts/zip-companion-module-mitti-full.js",

@@ -2,6 +2,7 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
+const { offlineShowRoot, nodeCommand, bundledNodeExe } = require('./runtime-paths');
 
 const OFFLINE_SHOW_URL = 'http://127.0.0.1:3004';
 const HEALTH_PATH = '/health';
@@ -9,14 +10,6 @@ const EVENTS_PATH = '/api/calendar-events';
 
 let showChild = null;
 let startedByKiosk = false;
-
-function offlineShowRoot() {
-  // Bundled with Offline Kiosk V2 (preferred for show-system packaging).
-  const bundled = path.resolve(__dirname, '..', 'engines', 'offline-show');
-  if (fs.existsSync(path.join(bundled, 'server', 'server.js'))) return bundled;
-  // Legacy sibling only if the bundled engine is missing.
-  return path.resolve(__dirname, '..', '..', 'offline-show');
-}
 
 function requestJson(urlPath, { method = 'GET', body = null, timeoutMs = 15000 } = {}) {
   return new Promise((resolve, reject) => {
@@ -279,7 +272,7 @@ function ensureOfflineShowInstall() {
     return {
       ok: false,
       error:
-        'Offline Show dependencies missing. Run npm install in offline-kiosk-v2\\engines\\offline-show.',
+        'Offline Show dependencies missing. Rebuild the portable kiosk (or run npm install in engines\\offline-show).',
     };
   }
   return { ok: true, root, serverJs };
@@ -287,12 +280,17 @@ function ensureOfflineShowInstall() {
 
 function spawnWithNode(root) {
   if (showChild && !showChild.killed) return showChild;
-  const child = spawn('node', ['server/server.js'], {
+  const nodeBin = nodeCommand();
+  const child = spawn(nodeBin, ['server/server.js'], {
     cwd: root,
     env: {
       ...process.env,
       OFFLINE_PORT: '3004',
       PORT: '3004',
+      // Prefer bundled Node's directory on PATH for any child tools
+      PATH: bundledNodeExe()
+        ? `${path.dirname(bundledNodeExe())}${path.delimiter}${process.env.PATH || ''}`
+        : process.env.PATH,
     },
     stdio: 'ignore',
     windowsHide: true,

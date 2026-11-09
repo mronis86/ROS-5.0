@@ -7,6 +7,8 @@
  *   node scripts/upload-app-download.js public/powerpoint-bridge.zip
  *   node scripts/upload-app-download.js public/ros-vmix-datasource-bridge.zip
  *   node scripts/upload-app-download.js public/ros-hyperdeck-ingest.zip
+ *   node scripts/upload-app-download.js offline-kiosk-v2/dist/ROS-Offline-Kiosk-Portable.zip
+ *   node scripts/upload-app-download.js public/ros-offline-kiosk-portable.zip
  */
 const { execFileSync } = require('child_process');
 const fs = require('fs');
@@ -55,6 +57,14 @@ const HOSTED = {
   },
   'ros-hyperdeck-ingest.zip': {
     key: 'downloads/ros-hyperdeck-ingest.zip',
+    contentType: 'application/zip',
+  },
+  'ros-offline-kiosk-portable.zip': {
+    key: 'downloads/ros-offline-kiosk-portable.zip',
+    contentType: 'application/zip',
+  },
+  'ROS-Offline-Kiosk-Portable.zip': {
+    key: 'downloads/ros-offline-kiosk-portable.zip',
     contentType: 'application/zip',
   },
 };

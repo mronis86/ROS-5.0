@@ -1,7 +1,7 @@
 /**
- * Zip offline-kiosk-v2/ → public/offline-kiosk-v2.zip for operator download.
- * Omits node_modules and WebLinked binary payload (~390MB); operators run
- * npm install then optional npm run sync:weblinked after unzip.
+ * Zip offline-kiosk-v2/ → public/offline-kiosk-v2.zip (fetched by install-offline-kiosk.bat).
+ * Operators download the .bat from the site, not this zip.
+ * Omits node_modules and WebLinked binary payload (~390MB).
  */
 const path = require('path');
 const fs = require('fs');
@@ -55,19 +55,15 @@ call "launcher\\start-offline-kiosk.bat"
 endlocal
 `;
 
-const readme = `ROS Offline Kiosk V2
+const readme = `ROS Offline Kiosk V2 (package used by install-offline-kiosk.bat)
 
-Operator shell for LAN Offline Show, displays (WebLinked), and RemoteOp.
+Preferred: download install-offline-kiosk.bat from ROS and run it.
+It installs this package under %LOCALAPPDATA%\\ROS-Offline-Kiosk if needed.
 
+Manual:
 1. Unzip this folder.
-2. Double-click START.bat (or launcher\\start-offline-kiosk.bat).
-   First run installs Electron via npm — Node.js required.
-3. Status tab: start Offline Show, set LAN / Cloud / token.
-4. Optional WebLinked (SDI/NDI): on a machine that has the Sinor WebLinked
-   build, run: npm run sync:weblinked
-   (binaries are not in this zip — too large for Pages).
-
-Settings / session length live in the kiosk UI.
+2. Double-click START.bat (Node.js 20+ required).
+3. Optional WebLinked: npm run sync:weblinked
 `;
 
 const output = fs.createWriteStream(zipPath);
@@ -114,4 +110,14 @@ archive.finalize();
 output.on('close', () => {
   const mb = (archive.pointer() / (1024 * 1024)).toFixed(1);
   console.log(`Created public/${path.basename(zipPath)} (${mb} MB)`);
+  const installSrc = path.join(sourcePath, 'launcher', 'install-offline-kiosk.bat');
+  const installDest = path.join(publicDir, 'install-offline-kiosk.bat');
+  if (fs.existsSync(installSrc)) {
+    try {
+      fs.copyFileSync(installSrc, installDest);
+      console.log('Updated public/install-offline-kiosk.bat');
+    } catch (err) {
+      console.warn(`Could not update install-offline-kiosk.bat (${err.message})`);
+    }
+  }
 });

@@ -1,0 +1,4 @@
+﻿Bundled WebLinked runtime for Offline Kiosk V2.
+Upstream reference (do not delete): WebLinked-SDI on the Desktop.
+Synced from: C:\Users\audre\OneDrive\Desktop\WebLinked-SDI\build\Release
+Synced at: 2026-11-04T15:43:47.0550070-05:00

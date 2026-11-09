@@ -29,6 +29,25 @@ npm start
 
 Or: `launcher\start-offline-kiosk.bat`
 
+## Show-PC install (download)
+
+**Preferred (portable):** download **Offline Kiosk Portable** from ROS (OSC / Graphics Links), or build with `npm run dist`.  
+Unzip → **START.bat**. Includes Electron + Offline Show + bundled Node + WebLinked. No system Node/npm.
+
+Hosted as `ros-offline-kiosk-portable.zip` on the Railway downloads bucket (same pattern as PPT Bridge).
+
+## Portable build
+
+```bat
+cd offline-kiosk-v2
+npm install
+npm run sync:weblinked
+npm run dist
+```
+
+Requires Desktop `WebLinked-SDI\build\Release` (or Program Files\\WebLinked) for the sync step.  
+Locales are trimmed to en-US to keep the pack closer to the ~155MB WebLinked zip size plus Electron/Node.
+
 ## Layout
 
 ```

@@ -1,5 +1,6 @@
 node_modules/
 dist/
+portable-runtime/
 *.log
 .DS_Store
 
@@ -15,3 +16,4 @@ engines/offline-show/*.db-shm
 engines/weblinked/**
 !engines/weblinked/README.md
 !engines/weblinked/.gitkeep
+!engines/weblinked/BUNDLE.txt

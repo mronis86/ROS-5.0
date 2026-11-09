@@ -157,14 +157,14 @@ const OSCModalSimplified: React.FC<OSCModalSimplifiedProps> = ({
 
               <div className="text-center mb-4">
                 <a
-                  href="/offline-kiosk-v2.zip"
-                  download="offline-kiosk-v2.zip"
+                  href={getAppDownloadUrl('ros-offline-kiosk-portable.zip')}
+                  download="ros-offline-kiosk-portable.zip"
                   className="block bg-cyan-800 hover:bg-cyan-700 text-white text-sm py-3 px-6 rounded text-center transition-colors font-semibold"
                 >
-                  Offline Kiosk V2 (Windows)
+                  Offline Kiosk Portable (Windows)
                 </a>
                 <div className="text-xs text-cyan-200 mt-2">
-                  Operator shell • Offline Show + Displays + RemoteOp • Unzip, START.bat (Node required)
+                  Unzip · START.bat • Offline Show + WebLinked included • no Node install
                 </div>
               </div>
 

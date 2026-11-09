@@ -25,7 +25,13 @@ $MaxFileBytes = 25 * 1024 * 1024
 $NetlifyBase = $NetlifyDownloadsBase.TrimEnd('/')
 $LargeZips = @('ROS-OSC-Control-portable.zip', 'ros-civics-vmix-bridge.zip')
 $RailwayDownloadsBase = 'https://ros-50-production.up.railway.app/api/downloads'
-$RailwayZips = @('powerpoint-bridge-v2.zip', 'powerpoint-bridge.zip', 'ros-vmix-datasource-bridge.zip', 'ros-hyperdeck-ingest.zip')
+$RailwayZips = @(
+    'powerpoint-bridge-v2.zip',
+    'powerpoint-bridge.zip',
+    'ros-vmix-datasource-bridge.zip',
+    'ros-hyperdeck-ingest.zip',
+    'ros-offline-kiosk-portable.zip'
+)
 $UnusedDeployZips = @(
     'OSC_GUI_App_Enhanced.zip',
     'OSC_GUI_App_Enhanced_Updated.zip',

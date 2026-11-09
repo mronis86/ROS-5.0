@@ -3,6 +3,7 @@ const fs = require('fs');
 const http = require('http');
 const path = require('path');
 const os = require('os');
+const { weblinkedRoot, isPackaged } = require('./runtime-paths');
 
 /**
  * Sinor WebLinked-SDI defaults HTTP control to :7655.
@@ -16,7 +17,7 @@ let enginePid = null;
 let startedByKiosk = false;
 
 function bundledRoot() {
-  return path.resolve(__dirname, '..', 'engines', 'weblinked');
+  return weblinkedRoot();
 }
 
 function candidateExePaths() {
@@ -31,24 +32,30 @@ function candidateExePaths() {
   );
   const desktopReleaseAlt = path.join(os.homedir(), 'Desktop', 'WebLinked-SDI', 'build', 'Release');
 
-  return [
+  const paths = [
     process.env.WEBLINKED_EXE,
     // Bundled with Offline Kiosk V2 (preferred for show-system packaging)
     path.join(bundled, 'sinor-weblinked.exe'),
     path.join(bundled, 'weblinked.exe'),
-    // Live Desktop build (reference project — not modified)
-    path.join(desktopRelease, 'sinor-weblinked.exe'),
-    path.join(desktopRelease, 'weblinked.exe'),
-    path.join(desktopReleaseAlt, 'sinor-weblinked.exe'),
-    path.join(desktopReleaseAlt, 'weblinked.exe'),
-    // Machine install fallback
-    path.join(process.env['ProgramFiles'] || 'C:\\Program Files', 'WebLinked', 'weblinked.exe'),
-    path.join(
-      process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)',
-      'WebLinked',
-      'weblinked.exe'
-    ),
-  ].filter(Boolean);
+  ];
+
+  // Dev-only fallbacks — portable builds must ship engines/weblinked
+  if (!isPackaged()) {
+    paths.push(
+      path.join(desktopRelease, 'sinor-weblinked.exe'),
+      path.join(desktopRelease, 'weblinked.exe'),
+      path.join(desktopReleaseAlt, 'sinor-weblinked.exe'),
+      path.join(desktopReleaseAlt, 'weblinked.exe'),
+      path.join(process.env['ProgramFiles'] || 'C:\\Program Files', 'WebLinked', 'weblinked.exe'),
+      path.join(
+        process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)',
+        'WebLinked',
+        'weblinked.exe'
+      )
+    );
+  }
+
+  return paths.filter(Boolean);
 }
 
 function findExe() {
@@ -287,8 +294,9 @@ async function startWebLinked({ force = false } = {}) {
   if (!exe) {
     return {
       ok: false,
-      error:
-        'WebLinked runtime not found. From offline-kiosk-v2 run: npm run sync:weblinked (uses Desktop\\WebLinked-SDI\\build\\Release).',
+      error: isPackaged()
+        ? 'WebLinked runtime missing from this portable build (engines\\weblinked). Re-download the full Offline Kiosk package.'
+        : 'WebLinked runtime not found. From offline-kiosk-v2 run: npm run sync:weblinked (uses Desktop\\WebLinked-SDI\\build\\Release).',
     };
   }
 

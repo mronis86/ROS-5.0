@@ -19,6 +19,19 @@ if not exist "node_modules\electron" (
   )
 )
 
+if exist "engines\offline-show\launcher\bootstrap.bat" (
+  pushd "engines\offline-show"
+  call "launcher\bootstrap.bat" --skip-ui-build
+  if errorlevel 1 call "launcher\bootstrap.bat"
+  if errorlevel 1 (
+    echo Offline Show bootstrap failed.
+    popd
+    pause
+    exit /b 1
+  )
+  popd
+)
+
 echo Starting ROS Offline Kiosk...
 call npm start
 endlocal

@@ -8,8 +8,10 @@
     "start": "electron .",
     "sync:offline-show": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/sync-offline-show.ps1",
     "sync:weblinked": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/sync-weblinked.ps1",
-    "pack": "electron-builder --dir",
-    "dist": "electron-builder --win portable"
+    "prepare:portable": "node scripts/prepare-portable.js",
+    "pack": "npm run prepare:portable && electron-builder --win dir",
+    "dist": "npm run prepare:portable && electron-builder --win dir && node scripts/zip-portable-out.js",
+    "dist:exe": "npm run prepare:portable && electron-builder --win portable"
   },
   "devDependencies": {
     "electron": "^33.2.1",
@@ -24,15 +26,63 @@
     "files": [
       "electron/**/*",
       "renderer/**/*",
-      "engines/offline-show/**/*",
-      "!engines/offline-show/data/**",
-      "engines/weblinked/**/*",
       "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "engines/offline-show",
+        "to": "engines/offline-show",
+        "filter": [
+          "**/*",
+          "!data/**",
+          "!**/*.db",
+          "!**/*.db-shm",
+          "!**/*.db-wal",
+          "!ui/node_modules/**",
+          "!ui/src/**",
+          "!.git/**"
+        ]
+      },
+      {
+        "from": "engines/weblinked",
+        "to": "engines/weblinked",
+        "filter": [
+          "**/*",
+          "!.gitkeep"
+        ]
+      },
+      {
+        "from": "portable-runtime/node",
+        "to": "node",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "extraFiles": [
+      {
+        "from": "launcher/START-PORTABLE.bat",
+        "to": "START.bat"
+      }
     ],
     "win": {
       "target": [
-        "portable"
+        {
+          "target": "dir",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
       ]
+    },
+    "portable": {
+      "artifactName": "ROS-Offline-Kiosk-Portable-${version}.exe"
     }
   }
 }

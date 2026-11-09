@@ -39,12 +39,28 @@ if (-not (Test-Path $sinor) -and (Test-Path $stock)) {
   Copy-Item $stock $sinor -Force
 }
 
+# Keep en-US CEF locales only (~48MB savings). Kiosk UI is English.
+$locales = Join-Path $dst 'locales'
+if (Test-Path $locales) {
+  Get-ChildItem $locales -File | Where-Object {
+    $_.Name -ne 'en-US.pak' -and -not $_.Name.StartsWith('en-US_')
+  } | Remove-Item -Force
+  Write-Host 'Trimmed WebLinked locales to en-US only.'
+}
+
+# Prefer a single exe name in the portable pack
+if ((Test-Path $sinor) -and (Test-Path $stock)) {
+  Remove-Item $stock -Force
+  Write-Host 'Removed duplicate weblinked.exe (keeping sinor-weblinked.exe).'
+}
+
 # Provenance note (source tree stays on Desktop).
 @"
 Bundled WebLinked runtime for Offline Kiosk V2.
 Upstream reference (do not delete): WebLinked-SDI on the Desktop.
 Synced from: $src
 Synced at: $(Get-Date -Format o)
+Locales: en-US only (portable trim)
 "@ | Set-Content -Path (Join-Path $dst 'BUNDLE.txt') -Encoding UTF8
 
 Write-Host "Done. Primary exe: $(if (Test-Path $sinor) { $sinor } else { $stock })"
