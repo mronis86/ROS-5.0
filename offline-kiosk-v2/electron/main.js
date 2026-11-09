@@ -12,6 +12,7 @@ const {
   formatRemaining,
   clampLiveHours,
 } = require('./session-schedule');
+const { injectRemoteWebrtcCodecShim } = require('./remote-webrtc-codec-shim');
 
 const userDataRoot = path.join(
   process.env.LOCALAPPDATA || os.tmpdir(),
@@ -132,6 +133,8 @@ function ensureRemoteView() {
     },
   });
   remoteView.setBackgroundColor('#000000');
+  // Meshcast Go Live can throw on bare "H264" codec prefs in Electron Chromium.
+  injectRemoteWebrtcCodecShim(remoteView.webContents);
   return remoteView;
 }
 
