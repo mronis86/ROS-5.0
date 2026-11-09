@@ -30,6 +30,7 @@ contextBridge.exposeInMainWorld('kiosk', {
   weblinkedSendInput: (payload) => ipcRenderer.invoke('kiosk:weblinkedSendInput', payload),
   weblinkedStatus: () => ipcRenderer.invoke('kiosk:weblinkedStatus'),
   weblinkedDiagnostics: () => ipcRenderer.invoke('kiosk:weblinkedDiagnostics'),
+  listSystemDisplays: () => ipcRenderer.invoke('kiosk:listSystemDisplays'),
   pptBridgeStatus: (payload) => ipcRenderer.invoke('kiosk:pptBridgeStatus', payload || {}),
   getSystemHealth: () => ipcRenderer.invoke('kiosk:getSystemHealth'),
   startWebLinked: (payload) => ipcRenderer.invoke('kiosk:startWebLinked', payload),

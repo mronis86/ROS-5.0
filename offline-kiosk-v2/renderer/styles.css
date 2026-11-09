@@ -1980,6 +1980,15 @@ body {
   pointer-events: none;
 }
 
+.wl-screen-section {
+  margin-top: 0.65rem;
+}
+
+.wl-screen-section.is-disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
 .wl-format-row {
   display: grid;
   grid-template-columns: 1fr 1.2fr;

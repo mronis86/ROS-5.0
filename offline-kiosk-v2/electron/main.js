@@ -1,4 +1,4 @@
-const { app, BrowserWindow, BrowserView, ipcMain, session } = require('electron');
+const { app, BrowserWindow, BrowserView, ipcMain, session, screen } = require('electron');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
@@ -354,6 +354,34 @@ ipcMain.handle('kiosk:weblinkedDiagnostics', async () => {
     return {
       ok: false,
       error: e instanceof Error ? e.message : 'WebLinked diagnostics failed',
+    };
+  }
+});
+
+ipcMain.handle('kiosk:listSystemDisplays', async () => {
+  try {
+    const primaryId = screen.getPrimaryDisplay()?.id;
+    const displays = screen.getAllDisplays().map((d, index) => {
+      const w = d.bounds?.width || 0;
+      const h = d.bounds?.height || 0;
+      const primary = d.id === primaryId;
+      return {
+        index,
+        id: d.id,
+        primary,
+        width: w,
+        height: h,
+        scaleFactor: d.scaleFactor || 1,
+        internal: Boolean(d.internal),
+        label: `Display ${index + 1} · ${w}×${h}${primary ? ' · primary' : ''}`,
+      };
+    });
+    return { ok: true, displays, primaryId };
+  } catch (e) {
+    return {
+      ok: false,
+      displays: [],
+      error: e instanceof Error ? e.message : 'Could not list displays',
     };
   }
 });

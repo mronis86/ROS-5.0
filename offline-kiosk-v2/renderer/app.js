@@ -77,6 +77,7 @@ function defaultWlSettingsForDisplay(row) {
     format: '1080p50',
     previewFactor: 4,
     sharedName: defaultNdiNameForDisplay(row),
+    screenDisplay: 0,
     ndi: [{ name: defaultNdiNameForDisplay(row), alpha: true }],
     outputs: {
       ndi: true,
@@ -100,6 +101,9 @@ function normalizeWlSettings(raw, row) {
         }))
         .filter((n) => n.name)
     : [];
+  const screenDisplay = Number.isFinite(Number(src.screenDisplay))
+    ? Math.max(0, Math.floor(Number(src.screenDisplay)))
+    : fallback.screenDisplay;
   return {
     format: typeof src.format === 'string' && src.format.trim() ? src.format.trim() : fallback.format,
     previewFactor: [1, 2, 4, 8].includes(Number(src.previewFactor))
@@ -109,6 +113,7 @@ function normalizeWlSettings(raw, row) {
       typeof src.sharedName === 'string' && src.sharedName.trim()
         ? src.sharedName.trim()
         : fallback.sharedName,
+    screenDisplay,
     ndi: ndi.length ? ndi : fallback.ndi,
     outputs: {
       ndi: typeof outs.ndi === 'boolean' ? outs.ndi : true,
@@ -265,6 +270,8 @@ function syncPresetDisplayUrls() {
 const state = {
   tab: 'status',
   displays: loadDisplays(),
+  /** @type {{ index: number, label: string, primary?: boolean }[]} */
+  systemDisplays: [],
   /** @type {string[]} display ids with a live WebLinked source */
   armedDisplayIds: [],
   /** which card's pipeline the dock/overlay preview is showing */
@@ -1729,6 +1736,34 @@ function syncWlNdiSectionEnabled() {
   }
 }
 
+function syncWlScreenSectionEnabled() {
+  const on = Boolean($('#wlOutScreen')?.checked) && !$('#wlOutScreen')?.disabled;
+  const section = $('#wlScreenSection');
+  if (section) section.classList.toggle('is-disabled', !on);
+  const sel = $('#wlScreenDisplay');
+  if (sel) sel.disabled = !on;
+}
+
+function fillWlScreenDisplayOptions(displays, selectedIndex = 0) {
+  const sel = $('#wlScreenDisplay');
+  if (!sel) return;
+  const list = Array.isArray(displays) && displays.length
+    ? displays
+    : [{ index: 0, label: 'Display 1' }];
+  const want = Number.isFinite(Number(selectedIndex))
+    ? Math.max(0, Math.floor(Number(selectedIndex)))
+    : 0;
+  sel.innerHTML = '';
+  for (const d of list) {
+    const opt = document.createElement('option');
+    opt.value = String(d.index);
+    opt.textContent = d.label || `Display ${Number(d.index) + 1}`;
+    sel.appendChild(opt);
+  }
+  const max = list.length - 1;
+  sel.value = String(Math.min(want, Math.max(0, max)));
+}
+
 function collectWlSettingsFromForm() {
   const ndiOn = Boolean($('#wlOutNdi')?.checked);
   return normalizeWlSettings(
@@ -1736,6 +1771,7 @@ function collectWlSettingsFromForm() {
       format: currentWlFormatSpec(),
       previewFactor: Number($('#wlPreviewFactor')?.value || 4),
       sharedName: ($('#wlSharedName')?.value || '').trim(),
+      screenDisplay: Number($('#wlScreenDisplay')?.value || 0),
       ndi: ndiOn ? collectWlNdiRows() : [],
       outputs: {
         ndi: ndiOn,
@@ -1756,6 +1792,7 @@ function wlSettingsToPayload(settings, row, { save = false } = {}) {
     format: s.format,
     previewFactor: s.previewFactor,
     sharedName: s.sharedName,
+    screenDisplay: s.screenDisplay,
     ndi: s.outputs.ndi ? s.ndi : [],
     outputs: {
       preview: true,
@@ -1806,6 +1843,7 @@ function fillWlSettingsForm(settings, backends = []) {
   const sharedName = $('#wlSharedName');
   if (sharedName) sharedName.value = s.sharedName;
   renderWlNdiRows(s.ndi);
+  fillWlScreenDisplayOptions(state.systemDisplays || [], s.screenDisplay);
 
   gateWlBackend('#wlOutNdi', 'ndi', backends);
   gateWlBackend('#wlOutShared', 'shared', backends);
@@ -1813,6 +1851,7 @@ function fillWlSettingsForm(settings, backends = []) {
   gateWlBackend('#wlOutDeckLink', 'decklink', backends);
   gateWlBackend('#wlOutOmt', 'omt', backends);
   syncWlNdiSectionEnabled();
+  syncWlScreenSectionEnabled();
 }
 
 async function openSimpleWlSettings(displayId) {
@@ -1838,6 +1877,17 @@ async function openSimpleWlSettings(displayId) {
   setWlSettingsNote('Loading…');
   const overlay = $('#wlSettingsOverlay');
   if (overlay) overlay.hidden = false;
+
+  if (window.kiosk?.listSystemDisplays) {
+    try {
+      const screens = await window.kiosk.listSystemDisplays();
+      state.systemDisplays = Array.isArray(screens?.displays) ? screens.displays : [];
+    } catch {
+      state.systemDisplays = [];
+    }
+  } else {
+    state.systemDisplays = [];
+  }
 
   // Prefill from this card immediately so cards never share another card's form values.
   fillWlSettingsForm(row.wlSettings || defaultWlSettingsForDisplay(row), []);
@@ -2974,6 +3024,7 @@ async function bootstrap() {
     if (e.target === $('#wlSettingsOverlay')) closeSimpleWlSettings();
   });
   $('#wlOutNdi')?.addEventListener('change', () => syncWlNdiSectionEnabled());
+  $('#wlOutScreen')?.addEventListener('change', () => syncWlScreenSectionEnabled());
   $('#wlRasterSelect')?.addEventListener('change', () => {
     fillWlRateSelect($('#wlRateSelect')?.value || 'p50');
   });

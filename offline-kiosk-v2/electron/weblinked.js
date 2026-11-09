@@ -1104,19 +1104,34 @@ async function applySimpleSettings(payload = {}) {
       await refreshOutputs();
       return { ok: true };
     }
-    if (enabled && existing.length > 0 && addBody?.name && existing[0].name !== addBody.name) {
-      const updated = await postApi(
-        '/api/output/update',
-        {
-          name: existing[0].name,
-          output: { ...addBody, kind },
-        },
-        apiOpts
-      );
-      if (!updated.ok) return updated;
-      notes.push(`${kind} → ${addBody.name}`);
-      await refreshOutputs();
-      return { ok: true };
+    if (enabled && existing.length > 0) {
+      const have = existing[0];
+      const nameChanged = Boolean(addBody?.name) && have.name !== addBody.name;
+      const wantDisp = addBody?.options?.display;
+      const haveDisp =
+        have.options?.display ?? have.display ?? have.options?.monitor ?? null;
+      const displayChanged =
+        wantDisp != null &&
+        Number.isFinite(Number(wantDisp)) &&
+        Number(haveDisp) !== Number(wantDisp);
+      if (nameChanged || displayChanged) {
+        const updated = await postApi(
+          '/api/output/update',
+          {
+            name: have.name,
+            output: { ...addBody, kind },
+          },
+          apiOpts
+        );
+        if (!updated.ok) return updated;
+        notes.push(
+          displayChanged
+            ? `${kind} → display ${wantDisp}`
+            : `${kind} → ${addBody.name}`
+        );
+        await refreshOutputs();
+        return { ok: true };
+      }
     }
     if (!enabled && existing.length > 0) {
       for (const out of existing) {
