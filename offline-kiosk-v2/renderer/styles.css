@@ -878,18 +878,30 @@ body {
 }
 
 .weblinked-status {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 0.65rem;
+  gap: 0.5rem;
   flex-wrap: wrap;
   margin: 0 0 1rem;
-  max-width: 48rem;
-  padding: 0.65rem 0.85rem;
+  width: fit-content;
+  max-width: 100%;
+  padding: 0.55rem 0.75rem;
   border-radius: 0.65rem;
   border: 1px solid #334155;
   background: #111827;
   color: #cbd5e1;
   font-size: 0.88rem;
+}
+
+.weblinked-status #weblinkedStatusText {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.weblinked-status .primary-btn,
+.weblinked-status .ghost-btn {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .custom-url-panel {
