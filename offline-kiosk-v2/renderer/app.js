@@ -388,14 +388,18 @@ async function refreshWebLinkedStatus() {
     renderWebLinkedStatus();
     return;
   }
+  const wasStarting = Boolean(state.weblinked.starting);
+  const wasStopping = Boolean(state.weblinked.stopping);
   const result = await window.kiosk.weblinkedStatus();
   state.weblinked = {
     ...state.weblinked,
     running: Boolean(result?.running),
     baseUrl: result?.baseUrl || null,
     port: result?.port || null,
-    error: result?.error || '',
-    starting: false,
+    error: wasStarting || wasStopping ? state.weblinked.error || '' : result?.error || '',
+    // Status polls must not clear an in-flight Start/Stop (that re-enabled the button mid-boot).
+    starting: wasStarting,
+    stopping: wasStopping,
   };
   renderWebLinkedStatus();
 }
@@ -405,10 +409,15 @@ async function startWebLinkedEngine() {
     setDisplayNote('Start WebLinked is only available in the Electron kiosk.');
     return;
   }
+  if (state.weblinked.starting || state.weblinked.stopping) return;
   const force = Boolean(state.weblinked.running);
   state.weblinked = { ...state.weblinked, starting: true, stopping: false, error: '' };
   renderWebLinkedStatus();
-  setDisplayNote(force ? 'Restarting WebLinked…' : 'Starting WebLinked…');
+  setDisplayNote(
+    force
+      ? 'Restarting WebLinked…'
+      : 'Starting WebLinked (first boot can take up to ~90s while CEF loads)…'
+  );
   const result = await window.kiosk.startWebLinked({ force });
   state.weblinked = {
     running: Boolean(result?.running || result?.ok),
@@ -1855,19 +1864,11 @@ function wlEventPosition(e) {
   const canvas = wlPreviewCanvas();
   if (!canvas) return { nx: 0, ny: 0 };
   const box = canvas.getBoundingClientRect();
-  const bw = canvas.width || 0;
-  const bh = canvas.height || 0;
-  if (!bw || !bh || box.width <= 0 || box.height <= 0) return { nx: 0, ny: 0 };
-  const scale = Math.min(box.width / bw, box.height / bh);
-  const contentW = bw * scale;
-  const contentH = bh * scale;
-  const offsetX = (box.width - contentW) / 2;
-  const offsetY = (box.height - contentH) / 2;
-  const x = e.clientX - box.left - offsetX;
-  const y = e.clientY - box.top - offsetY;
+  if (box.width <= 0 || box.height <= 0) return { nx: 0, ny: 0 };
+  // Preview canvas uses object-fit: fill — map directly onto the element box.
   return {
-    nx: Math.min(1, Math.max(0, contentW ? x / contentW : 0)),
-    ny: Math.min(1, Math.max(0, contentH ? y / contentH : 0)),
+    nx: Math.min(1, Math.max(0, (e.clientX - box.left) / box.width)),
+    ny: Math.min(1, Math.max(0, (e.clientY - box.top) / box.height)),
   };
 }
 

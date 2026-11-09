@@ -15,6 +15,24 @@ const CANDIDATE_PORTS = [7655, 7654];
 let resolvedBase = null;
 let enginePid = null;
 let startedByKiosk = false;
+/** Prevents a second Start from killing a cold CEF boot still coming up. */
+let startInFlight = null;
+
+function engineProcessAlive() {
+  for (const image of ['sinor-weblinked.exe', 'weblinked.exe']) {
+    try {
+      const out = execFileSync('tasklist', ['/FI', `IMAGENAME eq ${image}`, '/NH'], {
+        windowsHide: true,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+      if (String(out).toLowerCase().includes(image.toLowerCase())) return true;
+    } catch {
+      /* ignore */
+    }
+  }
+  return false;
+}
 
 function bundledRoot() {
   return weblinkedRoot();
@@ -252,83 +270,121 @@ function spawnEngine(exe) {
     `Write-Output $p.Id`,
   ].join('; ');
 
-  const child = spawn(
-    'powershell.exe',
-    ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass', '-Command', script],
-    {
-      windowsHide: true,
-      stdio: ['ignore', 'pipe', 'ignore'],
-      shell: false,
-    }
-  );
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass', '-Command', script],
+      {
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        shell: false,
+      }
+    );
 
-  let stdout = '';
-  child.stdout.on('data', (chunk) => {
-    stdout += String(chunk);
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => {
+      stdout += String(chunk);
+    });
+    child.stderr.on('data', (chunk) => {
+      stderr += String(chunk);
+    });
+    child.on('error', reject);
+    child.on('close', (code) => {
+      const pid = Number(String(stdout).trim().split(/\r?\n/).pop());
+      if (Number.isFinite(pid) && pid > 0) {
+        enginePid = pid;
+        startedByKiosk = true;
+        resolve({ pid, port: Number(port) });
+        return;
+      }
+      reject(
+        new Error(
+          stderr.trim() ||
+            `WebLinked launch failed (PowerShell exit ${code == null ? '?' : code})`
+        )
+      );
+    });
   });
-  child.on('close', () => {
-    const pid = Number(String(stdout).trim());
-    if (Number.isFinite(pid) && pid > 0) enginePid = pid;
-  });
-
-  startedByKiosk = true;
-  return child;
 }
 
-async function waitUntilReady(timeoutMs = 45000) {
+async function waitUntilReady(timeoutMs = 90000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     if (await isRunning()) return true;
-    await sleep(400);
+    await sleep(500);
   }
   return false;
 }
 
 async function startWebLinked({ force = false } = {}) {
-  if (!force && (await isRunning())) {
+  if (startInFlight) {
+    return startInFlight;
+  }
+
+  startInFlight = (async () => {
+    if (!force && (await isRunning())) {
+      const status = await getStatus();
+      return { ok: true, alreadyRunning: true, ...status };
+    }
+
+    const exe = findExe();
+    if (!exe) {
+      return {
+        ok: false,
+        error: isPackaged()
+          ? 'WebLinked runtime missing from this portable build (engines\\weblinked). Re-download the full Offline Kiosk package.'
+          : 'WebLinked runtime not found. From offline-kiosk-v2 run: npm run sync:weblinked (uses Desktop\\WebLinked-SDI\\build\\Release).',
+      };
+    }
+
+    // Fresh/forced start only — do not kill a boot already in progress from a double-click.
+    killOrphanEngines();
+    await sleep(400);
+
+    let launched;
+    try {
+      launched = await spawnEngine(exe);
+    } catch (e) {
+      return {
+        ok: false,
+        error: e instanceof Error ? e.message : 'Failed to start WebLinked',
+        exe,
+      };
+    }
+
+    // CEF cold-starts slowly the first time after unzip / AV scan — give it time.
+    let ready = await waitUntilReady(90000);
+    if (!ready && engineProcessAlive()) {
+      ready = await waitUntilReady(45000);
+    }
+    if (!ready) {
+      const alive = engineProcessAlive();
+      return {
+        ok: false,
+        error: alive
+          ? `WebLinked process is up but control API did not answer on :${CANDIDATE_PORTS.join(' / :')} yet — wait a few seconds and press Start again (or check AV blocking CEF).`
+          : `WebLinked failed to stay running after launch (exe=${path.basename(exe)}).`,
+        exe,
+        enginePid: launched?.pid || enginePid,
+      };
+    }
+
     const status = await getStatus();
-    return { ok: true, alreadyRunning: true, ...status };
-  }
-
-  const exe = findExe();
-  if (!exe) {
     return {
-      ok: false,
-      error: isPackaged()
-        ? 'WebLinked runtime missing from this portable build (engines\\weblinked). Re-download the full Offline Kiosk package.'
-        : 'WebLinked runtime not found. From offline-kiosk-v2 run: npm run sync:weblinked (uses Desktop\\WebLinked-SDI\\build\\Release).',
+      ok: true,
+      alreadyRunning: false,
+      startedByKiosk: true,
+      enginePid: launched?.pid || enginePid,
+      ...status,
     };
-  }
-
-  // Always clear prior instances before a fresh/forced start (avoids console orphans).
-  killOrphanEngines();
-  await sleep(400);
+  })();
 
   try {
-    spawnEngine(exe);
-  } catch (e) {
-    return {
-      ok: false,
-      error: e instanceof Error ? e.message : 'Failed to start WebLinked',
-      exe,
-    };
+    return await startInFlight;
+  } finally {
+    startInFlight = null;
   }
-
-  // Give PowerShell a moment to return the PID / process to start.
-  await sleep(600);
-
-  const ready = await waitUntilReady(45000);
-  if (!ready) {
-    return {
-      ok: false,
-      error: `WebLinked started but control API did not answer on :${CANDIDATE_PORTS.join(' / :')}`,
-      exe,
-      enginePid,
-    };
-  }
-
-  const status = await getStatus();
-  return { ok: true, alreadyRunning: false, startedByKiosk: true, enginePid, ...status };
 }
 
 async function ensureRunning() {
