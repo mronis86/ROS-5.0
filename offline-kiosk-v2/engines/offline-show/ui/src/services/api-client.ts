@@ -418,6 +418,22 @@ class ApiClient {
   async getTimerMessages(eventId: string) {
     return this.request(`/api/timer-messages/${eventId}`);
   }
+
+  async getDsmClockLayout(eventId: string) {
+    return this.request<{ event_id: string; mode: '16x9' | 'full' | null }>(
+      `/api/dsm-clock/layout/${encodeURIComponent(eventId)}`
+    );
+  }
+
+  async setDsmClockLayout(eventId: string, mode: 'full' | 'led' | 'vid' | 'ppt' | '16x9') {
+    return this.request<{ ok: boolean; event_id: string; mode: string }>(
+      '/api/dsm-clock/layout',
+      {
+        method: 'POST',
+        body: JSON.stringify({ event_id: eventId, mode }),
+      }
+    );
+  }
 }
 
 export const apiClient = new ApiClient();

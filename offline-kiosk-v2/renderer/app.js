@@ -323,7 +323,13 @@ function markDisplayDisarmed(id) {
 }
 
 function primaryArmedDisplayId() {
-  return state.previewDisplayId || state.armedDisplayIds[0] || null;
+  return state.armedDisplayIds[0] || null;
+}
+
+/** Display id currently shown / controlled in the live preview dock. */
+function activePreviewDisplayId() {
+  if (state.previewDisplayId) return state.previewDisplayId;
+  return primaryArmedDisplayId();
 }
 
 let embedObserver = null;
@@ -1046,9 +1052,12 @@ function renderConnectivity() {
 
   if (syncBtn) syncBtn.hidden = !(running && state.cloudConnected);
   if (refreshBtn) refreshBtn.hidden = !running;
-  [modeLan, modeCloud, tokenInput, saveTokenBtn].forEach((el) => {
+  // Token can be entered before Offline Show starts; Cloud mode needs the show.
+  [modeLan, modeCloud].forEach((el) => {
     if (el) el.disabled = !running;
   });
+  if (tokenInput) tokenInput.disabled = false;
+  if (saveTokenBtn) saveTokenBtn.disabled = false;
 
   modeLan?.classList.toggle('is-active', running && (state.lanOnly || !state.cloudConnected));
   modeCloud?.classList.toggle('is-active', running && state.cloudConnected);
@@ -1068,7 +1077,11 @@ function renderConnectivity() {
     setSvc('railway', 'skip', '—');
     setSvc('neon', 'skip', '—');
     setSvc('lan', 'skip', '—');
-    setSvc('token', 'skip', '—');
+    setSvc(
+      'token',
+      state.tokenConfigured ? 'ok' : 'bad',
+      state.tokenConfigured ? state.tokenPrefix || 'Saved' : 'Missing'
+    );
   } else if (!c) {
     setSvc('internet', 'skip', 'Checking…');
     setSvc('railway', 'skip', 'Checking…');
@@ -1100,9 +1113,15 @@ function renderConnectivity() {
     if (hero) hero.dataset.state = 'off';
     if (heroLabel) heroLabel.textContent = 'Offline Show not started';
     if (heroDetail) {
-      heroDetail.textContent = 'Start the show to see Internet, Railway, Neon, LAN, and token status.';
+      heroDetail.textContent = state.tokenConfigured
+        ? 'Token saved on this kiosk — it will apply when Offline Show starts. Start the show for Cloud / LAN status.'
+        : 'Paste an Integration token below anytime, then Start Offline Show for Cloud / LAN status.';
     }
-    if (tokenNote) tokenNote.textContent = 'Start Offline Show to manage Cloud / token.';
+    if (tokenNote) {
+      tokenNote.textContent = state.tokenConfigured
+        ? `Token saved locally${state.tokenPrefix ? ` (${state.tokenPrefix})` : ''} — applied when Offline Show starts.`
+        : 'Paste ros_itok_… from Admin → Integration tokens (read + control + write), then Save — works before Start.';
+    }
     return;
   }
 
@@ -1392,11 +1411,19 @@ function renderDisplays() {
   state.displays.forEach((row, index) => {
     const ready = row.ready !== false;
     const card = document.createElement('div');
+    const isPreview = activePreviewDisplayId() === row.id;
     card.className = `output-card display-card${isDisplayArmed(row.id) ? ' is-armed' : ''}${
-      ready ? '' : ' is-soon'
-    }`;
+      isPreview ? ' is-preview' : ''
+    }${ready ? '' : ' is-soon'}`;
     card.setAttribute('role', 'listitem');
     card.dataset.id = row.id;
+    card.title = isPreview
+      ? 'Selected for live preview — Exit fullscreen targets this source'
+      : 'Click to select for live preview control';
+    card.addEventListener('click', (e) => {
+      if (e.target.closest('button, input, select, a, label')) return;
+      void selectDisplayForPreview(row.id);
+    });
 
     const nameEl = document.createElement(row.preset ? 'span' : 'input');
     if (row.preset) {
@@ -1418,9 +1445,13 @@ function renderDisplays() {
     badge.className = 'badge';
     badge.textContent = !ready
       ? 'Soon'
-      : isDisplayArmed(row.id)
-        ? 'On WebLinked'
-        : 'Standby';
+      : isPreview
+        ? isDisplayArmed(row.id)
+          ? 'Preview'
+          : 'Selected'
+        : isDisplayArmed(row.id)
+          ? 'On WebLinked'
+          : 'Standby';
 
     const urlInput = document.createElement('input');
     urlInput.className = 'display-card-url';
@@ -2050,9 +2081,9 @@ function wlEventPosition(e) {
 
 async function wlSendInput(event) {
   if (!window.kiosk?.weblinkedSendInput) return;
-  const source = wlSourceId(state.previewDisplayId || primaryArmedDisplayId());
+  const source = wlSourceId(activePreviewDisplayId());
   try {
-    await window.kiosk.weblinkedSendInput({ ...(event || {}), source });
+    await window.kiosk.weblinkedSendInput({ ...(event || {}), source: source || undefined });
   } catch {
     /* ignore */
   }
@@ -2060,7 +2091,7 @@ async function wlSendInput(event) {
 
 /** Leave Element.requestFullscreen on the active WebLinked source (Esc + Escape synth). */
 async function exitWlPageFullscreen(displayId = null) {
-  const id = displayId || state.previewDisplayId || primaryArmedDisplayId();
+  const id = displayId || activePreviewDisplayId();
   if (!window.kiosk?.weblinkedSendInput) {
     setDisplayNote('Exit fullscreen only available in the Electron kiosk.');
     return { ok: false };
@@ -2069,8 +2100,21 @@ async function exitWlPageFullscreen(displayId = null) {
     setDisplayNote('Start WebLinked first.');
     return { ok: false };
   }
-  const source = wlSourceId(id || 'main');
+  if (!id) {
+    setDisplayNote('Select a display card (or Preview / Push) first.');
+    return { ok: false };
+  }
+  // Keep the dock preview locked to this source so Esc / Exit FS match what you see.
+  if (!displayId) state.previewDisplayId = id;
+  const source = wlSourceId(id);
+  if (!source) {
+    setDisplayNote('No WebLinked source id for the selected display.');
+    return { ok: false };
+  }
   try {
+    // Match WebLinked control page: focus the page, then exit HTML fullscreen.
+    if (!wlInteractive) setWlInteractive(true);
+    await window.kiosk.weblinkedSendInput({ type: 'focus', focused: true, source });
     const result = await window.kiosk.weblinkedSendInput({
       type: 'exit_fullscreen',
       source,
@@ -2087,6 +2131,28 @@ async function exitWlPageFullscreen(displayId = null) {
     setDisplayNote(msg);
     return { ok: false, error: msg };
   }
+}
+
+/** Select which armed (or soon-to-load) card the live preview / Exit FS controls. */
+async function selectDisplayForPreview(id) {
+  const row = findDisplay(id);
+  if (!row) return;
+  if (row.ready === false) {
+    setDisplayNote(`${row.name} is coming soon.`);
+    return;
+  }
+  state.previewDisplayId = row.id;
+  renderDisplays();
+  if (isDisplayArmed(row.id) && state.weblinked?.running) {
+    placeWlLivePreview('dock');
+    startWlLivePreviewLoop();
+    setDisplayNote(`Live preview control · ${row.name}`);
+    void pullWlLivePreviewFrame();
+    return;
+  }
+  setDisplayNote(
+    `${row.name} selected for preview — click Preview or Push WL to load it into WebLinked.`
+  );
 }
 
 /** Turn off this card’s Screen (monitor) output — leaves NDI / Shared / URL alone. */
@@ -2254,8 +2320,12 @@ async function pullWlLivePreviewFrame() {
 
   wlPreviewBusy = true;
   try {
-    const source = wlSourceId(state.previewDisplayId || primaryArmedDisplayId());
-    const frame = await window.kiosk.weblinkedGetPreviewFrame({ source });
+    const previewId = activePreviewDisplayId();
+    const source = wlSourceId(previewId);
+    const previewRow = findDisplay(previewId);
+    const frame = await window.kiosk.weblinkedGetPreviewFrame({
+      source: source || undefined,
+    });
     if (!frame?.ok) {
       setWlLivePreviewMeta(frame?.error || 'Waiting for WebLinked…');
       return;
@@ -2282,7 +2352,8 @@ async function pullWlLivePreviewFrame() {
       image.data[i + 3] = 255;
     }
     ctx.putImageData(image, 0, 0);
-    setWlLivePreviewMeta(`${width}×${height} · seq ${frame.sequence}`);
+    const label = previewRow?.name || source || 'source';
+    setWlLivePreviewMeta(`${label} · ${width}×${height}`);
   } catch {
     setWlLivePreviewMeta('Preview unavailable');
   } finally {
@@ -2875,7 +2946,9 @@ async function saveToken() {
     return;
   }
   if (!window.kiosk?.saveRailwayToken) return;
-  setEventNote('Saving and validating token…');
+  setEventNote(
+    state.offlineShowRunning ? 'Saving and validating token…' : 'Saving token on this kiosk…'
+  );
   const result = await window.kiosk.saveRailwayToken({ token });
   if (!result?.ok) {
     setEventNote(result?.error || 'Token save failed.');
@@ -2883,6 +2956,13 @@ async function saveToken() {
   }
   if ($('#railwayTokenInput')) $('#railwayTokenInput').value = '';
   applyConnectivity({ token: result.token });
+  if (!state.offlineShowRunning) {
+    setEventNote(
+      `Token saved locally${result.token?.prefix ? ` (${result.token.prefix})` : ''} — it will apply when Offline Show starts.`
+    );
+    renderConnectivity();
+    return;
+  }
   setEventNote('Token saved.');
   if (!state.cloudConnected) {
     await requestModeChange('cloud-connected');
@@ -2996,10 +3076,13 @@ async function connectOfflineShow() {
       return;
     }
     state.offlineShowRunning = true;
+    if (result.token) applyConnectivity({ token: result.token });
     setEventNote(
       result.alreadyRunning
         ? 'Offline Show already running — preferring Cloud on / loading events…'
-        : 'Offline Show started — preferring Cloud on / loading events…'
+        : result.tokenApplied
+          ? 'Offline Show started — applied saved API token / loading events…'
+          : 'Offline Show started — preferring Cloud on / loading events…'
     );
     await refreshEventsFromShow();
     // Belt-and-suspenders: if prepareEvents left us LAN-only but a token exists, force Cloud.
@@ -3194,7 +3277,7 @@ async function bootstrap() {
     const previewOverlay = $('#wlPreviewOverlay');
     if (previewOverlay && !previewOverlay.hidden) {
       // Prefer leaving page fullscreen over closing the enlarged preview.
-      if (state.weblinked?.running && (state.previewDisplayId || primaryArmedDisplayId())) {
+      if (state.weblinked?.running && activePreviewDisplayId()) {
         void exitWlPageFullscreen();
         return;
       }
@@ -3234,12 +3317,17 @@ async function bootstrap() {
     if ($('#footerMeta')) {
       $('#footerMeta').textContent = data?.version || 'V2';
     }
+    if (data?.token) {
+      applyConnectivity({ token: data.token });
+    }
     void refreshWebLinkedStatus();
     if (data?.offlineShowRunning) {
       state.offlineShowRunning = true;
       setEventNote('Offline Show already running — checking cloud / loading events…');
       await refreshEventsFromShow();
       startPptBridgePoll();
+    } else {
+      renderConnectivity();
     }
   } catch {
     /* ignore */

@@ -262,10 +262,13 @@ const DsmClockPage: React.FC = () => {
     const loadDsmLayout = async () => {
       try {
         const res = await apiClient.getDsmClockLayout(eventId);
-        const next = applyDsmLayoutMode(res?.mode);
+        // null / missing → keep default 16:9; only an explicit "full" turns it off
+        const next = applyDsmLayoutMode(res?.mode ?? '16x9');
         if (next != null) setForce16x9Ref(next);
+        else setForce16x9Ref(true);
       } catch (error) {
-        console.warn('DSM layout load failed:', error);
+        console.warn('DSM layout load failed — keeping 16:9 default:', error);
+        setForce16x9Ref(true);
       }
     };
 
@@ -284,8 +287,9 @@ const DsmClockPage: React.FC = () => {
       },
       onDsmClockLayout: (data: any) => {
         if (!data || String(data.event_id || '') !== String(eventId)) return;
-        const next = applyDsmLayoutMode(data.mode);
+        const next = applyDsmLayoutMode(data.mode ?? '16x9');
         if (next != null) setForce16x9Ref(next);
+        else setForce16x9Ref(true);
       },
       onConnectionChange: (connected: boolean) => {
         console.log('📨 ClockPage: WebSocket connection status:', connected);

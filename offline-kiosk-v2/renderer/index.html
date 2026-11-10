@@ -43,14 +43,6 @@
         <p class="header-user">Offline Kiosk</p>
         <p class="header-sub" id="headerSub">No event selected</p>
         <p class="header-ver" id="footerMeta"></p>
-        <button
-          type="button"
-          class="ghost-btn header-shutdown-btn"
-          id="shutdownKioskBtn"
-          title="Stop WebLinked, Offline Show, and quit so the install folder is not locked"
-        >
-          Shutdown
-        </button>
       </div>
     </header>
 
@@ -69,6 +61,14 @@
       </button>
       <button type="button" class="tab is-active" role="tab" aria-selected="true" data-tab="status">
         Status
+      </button>
+      <button
+        type="button"
+        class="ghost-btn tabs-shutdown-btn"
+        id="shutdownKioskBtn"
+        title="Stop WebLinked, Offline Show, and quit so the install folder is not locked"
+      >
+        Shutdown
       </button>
     </nav>
 
@@ -168,7 +168,7 @@
               type="button"
               class="ghost-btn"
               id="wlExitPageFullscreenBtn"
-              title="Leave the page’s own fullscreen (sends Esc to the active source)"
+              title="Leave page fullscreen on the selected preview source (blue card)"
             >
               Exit fullscreen
             </button>
@@ -213,7 +213,7 @@
           type="button"
           class="ghost-btn"
           id="wlExitPageFullscreenBtnPop"
-          title="Leave the page’s own fullscreen (sends Esc to the active source)"
+          title="Leave page fullscreen on the selected preview source (blue card)"
         >
           Exit fullscreen
         </button>
@@ -467,15 +467,16 @@
                 type="password"
                 placeholder="ros_itok_… Integration token"
                 autocomplete="off"
-                disabled
               />
-              <button type="button" class="ghost-btn" id="saveTokenBtn" disabled>Save</button>
+              <button type="button" class="ghost-btn" id="saveTokenBtn">Save</button>
             </div>
             <div class="token-status-line" id="tokenStatusLine" data-state="skip" aria-live="polite">
               <span class="token-status-label">API token</span>
               <span class="token-status-value" id="svcToken">—</span>
             </div>
-            <p class="status-token-note" id="tokenStatusNote">Start Offline Show to manage Cloud / token.</p>
+            <p class="status-token-note" id="tokenStatusNote">
+              Paste the Integration token anytime — it is saved before Offline Show starts.
+            </p>
           </div>
 
           <div class="session-jump" aria-label="Session shortcuts">

@@ -443,6 +443,7 @@ ipcMain.handle('kiosk:getBootstrap', async () => {
     offlineShowRunning: status.running,
     outputsEngine: 'weblinked',
     version: '0.1.0-offline-events',
+    token: status.token || offlineShow.getStoredTokenStatus(),
   };
 });
 

@@ -41,6 +41,8 @@ interface ClockProps {
   /** Offline show timer page — badges sit to the right of TIMER LOADED */
   offlineShowBadge?: boolean;
   cloudConnected?: boolean;
+  /** Fill a parent stage (e.g. DSM 16:9 board) instead of the browser viewport. */
+  fillParent?: boolean;
 }
 
 const Clock: React.FC<ClockProps> = ({
@@ -58,6 +60,7 @@ const Clock: React.FC<ClockProps> = ({
   secondaryTimer = null,
   offlineShowBadge = false,
   cloudConnected = false,
+  fillParent = false,
 }) => {
   const [timerProgress, setTimerProgress] = useState<{ elapsed: number; total: number }>({
     elapsed: elapsedTime,
@@ -947,7 +950,12 @@ const Clock: React.FC<ClockProps> = ({
   const crowdedBarBottom = stageFeedActive ? 'bottom-5' : 'bottom-8';
 
   return (
-    <div className="fixed inset-0 bg-black text-white overflow-hidden flex flex-col items-center justify-center" style={{ padding: 0, margin: 0 }}>
+    <div
+      className={`${
+        fillParent ? 'absolute inset-0' : 'fixed inset-0'
+      } bg-black text-white overflow-hidden flex flex-col items-center justify-center`}
+      style={{ padding: 0, margin: 0 }}
+    >
 
       {/* Top Left: hide when cue/teleprompter feed is filling the stage */}
       {!useTodOnly && !stageFeedActive && (

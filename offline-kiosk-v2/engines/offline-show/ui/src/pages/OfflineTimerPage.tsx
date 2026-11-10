@@ -1,12 +1,14 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useLayoutEffect, useRef } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import Clock from '../components/Clock';
 import { DatabaseService } from '../services/database';
+import { apiClient } from '../services/api-client';
 import { socketClient } from '../services/socket-client';
 import { Event } from '../types/Event';
 import { EventSelectorDropdown } from '../components/EventSelectorDropdown';
 import { fetchConnectivityStatus, type ConnectivitySnapshot } from '../services/connectivity-status';
 import { onCloudModeChange } from '../services/socket-client';
+import { applyDsmLayoutModeToForce16x9 } from '../lib/dsmClockLayout';
 import {
   DISPLAY_SESSION_MAX_HOURS,
   DISPLAY_SESSION_MAX_HINT,
@@ -14,11 +16,16 @@ import {
   DISPLAY_SESSION_PICK_TIME_ALERT,
 } from '../lib/displaySession';
 
+const DSM_DESIGN_W = 1920;
+const DSM_DESIGN_H = 1080;
+
 /** Stage / confidence monitor — syncs via show server Socket.IO (LAN or cloud-bridged). */
 const OfflineTimerPage: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const isDsmRoute = /dsm-clock/i.test(location.pathname);
+  const timerBasePath = isDsmRoute ? '/dsm-clock' : '/timer';
 
   // Get event ID from URL parameters
   const eventIdFromUrl = searchParams.get('eventId');
@@ -38,6 +45,11 @@ const OfflineTimerPage: React.FC = () => {
   const [disconnectTimer, setDisconnectTimer] = useState<NodeJS.Timeout | null>(null);
   const [hasShownModalOnce, setHasShownModalOnce] = useState(false);
 
+  // DSM defaults to 16:9 master board unless Companion / UI explicitly sets Full.
+  const [force16x9Ref, setForce16x9Ref] = useState(true);
+  const [stageScale, setStageScale] = useState(1);
+  const stageOuterRef = useRef<HTMLDivElement>(null);
+
   // Event selector (same pattern as PhotoView / Green Room)
   const [events, setEvents] = useState<Event[]>([]);
   const [eventsLoading, setEventsLoading] = useState(true);
@@ -54,10 +66,43 @@ const OfflineTimerPage: React.FC = () => {
   const [eventLabel, setEventLabel] = useState<string | null>(null);
 
   useEffect(() => {
+    const kind = isDsmRoute ? 'DSM' : 'Timer';
     document.title = eventLabel
-      ? `Offline Show · Timer · ${eventLabel}`
-      : 'Offline Show · Timer';
-  }, [eventLabel]);
+      ? `Offline Show · ${kind} · ${eventLabel}`
+      : `Offline Show · ${kind}`;
+  }, [eventLabel, isDsmRoute]);
+
+  useLayoutEffect(() => {
+    if (!isDsmRoute || !force16x9Ref) return;
+    const el = stageOuterRef.current;
+    if (!el) return;
+    const update = () => {
+      const w = el.clientWidth || window.innerWidth;
+      const h = el.clientHeight || window.innerHeight;
+      setStageScale(Math.min(w / DSM_DESIGN_W, h / DSM_DESIGN_H));
+    };
+    update();
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(update) : null;
+    ro?.observe(el);
+    window.addEventListener('resize', update);
+    return () => {
+      ro?.disconnect();
+      window.removeEventListener('resize', update);
+    };
+  }, [isDsmRoute, force16x9Ref]);
+
+  const publishDsmLayout = useCallback(
+    async (nextForce16x9: boolean) => {
+      setForce16x9Ref(nextForce16x9);
+      if (!eventId) return;
+      try {
+        await apiClient.setDsmClockLayout(eventId, nextForce16x9 ? '16x9' : 'full');
+      } catch (err) {
+        console.warn('DSM layout publish failed:', err);
+      }
+    },
+    [eventId]
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -197,9 +242,9 @@ const OfflineTimerPage: React.FC = () => {
     if (eventsLoading || eventId) return;
     if (events.length === 1 && events[0]?.id) {
       setEventId(events[0].id);
-      navigate(`/timer?eventId=${encodeURIComponent(events[0].id)}`, { replace: true });
+      navigate(`${timerBasePath}?eventId=${encodeURIComponent(events[0].id)}`, { replace: true });
     }
-  }, [eventsLoading, eventId, events, navigate]);
+  }, [eventsLoading, eventId, events, navigate, timerBasePath]);
 
   useEffect(() => {
     if (eventsRefreshSuccessAt == null) return;
@@ -277,7 +322,21 @@ const OfflineTimerPage: React.FC = () => {
       }
     };
 
+    const loadDsmLayout = async () => {
+      if (!isDsmRoute) return;
+      try {
+        const res = await apiClient.getDsmClockLayout(eventId);
+        // null / missing → keep default 16:9; only "full" turns the board off
+        const next = applyDsmLayoutModeToForce16x9(res?.mode ?? '16x9');
+        if (next != null) setForce16x9Ref(next);
+      } catch (error) {
+        console.warn('DSM layout load failed — keeping 16:9 default:', error);
+        setForce16x9Ref(true);
+      }
+    };
+
     loadMessage(); // Load initial data
+    void loadDsmLayout();
 
     // Set up WebSocket connection for timer messages only
     // Clock component handles its own timer WebSocket connection
@@ -288,11 +347,17 @@ const OfflineTimerPage: React.FC = () => {
           setSupabaseMessage(data.enabled ? data : null);
         }
       },
+      onDsmClockLayout: (data: any) => {
+        if (!isDsmRoute || !data || String(data.event_id || '') !== String(eventId)) return;
+        const next = applyDsmLayoutModeToForce16x9(data.mode ?? '16x9');
+        if (next != null) setForce16x9Ref(next);
+      },
       onConnectionChange: (connected: boolean) => {
         console.log('📨 ClockPage: WebSocket connection status:', connected);
         if (connected) {
           // Reload message when reconnected
           loadMessage();
+          void loadDsmLayout();
         }
       }
     };
@@ -310,7 +375,7 @@ const OfflineTimerPage: React.FC = () => {
       unsub();
       if (disconnectTimer) clearTimeout(disconnectTimer);
     };
-  }, [eventId]);
+  }, [eventId, isDsmRoute]);
 
   // DISABLED: postMessage updates - now using WebSocket only to prevent conflicts
   // The postMessage method was causing timer flipping because it conflicted with WebSocket updates
@@ -403,28 +468,68 @@ const OfflineTimerPage: React.FC = () => {
   const handleEventSelect = (selected: Event) => {
     setEventId(selected.id);
     setShowEventSelector(false);
-    navigate(`/timer?eventId=${encodeURIComponent(selected.id)}`, { replace: true });
+    navigate(`${timerBasePath}?eventId=${encodeURIComponent(selected.id)}`, { replace: true });
   };
+
+  const useDsm16x9Board = isDsmRoute && force16x9Ref;
+  const stageW = DSM_DESIGN_W * stageScale;
+  const stageH = DSM_DESIGN_H * stageScale;
+
+  const clockNode = (
+    <Clock
+      onClose={handleClose}
+      message={message}
+      messageEnabled={messageEnabled}
+      eventId={eventId}
+      supabaseMessage={supabaseMessage}
+      scheduleItems={scheduleItems}
+      offlineShowBadge
+      cloudConnected={connectivity?.cloudConnected === true}
+      fillParent={useDsm16x9Board}
+    />
+  );
 
   return (
     <>
-      <div className="relative w-full min-h-screen">
-        <Clock
-        onClose={handleClose}
-        message={message}
-        messageEnabled={messageEnabled}
-        eventId={eventId}
-        supabaseMessage={supabaseMessage}
-        scheduleItems={scheduleItems}
-        offlineShowBadge
-        cloudConnected={connectivity?.cloudConnected === true}
-      />
+      <div className={`relative w-full min-h-screen ${isDsmRoute ? 'dsm-clock-page' : ''}`}>
+        {useDsm16x9Board ? (
+          <div
+            ref={stageOuterRef}
+            className="fixed inset-0 z-0 flex items-center justify-center overflow-hidden bg-black text-white"
+          >
+            <div
+              className="relative overflow-hidden bg-black"
+              style={{
+                width: stageW,
+                height: stageH,
+                outline: !isFullScreen ? '1px solid rgba(251,191,36,0.85)' : undefined,
+                outlineOffset: 0,
+              }}
+              title={!isFullScreen ? '16:9 DSM master board (default)' : undefined}
+            >
+              <div
+                className="absolute left-0 top-0 overflow-hidden bg-black text-white"
+                style={{
+                  width: DSM_DESIGN_W,
+                  height: DSM_DESIGN_H,
+                  transform: `scale(${stageScale})`,
+                  transformOrigin: 'top left',
+                }}
+              >
+                {clockNode}
+              </div>
+            </div>
+          </div>
+        ) : (
+          clockNode
+        )}
 
-        {/* Event Selector - left side below CURRENT TIME, fixed so it doesn't move on scroll; overflow-visible so dropdown can expand */}
-        {!isFullScreen && events.length > 1 && (
-          <div className="fixed top-[115px] left-4 z-[100] bg-black/50 backdrop-blur-sm rounded-lg p-3 space-y-2 overflow-visible">
-            {showEventSelector ? (
-              <div className="overflow-visible">
+        {/* Event Selector + DSM 16:9 toggle — left side; hidden in fullscreen */}
+        {!isFullScreen && (events.length > 1 || isDsmRoute) && (
+          <div className="fixed top-[115px] left-4 z-[100] bg-black/50 backdrop-blur-sm rounded-lg p-3 space-y-2 overflow-visible min-w-[160px]">
+            {events.length > 1 && (
+              showEventSelector ? (
+              <div className="overflow-visible space-y-2">
                 <label className="text-sm text-gray-400 block mb-1">Event:</label>
                 <EventSelectorDropdown
                   events={events}
@@ -474,6 +579,27 @@ const OfflineTimerPage: React.FC = () => {
               >
                 Change event
               </button>
+            )
+            )}
+            {isDsmRoute && (
+              <div
+                className={`flex flex-col items-stretch gap-1.5 ${
+                  events.length > 1 ? 'pt-1 border-t border-slate-600/60' : ''
+                }`}
+              >
+                <button
+                  type="button"
+                  onClick={() => void publishDsmLayout(!force16x9Ref)}
+                  className={`px-3 py-1.5 rounded-md text-xs font-semibold tracking-wide border ${
+                    force16x9Ref
+                      ? 'bg-amber-500 text-black border-amber-200'
+                      : 'bg-slate-800/90 text-white border-slate-500 hover:bg-slate-700'
+                  }`}
+                  title="DSM defaults to 16:9. Turn OFF for Full DSM (fills the monitor)."
+                >
+                  DSM · {force16x9Ref ? '16:9 ON' : '16:9 OFF'}
+                </button>
+              </div>
             )}
           </div>
         )}

@@ -17,6 +17,7 @@ export interface SocketCallbacks {
   onConnectionChange?: (connected: boolean) => void;
   onInitialSync?: () => Promise<void>;
   onTimerMessageUpdated?: (data: any) => void;
+  onDsmClockLayout?: (data: { event_id?: string; mode?: '16x9' | 'full' | string }) => void;
   onOvertimeUpdate?: (data: any) => void;
   onOvertimeReset?: (data: any) => void;
   onShowStartOvertimeUpdate?: (data: any) => void;
@@ -42,7 +43,7 @@ export interface SocketCallbacks {
   onRowLocksSnapshot?: (data: { eventId: string; locks: { rowId: number; userId: string; userName: string }[] }) => void;
 }
 
-type Subscriber = { eventId: string; callbacks: SocketCallbacks };
+type Subscriber = { eventId: string; callbacks: SocketCallbacks; key: string };
 
 class SocketClient {
   private socket: Socket | null = null;
@@ -53,10 +54,20 @@ class SocketClient {
   private maxReconnectAttempts = 5;
   private disconnectedByAdmin = false;
 
-  /** Register for socket updates. Returns unsubscribe — prefer this over disconnect(). */
-  connect(eventId: string, callbacks: SocketCallbacks): () => void {
+  /**
+   * Register for socket updates. Returns unsubscribe — prefer this over disconnect().
+   * Optional handlerKey (e.g. 'clock' / 'clockPage') replaces any prior subscriber
+   * with the same eventId+key so DsmClock + DsmClockPage can share one socket.
+   */
+  connect(eventId: string, callbacks: SocketCallbacks, handlerKey: string = 'default'): () => void {
+    const key = String(handlerKey || 'default');
+    for (const [id, sub] of this.subscribers) {
+      if (sub.eventId === eventId && sub.key === key) {
+        this.subscribers.delete(id);
+      }
+    }
     const id = this.nextSubscriberId++;
-    this.subscribers.set(id, { eventId, callbacks });
+    this.subscribers.set(id, { eventId, callbacks, key });
 
     this.ensureSocket(eventId);
 
@@ -68,12 +79,16 @@ class SocketClient {
     };
   }
 
-  /** @deprecated Prefer the unsubscribe function returned by connect(). */
-  disconnect(eventId?: string) {
+  /**
+   * Remove subscribers. With handlerKey, only that bag is removed (Clock vs page).
+   * Without handlerKey, removes every subscriber for the event (or all if no eventId).
+   */
+  disconnect(eventId?: string, handlerKey?: string) {
+    const key = handlerKey != null ? String(handlerKey) : null;
     for (const [id, sub] of this.subscribers) {
-      if (!eventId || sub.eventId === eventId) {
-        this.subscribers.delete(id);
-      }
+      if (eventId && sub.eventId !== eventId) continue;
+      if (key != null && sub.key !== key) continue;
+      this.subscribers.delete(id);
     }
     if (this.subscribers.size === 0) {
       this.teardownSocket();
@@ -176,6 +191,9 @@ class SocketClient {
           break;
         case 'timerMessageUpdated':
           this.invoke(activeEventId, 'onTimerMessageUpdated', message.data);
+          break;
+        case 'dsmClockLayout':
+          this.invoke(activeEventId, 'onDsmClockLayout', message.data);
           break;
         case 'overtimeUpdate':
           this.invoke(activeEventId, 'onOvertimeUpdate', message.data);

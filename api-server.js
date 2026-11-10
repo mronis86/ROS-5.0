@@ -6862,7 +6862,8 @@ app.get('/api/dsm-clock/layout/:eventId', async (req, res) => {
     if (!eventId) {
       return res.status(400).json({ error: 'eventId is required' });
     }
-    const mode = dsmClockLayoutByEvent.get(eventId) || null;
+    // Default 16:9 — Full only after an explicit Companion / UI / cue set.
+    const mode = dsmClockLayoutByEvent.get(eventId) || '16x9';
     res.json({ event_id: eventId, mode });
   } catch (error) {
     console.error('Error reading DSM clock layout:', error);

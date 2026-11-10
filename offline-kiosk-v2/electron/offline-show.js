@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const { offlineShowRoot, nodeCommand, bundledNodeExe } = require('./runtime-paths');
+const { loadStoredToken, saveStoredToken, clearStoredToken } = require('./token-store');
 
 const OFFLINE_SHOW_URL = 'http://127.0.0.1:3004';
 const HEALTH_PATH = '/health';
@@ -157,18 +158,83 @@ async function getTokenStatus() {
 }
 
 async function saveRailwayToken(token) {
+  const trimmed = typeof token === 'string' ? token.trim() : '';
+  if (!trimmed) {
+    throw new Error('token is required');
+  }
+  // Always keep a local copy so operators can set the token before Offline Show starts.
+  saveStoredToken(trimmed);
+  if (!(await isRunning())) {
+    const stored = loadStoredToken();
+    return {
+      configured: true,
+      prefix: stored.prefix,
+      source: 'kiosk',
+      locked: false,
+      pending: true,
+    };
+  }
   return requestJson('/api/railway-api-token', {
     method: 'PUT',
-    body: { token },
+    body: { token: trimmed },
     timeoutMs: 30000,
   });
 }
 
 async function clearRailwayToken() {
+  clearStoredToken();
+  if (!(await isRunning())) {
+    return { configured: false, prefix: null, source: null, locked: false, pending: false };
+  }
   return requestJson('/api/railway-api-token', {
     method: 'DELETE',
     timeoutMs: 8000,
   });
+}
+
+/** After Offline Show is up, push any locally saved token into its SQLite. */
+async function applyPendingRailwayToken() {
+  const stored = loadStoredToken();
+  if (!stored.configured || !stored.token) {
+    return { ok: true, applied: false, token: null };
+  }
+  if (!(await isRunning())) {
+    return { ok: false, applied: false, error: 'Offline Show is not running', token: null };
+  }
+  try {
+    const status = await getTokenStatus();
+    if (status?.configured && status?.prefix === stored.prefix && status?.source === 'db') {
+      return { ok: true, applied: false, token: status };
+    }
+  } catch {
+    /* continue and write */
+  }
+  try {
+    const token = await requestJson('/api/railway-api-token', {
+      method: 'PUT',
+      body: { token: stored.token },
+      timeoutMs: 30000,
+    });
+    return { ok: true, applied: true, token };
+  } catch (e) {
+    return {
+      ok: false,
+      applied: false,
+      error: e instanceof Error ? e.message : 'Token apply failed',
+      token: null,
+    };
+  }
+}
+
+function getStoredTokenStatus() {
+  const stored = loadStoredToken();
+  return {
+    configured: stored.configured,
+    prefix: stored.prefix || null,
+    source: stored.configured ? 'kiosk' : null,
+    locked: false,
+    pending: stored.configured,
+  };
 }
 
 async function syncFromCloud() {
@@ -309,11 +375,14 @@ function spawnWithNode(root) {
 
 async function startOfflineShow() {
   if (await isRunning()) {
+    const pending = await applyPendingRailwayToken();
     return {
       ok: true,
       alreadyRunning: true,
       startedByKiosk: false,
       url: OFFLINE_SHOW_URL,
+      tokenApplied: Boolean(pending?.applied),
+      token: pending?.token || null,
     };
   }
 
@@ -338,11 +407,16 @@ async function startOfflineShow() {
     };
   }
 
+  // Apply any token saved while Offline Show was stopped (before Cloud sync).
+  const pending = await applyPendingRailwayToken();
+
   return {
     ok: true,
     alreadyRunning: false,
     startedByKiosk,
     url: OFFLINE_SHOW_URL,
+    tokenApplied: Boolean(pending?.applied),
+    token: pending?.token || (pending?.ok ? getStoredTokenStatus() : null),
   };
 }
 
@@ -437,6 +511,10 @@ async function getStatus() {
       /* ignore */
     }
   }
+  if (!token?.configured) {
+    const stored = getStoredTokenStatus();
+    if (stored.configured) token = stored;
+  }
   return {
     running,
     url: OFFLINE_SHOW_URL,
@@ -489,6 +567,8 @@ module.exports = {
   getTokenStatus,
   saveRailwayToken,
   clearRailwayToken,
+  applyPendingRailwayToken,
+  getStoredTokenStatus,
   syncFromCloud,
   prepareEvents,
   getPptBridgeStatus,

@@ -968,7 +968,8 @@ function registerRoutes(app, db, helpers) {
     if (!eventId) {
       return res.status(400).json({ error: 'eventId is required' });
     }
-    res.json({ event_id: eventId, mode: dsmClockLayoutByEvent.get(eventId) || null });
+    // Default 16:9 — Full only after an explicit Companion / UI set.
+    res.json({ event_id: eventId, mode: dsmClockLayoutByEvent.get(eventId) || '16x9' });
   });
 
   // ─── Completed cues ─────────────────────────────────────────────────────────
