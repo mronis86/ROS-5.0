@@ -296,11 +296,11 @@ function registerRoutes(app, db, helpers) {
     const action = String(body.action || '').trim().toLowerCase();
     const eventId = String(body.eventId || body.event_id || '').trim();
     if ((action === 'start' || action === 'assign') && eventId && !body.url) {
-      // Prefer cloud SPA URL so off-LAN clients can open Green Room.
+      // SPA is on Cloudflare Pages (Railway /green-room is API-only → 404).
       const base =
         process.env.OFFLINE_ROS_APP_URL ||
-        process.env.OFFLINE_RAILWAY_URL ||
-        'https://ros-50-production.up.railway.app';
+        process.env.ROS_APP_URL ||
+        'https://ros1615.pages.dev';
       body.url = `${String(base).replace(/\/$/, '')}/green-room?eventId=${encodeURIComponent(eventId)}`;
       body.page = body.page || 'green-room';
       body.eventId = eventId;

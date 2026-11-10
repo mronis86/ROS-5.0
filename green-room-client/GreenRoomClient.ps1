@@ -29,7 +29,10 @@ function Read-Config {
   $safeHost = ($hostname -replace '[^a-zA-Z0-9_-]+', '-').ToLowerInvariant()
 
   $apiUrl = if ($env:ROS_API_URL) { $env:ROS_API_URL } elseif ($file -and $file.apiUrl) { $file.apiUrl } else { 'https://ros-50-production.up.railway.app' }
-  $appUrl = if ($env:ROS_APP_URL) { $env:ROS_APP_URL } elseif ($file -and $file.appUrl) { $file.appUrl } else { $apiUrl }
+  # Green Room page is on Cloudflare Pages (not the Railway API host).
+  $defaultApp = 'https://ros1615.pages.dev'
+  $appUrl = if ($env:ROS_APP_URL) { $env:ROS_APP_URL } elseif ($file -and $file.appUrl) { $file.appUrl } else { $defaultApp }
+  if ($appUrl -match 'up\.railway\.app') { $appUrl = $defaultApp }
   $token = if ($env:ROS_API_TOKEN) { $env:ROS_API_TOKEN } elseif ($file -and $file.token) { $file.token } else { '' }
   $clientId = if ($env:CLIENT_ID) { $env:CLIENT_ID } elseif ($file -and $file.clientId) { $file.clientId } else { "gr-$safeHost" }
   $name = if ($env:CLIENT_NAME) { $env:CLIENT_NAME } elseif ($file -and $file.name) { $file.name } else { "Green Room - $hostname" }

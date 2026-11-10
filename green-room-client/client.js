@@ -28,12 +28,13 @@ function loadConfig() {
     apiUrl: String(process.env.ROS_API_URL || file.apiUrl || 'https://ros-50-production.up.railway.app')
       .trim()
       .replace(/\/$/, ''),
-    // SPA host (Cloudflare Pages / custom domain). Falls back to API host if unset.
+    // SPA host (Cloudflare Pages). Railway API host has no /green-room UI (404).
     appUrl: String(
-      process.env.ROS_APP_URL || file.appUrl || process.env.ROS_API_URL || file.apiUrl || 'https://ros-50-production.up.railway.app'
+      process.env.ROS_APP_URL || file.appUrl || 'https://ros1615.pages.dev'
     )
       .trim()
-      .replace(/\/$/, ''),
+      .replace(/\/$/, '')
+      .replace(/https?:\/\/[^/]*up\.railway\.app$/i, 'https://ros1615.pages.dev'),
     token: String(process.env.ROS_API_TOKEN || file.token || '').trim(),
     clientId: String(
       process.env.CLIENT_ID || file.clientId || `gr-${hostname.replace(/[^a-zA-Z0-9_-]+/g, '-').toLowerCase()}`

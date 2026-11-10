@@ -1,9 +1,9 @@
 {
   "apiUrl": "https://ros-50-production.up.railway.app",
-  "appUrl": "https://ros-50-production.up.railway.app",
+  "appUrl": "https://ros1615.pages.dev",
   "token": "ros_itok_REPLACE_ME",
   "clientId": "gr-test-laptop-1",
-  "name": "Green Room · Test Laptop",
+  "name": "Green Room - Test Laptop",
   "heartbeatMs": 20000,
   "openBrowser": true
 }

@@ -1202,6 +1202,7 @@ async function commandDisplayClient(clientId, action) {
   }
   state.displayClientBusyId = id;
   renderDisplayClients();
+  const note = $('#grClientsNote');
   try {
     const result = await window.kiosk.commandDisplayClient({
       clientId: id,
@@ -1209,15 +1210,19 @@ async function commandDisplayClient(clientId, action) {
       eventId: action === 'start' || action === 'assign' ? state.eventId : undefined,
       page: 'green-room',
     });
-    if (!result?.ok && result?.error) {
-      const note = $('#grClientsNote');
-      if (note) {
+    if (note) {
+      if (!result?.ok && result?.error) {
         note.hidden = false;
         note.textContent = result.error;
+      } else if (action === 'start') {
+        note.hidden = false;
+        note.textContent = `Start queued for ${selectedEvent()?.name || state.eventId} — client should open Green Room within ~20s.`;
+      } else if (action === 'stop') {
+        note.hidden = false;
+        note.textContent = 'Standby queued — client will stop opening new Green Room tabs.';
       }
     }
   } catch (e) {
-    const note = $('#grClientsNote');
     if (note) {
       note.hidden = false;
       note.textContent = e instanceof Error ? e.message : 'Command failed';
