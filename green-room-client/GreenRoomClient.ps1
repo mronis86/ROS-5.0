@@ -244,12 +244,85 @@ function Invoke-RosApi {
   }
 }
 
-function Open-Url {
-  param([string]$Url)
-  if (-not $Url) { return $false }
+function Get-ClientDisplays {
+  $list = @()
   try {
-    # cmd start is more reliable than Start-Process when this script is
-    # launched with -WindowStyle Hidden (tray mode).
+    $screens = [System.Windows.Forms.Screen]::AllScreens
+    $i = 0
+    foreach ($s in $screens) {
+      $b = $s.Bounds
+      $list += [pscustomobject]@{
+        index      = $i
+        primary    = [bool]$s.Primary
+        deviceName = "$($s.DeviceName)"
+        label      = if ($s.Primary) { "Display $($i + 1) (primary)" } else { "Display $($i + 1)" }
+        x          = [int]$b.X
+        y          = [int]$b.Y
+        width      = [int]$b.Width
+        height     = [int]$b.Height
+      }
+      $i++
+    }
+  } catch {
+    $list = @([pscustomobject]@{
+        index = 0; primary = $true; deviceName = 'primary'; label = 'Primary display'
+        x = 0; y = 0; width = 1920; height = 1080
+      })
+  }
+  return $list
+}
+
+function Find-BrowserExe {
+  $candidates = @(
+    "$env:ProgramFiles(x86)\Microsoft\Edge\Application\msedge.exe",
+    "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe",
+    "$env:ProgramFiles\Google\Chrome\Application\chrome.exe",
+    "$env:ProgramFiles(x86)\Google\Chrome\Application\chrome.exe",
+    "$env:LocalAppData\Google\Chrome\Application\chrome.exe"
+  )
+  foreach ($p in $candidates) {
+    if ($p -and (Test-Path -LiteralPath $p)) { return $p }
+  }
+  return $null
+}
+
+function Stop-BrowserSession {
+  if ($script:State.browserPid) {
+    try {
+      Stop-Process -Id ([int]$script:State.browserPid) -Force -ErrorAction SilentlyContinue
+    } catch {}
+  }
+  $script:State.browserPid = $null
+}
+
+function Open-GreenRoomWindow {
+  param(
+    [string]$Url,
+    [bool]$Fullscreen = $true,
+    $Display = $null
+  )
+  if (-not $Url) { return $false }
+  $x = 0; $y = 0
+  if ($Display) {
+    if ($null -ne $Display.x) { $x = [int]$Display.x }
+    if ($null -ne $Display.y) { $y = [int]$Display.y }
+  }
+  $browser = Find-BrowserExe
+  if ($browser) {
+    $args = @("--new-window", "--window-position=$x,$y", "--app=$Url")
+    if ($Fullscreen) { $args = @("--start-fullscreen") + $args }
+    try {
+      $p = Start-Process -FilePath $browser -ArgumentList $args -PassThru -WindowStyle Normal
+      if ($p -and $p.Id) {
+        $script:State.browserPid = $p.Id
+        Write-Log 'browser' $browser "pid=$($p.Id)" "pos=$x,$y" "fs=$Fullscreen"
+        return $true
+      }
+    } catch {
+      Write-Log 'browser launch failed' $_.Exception.Message
+    }
+  }
+  try {
     $p = Start-Process -FilePath 'cmd.exe' -ArgumentList @('/c', 'start', '""', $Url) -WindowStyle Hidden -PassThru
     if ($p) { return $true }
   } catch {}
@@ -269,6 +342,14 @@ $script:State = @{
   openedUrl     = ''
   lastOk        = $false
   lastMessage   = 'Starting...'
+  browserPid    = $null
+  activeUntil   = $null
+}
+
+function Clear-ActiveSession {
+  $script:State.status = 'standby'
+  $script:State.activeUntil = $null
+  Stop-BrowserSession
 }
 
 function Apply-Command {
@@ -284,20 +365,45 @@ function Apply-Command {
     $script:State.lastError = ''
   } elseif ($action -eq 'start') {
     $script:State.eventId = $eventId
+    $day = [Math]::Max(1, [int]($Command.day))
+    if (-not $day) { $day = 1 }
     $appBase = if ($Cfg.appUrl -and $Cfg.appUrl -notmatch 'up\.railway\.app') { $Cfg.appUrl } else { 'https://ros1615.pages.dev' }
     $url = if ($Command.url -and "$($Command.url)" -notmatch 'up\.railway\.app/green-room') {
       "$($Command.url)"
     } else {
-      "$appBase/green-room?eventId=$([Uri]::EscapeDataString($eventId))"
+      "$appBase/green-room?eventId=$([Uri]::EscapeDataString($eventId))&day=$day"
     }
-    # Always rewrite legacy Railway UI URLs (API host 404s on /green-room).
     if ($url -match 'up\.railway\.app/green-room') {
-      $url = "$appBase/green-room?eventId=$([Uri]::EscapeDataString($eventId))"
+      $url = "$appBase/green-room?eventId=$([Uri]::EscapeDataString($eventId))&day=$day"
+    }
+    if ($url -notmatch '[?&]day=') {
+      $join = if ($url -match '\?') { '&' } else { '?' }
+      $url = "$url${join}day=$day"
     }
     $script:State.openedUrl = $url
+
+    $displays = @(Get-ClientDisplays)
+    $displayIndex = 0
+    if ($null -ne $Command.displayIndex) { $displayIndex = [int]$Command.displayIndex }
+    $display = $null
+    if ($Command.display) { $display = $Command.display }
+    elseif ($displays.Count -gt 0) {
+      $display = $displays | Where-Object { [int]$_.index -eq $displayIndex } | Select-Object -First 1
+      if (-not $display) { $display = $displays[0] }
+    }
+    $fullscreen = $true
+    if ($null -ne $Command.fullscreen) { $fullscreen = [bool]$Command.fullscreen }
+
+    $hours = 0
+    if ($Command.durationHours) { $hours = [double]$Command.durationHours }
+    if ($hours -lt 2) { $hours = 2 }
+    if ($hours -gt 24) { $hours = 24 }
+    $script:State.activeUntil = (Get-Date).AddHours($hours)
+
+    Stop-BrowserSession
     $opened = $false
     if ($Cfg.openBrowser) {
-      $opened = Open-Url $url
+      $opened = Open-GreenRoomWindow -Url $url -Fullscreen $fullscreen -Display $display
       if (-not $opened) {
         Write-Log 'warn: could not open browser - client still marked active'
         $script:State.lastError = 'Could not open browser'
@@ -305,17 +411,17 @@ function Apply-Command {
     }
     $script:State.status = 'active'
     if ($opened) { $script:State.lastError = '' }
-    Write-Log 'active ->' $url
+    Write-Log 'active ->' $url "until=$($script:State.activeUntil)" "day=$day" "fs=$fullscreen"
     if ($Notify) {
-      $tip = if ($opened) { "Opening Green Room for $eventId" } else { "Active, but browser did not open. URL in log." }
-      $Notify.ShowBalloonTip(6000, 'Green Room started', $tip, [System.Windows.Forms.ToolTipIcon]::Info)
+      $tip = if ($opened) { "Green Room for ${hours}h (day $day)" } else { 'Active, but browser did not open. Use Open Green Room now.' }
+      $Notify.ShowBalloonTip(7000, 'Green Room started', $tip, [System.Windows.Forms.ToolTipIcon]::Info)
     }
   } elseif ($action -eq 'stop') {
-    $script:State.status = 'standby'
+    Clear-ActiveSession
     $script:State.lastError = ''
-    Write-Log 'back to standby (close the Green Room tab manually for now)'
+    Write-Log 'back to standby'
     if ($Notify) {
-      $Notify.ShowBalloonTip(4000, 'Green Room standby', 'Back on standby. Close the browser tab if it is still open.', [System.Windows.Forms.ToolTipIcon]::Info)
+      $Notify.ShowBalloonTip(4000, 'Green Room standby', 'Back on standby.', [System.Windows.Forms.ToolTipIcon]::Info)
     }
   } else {
     $script:State.lastError = "Unknown action: $action"
@@ -325,6 +431,17 @@ function Apply-Command {
 
 function Send-Heartbeat {
   param($Cfg, $Notify)
+  if ($script:State.status -eq 'active' -and $script:State.activeUntil) {
+    if ((Get-Date) -ge [datetime]$script:State.activeUntil) {
+      Write-Log 'duration elapsed - returning to standby'
+      Clear-ActiveSession
+      if ($Notify) {
+        $Notify.ShowBalloonTip(5000, 'Green Room ended', 'Active time finished - back on standby.', [System.Windows.Forms.ToolTipIcon]::Info)
+      }
+    }
+  }
+
+  $displays = @(Get-ClientDisplays)
   $body = @{
     clientId      = $Cfg.clientId
     name          = $Cfg.name
@@ -334,6 +451,11 @@ function Send-Heartbeat {
     eventId       = $script:State.eventId
     lastCommandId = $script:State.lastCommandId
     lastError     = $script:State.lastError
+    meta          = @{
+      displays    = $displays
+      activeUntil = if ($script:State.activeUntil) { ([datetime]$script:State.activeUntil).ToString('o') } else { $null }
+      openedUrl   = $script:State.openedUrl
+    }
   }
   $data = Invoke-RosApi -Cfg $Cfg -Method 'POST' -UrlPath '/api/display-clients/heartbeat' -Body $body
   $queued = $null
@@ -344,6 +466,8 @@ function Send-Heartbeat {
     $body.eventId = $script:State.eventId
     $body.lastCommandId = $script:State.lastCommandId
     $body.lastError = $script:State.lastError
+    $body.meta.activeUntil = if ($script:State.activeUntil) { ([datetime]$script:State.activeUntil).ToString('o') } else { $null }
+    $body.meta.openedUrl = $script:State.openedUrl
     $null = Invoke-RosApi -Cfg $Cfg -Method 'POST' -UrlPath '/api/display-clients/heartbeat' -Body $body
   }
   return $data.client
@@ -445,11 +569,12 @@ $itemOpenGr.Text = 'Open Green Room now'
 $itemOpenGr.Add_Click({
   $eid = if ($script:State.eventId) { $script:State.eventId } else { 'TEST' }
   $appBase = if ($script:Cfg.appUrl -and $script:Cfg.appUrl -notmatch 'up\.railway\.app') { $script:Cfg.appUrl } else { 'https://ros1615.pages.dev' }
-  $url = "$appBase/green-room?eventId=$([Uri]::EscapeDataString($eid))"
-  $ok = Open-Url $url
+  $url = if ($script:State.openedUrl) { $script:State.openedUrl } else { "$appBase/green-room?eventId=$([Uri]::EscapeDataString($eid))&day=1" }
+  $displays = @(Get-ClientDisplays)
+  $ok = Open-GreenRoomWindow -Url $url -Fullscreen $true -Display ($displays | Select-Object -First 1)
   Write-Log 'manual open' $url "ok=$ok"
   if ($ok) {
-    $notify.ShowBalloonTip(4000, 'Green Room', "Opened $url", [System.Windows.Forms.ToolTipIcon]::Info)
+    $notify.ShowBalloonTip(4000, 'Green Room', 'Opened full screen', [System.Windows.Forms.ToolTipIcon]::Info)
   } else {
     [System.Windows.Forms.MessageBox]::Show("Could not open browser for:`n$url", 'Green Room Client') | Out-Null
   }

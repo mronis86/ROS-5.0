@@ -583,6 +583,13 @@ ipcMain.handle('kiosk:commandDisplayClient', async (_evt, payload) => {
       url: payload?.url,
       page: payload?.page || 'green-room',
       message: payload?.message,
+      durationHours: payload?.durationHours,
+      day: payload?.day,
+      eventName: payload?.eventName,
+      eventDate: payload?.eventDate,
+      fullscreen: payload?.fullscreen,
+      displayIndex: payload?.displayIndex,
+      display: payload?.display,
     });
   } catch (e) {
     return {

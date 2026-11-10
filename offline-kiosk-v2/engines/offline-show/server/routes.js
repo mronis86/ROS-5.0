@@ -301,9 +301,17 @@ function registerRoutes(app, db, helpers) {
         process.env.OFFLINE_ROS_APP_URL ||
         process.env.ROS_APP_URL ||
         'https://ros1615.pages.dev';
-      body.url = `${String(base).replace(/\/$/, '')}/green-room?eventId=${encodeURIComponent(eventId)}`;
+      const day = Math.max(1, Math.floor(Number(body.day || 1) || 1));
+      const qs = new URLSearchParams({
+        eventId: String(eventId),
+        day: String(day),
+      });
+      if (body.eventName) qs.set('eventName', String(body.eventName));
+      if (body.eventDate) qs.set('eventDate', String(body.eventDate));
+      body.url = `${String(base).replace(/\/$/, '')}/green-room?${qs.toString()}`;
       body.page = body.page || 'green-room';
       body.eventId = eventId;
+      body.day = day;
     }
     try {
       const { data } = await railwayFetch(

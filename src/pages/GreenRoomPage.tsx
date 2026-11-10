@@ -109,6 +109,10 @@ const GreenRoomPage: React.FC = () => {
   const eventDate = urlParams.get('eventDate');
   const eventLocation = urlParams.get('eventLocation');
   const layoutFromUrl = parseGreenRoomLayoutId(urlParams.get('layout'));
+  const dayFromUrl = (() => {
+    const raw = Number(urlParams.get('day') || '');
+    return Number.isFinite(raw) && raw >= 1 ? Math.floor(raw) : null;
+  })();
   const [brandLayout, setBrandLayout] = useState<GreenRoomLayoutId>(() => getGreenRoomLayoutId());
 
   useEffect(() => {
@@ -362,7 +366,13 @@ const GreenRoomPage: React.FC = () => {
   
   const [masterStartTime, setMasterStartTime] = useState<string>('09:00');
   const [dayStartTimes, setDayStartTimes] = useState<{[key: number]: string}>({});
-  const [selectedDay, setSelectedDay] = useState<number>(1);
+  const [selectedDay, setSelectedDay] = useState<number>(() => dayFromUrl || 1);
+
+  useEffect(() => {
+    if (dayFromUrl && dayFromUrl !== selectedDay) setSelectedDay(dayFromUrl);
+    // Only react to URL day changes (kiosk / deep link).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dayFromUrl]);
   const [numberOfDays, setNumberOfDays] = useState<number>(1);
   const [localTimerInterval, setLocalTimerInterval] = useState<NodeJS.Timeout | null>(null);
   const [serverSyncedTimers, setServerSyncedTimers] = useState<Set<number>>(new Set());

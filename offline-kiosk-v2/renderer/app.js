@@ -297,6 +297,8 @@ const state = {
   /** @type {{ ok?: boolean, clients?: any[], error?: string, reason?: string, message?: string } | null} */
   displayClients: null,
   displayClientBusyId: '',
+  /** @type {string} */
+  grStartClientId: '',
 };
 
 let pptBridgePollTimer = null;
@@ -1147,7 +1149,7 @@ function renderDisplayClients() {
     startBtn.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      void commandDisplayClient(c.clientId, 'start');
+      openGrStartModal(c);
     });
 
     const stopBtn = document.createElement('button');
@@ -1198,7 +1200,143 @@ async function refreshDisplayClients() {
   renderDisplayClients();
 }
 
-async function commandDisplayClient(clientId, action) {
+function clientDisplays(client) {
+  const meta = client?.meta && typeof client.meta === 'object' ? client.meta : null;
+  const list = meta?.displays || client?.displays || [];
+  return Array.isArray(list) ? list : [];
+}
+
+function addDaysYmd(ymd, dayOffset) {
+  const m = String(ymd || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return '';
+  const dt = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+  dt.setUTCDate(dt.getUTCDate() + Math.max(0, dayOffset));
+  return dt.toISOString().slice(0, 10);
+}
+
+function openGrStartModal(client) {
+  if (!state.eventId) {
+    const note = $('#grClientsNote');
+    if (note) {
+      note.hidden = false;
+      note.textContent = 'Select an event on the Event tab before starting a client.';
+    }
+    return;
+  }
+  const ev = selectedEvent();
+  const days = Math.max(1, Number(ev?.numberOfDays) || 1);
+  state.grStartClientId = String(client?.clientId || '').trim();
+  const overlay = $('#grStartOverlay');
+  const lead = $('#grStartLead');
+  const dayRow = $('#grStartDayRow');
+  const daySelect = $('#grStartDay');
+  const displaySelect = $('#grStartDisplay');
+  const err = $('#grStartError');
+  if (err) {
+    err.hidden = true;
+    err.textContent = '';
+  }
+  if (lead) {
+    lead.textContent = `Start ${client?.name || client?.clientId || 'client'} on ${ev?.name || state.eventId}.`;
+  }
+  if (daySelect) {
+    daySelect.innerHTML = '';
+    for (let d = 1; d <= days; d += 1) {
+      const opt = document.createElement('option');
+      opt.value = String(d);
+      const dateLabel = addDaysYmd(ev?.date, d - 1);
+      opt.textContent = dateLabel ? `Day ${d} (${dateLabel})` : `Day ${d}`;
+      daySelect.appendChild(opt);
+    }
+    // Prefer today's date within the event range when possible.
+    let pick = 1;
+    const today = new Date();
+    const todayYmd = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    for (let d = 1; d <= days; d += 1) {
+      if (addDaysYmd(ev?.date, d - 1) === todayYmd) pick = d;
+    }
+    daySelect.value = String(pick);
+  }
+  if (dayRow) dayRow.hidden = days <= 1;
+  if (displaySelect) {
+    displaySelect.innerHTML = '';
+    const displays = clientDisplays(client);
+    if (!displays.length) {
+      const opt = document.createElement('option');
+      opt.value = '0';
+      opt.textContent = 'Primary display';
+      displaySelect.appendChild(opt);
+    } else {
+      displays.forEach((d, i) => {
+        const opt = document.createElement('option');
+        opt.value = String(d.index != null ? d.index : i);
+        const label = d.label || d.deviceName || `Display ${i + 1}`;
+        const size = d.width && d.height ? ` · ${d.width}×${d.height}` : '';
+        opt.textContent = `${label}${d.primary ? ' (primary)' : ''}${size}`;
+        displaySelect.appendChild(opt);
+      });
+    }
+  }
+  const hint = $('#grStartDisplayHint');
+  if (hint) {
+    const n = clientDisplays(client).length;
+    hint.textContent = n
+      ? `${n} display(s) reported by this PC.`
+      : 'No displays reported yet — uses primary. Refresh after the client updates.';
+  }
+  const hours = $('#grStartHours');
+  if (hours && !hours.value) hours.value = '4';
+  const fs = $('#grStartFullscreen');
+  if (fs) fs.checked = true;
+  if (overlay) overlay.hidden = false;
+}
+
+function closeGrStartModal() {
+  const overlay = $('#grStartOverlay');
+  if (overlay) overlay.hidden = true;
+  state.grStartClientId = '';
+}
+
+async function confirmGrStartModal() {
+  const id = String(state.grStartClientId || '').trim();
+  const err = $('#grStartError');
+  if (!id) {
+    closeGrStartModal();
+    return;
+  }
+  if (!state.eventId) {
+    if (err) {
+      err.hidden = false;
+      err.textContent = 'Select an event first.';
+    }
+    return;
+  }
+  const ev = selectedEvent();
+  const hours = Math.min(24, Math.max(2, Number($('#grStartHours')?.value || 4) || 4));
+  const day = Math.max(1, Number($('#grStartDay')?.value || 1) || 1);
+  const displayIndex = Math.max(0, Number($('#grStartDisplay')?.value || 0) || 0);
+  const fullscreen = Boolean($('#grStartFullscreen')?.checked);
+  const client =
+    (Array.isArray(state.displayClients?.clients) ? state.displayClients.clients : []).find(
+      (c) => c.clientId === id
+    ) || null;
+  const displays = clientDisplays(client);
+  const display =
+    displays.find((d) => Number(d.index) === displayIndex) || displays[displayIndex] || null;
+
+  closeGrStartModal();
+  await commandDisplayClient(id, 'start', {
+    durationHours: hours,
+    day,
+    eventName: ev?.name || '',
+    eventDate: addDaysYmd(ev?.date, day - 1) || ev?.date || '',
+    fullscreen,
+    displayIndex,
+    display,
+  });
+}
+
+async function commandDisplayClient(clientId, action, extras = {}) {
   const id = String(clientId || '').trim();
   if (!id || !window.kiosk?.commandDisplayClient) return;
   if (action === 'start' && !state.eventId) {
@@ -1218,14 +1356,17 @@ async function commandDisplayClient(clientId, action) {
       action,
       eventId: action === 'start' || action === 'assign' ? state.eventId : undefined,
       page: 'green-room',
+      ...extras,
     });
     if (note) {
       if (!result?.ok && result?.error) {
         note.hidden = false;
         note.textContent = result.error;
       } else if (action === 'start') {
+        const hrs = extras.durationHours ? ` for ${extras.durationHours}h` : '';
+        const day = extras.day && extras.day > 1 ? ` · day ${extras.day}` : '';
         note.hidden = false;
-        note.textContent = `Start queued for ${selectedEvent()?.name || state.eventId} — client should open Green Room within ~20s.`;
+        note.textContent = `Start queued${hrs}${day} — client should open Green Room within ~20s.`;
       } else if (action === 'stop') {
         note.hidden = false;
         note.textContent = 'Standby queued — client will stop opening new Green Room tabs.';
@@ -3467,6 +3608,11 @@ async function bootstrap() {
   });
   $('#refreshPptBtn')?.addEventListener('click', () => void refreshPptBridgeStatus());
   $('#refreshGrClientsBtn')?.addEventListener('click', () => void refreshDisplayClients());
+  $('#grStartCancelBtn')?.addEventListener('click', () => closeGrStartModal());
+  $('#grStartConfirmBtn')?.addEventListener('click', () => void confirmGrStartModal());
+  $('#grStartOverlay')?.addEventListener('click', (e) => {
+    if (e.target?.id === 'grStartOverlay') closeGrStartModal();
+  });
   $('#wlSettingsCancelBtn')?.addEventListener('click', () => closeSimpleWlSettings());
   $('#wlSettingsApplyBtn')?.addEventListener('click', () => void applySimpleWlSettings());
   $('#wlSettingsOverlay')?.addEventListener('click', (e) => {

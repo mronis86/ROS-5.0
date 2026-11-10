@@ -2143,6 +2143,28 @@ body {
   object-fit: fill;
 }
 
+.gr-start-dialog {
+  width: min(28rem, 94vw);
+  max-height: 90vh;
+  overflow: auto;
+  text-align: left;
+}
+
+.gr-start-lead {
+  margin: 0 0 0.85rem;
+  color: #94a3b8;
+  font-size: 0.88rem;
+}
+
+.gr-start-fs {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0.85rem 0 0.35rem;
+  color: #e2e8f0;
+  font-size: 0.9rem;
+}
+
 .wl-settings-dialog {
   max-width: 28rem;
   width: min(96vw, 28rem);

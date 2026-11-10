@@ -521,6 +521,57 @@
       </section>
     </main>
 
+    <div class="confirm-overlay" id="grStartOverlay" hidden>
+      <div
+        class="confirm-dialog gr-start-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="grStartTitle"
+      >
+        <h3 id="grStartTitle">Start Green Room</h3>
+        <p class="gr-start-lead" id="grStartLead">Choose how long this PC should stay on Green Room.</p>
+
+        <label class="wl-settings-label" for="grStartHours">Active for</label>
+        <select id="grStartHours" class="wl-settings-select" aria-label="Active duration">
+          <option value="2">2 hours</option>
+          <option value="3">3 hours</option>
+          <option value="4" selected>4 hours</option>
+          <option value="6">6 hours</option>
+          <option value="8">8 hours</option>
+          <option value="10">10 hours</option>
+          <option value="12">12 hours</option>
+          <option value="16">16 hours</option>
+          <option value="20">20 hours</option>
+          <option value="24">24 hours (max)</option>
+        </select>
+
+        <div id="grStartDayRow">
+          <label class="wl-settings-label" for="grStartDay">Event day</label>
+          <select id="grStartDay" class="wl-settings-select" aria-label="Event day"></select>
+          <p class="wl-settings-hint">Multi-day events: pick which day this Green Room should show.</p>
+        </div>
+
+        <label class="wl-settings-label" for="grStartDisplay">Client display</label>
+        <select id="grStartDisplay" class="wl-settings-select" aria-label="Client display">
+          <option value="0">Primary display</option>
+        </select>
+        <p class="wl-settings-hint" id="grStartDisplayHint">
+          Displays reported by the Green Room PC. If empty, it uses the primary screen.
+        </p>
+
+        <label class="wl-check gr-start-fs">
+          <input type="checkbox" id="grStartFullscreen" checked />
+          Open full screen
+        </label>
+
+        <p class="session-error" id="grStartError" hidden></p>
+        <div class="confirm-actions">
+          <button type="button" class="ghost-btn" id="grStartCancelBtn">Cancel</button>
+          <button type="button" class="primary-btn" id="grStartConfirmBtn">Start</button>
+        </div>
+      </div>
+    </div>
+
     <div class="confirm-overlay" id="wlSettingsOverlay" hidden>
       <div
         class="confirm-dialog wl-settings-dialog"
