@@ -1143,15 +1143,24 @@ function renderDisplayClients() {
     startBtn.disabled = busy || !canCommand || !state.eventId || status === 'offline';
     startBtn.title = state.eventId
       ? `Open Green Room for ${selectedEvent()?.name || state.eventId}`
-      : 'Select an event first';
-    startBtn.addEventListener('click', () => void commandDisplayClient(c.clientId, 'start'));
+      : 'Select an event on the Event tab first';
+    startBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      void commandDisplayClient(c.clientId, 'start');
+    });
 
     const stopBtn = document.createElement('button');
     stopBtn.type = 'button';
     stopBtn.className = 'ghost-btn';
     stopBtn.textContent = 'Standby';
     stopBtn.disabled = busy || !canCommand || status === 'offline' || status === 'standby';
-    stopBtn.addEventListener('click', () => void commandDisplayClient(c.clientId, 'stop'));
+    stopBtn.title = status === 'standby' ? 'Already on standby' : 'Send standby to this PC';
+    stopBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      void commandDisplayClient(c.clientId, 'stop');
+    });
 
     actions.append(startBtn, stopBtn);
     li.append(meta, badge, actions);

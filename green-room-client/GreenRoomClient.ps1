@@ -246,8 +246,15 @@ function Invoke-RosApi {
 
 function Open-Url {
   param([string]$Url)
+  if (-not $Url) { return $false }
   try {
-    Start-Process $Url | Out-Null
+    # cmd start is more reliable than Start-Process when this script is
+    # launched with -WindowStyle Hidden (tray mode).
+    $p = Start-Process -FilePath 'cmd.exe' -ArgumentList @('/c', 'start', '""', $Url) -WindowStyle Hidden -PassThru
+    if ($p) { return $true }
+  } catch {}
+  try {
+    Start-Process -FilePath $Url | Out-Null
     return $true
   } catch {
     return $false
@@ -277,29 +284,38 @@ function Apply-Command {
     $script:State.lastError = ''
   } elseif ($action -eq 'start') {
     $script:State.eventId = $eventId
-    $url = if ($Command.url) { "$($Command.url)" } else {
-      $u = [UriBuilder]::new("$($Cfg.appUrl)/green-room")
-      $u.Query = "eventId=$([Uri]::EscapeDataString($eventId))"
-      $u.Uri.AbsoluteUri
+    $appBase = if ($Cfg.appUrl -and $Cfg.appUrl -notmatch 'up\.railway\.app') { $Cfg.appUrl } else { 'https://ros1615.pages.dev' }
+    $url = if ($Command.url -and "$($Command.url)" -notmatch 'up\.railway\.app/green-room') {
+      "$($Command.url)"
+    } else {
+      "$appBase/green-room?eventId=$([Uri]::EscapeDataString($eventId))"
+    }
+    # Always rewrite legacy Railway UI URLs (API host 404s on /green-room).
+    if ($url -match 'up\.railway\.app/green-room') {
+      $url = "$appBase/green-room?eventId=$([Uri]::EscapeDataString($eventId))"
     }
     $script:State.openedUrl = $url
+    $opened = $false
     if ($Cfg.openBrowser) {
-      if (-not (Open-Url $url)) {
+      $opened = Open-Url $url
+      if (-not $opened) {
         Write-Log 'warn: could not open browser - client still marked active'
+        $script:State.lastError = 'Could not open browser'
       }
     }
     $script:State.status = 'active'
-    $script:State.lastError = ''
+    if ($opened) { $script:State.lastError = '' }
     Write-Log 'active ->' $url
     if ($Notify) {
-      $Notify.ShowBalloonTip(4000, 'Green Room started', "Opened event $eventId", [System.Windows.Forms.ToolTipIcon]::Info)
+      $tip = if ($opened) { "Opening Green Room for $eventId" } else { "Active, but browser did not open. URL in log." }
+      $Notify.ShowBalloonTip(6000, 'Green Room started', $tip, [System.Windows.Forms.ToolTipIcon]::Info)
     }
   } elseif ($action -eq 'stop') {
     $script:State.status = 'standby'
     $script:State.lastError = ''
     Write-Log 'back to standby (close the Green Room tab manually for now)'
     if ($Notify) {
-      $Notify.ShowBalloonTip(3000, 'Green Room standby', 'Waiting for the next Start from the kiosk.', [System.Windows.Forms.ToolTipIcon]::Info)
+      $Notify.ShowBalloonTip(4000, 'Green Room standby', 'Back on standby. Close the browser tab if it is still open.', [System.Windows.Forms.ToolTipIcon]::Info)
     }
   } else {
     $script:State.lastError = "Unknown action: $action"
@@ -424,6 +440,21 @@ $itemTest.Add_Click({
   }
 })
 
+$itemOpenGr = New-Object System.Windows.Forms.ToolStripMenuItem
+$itemOpenGr.Text = 'Open Green Room now'
+$itemOpenGr.Add_Click({
+  $eid = if ($script:State.eventId) { $script:State.eventId } else { 'TEST' }
+  $appBase = if ($script:Cfg.appUrl -and $script:Cfg.appUrl -notmatch 'up\.railway\.app') { $script:Cfg.appUrl } else { 'https://ros1615.pages.dev' }
+  $url = "$appBase/green-room?eventId=$([Uri]::EscapeDataString($eid))"
+  $ok = Open-Url $url
+  Write-Log 'manual open' $url "ok=$ok"
+  if ($ok) {
+    $notify.ShowBalloonTip(4000, 'Green Room', "Opened $url", [System.Windows.Forms.ToolTipIcon]::Info)
+  } else {
+    [System.Windows.Forms.MessageBox]::Show("Could not open browser for:`n$url", 'Green Room Client') | Out-Null
+  }
+})
+
 $itemOpenLog = New-Object System.Windows.Forms.ToolStripMenuItem
 $itemOpenLog.Text = 'Open log'
 $itemOpenLog.Add_Click({
@@ -445,6 +476,7 @@ $itemExit.Add_Click({
 [void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
 [void]$menu.Items.Add($itemSettings)
 [void]$menu.Items.Add($itemTest)
+[void]$menu.Items.Add($itemOpenGr)
 [void]$menu.Items.Add($itemOpenLog)
 [void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
 [void]$menu.Items.Add($itemExit)
