@@ -9,6 +9,7 @@
  *   node scripts/upload-app-download.js public/ros-hyperdeck-ingest.zip
  *   node scripts/upload-app-download.js offline-kiosk-v2/dist/ROS-Offline-Kiosk-Portable.zip
  *   node scripts/upload-app-download.js public/ros-offline-kiosk-portable.zip
+ *   node scripts/upload-app-download.js public/ros-green-room-client-portable.zip
  */
 const { execFileSync } = require('child_process');
 const fs = require('fs');
@@ -65,6 +66,10 @@ const HOSTED = {
   },
   'ROS-Offline-Kiosk-Portable.zip': {
     key: 'downloads/ros-offline-kiosk-portable.zip',
+    contentType: 'application/zip',
+  },
+  'ros-green-room-client-portable.zip': {
+    key: 'downloads/ros-green-room-client-portable.zip',
     contentType: 'application/zip',
   },
 };

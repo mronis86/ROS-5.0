@@ -133,6 +133,25 @@ const DOWNLOAD_TOOLS = [
     metaClass: 'text-teal-400/70',
     btn: 'bg-teal-700 hover:bg-teal-600',
   },
+  {
+    id: 'green-room-client',
+    title: 'Green Room Client Portable',
+    blurb: 'Standby PC for Green Room — kiosk Status can Start it on an event',
+    meta: 'Tiny · Windows · no install',
+    href: getAppDownloadUrl('ros-green-room-client-portable.zip'),
+    filename: 'ros-green-room-client-portable.zip',
+    details: [
+      'Unzip · double-click Start Green Room Client.bat',
+      'Same Integration token as Offline Kiosk',
+      'Shows under Status → Green Room clients',
+    ],
+    row: 'bg-emerald-950/70 border-emerald-700',
+    bar: 'bg-emerald-500',
+    titleClass: 'text-emerald-100',
+    blurbClass: 'text-emerald-300/80',
+    metaClass: 'text-emerald-400/70',
+    btn: 'bg-emerald-700 hover:bg-emerald-600',
+  },
 ] as const;
 
 const GraphicsLinksPage: React.FC = () => {

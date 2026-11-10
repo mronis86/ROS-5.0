@@ -168,6 +168,19 @@ const OSCModalSimplified: React.FC<OSCModalSimplifiedProps> = ({
                 </div>
               </div>
 
+              <div className="text-center mb-4">
+                <a
+                  href={getAppDownloadUrl('ros-green-room-client-portable.zip')}
+                  download="ros-green-room-client-portable.zip"
+                  className="block bg-emerald-800 hover:bg-emerald-700 text-white text-sm py-3 px-6 rounded text-center transition-colors font-semibold"
+                >
+                  Green Room Client Portable (Windows)
+                </a>
+                <div className="text-xs text-emerald-200 mt-2">
+                  Unzip · Start Green Room Client.bat • standby PC for kiosk Start • no install
+                </div>
+              </div>
+
               <details className="mt-1 rounded-lg border border-slate-600/80 bg-slate-800/40 group">
                 <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden px-3 py-2.5 text-sm text-slate-300 hover:text-white select-none flex items-center justify-between gap-2">
                   <span>Legacy desktop apps (Python &amp; Electron)</span>

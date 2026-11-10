@@ -2,10 +2,12 @@
   "name": "ros-green-room-client",
   "version": "0.1.0",
   "private": true,
-  "description": "MVP Green Room display client — standby heartbeat + start/stop commands from kiosk/cloud",
+  "description": "Portable Green Room standby client (Windows: Start Green Room Client.bat — no install). Node client.js for Mac/Linux.",
   "main": "client.js",
   "scripts": {
     "start": "node client.js",
-    "standby": "node client.js"
+    "standby": "node client.js",
+    "start:win": "powershell -NoProfile -ExecutionPolicy Bypass -File ./GreenRoomClient.ps1",
+    "pack": "node scripts/pack-portable.js"
   }
 }

@@ -1,21 +1,13 @@
 #!/usr/bin/env node
 /**
- * MVP Green Room display client
+ * Green Room display client (Node) — Mac/Linux or machines that already have Node.
+ * On Windows prefer the portable double-click: "Start Green Room Client.bat"
+ * (PowerShell, no install). Same config.json / cloud API either way.
  *
- * Standby on boot → shows up on kiosk/cloud → accepts start/stop/assign.
+ * Standby → shows up on kiosk Status → Start/Standby commands.
  *
  * Config (env or ./config.json):
- *   ROS_API_URL   default https://ros-50-production.up.railway.app
- *   ROS_API_TOKEN required ros_itok_… (same Integration token family as kiosk)
- *   CLIENT_ID     stable id (default: hostname-based)
- *   CLIENT_NAME   display name
- *   HEARTBEAT_MS  default 20000
- *
- * Test:
- *   set ROS_API_TOKEN=ros_itok_…
- *   npm start
- * Then from another shell (or later kiosk UI):
- *   POST /api/display-clients/:id/command { "action":"start", "eventId":"…" }
+ *   ROS_API_URL / ROS_APP_URL / ROS_API_TOKEN / CLIENT_ID / CLIENT_NAME / HEARTBEAT_MS
  */
 
 const fs = require('fs');
