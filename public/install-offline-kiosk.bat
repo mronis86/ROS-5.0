@@ -3,7 +3,7 @@ setlocal EnableExtensions
 title ROS Offline Kiosk — install / update
 
 REM One-click installer: download this .bat from ROS, run it.
-REM Installs under %%LOCALAPPDATA%%\ROS-Offline-Kiosk if missing, then npm install + start.
+REM Always stops running engines, downloads a fresh zip, unpacks, then starts.
 
 set "INSTALL_ROOT=%LOCALAPPDATA%\ROS-Offline-Kiosk"
 set "APP_DIR=%INSTALL_ROOT%\offline-kiosk-v2"
@@ -27,10 +27,30 @@ if errorlevel 1 (
 for /f "tokens=1 delims=v" %%V in ('node -v 2^>nul') do set "NODE_VER=%%V"
 echo Node %NODE_VER%
 
-if exist "%APP_DIR%\package.json" if exist "%APP_DIR%\electron\main.js" (
-  echo Kiosk files already present — skipping download.
-  goto ENSURE_DEPS
-)
+echo.
+echo Stopping any running Offline Kiosk / Offline Show / WebLinked so files unlock...
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$ErrorActionPreference='SilentlyContinue';" ^
+  "Get-CimInstance Win32_Process | Where-Object {" ^
+  "  ($_.Name -match '^(electron|ROS Offline Kiosk|ROS Offline Kiosk.exe)$') -or" ^
+  "  ($_.CommandLine -and (" ^
+  "    $_.CommandLine -match 'offline-kiosk-v2' -or" ^
+  "    $_.CommandLine -match 'ROS-Offline-Kiosk' -or" ^
+  "    $_.CommandLine -match 'ros-offline-kiosk'" ^
+  "  ))" ^
+  "} | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue };" ^
+  "Get-CimInstance Win32_Process | Where-Object {" ^
+  "  $_.Name -match '^(node|node\\.exe)$' -and $_.CommandLine -and (" ^
+  "    $_.CommandLine -match 'offline-show[\\\\/]+server[\\\\/]+server\\.js' -or" ^
+  "    ($_.CommandLine -match 'server[\\\\/]+server\\.js' -and $_.CommandLine -match 'offline-show')" ^
+  "  )" ^
+  "} | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue };" ^
+  "foreach ($img in @('sinor-weblinked.exe','weblinked.exe')) {" ^
+  "  & taskkill.exe /F /IM $img /T 2>$null | Out-Null" ^
+  "};" ^
+  "$conns = Get-NetTCPConnection -LocalPort 3004 -State Listen -ErrorAction SilentlyContinue;" ^
+  "foreach ($c in @($conns)) { if ($c.OwningProcess) { Stop-Process -Id $c.OwningProcess -Force -ErrorAction SilentlyContinue } }"
+timeout /t 2 /nobreak >nul
 
 echo.
 echo Downloading Offline Kiosk package...
@@ -51,7 +71,16 @@ if errorlevel 1 (
 )
 
 echo Unpacking...
-if exist "%APP_DIR%" rmdir /s /q "%APP_DIR%" 2>nul
+if exist "%APP_DIR%" (
+  rmdir /s /q "%APP_DIR%" 2>nul
+  if exist "%APP_DIR%" (
+    echo.
+    echo Could not remove old folder — something still has it locked.
+    echo Run launcher\STOP-KIOSK.bat, wait a few seconds, then try again.
+    pause
+    exit /b 1
+  )
+)
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$ErrorActionPreference='Stop';" ^
   "Expand-Archive -LiteralPath $env:ZIP_FILE -DestinationPath $env:INSTALL_ROOT -Force;" ^
@@ -64,7 +93,6 @@ if errorlevel 1 (
 del /f /q "%ZIP_FILE%" >nul 2>&1
 echo Package ready.
 
-:ENSURE_DEPS
 cd /d "%APP_DIR%"
 if errorlevel 1 (
   echo Could not open %APP_DIR%

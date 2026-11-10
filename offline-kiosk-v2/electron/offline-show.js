@@ -1,4 +1,4 @@
-const { spawn } = require('child_process');
+const { spawn, execFileSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
@@ -346,23 +346,83 @@ async function startOfflineShow() {
   };
 }
 
-async function stopOfflineShow() {
-  if (!startedByKiosk || !showChild) {
-    return {
-      ok: true,
-      stopped: false,
-      note: 'Offline Show was not started by this kiosk (left running).',
-    };
-  }
+/** Kill any Node still serving Offline Show (holds locks on engines/offline-show). */
+function killOrphanOfflineShowProcesses() {
+  if (process.platform !== 'win32') return;
   try {
-    showChild.kill();
+    execFileSync(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-Command',
+        [
+          "$ErrorActionPreference='SilentlyContinue'",
+          // Match Offline Show server.js regardless of which Node started it.
+          "$procs = Get-CimInstance Win32_Process | Where-Object {",
+          "  $_.Name -match '^(node|node\\.exe)$' -and $_.CommandLine -and (",
+          "    $_.CommandLine -match 'offline-show[\\\\/]+server[\\\\/]+server\\.js' -or",
+          "    ($_.CommandLine -match 'server[\\\\/]+server\\.js' -and $_.CommandLine -match 'offline-show')",
+          "  )",
+          "}",
+          "foreach ($p in $procs) { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }",
+          // Free port 3004 if something else is still bound.
+          "$conns = Get-NetTCPConnection -LocalPort 3004 -State Listen -ErrorAction SilentlyContinue",
+          "foreach ($c in @($conns)) {",
+          "  if ($c.OwningProcess -and $c.OwningProcess -gt 0) {",
+          "    Stop-Process -Id $c.OwningProcess -Force -ErrorAction SilentlyContinue",
+          "  }",
+          "}",
+        ].join('; '),
+      ],
+      { windowsHide: true, stdio: 'ignore', timeout: 15000 }
+    );
   } catch {
     /* ignore */
   }
-  showChild = null;
+}
+
+async function stopOfflineShow({ force = true } = {}) {
+  let stoppedChild = false;
+  if (showChild) {
+    try {
+      if (process.platform === 'win32' && showChild.pid) {
+        try {
+          execFileSync('taskkill', ['/F', '/PID', String(showChild.pid), '/T'], {
+            windowsHide: true,
+            stdio: 'ignore',
+          });
+        } catch {
+          try {
+            showChild.kill();
+          } catch {
+            /* ignore */
+          }
+        }
+      } else {
+        showChild.kill();
+      }
+      stoppedChild = true;
+    } catch {
+      /* ignore */
+    }
+    showChild = null;
+  }
   startedByKiosk = false;
+
+  if (force) {
+    killOrphanOfflineShowProcesses();
+  }
+
   await sleep(400);
-  return { ok: true, stopped: true };
+  const stillUp = await isRunning();
+  return {
+    ok: !stillUp,
+    stopped: stoppedChild || !stillUp,
+    running: stillUp,
+    note: stillUp ? 'Offline Show still answering on :3004 after stop' : undefined,
+  };
 }
 
 async function getStatus() {

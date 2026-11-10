@@ -1150,44 +1150,43 @@ function renderConnectivity() {
   updateConnBar();
 }
 
-function hostBounds() {
+function remoteWebview() {
+  return document.getElementById('remoteWebview');
+}
+
+function setRemoteWebviewVisible(on) {
   const host = $('#remoteEmbedHost');
-  if (!host || host.offsetParent === null) return null;
-  const r = host.getBoundingClientRect();
-  // Keep the BrowserView inside the visible host (and the window).
-  const maxW = Math.max(1, Math.floor(window.innerWidth || r.width));
-  const maxH = Math.max(1, Math.floor(window.innerHeight || r.height));
-  let x = Math.max(0, Math.round(r.left));
-  let y = Math.max(0, Math.round(r.top));
-  let width = Math.max(1, Math.round(r.width));
-  let height = Math.max(1, Math.round(r.height));
-  if (x + width > maxW) width = Math.max(1, maxW - x);
-  if (y + height > maxH) height = Math.max(1, maxH - y);
-  return { x, y, width, height };
+  const wv = remoteWebview();
+  if (host) host.classList.toggle('is-live', Boolean(on));
+  if (wv) wv.style.visibility = on ? 'visible' : 'hidden';
 }
 
-function pushEmbedBounds() {
-  if (!state.remoteOpen || state.tab !== 'remoteop' || !window.kiosk?.remoteEmbedBounds) return;
-  const bounds = hostBounds();
-  if (!bounds || bounds.width < 2 || bounds.height < 2) return;
-  void window.kiosk.remoteEmbedBounds(bounds);
-}
-
-function startEmbedObserver() {
-  stopEmbedObserver();
-  const host = $('#remoteEmbedHost');
-  if (!host) return;
-  embedObserver = new ResizeObserver(() => pushEmbedBounds());
-  embedObserver.observe(host);
-  window.addEventListener('resize', pushEmbedBounds);
-}
-
-function stopEmbedObserver() {
-  if (embedObserver) {
-    embedObserver.disconnect();
-    embedObserver = null;
+function loadRemoteWebview(url) {
+  const wv = remoteWebview();
+  if (!wv || !url) return false;
+  try {
+    if (wv.getAttribute('src') === url) {
+      wv.reload?.();
+    } else {
+      wv.setAttribute('src', url);
+    }
+    setRemoteWebviewVisible(true);
+    return true;
+  } catch {
+    return false;
   }
-  window.removeEventListener('resize', pushEmbedBounds);
+}
+
+function clearRemoteWebview() {
+  const wv = remoteWebview();
+  if (!wv) return;
+  try {
+    wv.stop?.();
+    wv.setAttribute('src', 'about:blank');
+  } catch {
+    /* ignore */
+  }
+  setRemoteWebviewVisible(false);
 }
 
 function syncRemoteSubtabs() {
@@ -1209,9 +1208,9 @@ function showRemoteLive() {
 }
 
 async function resetRemoteChoice() {
-  stopEmbedObserver();
   state.remoteProvider = null;
   state.remoteOpen = false;
+  clearRemoteWebview();
   if (window.kiosk?.remoteEmbedClose) await window.kiosk.remoteEmbedClose();
   showRemotePicker();
   syncStatus();
@@ -1222,7 +1221,7 @@ async function loadRemoteProvider(provider, { force = false } = {}) {
   if (!force && state.remoteProvider === provider && state.remoteOpen) {
     syncRemoteSubtabs();
     showRemoteLive();
-    pushEmbedBounds();
+    setRemoteWebviewVisible(true);
     return;
   }
 
@@ -1231,18 +1230,13 @@ async function loadRemoteProvider(provider, { force = false } = {}) {
   showRemoteLive();
 
   const url = REMOTE_DEFAULTS[provider] || REMOTE_DEFAULTS.vdo;
-  if (!window.kiosk?.remoteEmbedOpen) {
-    syncStatus();
-    return;
+  // Prefer in-page <webview> (clipped by CSS). IPC stub clears any old BrowserView.
+  if (window.kiosk?.remoteEmbedOpen) {
+    await window.kiosk.remoteEmbedOpen({ url, provider });
   }
-
-  startEmbedObserver();
-  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-  const bounds = hostBounds();
-  const result = await window.kiosk.remoteEmbedOpen({ url, provider, bounds });
-  state.remoteOpen = Boolean(result?.ok);
-  if (state.remoteOpen) pushEmbedBounds();
-  else showRemotePicker();
+  const ok = loadRemoteWebview(url);
+  state.remoteOpen = ok;
+  if (!ok) showRemotePicker();
   syncStatus();
 }
 
@@ -1274,10 +1268,12 @@ async function setTab(tabId) {
       await loadRemoteProvider(state.remoteProvider, { force: !state.remoteOpen });
     } else {
       showRemotePicker();
+      setRemoteWebviewVisible(false);
       if (window.kiosk?.remoteEmbedHide) await window.kiosk.remoteEmbedHide();
     }
-  } else if (state.remoteOpen && window.kiosk?.remoteEmbedHide) {
-    await window.kiosk.remoteEmbedHide();
+  } else if (state.remoteOpen) {
+    setRemoteWebviewVisible(false);
+    if (window.kiosk?.remoteEmbedHide) await window.kiosk.remoteEmbedHide();
   }
 
   if (tabId === 'status') {
@@ -3167,6 +3163,26 @@ async function bootstrap() {
   $('#wlExitPageFullscreenBtn')?.addEventListener('click', () => void exitWlPageFullscreen());
   $('#wlExitPageFullscreenBtnPop')?.addEventListener('click', () => void exitWlPageFullscreen());
   $('#wlPreviewOverlayCloseBtn')?.addEventListener('click', () => placeWlLivePreview('dock'));
+  $('#shutdownKioskBtn')?.addEventListener('click', () => {
+    void (async () => {
+      const ok = await askConfirm({
+        title: 'Shutdown Offline Kiosk?',
+        message:
+          'Stops WebLinked and Offline Show, then quits so the install folder is not locked.',
+        okLabel: 'Shutdown',
+      });
+      if (!ok) return;
+      if (!window.kiosk?.shutdownKiosk) {
+        window.close();
+        return;
+      }
+      try {
+        await window.kiosk.shutdownKiosk({ reason: 'operator-shutdown' });
+      } catch {
+        window.close();
+      }
+    })();
+  });
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
     if (wlInteractive && document.activeElement === wlPreviewCanvas()) return;

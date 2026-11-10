@@ -135,28 +135,72 @@ function ensureRemoteView() {
   remoteView.setBackgroundColor('#000000');
   // Meshcast Go Live can throw on bare "H264" codec prefs in Electron Chromium.
   injectRemoteWebrtcCodecShim(remoteView.webContents);
+  // Keep Meshcast/VDO popups inside this embed instead of spawning loose windows.
+  remoteView.webContents.setWindowOpenHandler(({ url }) => {
+    if (url && /^https?:\/\//i.test(url)) {
+      void remoteView.webContents.loadURL(url);
+    }
+    return { action: 'deny' };
+  });
   return remoteView;
 }
 
 function applyRemoteBounds(bounds) {
   if (!remoteView || !mainWindow || mainWindow.isDestroyed()) return;
-  // BrowserView coords are relative to the window content area (DIP).
-  // Clamp so VDO/Meshcast never paints past the kiosk chrome.
-  const content = mainWindow.getContentSize();
-  const maxW = Math.max(1, Math.round(content[0] || 1));
-  const maxH = Math.max(1, Math.round(content[1] || 1));
-  let x = Math.max(0, Math.round(bounds?.x || 0));
-  let y = Math.max(0, Math.round(bounds?.y || 0));
-  let width = Math.max(1, Math.round(bounds?.width || 1));
-  let height = Math.max(1, Math.round(bounds?.height || 1));
+  // BrowserView is a native layer — CSS overflow cannot clip it. Floor + clamp
+  // hard against content size so Meshcast/VDO never paints past the window.
+  // Prefer getContentBounds size (DIP) which matches getBoundingClientRect space.
+  const contentBounds = mainWindow.getContentBounds();
+  const maxW = Math.max(1, Math.floor(contentBounds.width || 1));
+  const maxH = Math.max(1, Math.floor(contentBounds.height || 1));
+  let x = Math.max(0, Math.floor(Number(bounds?.x) || 0));
+  let y = Math.max(0, Math.floor(Number(bounds?.y) || 0));
+  let width = Math.max(1, Math.floor(Number(bounds?.width) || 1));
+  let height = Math.max(1, Math.floor(Number(bounds?.height) || 1));
+  // Keep a visible gutter inside the window (DPI 1.25 was still kissing the edge).
+  const edgePad = 8;
+  if (x < edgePad) {
+    width -= edgePad - x;
+    x = edgePad;
+  }
+  if (y < edgePad) {
+    height -= edgePad - y;
+    y = edgePad;
+  }
   if (x >= maxW) x = Math.max(0, maxW - 1);
   if (y >= maxH) y = Math.max(0, maxH - 1);
-  if (x + width > maxW) width = Math.max(1, maxW - x);
-  if (y + height > maxH) height = Math.max(1, maxH - y);
+  if (x + width > maxW - edgePad) width = Math.max(1, maxW - edgePad - x);
+  if (y + height > maxH - edgePad) height = Math.max(1, maxH - edgePad - y);
   remoteView.setBounds({ x, y, width, height });
-  // ResizeObserver in the renderer already pushes exact host bounds —
-  // auto-resize grows with the window and was overflowing past the panel.
+  // Renderer ResizeObserver pushes exact host bounds — do not auto-grow with the window.
   remoteView.setAutoResize({ width: false, height: false, horizontal: false, vertical: false });
+}
+
+/** Re-read #remoteEmbedHost from the renderer so bounds match the laid-out host. */
+async function syncRemoteBoundsFromDom() {
+  if (!remoteVisible || !remoteView || !mainWindow || mainWindow.isDestroyed()) return;
+  try {
+    const rect = await mainWindow.webContents.executeJavaScript(`(() => {
+      const el = document.getElementById('remoteEmbedHost');
+      if (!el) return null;
+      const style = window.getComputedStyle(el);
+      if (style.display === 'none' || style.visibility === 'hidden') return null;
+      const r = el.getBoundingClientRect();
+      if (r.width < 2 || r.height < 2) return null;
+      return {
+        x: r.left,
+        y: r.top,
+        width: r.width,
+        height: r.height,
+        iw: window.innerWidth,
+        ih: window.innerHeight
+      };
+    })()`);
+    if (!rect) return;
+    applyRemoteBounds(rect);
+  } catch {
+    /* ignore */
+  }
 }
 
 function showRemoteView(bounds) {
@@ -166,6 +210,13 @@ function showRemoteView(bounds) {
   if (!attached) mainWindow.addBrowserView(view);
   applyRemoteBounds(bounds);
   remoteVisible = true;
+  // Second pass after layout / DPI settle.
+  setTimeout(() => {
+    void syncRemoteBoundsFromDom();
+  }, 50);
+  setTimeout(() => {
+    void syncRemoteBoundsFromDom();
+  }, 250);
   return { ok: true };
 }
 
@@ -277,7 +328,20 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      // RemoteOp Meshcast/VDO uses <webview> so CSS can clip it inside the panel.
+      webviewTag: true,
     },
+  });
+
+  // Guest page for RemoteOp — codec shim + keep popups inside the webview.
+  mainWindow.webContents.on('did-attach-webview', (_event, guest) => {
+    injectRemoteWebrtcCodecShim(guest);
+    guest.setWindowOpenHandler(({ url }) => {
+      if (url && /^https?:\/\//i.test(url)) {
+        void guest.loadURL(url);
+      }
+      return { action: 'deny' };
+    });
   });
 
   mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
@@ -286,21 +350,26 @@ function createWindow() {
     closeDisplayPopup();
     mainWindow = null;
   });
-  mainWindow.on('resize', () => {
-    /* Renderer ResizeObserver pushes fresh bounds while embed is open. */
-  });
+}
+
+function allowMediaPermission(_wc, permission, callback) {
+  const allow =
+    permission === 'media' || permission === 'display-capture' || permission === 'mediaKeySystem';
+  if (typeof callback === 'function') callback(allow);
+  return allow;
 }
 
 app.whenReady().then(() => {
-  // VDO / Meshcast need camera + mic inside the embed.
-  session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
-    const allow =
-      permission === 'media' || permission === 'display-capture' || permission === 'mediaKeySystem';
-    callback(allow);
-  });
-  session.defaultSession.setPermissionCheckHandler((_wc, permission) => {
-    return permission === 'media' || permission === 'display-capture' || permission === 'mediaKeySystem';
-  });
+  // VDO / Meshcast need camera + mic inside the embed (default + remoteop partition).
+  session.defaultSession.setPermissionRequestHandler(allowMediaPermission);
+  session.defaultSession.setPermissionCheckHandler((_wc, permission) =>
+    allowMediaPermission(null, permission)
+  );
+  const remoteSession = session.fromPartition('persist:remoteop');
+  remoteSession.setPermissionRequestHandler(allowMediaPermission);
+  remoteSession.setPermissionCheckHandler((_wc, permission) =>
+    allowMediaPermission(null, permission)
+  );
 
   createWindow();
   const existing = getSessionState();
@@ -310,9 +379,61 @@ app.whenReady().then(() => {
   });
 });
 
+let shuttingDown = false;
+
+/**
+ * Stop WebLinked + Offline Show + popups so closing the kiosk releases file locks
+ * (otherwise sinor-weblinked / node keep the install folder locked until reboot).
+ */
+async function shutdownKiosk(reason = 'shutdown') {
+  clearSessionTimer();
+  destroyRemoteView();
+  try {
+    closeDisplayPopup();
+  } catch {
+    /* ignore */
+  }
+  // Force-kill engines first (unref'd WebLinked / orphaned Offline Show node).
+  try {
+    await weblinked.stopWebLinked();
+  } catch {
+    /* ignore */
+  }
+  try {
+    await offlineShow.stopOfflineShow({ force: true });
+  } catch {
+    /* ignore */
+  }
+  try {
+    saveSessionConfig({
+      sessionMode: '',
+      sessionEndsAt: '',
+      sessionLabel: '',
+    });
+  } catch {
+    /* ignore */
+  }
+  return { ok: true, reason };
+}
+
 app.on('window-all-closed', () => {
   clearSessionTimer();
   if (process.platform !== 'darwin') app.quit();
+});
+
+app.on('before-quit', (event) => {
+  if (shuttingDown) return;
+  event.preventDefault();
+  shuttingDown = true;
+  void shutdownKiosk('window-closed')
+    .catch(() => {})
+    .finally(() => {
+      try {
+        app.exit(0);
+      } catch {
+        process.exit(0);
+      }
+    });
 });
 
 ipcMain.handle('kiosk:getBootstrap', async () => {
@@ -467,7 +588,21 @@ ipcMain.handle('kiosk:startOfflineShow', async () => {
   return offlineShow.startOfflineShow();
 });
 
-ipcMain.handle('kiosk:stopOfflineShow', async () => offlineShow.stopOfflineShow());
+ipcMain.handle('kiosk:stopOfflineShow', async () => offlineShow.stopOfflineShow({ force: true }));
+
+ipcMain.handle('kiosk:shutdown', async (_evt, payload) => {
+  const reason = typeof payload?.reason === 'string' ? payload.reason : 'operator-shutdown';
+  shuttingDown = true;
+  const result = await shutdownKiosk(reason);
+  setTimeout(() => {
+    try {
+      app.exit(0);
+    } catch {
+      process.exit(0);
+    }
+  }, 150);
+  return result;
+});
 
 ipcMain.handle('kiosk:listEvents', async () => {
   try {
@@ -632,29 +767,30 @@ ipcMain.handle('kiosk:setCameraMode', async (_evt, payload) => ({
   ...payload,
 }));
 
+// RemoteOp now uses an in-page <webview> (CSS-clipped). Keep these IPC stubs so
+ // older renderer calls stay harmless; destroy any leftover BrowserView.
 ipcMain.handle('kiosk:remoteEmbedOpen', async (_evt, payload) => {
+  destroyRemoteView();
   const url = typeof payload?.url === 'string' ? payload.url.trim() : '';
   if (!/^https?:\/\//i.test(url)) {
     return { ok: false, error: 'invalid-url' };
   }
-  const view = ensureRemoteView();
-  const shown = showRemoteView(payload?.bounds || { x: 0, y: 120, width: 1000, height: 600 });
-  if (!shown.ok) return shown;
-  await view.webContents.loadURL(url);
-  return { ok: true, url, provider: payload?.provider || null };
+  return { ok: true, url, provider: payload?.provider || null, mode: 'webview' };
 });
 
-ipcMain.handle('kiosk:remoteEmbedBounds', async (_evt, bounds) => {
-  if (!remoteVisible || !remoteView) return { ok: true, skipped: true };
-  applyRemoteBounds(bounds);
+ipcMain.handle('kiosk:remoteEmbedBounds', async () => ({ ok: true, skipped: true }));
+
+ipcMain.handle('kiosk:remoteEmbedHide', async () => {
+  destroyRemoteView();
   return { ok: true };
 });
-
-ipcMain.handle('kiosk:remoteEmbedHide', async () => hideRemoteView());
 
 ipcMain.handle('kiosk:remoteEmbedClose', async () => {
   destroyRemoteView();
   return { ok: true };
 });
 
-ipcMain.handle('kiosk:remoteEmbedShow', async (_evt, bounds) => showRemoteView(bounds || {}));
+ipcMain.handle('kiosk:remoteEmbedShow', async () => {
+  destroyRemoteView();
+  return { ok: true };
+});

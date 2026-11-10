@@ -35,6 +35,7 @@ contextBridge.exposeInMainWorld('kiosk', {
   getSystemHealth: () => ipcRenderer.invoke('kiosk:getSystemHealth'),
   startWebLinked: (payload) => ipcRenderer.invoke('kiosk:startWebLinked', payload),
   stopWebLinked: () => ipcRenderer.invoke('kiosk:stopWebLinked'),
+  shutdownKiosk: (payload) => ipcRenderer.invoke('kiosk:shutdown', payload),
   setCameraMode: (payload) => ipcRenderer.invoke('kiosk:setCameraMode', payload),
   remoteEmbedOpen: (payload) => ipcRenderer.invoke('kiosk:remoteEmbedOpen', payload),
   remoteEmbedBounds: (bounds) => ipcRenderer.invoke('kiosk:remoteEmbedBounds', bounds),

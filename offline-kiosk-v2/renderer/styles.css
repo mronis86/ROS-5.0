@@ -30,9 +30,12 @@ body {
 }
 
 body {
-  min-height: 100vh;
+  height: 100vh;
+  max-height: 100vh;
+  min-height: 0;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .app-header {
@@ -123,6 +126,20 @@ body {
   font-size: 0.65rem;
   color: #64748b;
   line-height: 1.2;
+}
+
+.header-shutdown-btn {
+  margin-top: 0.35rem;
+  font-size: 0.72rem;
+  padding: 0.25rem 0.55rem;
+  border-color: #7f1d1d;
+  color: #fecaca;
+}
+
+.header-shutdown-btn:hover {
+  border-color: #ef4444;
+  color: #fff;
+  background: #7f1d1d;
 }
 
 .status-dash {
@@ -1340,9 +1357,13 @@ body {
 #panel-remoteop.is-active {
   display: flex;
   flex-direction: column;
+  flex: 1 1 auto;
   min-height: 0;
-  height: calc(100vh - var(--header-h) - var(--tabs-h));
+  height: 100%;
+  max-height: 100%;
   padding: 0;
+  overflow: hidden;
+  box-sizing: border-box;
 }
 
 #panel-remoteop.is-active .remoteop-picker {
@@ -1525,12 +1546,16 @@ body {
 .remoteop-live {
   display: flex;
   flex-direction: column;
-  flex: 1;
+  flex: 1 1 auto;
   min-height: 0;
   min-width: 0;
   width: 100%;
   max-width: 100%;
+  max-height: 100%;
   overflow: hidden;
+  /* Generous inset so Meshcast/VDO never sit flush with the window edge. */
+  padding: 0 1.75rem 1.25rem;
+  box-sizing: border-box;
 }
 
 .remoteop-live[hidden],
@@ -1543,6 +1568,8 @@ body {
   flex-shrink: 0;
   align-items: stretch;
   gap: 0;
+  /* Bleed subtabs to the panel edges despite .remoteop-live padding. */
+  margin: 0 -1.75rem;
   border-bottom: 1px solid var(--line);
   background: #1e293b;
 }
@@ -1594,14 +1621,27 @@ body {
 }
 
 .remoteop-embed-host {
-  flex: 1;
+  flex: 1 1 0;
+  align-self: center;
+  position: relative;
   min-width: 0;
   min-height: 0;
-  margin: 0.65rem 0.85rem 0.85rem;
+  width: 100%;
+  max-width: min(100%, 1100px);
+  margin: 0.65rem 0 0;
   background: #000;
   border: 1px solid var(--line);
   border-radius: 0.5rem;
   overflow: hidden;
+  box-sizing: border-box;
+}
+
+.remoteop-webview {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #000;
 }
 
 @media (max-width: 700px) {
@@ -1659,9 +1699,18 @@ body {
 }
 
 .content {
-  flex: 1;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow: auto;
   padding: 1.25rem 1.5rem 1.5rem;
+}
+
+/* RemoteOp: drop content padding so BrowserView host can fill and stay clipped. */
+.content:has(#panel-remoteop.is-active:not([hidden])) {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
 }
 
 .tab-panel[hidden] {

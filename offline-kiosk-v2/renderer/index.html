@@ -43,6 +43,14 @@
         <p class="header-user">Offline Kiosk</p>
         <p class="header-sub" id="headerSub">No event selected</p>
         <p class="header-ver" id="footerMeta"></p>
+        <button
+          type="button"
+          class="ghost-btn header-shutdown-btn"
+          id="shutdownKioskBtn"
+          title="Stop WebLinked, Offline Show, and quit so the install folder is not locked"
+        >
+          Shutdown
+        </button>
       </div>
     </header>
 
@@ -289,7 +297,15 @@
               Change source
             </button>
           </div>
-          <div class="remoteop-embed-host" id="remoteEmbedHost" aria-label="RemoteOp page"></div>
+          <div class="remoteop-embed-host" id="remoteEmbedHost" aria-label="RemoteOp page">
+            <webview
+              id="remoteWebview"
+              class="remoteop-webview"
+              partition="persist:remoteop"
+              allowpopups
+              webpreferences="contextIsolation=yes, nativeWindowOpen=yes"
+            ></webview>
+          </div>
         </div>
       </section>
 
