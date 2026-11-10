@@ -1065,8 +1065,8 @@ function renderDisplayClients() {
       lead.textContent = 'Save an Integration token to see Green Room clients.';
     } else if (pack?.error) lead.textContent = 'Could not reach Green Room clients.';
     else if (!clients.length) {
-      lead.textContent =
-        'No Green Room clients checking in yet (token must be from the same Admin account).';
+      const pref = state.tokenPrefix ? ` (kiosk token ${state.tokenPrefix})` : '';
+      lead.textContent = `No Green Room clients checking in yet${pref}.`;
     } else {
       lead.textContent = `${online.length} online · ${standby} standby · ${active} active`;
     }
@@ -1091,7 +1091,10 @@ function renderDisplayClients() {
     if (!state.offlineShowRunning) msg = 'Start Offline Show on Status first.';
     else if (pack?.message) msg = pack.message;
     else if (pack?.error) msg = pack.error;
-    else if (!state.eventId) msg = 'Select an event on the Event tab, then Start a standby client.';
+    else if (!clients.length) {
+      msg =
+        'Client must be running (tray icon) and using an Integration token from this ROS account. Right-click the tray icon → Settings / Test connection.';
+    } else if (!state.eventId) msg = 'Select an event on the Event tab, then Start a standby client.';
     else if (clients.length && !online.length) msg = 'Clients listed but none have heartbeated in the last ~45s.';
     note.textContent = msg;
     note.hidden = !msg;

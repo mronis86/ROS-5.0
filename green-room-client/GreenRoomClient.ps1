@@ -98,12 +98,18 @@ function Ensure-AppIcon {
   return [System.Drawing.SystemIcons]::Application
 }
 
-function Show-SetupForm {
-  param($Cfg)
+function Token-Prefix([string]$Token) {
+  if (-not $Token -or $Token.Length -lt 8) { return '(none)' }
+  if ($Token.Length -le 12) { return $Token }
+  return ($Token.Substring(0, 12) + '...')
+}
+
+function Show-SettingsForm {
+  param($Cfg, [string]$Title = 'ROS Green Room Client - Settings')
 
   $form = New-Object System.Windows.Forms.Form
-  $form.Text = 'ROS Green Room Client - Setup'
-  $form.Size = New-Object System.Drawing.Size(480, 260)
+  $form.Text = $Title
+  $form.Size = New-Object System.Drawing.Size(520, 360)
   $form.StartPosition = 'CenterScreen'
   $form.FormBorderStyle = 'FixedDialog'
   $form.MaximizeBox = $false
@@ -111,39 +117,64 @@ function Show-SetupForm {
   $form.TopMost = $true
 
   $lbl = New-Object System.Windows.Forms.Label
-  $lbl.Text = "Paste the same Integration token the Offline Kiosk uses (ros_itok_...)."
-  $lbl.Location = New-Object System.Drawing.Point(16, 16)
-  $lbl.Size = New-Object System.Drawing.Size(430, 36)
+  $lbl.Text = "Integration token (ros_itok_...). Can be its own token - just created by the same Admin as the Offline Kiosk token."
+  $lbl.Location = New-Object System.Drawing.Point(16, 12)
+  $lbl.Size = New-Object System.Drawing.Size(470, 40)
+
+  $tokenLbl = New-Object System.Windows.Forms.Label
+  $tokenLbl.Text = 'Token'
+  $tokenLbl.Location = New-Object System.Drawing.Point(16, 56)
+  $tokenLbl.Size = New-Object System.Drawing.Size(470, 18)
 
   $tokenBox = New-Object System.Windows.Forms.TextBox
-  $tokenBox.Location = New-Object System.Drawing.Point(16, 56)
-  $tokenBox.Size = New-Object System.Drawing.Size(430, 24)
+  $tokenBox.Location = New-Object System.Drawing.Point(16, 76)
+  $tokenBox.Size = New-Object System.Drawing.Size(470, 24)
   $tokenBox.UseSystemPasswordChar = $true
   if ($Cfg.token -and $Cfg.token -notmatch 'REPLACE') { $tokenBox.Text = $Cfg.token }
 
   $nameLbl = New-Object System.Windows.Forms.Label
   $nameLbl.Text = 'Display name'
-  $nameLbl.Location = New-Object System.Drawing.Point(16, 96)
-  $nameLbl.Size = New-Object System.Drawing.Size(430, 20)
+  $nameLbl.Location = New-Object System.Drawing.Point(16, 110)
+  $nameLbl.Size = New-Object System.Drawing.Size(470, 18)
 
   $nameBox = New-Object System.Windows.Forms.TextBox
-  $nameBox.Location = New-Object System.Drawing.Point(16, 118)
-  $nameBox.Size = New-Object System.Drawing.Size(430, 24)
+  $nameBox.Location = New-Object System.Drawing.Point(16, 130)
+  $nameBox.Size = New-Object System.Drawing.Size(470, 24)
   $nameBox.Text = $Cfg.name
 
+  $idLbl = New-Object System.Windows.Forms.Label
+  $idLbl.Text = 'Client id (stable id for this PC)'
+  $idLbl.Location = New-Object System.Drawing.Point(16, 164)
+  $idLbl.Size = New-Object System.Drawing.Size(470, 18)
+
+  $idBox = New-Object System.Windows.Forms.TextBox
+  $idBox.Location = New-Object System.Drawing.Point(16, 184)
+  $idBox.Size = New-Object System.Drawing.Size(470, 24)
+  $idBox.Text = $Cfg.clientId
+
+  $apiLbl = New-Object System.Windows.Forms.Label
+  $apiLbl.Text = 'API URL'
+  $apiLbl.Location = New-Object System.Drawing.Point(16, 218)
+  $apiLbl.Size = New-Object System.Drawing.Size(470, 18)
+
+  $apiBox = New-Object System.Windows.Forms.TextBox
+  $apiBox.Location = New-Object System.Drawing.Point(16, 238)
+  $apiBox.Size = New-Object System.Drawing.Size(470, 24)
+  $apiBox.Text = $Cfg.apiUrl
+
   $ok = New-Object System.Windows.Forms.Button
-  $ok.Text = 'Save and start'
-  $ok.Location = New-Object System.Drawing.Point(250, 170)
-  $ok.Size = New-Object System.Drawing.Size(120, 32)
+  $ok.Text = 'Save'
+  $ok.Location = New-Object System.Drawing.Point(310, 280)
+  $ok.Size = New-Object System.Drawing.Size(90, 32)
   $ok.DialogResult = [System.Windows.Forms.DialogResult]::OK
 
   $cancel = New-Object System.Windows.Forms.Button
   $cancel.Text = 'Cancel'
-  $cancel.Location = New-Object System.Drawing.Point(376, 170)
-  $cancel.Size = New-Object System.Drawing.Size(70, 32)
+  $cancel.Location = New-Object System.Drawing.Point(410, 280)
+  $cancel.Size = New-Object System.Drawing.Size(76, 32)
   $cancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
 
-  $form.Controls.AddRange(@($lbl, $tokenBox, $nameLbl, $nameBox, $ok, $cancel))
+  $form.Controls.AddRange(@($lbl, $tokenLbl, $tokenBox, $nameLbl, $nameBox, $idLbl, $idBox, $apiLbl, $apiBox, $ok, $cancel))
   $form.AcceptButton = $ok
   $form.CancelButton = $cancel
 
@@ -154,10 +185,17 @@ function Show-SetupForm {
   }
   $token = ("$($tokenBox.Text)").Trim()
   $name = ("$($nameBox.Text)").Trim()
+  $clientId = ("$($idBox.Text)").Trim()
+  $apiUrl = ("$($apiBox.Text)").Trim().TrimEnd('/')
   $form.Dispose()
   if (-not $token) { return $null }
   $Cfg.token = $token
   if ($name) { $Cfg.name = $name }
+  if ($clientId) { $Cfg.clientId = $clientId }
+  if ($apiUrl) {
+    $Cfg.apiUrl = $apiUrl
+    if (-not $Cfg.appUrl) { $Cfg.appUrl = $apiUrl }
+  }
   if (-not (Test-Path -LiteralPath $ConfigPath) -and (Test-Path -LiteralPath $ExamplePath)) {
     Copy-Item -LiteralPath $ExamplePath -Destination $ConfigPath -Force
   }
@@ -168,7 +206,7 @@ function Show-SetupForm {
 function Ensure-Config {
   $cfg = Read-Config
   if ($cfg.token -and $cfg.token -notmatch 'REPLACE') { return $cfg }
-  return Show-SetupForm -Cfg $cfg
+  return Show-SettingsForm -Cfg $cfg -Title 'ROS Green Room Client - Setup'
 }
 
 function Invoke-RosApi {
@@ -326,6 +364,63 @@ $itemStatus = New-Object System.Windows.Forms.ToolStripMenuItem
 $itemStatus.Text = 'Status: starting...'
 $itemStatus.Enabled = $false
 
+$itemInfo = New-Object System.Windows.Forms.ToolStripMenuItem
+$itemInfo.Text = ("Id: {0}  Token: {1}" -f $cfg.clientId, (Token-Prefix $cfg.token))
+$itemInfo.Enabled = $false
+
+$itemSettings = New-Object System.Windows.Forms.ToolStripMenuItem
+$itemSettings.Text = 'Settings...'
+$itemSettings.Add_Click({
+  $updated = Show-SettingsForm -Cfg $script:Cfg
+  if ($updated) {
+    $script:Cfg = $updated
+    $timer.Interval = [Math]::Max(5000, [int]$script:Cfg.heartbeatMs)
+    $itemInfo.Text = ("Id: {0}  Token: {1}" -f $script:Cfg.clientId, (Token-Prefix $script:Cfg.token))
+    Write-Log 'settings saved' $script:Cfg.clientId (Token-Prefix $script:Cfg.token)
+    try {
+      $null = Send-Heartbeat -Cfg $script:Cfg -Notify $notify
+      $script:State.lastOk = $true
+      $script:State.lastMessage = "ok - $($script:State.status)"
+      $itemStatus.Text = "Status: $($script:State.lastMessage)"
+      $notify.ShowBalloonTip(3000, 'Settings saved', 'Heartbeat OK - kiosk should see this PC.', [System.Windows.Forms.ToolTipIcon]::Info)
+    } catch {
+      $script:State.lastOk = $false
+      $script:State.lastMessage = $_.Exception.Message
+      $itemStatus.Text = "Status: error - $($script:State.lastMessage)"
+      $notify.ShowBalloonTip(5000, 'Heartbeat failed', $script:State.lastMessage, [System.Windows.Forms.ToolTipIcon]::Error)
+    }
+    Update-TrayText -Notify $notify -Cfg $script:Cfg
+  }
+})
+
+$itemTest = New-Object System.Windows.Forms.ToolStripMenuItem
+$itemTest.Text = 'Test connection'
+$itemTest.Add_Click({
+  try {
+    $null = Send-Heartbeat -Cfg $script:Cfg -Notify $notify
+    $script:State.lastOk = $true
+    $script:State.lastMessage = "ok - $($script:State.status)"
+    $itemStatus.Text = "Status: $($script:State.lastMessage)"
+    Update-TrayText -Notify $notify -Cfg $script:Cfg
+    [System.Windows.Forms.MessageBox]::Show(
+      ("Connected.`nClient id: {0}`nToken: {1}`nStatus: {2}" -f $script:Cfg.clientId, (Token-Prefix $script:Cfg.token), $script:State.status),
+      'Green Room Client',
+      [System.Windows.Forms.MessageBoxButtons]::OK,
+      [System.Windows.Forms.MessageBoxIcon]::Information
+    ) | Out-Null
+  } catch {
+    $script:State.lastOk = $false
+    $script:State.lastMessage = $_.Exception.Message
+    $itemStatus.Text = "Status: error - $($script:State.lastMessage)"
+    [System.Windows.Forms.MessageBox]::Show(
+      ("Heartbeat failed:`n{0}" -f $script:State.lastMessage),
+      'Green Room Client',
+      [System.Windows.Forms.MessageBoxButtons]::OK,
+      [System.Windows.Forms.MessageBoxIcon]::Error
+    ) | Out-Null
+  }
+})
+
 $itemOpenLog = New-Object System.Windows.Forms.ToolStripMenuItem
 $itemOpenLog.Text = 'Open log'
 $itemOpenLog.Add_Click({
@@ -343,8 +438,12 @@ $itemExit.Add_Click({
 })
 
 [void]$menu.Items.Add($itemStatus)
+[void]$menu.Items.Add($itemInfo)
 [void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
+[void]$menu.Items.Add($itemSettings)
+[void]$menu.Items.Add($itemTest)
 [void]$menu.Items.Add($itemOpenLog)
+[void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
 [void]$menu.Items.Add($itemExit)
 $notify.ContextMenuStrip = $menu
 
