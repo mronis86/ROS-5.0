@@ -15,6 +15,7 @@ const stageDir = path.join(stageRoot, 'ros-green-room-client');
 const FILES = [
   'Start Green Room Client.bat',
   'GreenRoomClient.ps1',
+  'HOWTO.txt',
   'client.js',
   'config.example.json',
   'package.json',
@@ -34,22 +35,31 @@ for (const name of FILES) {
   fs.copyFileSync(src, path.join(stageDir, name));
 }
 
-fs.writeFileSync(
-  path.join(stageDir, 'HOWTO.txt'),
-  [
-    'ROS Green Room Client — portable (no install)',
-    '',
-    '1. Unzip this folder anywhere (USB is fine).',
-    '2. Double-click "Start Green Room Client.bat".',
-    '3. Paste your Integration token (ros_itok_…) — same as Offline Kiosk.',
-    '4. Leave the window open. The PC shows on Offline Kiosk → Status → Green Room clients.',
-    '5. On the kiosk: select an event, then Start on this client.',
-    '',
-    'No Node / npm install required on Windows.',
-    '',
-  ].join('\r\n'),
-  'utf8'
-);
+// Prefer repo HOWTO.txt (ASCII). Keep a fallback if missing.
+if (!fs.existsSync(path.join(stageDir, 'HOWTO.txt'))) {
+  fs.writeFileSync(
+    path.join(stageDir, 'HOWTO.txt'),
+    [
+      'ROS Green Room Client - portable (no install)',
+      '',
+      '1. Unzip anywhere (USB is fine).',
+      '2. Double-click "Start Green Room Client.bat".',
+      '3. First run: paste Integration token (same as Offline Kiosk).',
+      '4. Look by the Windows clock for the green tray icon.',
+      '5. Right-click tray icon to Exit. Kiosk Status can Start this PC.',
+      '',
+    ].join('\r\n'),
+    'ascii'
+  );
+}
+
+// Ensure the .ps1 is UTF-8 with BOM so Windows PowerShell 5.1 does not
+// mis-read the file (that caused the "string missing terminator" crash).
+const ps1Path = path.join(stageDir, 'GreenRoomClient.ps1');
+const ps1Body = fs.readFileSync(ps1Path);
+if (!(ps1Body[0] === 0xef && ps1Body[1] === 0xbb && ps1Body[2] === 0xbf)) {
+  fs.writeFileSync(ps1Path, Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), ps1Body]));
+}
 
 fs.mkdirSync(path.dirname(outZip), { recursive: true });
 if (fs.existsSync(outZip)) fs.unlinkSync(outZip);

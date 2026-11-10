@@ -1,0 +1,11 @@
+ROS Green Room Client - portable (no install)
+
+1. Unzip anywhere (USB is fine).
+2. Double-click "Start Green Room Client.bat".
+3. First run: paste Integration token (ros_itok_...) - same as Offline Kiosk.
+4. Look by the Windows clock (system tray) for the green icon.
+5. Right-click the tray icon: Status / Open log / Exit.
+
+The Offline Kiosk Status tab can Start / Standby this PC on a selected event.
+
+No Node or npm install required.

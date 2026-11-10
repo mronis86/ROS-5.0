@@ -30,7 +30,8 @@ $RailwayZips = @(
     'powerpoint-bridge.zip',
     'ros-vmix-datasource-bridge.zip',
     'ros-hyperdeck-ingest.zip',
-    'ros-offline-kiosk-portable.zip'
+    'ros-offline-kiosk-portable.zip',
+    'ros-green-room-client-portable.zip'
 )
 $UnusedDeployZips = @(
     'OSC_GUI_App_Enhanced.zip',
@@ -131,7 +132,8 @@ $OptionalZips = @(
     'ros-osc-python-app.zip',
     'electron-osc-app.zip',
     'OptimizedGraphicsGenerator-Python.zip',
-    'ROS-Local-Server-NodeJS.zip'
+    'ROS-Local-Server-NodeJS.zip',
+    'ros-green-room-client-portable.zip'
 )
 
 foreach ($name in $OptionalZips) {
