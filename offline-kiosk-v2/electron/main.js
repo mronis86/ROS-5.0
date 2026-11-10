@@ -563,6 +563,35 @@ ipcMain.handle('kiosk:pptBridgeStatus', async (_evt, payload) => {
   }
 });
 
+ipcMain.handle('kiosk:listDisplayClients', async (_evt, payload) => {
+  try {
+    return await offlineShow.listDisplayClients({ kind: payload?.kind || 'green-room' });
+  } catch (e) {
+    return {
+      ok: false,
+      clients: [],
+      error: e instanceof Error ? e.message : 'Display clients list failed',
+    };
+  }
+});
+
+ipcMain.handle('kiosk:commandDisplayClient', async (_evt, payload) => {
+  try {
+    return await offlineShow.commandDisplayClient(payload?.clientId, {
+      action: payload?.action || 'start',
+      eventId: payload?.eventId,
+      url: payload?.url,
+      page: payload?.page || 'green-room',
+      message: payload?.message,
+    });
+  } catch (e) {
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : 'Display client command failed',
+    };
+  }
+});
+
 ipcMain.handle('kiosk:getSession', () => getSessionState());
 ipcMain.handle('kiosk:startSession', (_evt, partial) => {
   const plan = planSession({

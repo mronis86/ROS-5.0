@@ -405,8 +405,21 @@
             <div class="svc" data-svc="neon"><span class="svc-dot"></span><strong>Neon</strong><em id="svcNeon">—</em></div>
             <div class="svc" data-svc="lan"><span class="svc-dot"></span><strong>Local LAN</strong><em id="svcLan">—</em></div>
             <div class="svc" data-svc="ppt"><span class="svc-dot"></span><strong>PPT Bridge</strong><em id="svcPpt">—</em></div>
+            <div class="svc" data-svc="gr"><span class="svc-dot"></span><strong>Green Room</strong><em id="svcGr">—</em></div>
           </div>
           <p class="note status-ppt-note" id="pptBridgeNote" hidden></p>
+
+          <div class="gr-panel" id="grClientsPanel" aria-live="polite">
+            <div class="gr-panel-head">
+              <div class="gr-panel-main">
+                <p class="gr-kicker">Green Room clients</p>
+                <p class="gr-lead" id="grClientsLead">Standby PCs checking in via cloud.</p>
+              </div>
+              <button type="button" class="ghost-btn" id="refreshGrClientsBtn">Refresh</button>
+            </div>
+            <p class="note gr-clients-note" id="grClientsNote"></p>
+            <ul class="gr-client-list" id="grClientList"></ul>
+          </div>
 
           <div class="perf-panel" id="perfPanel" data-level="ok" aria-live="polite">
             <div class="perf-head">

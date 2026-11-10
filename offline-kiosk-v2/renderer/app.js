@@ -294,10 +294,15 @@ const state = {
   connectivity: null,
   /** @type {Record<string, any> | null} */
   pptBridge: null,
+  /** @type {{ ok?: boolean, clients?: any[], error?: string, reason?: string, message?: string } | null} */
+  displayClients: null,
+  displayClientBusyId: '',
 };
 
 let pptBridgePollTimer = null;
 let pptBridgeFetchSeq = 0;
+let displayClientsPollTimer = null;
+let displayClientsFetchSeq = 0;
 
 function wlSourceId(rowOrId) {
   const id = typeof rowOrId === 'string' ? rowOrId : rowOrId?.id;
@@ -697,6 +702,7 @@ function setSvc(id, stateName, text) {
     lan: 'svcLan',
     token: 'svcToken',
     ppt: 'svcPpt',
+    gr: 'svcGr',
   };
   if (id === 'token') {
     const line = $('#tokenStatusLine');
@@ -1034,6 +1040,204 @@ function stopPptBridgePoll() {
   }
 }
 
+function formatAgeMs(ms) {
+  if (ms == null || !Number.isFinite(ms)) return 'never';
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return `${s}s ago`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m ago`;
+  return `${Math.round(m / 60)}h ago`;
+}
+
+function renderDisplayClients() {
+  const list = $('#grClientList');
+  const note = $('#grClientsNote');
+  const lead = $('#grClientsLead');
+  const pack = state.displayClients;
+  const clients = Array.isArray(pack?.clients) ? pack.clients : [];
+  const online = clients.filter((c) => c.online || c.status === 'standby' || c.status === 'active');
+  const standby = online.filter((c) => c.status === 'standby').length;
+  const active = online.filter((c) => c.status === 'active').length;
+
+  if (lead) {
+    if (!state.offlineShowRunning) lead.textContent = 'Start Offline Show to see Green Room clients.';
+    else if (pack?.reason === 'no-token' || (!state.tokenConfigured && !clients.length)) {
+      lead.textContent = 'Save an Integration token to see Green Room clients.';
+    } else if (pack?.error) lead.textContent = 'Could not reach Green Room clients.';
+    else if (!clients.length) lead.textContent = 'No Green Room clients checking in yet.';
+    else {
+      lead.textContent = `${online.length} online · ${standby} standby · ${active} active`;
+    }
+  }
+
+  if (!state.offlineShowRunning) {
+    setSvc('gr', 'skip', '—');
+  } else if (pack?.error) {
+    setSvc('gr', 'bad', 'Error');
+  } else if (!state.tokenConfigured && !clients.length) {
+    setSvc('gr', 'skip', 'No token');
+  } else if (!clients.length) {
+    setSvc('gr', 'skip', 'None');
+  } else if (online.length) {
+    setSvc('gr', 'ok', `${online.length} online`);
+  } else {
+    setSvc('gr', 'bad', 'Offline');
+  }
+
+  if (note) {
+    let msg = '';
+    if (!state.offlineShowRunning) msg = 'Start Offline Show on Status first.';
+    else if (pack?.message) msg = pack.message;
+    else if (pack?.error) msg = pack.error;
+    else if (!state.eventId) msg = 'Select an event on the Event tab, then Start a standby client.';
+    else if (clients.length && !online.length) msg = 'Clients listed but none have heartbeated in the last ~45s.';
+    note.textContent = msg;
+    note.hidden = !msg;
+  }
+
+  if (!list) return;
+  list.innerHTML = '';
+  if (!state.offlineShowRunning || !clients.length) return;
+
+  for (const c of clients) {
+    const status = String(c.status || (c.online ? 'standby' : 'offline')).toLowerCase();
+    const li = document.createElement('li');
+    li.className = 'gr-client-row';
+    li.dataset.state = status;
+    li.dataset.clientId = c.clientId || '';
+
+    const meta = document.createElement('div');
+    meta.className = 'gr-client-meta';
+    const name = document.createElement('p');
+    name.className = 'gr-client-name';
+    name.textContent = c.name || c.hostname || c.clientId || 'Client';
+    const sub = document.createElement('p');
+    sub.className = 'gr-client-sub';
+    const parts = [];
+    if (c.hostname && c.hostname !== c.name) parts.push(c.hostname);
+    parts.push(formatAgeMs(c.lastSeenAgeMs));
+    if (c.eventId) parts.push(`event ${c.eventId}`);
+    if (c.queuedCommand?.action) parts.push(`queued ${c.queuedCommand.action}`);
+    if (c.lastError) parts.push(c.lastError);
+    sub.textContent = parts.join(' · ');
+    meta.append(name, sub);
+
+    const badge = document.createElement('span');
+    badge.className = 'gr-client-badge';
+    badge.textContent = status;
+
+    const actions = document.createElement('div');
+    actions.className = 'gr-client-actions';
+    const busy = state.displayClientBusyId === c.clientId;
+    const canCommand = Boolean(c.online || status === 'standby' || status === 'active');
+
+    const startBtn = document.createElement('button');
+    startBtn.type = 'button';
+    startBtn.className = 'primary-btn';
+    startBtn.textContent = busy ? '…' : 'Start';
+    startBtn.disabled = busy || !canCommand || !state.eventId || status === 'offline';
+    startBtn.title = state.eventId
+      ? `Open Green Room for ${selectedEvent()?.name || state.eventId}`
+      : 'Select an event first';
+    startBtn.addEventListener('click', () => void commandDisplayClient(c.clientId, 'start'));
+
+    const stopBtn = document.createElement('button');
+    stopBtn.type = 'button';
+    stopBtn.className = 'ghost-btn';
+    stopBtn.textContent = 'Standby';
+    stopBtn.disabled = busy || !canCommand || status === 'offline' || status === 'standby';
+    stopBtn.addEventListener('click', () => void commandDisplayClient(c.clientId, 'stop'));
+
+    actions.append(startBtn, stopBtn);
+    li.append(meta, badge, actions);
+    list.appendChild(li);
+  }
+}
+
+async function refreshDisplayClients() {
+  if (!window.kiosk?.listDisplayClients) {
+    state.displayClients = { ok: false, clients: [], error: 'Not available in this build.' };
+    renderDisplayClients();
+    return;
+  }
+  if (!state.offlineShowRunning) {
+    state.displayClients = null;
+    renderDisplayClients();
+    return;
+  }
+  const seq = ++displayClientsFetchSeq;
+  try {
+    const result = await window.kiosk.listDisplayClients({ kind: 'green-room' });
+    if (seq !== displayClientsFetchSeq) return;
+    state.displayClients =
+      result && typeof result === 'object'
+        ? result
+        : { ok: false, clients: [], error: 'Bad response' };
+  } catch (e) {
+    if (seq !== displayClientsFetchSeq) return;
+    state.displayClients = {
+      ok: false,
+      clients: [],
+      error: e instanceof Error ? e.message : 'Display clients failed',
+    };
+  }
+  renderDisplayClients();
+}
+
+async function commandDisplayClient(clientId, action) {
+  const id = String(clientId || '').trim();
+  if (!id || !window.kiosk?.commandDisplayClient) return;
+  if (action === 'start' && !state.eventId) {
+    const note = $('#grClientsNote');
+    if (note) {
+      note.hidden = false;
+      note.textContent = 'Select an event on the Event tab before starting a client.';
+    }
+    return;
+  }
+  state.displayClientBusyId = id;
+  renderDisplayClients();
+  try {
+    const result = await window.kiosk.commandDisplayClient({
+      clientId: id,
+      action,
+      eventId: action === 'start' || action === 'assign' ? state.eventId : undefined,
+      page: 'green-room',
+    });
+    if (!result?.ok && result?.error) {
+      const note = $('#grClientsNote');
+      if (note) {
+        note.hidden = false;
+        note.textContent = result.error;
+      }
+    }
+  } catch (e) {
+    const note = $('#grClientsNote');
+    if (note) {
+      note.hidden = false;
+      note.textContent = e instanceof Error ? e.message : 'Command failed';
+    }
+  } finally {
+    state.displayClientBusyId = '';
+  }
+  await refreshDisplayClients();
+}
+
+function startDisplayClientsPoll() {
+  stopDisplayClientsPoll();
+  void refreshDisplayClients();
+  displayClientsPollTimer = window.setInterval(() => {
+    void refreshDisplayClients();
+  }, state.tab === 'status' ? 8_000 : 20_000);
+}
+
+function stopDisplayClientsPoll() {
+  if (displayClientsPollTimer) {
+    clearInterval(displayClientsPollTimer);
+    displayClientsPollTimer = null;
+  }
+}
+
 function pillState(pill) {
   if (!pill) return { state: 'skip', text: '—' };
   if (pill.skipped) return { state: 'skip', text: pill.reason || 'Skipped' };
@@ -1071,6 +1275,7 @@ function renderConnectivity() {
 
   const c = state.connectivity;
   renderPptBridgeStatus();
+  renderDisplayClients();
 
   if (!running) {
     setSvc('internet', 'skip', '—');
@@ -1267,6 +1472,7 @@ async function refreshConnectivityOnly() {
   }
   renderConnectivity();
   void refreshPptBridgeStatus();
+  void refreshDisplayClients();
 }
 
 async function setTab(tabId) {
@@ -1305,6 +1511,11 @@ async function setTab(tabId) {
     startPptBridgePoll();
   } else {
     stopPptBridgePoll();
+  }
+  if (tabId === 'status' || state.offlineShowRunning) {
+    startDisplayClientsPoll();
+  } else {
+    stopDisplayClientsPoll();
   }
   if (tabId === 'displays') {
     void refreshWebLinkedStatus();
@@ -1375,6 +1586,7 @@ function renderEventBrowser() {
       syncEventChrome();
       renderEventBrowser();
       renderPptBridgeStatus();
+      renderDisplayClients();
       startPptBridgePoll();
     });
     actions.appendChild(selectBtn);
@@ -2113,10 +2325,28 @@ async function exitWlPageFullscreen(displayId = null) {
   }
   try {
     // Match WebLinked control page: focus the page, then exit HTML fullscreen.
+    // Clock/DSM treat Escape as document.exitFullscreen (not window.close) when FS is on.
     if (!wlInteractive) setWlInteractive(true);
     await window.kiosk.weblinkedSendInput({ type: 'focus', focused: true, source });
     const result = await window.kiosk.weblinkedSendInput({
       type: 'exit_fullscreen',
+      source,
+    });
+    // Belt-and-suspenders: also send a raw Escape key in case CEF IsFullscreen was false.
+    await window.kiosk.weblinkedSendInput({
+      type: 'key',
+      action: 'down',
+      key_code: 27,
+      character: 0,
+      modifiers: 0,
+      source,
+    });
+    await window.kiosk.weblinkedSendInput({
+      type: 'key',
+      action: 'up',
+      key_code: 27,
+      character: 0,
+      modifiers: 0,
       source,
     });
     const row = findDisplay(id);
@@ -3091,6 +3321,7 @@ async function connectOfflineShow() {
       await applyMode('cloud-connected');
     }
     startPptBridgePoll();
+    startDisplayClientsPoll();
   } finally {
     state.busy = false;
     if (btn) btn.disabled = false;
@@ -3118,10 +3349,13 @@ async function disconnectOfflineShow() {
     state.eventId = '';
     state.connectivity = null;
     state.pptBridge = null;
+    state.displayClients = null;
     stopPptBridgePoll();
+    stopDisplayClientsPoll();
     renderEventBrowser();
     syncEventChrome();
     renderPptBridgeStatus();
+    renderDisplayClients();
   } finally {
     state.busy = false;
     if (btn) btn.disabled = false;
@@ -3213,6 +3447,7 @@ async function bootstrap() {
     if (e.target?.id === 'wlLogOverlay') closeWebLinkedLogViewer();
   });
   $('#refreshPptBtn')?.addEventListener('click', () => void refreshPptBridgeStatus());
+  $('#refreshGrClientsBtn')?.addEventListener('click', () => void refreshDisplayClients());
   $('#wlSettingsCancelBtn')?.addEventListener('click', () => closeSimpleWlSettings());
   $('#wlSettingsApplyBtn')?.addEventListener('click', () => void applySimpleWlSettings());
   $('#wlSettingsOverlay')?.addEventListener('click', (e) => {
@@ -3326,6 +3561,7 @@ async function bootstrap() {
       setEventNote('Offline Show already running — checking cloud / loading events…');
       await refreshEventsFromShow();
       startPptBridgePoll();
+      startDisplayClientsPoll();
     } else {
       renderConnectivity();
     }

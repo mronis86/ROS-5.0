@@ -246,6 +246,79 @@ function registerRoutes(app, db, helpers) {
   });
 
   /**
+   * Kiosk Status: Green Room display clients (standby → start via cloud).
+   * Uses Railway Integration token (works even in LAN-only if a token is saved).
+   */
+  app.get('/api/kiosk/display-clients', async (req, res) => {
+    const kind = String(req.query.kind || 'green-room').trim() || 'green-room';
+    const tokenStatus = getRailwayApiTokenStatus(db);
+    if (!tokenStatus.configured) {
+      return res.json({
+        ok: true,
+        clients: [],
+        reason: 'no-token',
+        message: 'Add an Integration token to see Green Room clients.',
+      });
+    }
+    try {
+      const { data } = await railwayFetch(
+        'GET',
+        `/api/display-clients?kind=${encodeURIComponent(kind)}`
+      );
+      res.json({
+        ok: true,
+        kind,
+        staleMs: data?.staleMs || 45000,
+        clients: Array.isArray(data?.clients) ? data.clients : [],
+      });
+    } catch (e) {
+      res.status(502).json({
+        ok: false,
+        clients: [],
+        error: friendlyError(e),
+      });
+    }
+  });
+
+  app.post('/api/kiosk/display-clients/:clientId/command', async (req, res) => {
+    const clientId = String(req.params.clientId || '').trim();
+    if (!clientId) {
+      return res.status(400).json({ ok: false, error: 'clientId is required' });
+    }
+    const tokenStatus = getRailwayApiTokenStatus(db);
+    if (!tokenStatus.configured) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Add an Integration token before commanding Green Room clients.',
+      });
+    }
+    const body = req.body && typeof req.body === 'object' ? { ...req.body } : {};
+    const action = String(body.action || '').trim().toLowerCase();
+    const eventId = String(body.eventId || body.event_id || '').trim();
+    if ((action === 'start' || action === 'assign') && eventId && !body.url) {
+      // Prefer cloud SPA URL so off-LAN clients can open Green Room.
+      const base =
+        process.env.OFFLINE_ROS_APP_URL ||
+        process.env.OFFLINE_RAILWAY_URL ||
+        'https://ros-50-production.up.railway.app';
+      body.url = `${String(base).replace(/\/$/, '')}/green-room?eventId=${encodeURIComponent(eventId)}`;
+      body.page = body.page || 'green-room';
+      body.eventId = eventId;
+    }
+    try {
+      const { data } = await railwayFetch(
+        'POST',
+        `/api/display-clients/${encodeURIComponent(clientId)}/command`,
+        body
+      );
+      res.json(data && typeof data === 'object' ? data : { ok: true, data });
+    } catch (e) {
+      const status = e?.status && Number(e.status) >= 400 ? Number(e.status) : 502;
+      res.status(status).json({ ok: false, error: friendlyError(e) });
+    }
+  });
+
+  /**
    * Kiosk Status: is the PPT Bridge / Launcher online for this event?
    * Uses Railway Integration token (works even in LAN-only if a token is saved).
    */

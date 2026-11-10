@@ -264,6 +264,12 @@ const OfflineTimerPage: React.FC = () => {
     const handleKeyPress = (e: KeyboardEvent) => {
       switch (e.key) {
         case 'Escape':
+          // Kiosk / WebLinked Exit FS synthesizes Escape — leave HTML fullscreen first.
+          if (document.fullscreenElement) {
+            e.preventDefault();
+            void document.exitFullscreen?.();
+            break;
+          }
           window.close();
           break;
         // Timer controls are managed by RunOfShowPage via WebSocket

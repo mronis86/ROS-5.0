@@ -1139,6 +1139,8 @@ registerPowerpointRoutes(app, {
   },
 });
 registerPowerpointPlaybackRoutes(app, { pool, broadcastUpdate });
+const { registerDisplayClientRoutes } = require('./lib/display-clients');
+registerDisplayClientRoutes(app, { pool });
 registerEventBoardRoutes(app, {
   pool,
   userCanAccessEvent,

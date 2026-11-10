@@ -310,6 +310,19 @@ const Clock: React.FC<ClockProps> = ({
     return () => document.removeEventListener('fullscreenchange', handleFullScreenChange);
   }, []);
 
+  // Capture-phase: kiosk Exit FS / WebLinked Escape must leave HTML fullscreen
+  // (page handlers used to call window.close() and ignore exitFullscreen).
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || !document.fullscreenElement) return;
+      e.preventDefault();
+      e.stopPropagation();
+      void document.exitFullscreen?.();
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, []);
+
   // Message loading is now handled by ClockPage via real-time subscriptions
   // No need for polling here since ClockPage already manages this
 

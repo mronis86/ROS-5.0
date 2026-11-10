@@ -554,6 +554,51 @@ async function getPptBridgeStatus(eventId) {
   }
 }
 
+async function listDisplayClients({ kind = 'green-room' } = {}) {
+  if (!(await isRunning())) {
+    return {
+      ok: false,
+      clients: [],
+      reason: 'show-off',
+      error: 'Start Offline Show to list Green Room clients.',
+    };
+  }
+  try {
+    const q = kind ? `?kind=${encodeURIComponent(kind)}` : '';
+    const data = await requestJson(`/api/kiosk/display-clients${q}`, { timeoutMs: 15000 });
+    return data && typeof data === 'object'
+      ? { ok: true, ...data }
+      : { ok: false, clients: [], error: 'Bad response' };
+  } catch (e) {
+    return {
+      ok: false,
+      clients: [],
+      error: e instanceof Error ? e.message : 'Display clients list failed',
+    };
+  }
+}
+
+async function commandDisplayClient(clientId, command) {
+  const id = String(clientId || '').trim();
+  if (!id) return { ok: false, error: 'clientId is required' };
+  if (!(await isRunning())) {
+    return { ok: false, error: 'Start Offline Show first.' };
+  }
+  try {
+    const data = await requestJson(`/api/kiosk/display-clients/${encodeURIComponent(id)}/command`, {
+      method: 'POST',
+      body: command && typeof command === 'object' ? command : {},
+      timeoutMs: 20000,
+    });
+    return data && typeof data === 'object' ? { ok: true, ...data } : { ok: false, error: 'Bad response' };
+  } catch (e) {
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : 'Display client command failed',
+    };
+  }
+}
+
 module.exports = {
   OFFLINE_SHOW_URL,
   getStatus,
@@ -572,4 +617,6 @@ module.exports = {
   syncFromCloud,
   prepareEvents,
   getPptBridgeStatus,
+  listDisplayClients,
+  commandDisplayClient,
 };

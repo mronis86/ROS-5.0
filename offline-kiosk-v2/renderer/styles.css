@@ -294,6 +294,131 @@ body {
   font-size: 0.8rem;
 }
 
+.gr-panel {
+  margin-top: 0.75rem;
+  padding: 0.85rem 1rem;
+  border-radius: 0.75rem;
+  border: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.gr-panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.gr-kicker {
+  margin: 0;
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #94a3b8;
+}
+
+.gr-lead {
+  margin: 0.15rem 0 0;
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: #e2e8f0;
+}
+
+.gr-clients-note {
+  margin: 0.45rem 0 0;
+  color: #94a3b8;
+  font-size: 0.8rem;
+}
+
+.gr-clients-note[hidden] {
+  display: none;
+}
+
+.gr-client-list {
+  list-style: none;
+  margin: 0.65rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.gr-client-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.55rem 0.85rem;
+  padding: 0.55rem 0.65rem;
+  border-radius: 0.55rem;
+  border: 1px solid #334155;
+  background: #0f172a;
+}
+
+.gr-client-row[data-state='standby'] {
+  border-color: #0ea5e9;
+}
+
+.gr-client-row[data-state='active'] {
+  border-color: #059669;
+}
+
+.gr-client-row[data-state='offline'] {
+  border-color: #475569;
+  opacity: 0.85;
+}
+
+.gr-client-meta {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+
+.gr-client-name {
+  margin: 0;
+  font-size: 0.92rem;
+  font-weight: 650;
+  color: #f8fafc;
+}
+
+.gr-client-sub {
+  margin: 0.1rem 0 0;
+  font-size: 0.75rem;
+  color: #94a3b8;
+}
+
+.gr-client-badge {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0.2rem 0.45rem;
+  border-radius: 0.35rem;
+  background: #1e293b;
+  color: #cbd5e1;
+}
+
+.gr-client-row[data-state='standby'] .gr-client-badge {
+  background: #0c4a6e;
+  color: #7dd3fc;
+}
+
+.gr-client-row[data-state='active'] .gr-client-badge {
+  background: #064e3b;
+  color: #6ee7b7;
+}
+
+.gr-client-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-left: auto;
+}
+
+.gr-client-actions .ghost-btn,
+.gr-client-actions .primary-btn {
+  padding: 0.28rem 0.65rem;
+  font-size: 0.78rem;
+}
+
 .ppt-page {
   display: flex;
   flex-direction: column;
