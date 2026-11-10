@@ -308,6 +308,13 @@ function registerRoutes(app, db, helpers) {
       });
       if (body.eventName) qs.set('eventName', String(body.eventName));
       if (body.eventDate) qs.set('eventDate', String(body.eventDate));
+      const sessionHours = Math.min(
+        24,
+        Math.max(0, Number(body.durationHours || body.duration_hours || 0) || 0)
+      );
+      if (sessionHours > 0) qs.set('sessionHours', String(sessionHours));
+      // Display client opens Edge/Chrome fullscreen; page can also request FS.
+      if (body.fullscreen !== false && body.fullscreen !== '0') qs.set('fs', '1');
       body.url = `${String(base).replace(/\/$/, '')}/green-room?${qs.toString()}`;
       body.page = body.page || 'green-room';
       body.eventId = eventId;

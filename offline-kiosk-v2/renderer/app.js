@@ -1142,13 +1142,24 @@ function renderDisplayClients() {
     startBtn.type = 'button';
     startBtn.className = 'primary-btn';
     startBtn.textContent = busy ? '…' : 'Start';
-    startBtn.disabled = busy || !canCommand || !state.eventId || status === 'offline';
+    // Keep Start clickable when online so we can show a clear "pick an event" message
+    // (disabled buttons feel like "nothing happens").
+    startBtn.disabled = busy || !canCommand || status === 'offline';
     startBtn.title = state.eventId
       ? `Open Green Room for ${selectedEvent()?.name || state.eventId}`
-      : 'Select an event on the Event tab first';
+      : 'Select an event on the Event tab, then Start';
     startBtn.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
+      if (!state.eventId) {
+        const note = $('#grClientsNote');
+        if (note) {
+          note.hidden = false;
+          note.textContent = 'Select an event on the Event tab first, then hit Start.';
+        }
+        window.alert('Select an event on the Event tab first, then hit Start on this Green Room client.');
+        return;
+      }
       openGrStartModal(c);
     });
 
@@ -1285,15 +1296,26 @@ function openGrStartModal(client) {
       : 'No displays reported yet — uses primary. Refresh after the client updates.';
   }
   const hours = $('#grStartHours');
-  if (hours && !hours.value) hours.value = '4';
+  if (hours) hours.value = hours.value || '4';
   const fs = $('#grStartFullscreen');
   if (fs) fs.checked = true;
-  if (overlay) overlay.hidden = false;
+  if (overlay) {
+    overlay.hidden = false;
+    overlay.removeAttribute('hidden');
+    overlay.style.display = 'grid';
+    overlay.style.zIndex = '5000';
+  } else {
+    window.alert('Start dialog missing — restart the Offline Kiosk.');
+  }
 }
 
 function closeGrStartModal() {
   const overlay = $('#grStartOverlay');
-  if (overlay) overlay.hidden = true;
+  if (overlay) {
+    overlay.hidden = true;
+    overlay.setAttribute('hidden', '');
+    overlay.style.display = '';
+  }
   state.grStartClientId = '';
 }
 
@@ -1325,6 +1347,11 @@ async function confirmGrStartModal() {
     displays.find((d) => Number(d.index) === displayIndex) || displays[displayIndex] || null;
 
   closeGrStartModal();
+  const note = $('#grClientsNote');
+  if (note) {
+    note.hidden = false;
+    note.textContent = `Sending Start (${hours}h, day ${day}) to ${id}…`;
+  }
   await commandDisplayClient(id, 'start', {
     durationHours: hours,
     day,

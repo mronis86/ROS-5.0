@@ -299,23 +299,45 @@ function Open-GreenRoomWindow {
   param(
     [string]$Url,
     [bool]$Fullscreen = $true,
-    $Display = $null
+    $Display = $null,
+    [int]$DisplayIndex = 0
   )
   if (-not $Url) { return $false }
-  $x = 0; $y = 0
+  $x = 0; $y = 0; $w = 1920; $h = 1080
   if ($Display) {
     if ($null -ne $Display.x) { $x = [int]$Display.x }
     if ($null -ne $Display.y) { $y = [int]$Display.y }
+    if ($null -ne $Display.width) { $w = [Math]::Max(800, [int]$Display.width) }
+    if ($null -ne $Display.height) { $h = [Math]::Max(600, [int]$Display.height) }
+    if ($null -ne $Display.index) { $DisplayIndex = [int]$Display.index }
   }
   $browser = Find-BrowserExe
   if ($browser) {
-    $args = @("--new-window", "--window-position=$x,$y", "--app=$Url")
-    if ($Fullscreen) { $args = @("--start-fullscreen") + $args }
+    # Chromium ignores --window-position when reusing the default profile.
+    # A per-display user-data-dir is required for secondary-monitor + fullscreen.
+    $profileDir = Join-Path $env:LOCALAPPDATA ("ROS-GreenRoom\profile-d{0}" -f $DisplayIndex)
+    try { New-Item -ItemType Directory -Force -Path $profileDir | Out-Null } catch {}
+    # Use ProcessStartInfo so & in query strings (apiToken, day, etc.) are not mangled
+    # by Start-Process -ArgumentList array quoting quirks on Windows PowerShell 5.1.
+    $argParts = New-Object System.Collections.Generic.List[string]
+    if ($Fullscreen) { [void]$argParts.Add('--start-fullscreen') }
+    [void]$argParts.Add('--user-data-dir="' + $profileDir + '"')
+    [void]$argParts.Add('--no-first-run')
+    [void]$argParts.Add('--no-default-browser-check')
+    [void]$argParts.Add('--disable-session-crashed-bubble')
+    [void]$argParts.Add("--window-position=$x,$y")
+    [void]$argParts.Add("--window-size=$w,$h")
+    [void]$argParts.Add('--app="' + $Url + '"')
+    $argLine = [string]::Join(' ', $argParts)
     try {
-      $p = Start-Process -FilePath $browser -ArgumentList $args -PassThru -WindowStyle Normal
+      $psi = New-Object System.Diagnostics.ProcessStartInfo
+      $psi.FileName = $browser
+      $psi.Arguments = $argLine
+      $psi.UseShellExecute = $false
+      $p = [System.Diagnostics.Process]::Start($psi)
       if ($p -and $p.Id) {
         $script:State.browserPid = $p.Id
-        Write-Log 'browser' $browser "pid=$($p.Id)" "pos=$x,$y" "fs=$Fullscreen"
+        Write-Log 'browser' $browser "pid=$($p.Id)" "pos=$x,$y" "size=${w}x${h}" "fs=$Fullscreen" "profile=$profileDir"
         return $true
       }
     } catch {
@@ -367,18 +389,45 @@ function Apply-Command {
     $script:State.eventId = $eventId
     $day = [Math]::Max(1, [int]($Command.day))
     if (-not $day) { $day = 1 }
+    $hours = 0
+    if ($Command.durationHours) { $hours = [double]$Command.durationHours }
+    if ($hours -lt 2) { $hours = 2 }
+    if ($hours -gt 24) { $hours = 24 }
+    $fullscreen = $true
+    if ($null -ne $Command.fullscreen) {
+      # PS ConvertFrom-Json may yield bool or string; avoid [bool]"false" => $true
+      $fsRaw = $Command.fullscreen
+      if ($fsRaw -is [bool]) { $fullscreen = $fsRaw }
+      elseif ("$fsRaw" -eq '0' -or "$fsRaw" -eq 'false' -or "$fsRaw" -eq 'False') { $fullscreen = $false }
+      else { $fullscreen = $true }
+    }
+
     $appBase = if ($Cfg.appUrl -and $Cfg.appUrl -notmatch 'up\.railway\.app') { $Cfg.appUrl } else { 'https://ros1615.pages.dev' }
     $url = if ($Command.url -and "$($Command.url)" -notmatch 'up\.railway\.app/green-room') {
       "$($Command.url)"
     } else {
-      "$appBase/green-room?eventId=$([Uri]::EscapeDataString($eventId))&day=$day"
+      "$appBase/green-room?eventId=$([Uri]::EscapeDataString($eventId))&day=$day&sessionHours=$hours&fs=$(if ($fullscreen) { '1' } else { '0' })"
     }
     if ($url -match 'up\.railway\.app/green-room') {
-      $url = "$appBase/green-room?eventId=$([Uri]::EscapeDataString($eventId))&day=$day"
+      $url = "$appBase/green-room?eventId=$([Uri]::EscapeDataString($eventId))&day=$day&sessionHours=$hours&fs=$(if ($fullscreen) { '1' } else { '0' })"
     }
     if ($url -notmatch '[?&]day=') {
       $join = if ($url -match '\?') { '&' } else { '?' }
       $url = "$url${join}day=$day"
+    }
+    if ($url -notmatch '[?&]sessionHours=') {
+      $join = if ($url -match '\?') { '&' } else { '?' }
+      $url = "$url${join}sessionHours=$hours"
+    }
+    if ($fullscreen -and $url -notmatch '[?&]fs=') {
+      $join = if ($url -match '\?') { '&' } else { '?' }
+      $url = "$url${join}fs=1"
+    }
+    # Bootstrap SPA API auth from this client's Integration token (no Neon sign-in).
+    # Prefer query apiToken (hash fragments are sometimes dropped by Windows shell launches).
+    if ($Cfg.token -and $url -notmatch 'apiToken=' -and $url -notmatch 'ros_api_token=') {
+      $join = if ($url -match '\?') { '&' } else { '?' }
+      $url = "$url${join}apiToken=$([Uri]::EscapeDataString($Cfg.token))"
     }
     $script:State.openedUrl = $url
 
@@ -386,24 +435,22 @@ function Apply-Command {
     $displayIndex = 0
     if ($null -ne $Command.displayIndex) { $displayIndex = [int]$Command.displayIndex }
     $display = $null
-    if ($Command.display) { $display = $Command.display }
+    if ($Command.display) {
+      $display = $Command.display
+      # Prefer live local bounds for the selected index (coords in the command can be stale).
+      $live = $displays | Where-Object { [int]$_.index -eq $displayIndex } | Select-Object -First 1
+      if ($live) { $display = $live }
+    }
     elseif ($displays.Count -gt 0) {
       $display = $displays | Where-Object { [int]$_.index -eq $displayIndex } | Select-Object -First 1
       if (-not $display) { $display = $displays[0] }
     }
-    $fullscreen = $true
-    if ($null -ne $Command.fullscreen) { $fullscreen = [bool]$Command.fullscreen }
-
-    $hours = 0
-    if ($Command.durationHours) { $hours = [double]$Command.durationHours }
-    if ($hours -lt 2) { $hours = 2 }
-    if ($hours -gt 24) { $hours = 24 }
     $script:State.activeUntil = (Get-Date).AddHours($hours)
 
     Stop-BrowserSession
     $opened = $false
     if ($Cfg.openBrowser) {
-      $opened = Open-GreenRoomWindow -Url $url -Fullscreen $fullscreen -Display $display
+      $opened = Open-GreenRoomWindow -Url $url -Fullscreen $fullscreen -Display $display -DisplayIndex $displayIndex
       if (-not $opened) {
         Write-Log 'warn: could not open browser - client still marked active'
         $script:State.lastError = 'Could not open browser'
@@ -411,7 +458,7 @@ function Apply-Command {
     }
     $script:State.status = 'active'
     if ($opened) { $script:State.lastError = '' }
-    Write-Log 'active ->' $url "until=$($script:State.activeUntil)" "day=$day" "fs=$fullscreen"
+    Write-Log 'active ->' ($url -replace 'apiToken=[^&#]+', 'apiToken=(redacted)' -replace 'ros_api_token=[^&#]+', 'ros_api_token=(redacted)') "until=$($script:State.activeUntil)" "day=$day" "fs=$fullscreen" "display=$displayIndex"
     if ($Notify) {
       $tip = if ($opened) { "Green Room for ${hours}h (day $day)" } else { 'Active, but browser did not open. Use Open Green Room now.' }
       $Notify.ShowBalloonTip(7000, 'Green Room started', $tip, [System.Windows.Forms.ToolTipIcon]::Info)
@@ -569,14 +616,18 @@ $itemOpenGr.Text = 'Open Green Room now'
 $itemOpenGr.Add_Click({
   $eid = if ($script:State.eventId) { $script:State.eventId } else { 'TEST' }
   $appBase = if ($script:Cfg.appUrl -and $script:Cfg.appUrl -notmatch 'up\.railway\.app') { $script:Cfg.appUrl } else { 'https://ros1615.pages.dev' }
-  $url = if ($script:State.openedUrl) { $script:State.openedUrl } else { "$appBase/green-room?eventId=$([Uri]::EscapeDataString($eid))&day=1" }
+  $url = if ($script:State.openedUrl) { $script:State.openedUrl } else { "$appBase/green-room?eventId=$([Uri]::EscapeDataString($eid))&day=1&sessionHours=4&fs=1" }
+  if ($script:Cfg.token -and $url -notmatch 'apiToken=' -and $url -notmatch 'ros_api_token=') {
+    $join = if ($url -match '\?') { '&' } else { '?' }
+    $url = "$url${join}apiToken=$([Uri]::EscapeDataString($script:Cfg.token))"
+  }
   $displays = @(Get-ClientDisplays)
-  $ok = Open-GreenRoomWindow -Url $url -Fullscreen $true -Display ($displays | Select-Object -First 1)
-  Write-Log 'manual open' $url "ok=$ok"
+  $ok = Open-GreenRoomWindow -Url $url -Fullscreen $true -Display ($displays | Select-Object -First 1) -DisplayIndex 0
+  Write-Log 'manual open' ($url -replace 'apiToken=[^&#]+', 'apiToken=(redacted)' -replace 'ros_api_token=[^&#]+', 'ros_api_token=(redacted)') "ok=$ok"
   if ($ok) {
     $notify.ShowBalloonTip(4000, 'Green Room', 'Opened full screen', [System.Windows.Forms.ToolTipIcon]::Info)
   } else {
-    [System.Windows.Forms.MessageBox]::Show("Could not open browser for:`n$url", 'Green Room Client') | Out-Null
+    [System.Windows.Forms.MessageBox]::Show("Could not open browser for:`n$($url -replace 'apiToken=[^&#]+', 'apiToken=(redacted)' -replace 'ros_api_token=[^&#]+', 'ros_api_token=(redacted)')", 'Green Room Client') | Out-Null
   }
 })
 

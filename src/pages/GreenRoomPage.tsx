@@ -13,7 +13,7 @@ import { overtimeSignPrefix, useOvertimeSign } from '../lib/overtimeSign';
 // import { driftDetector } from '../services/driftDetector'; // REMOVED: Using WebSocket-only approach
 import { socketClient } from '../services/socket-client';
 import { apiClient, getApiBaseUrl } from '../services/api-client';
-import { apiAuthFetch } from '../lib/sessionAuth';
+import { apiAuthFetch, bootstrapApiTokenFromUrl, getApiAccessToken } from '../lib/sessionAuth';
 import {
   findParentScheduleIndex,
   isIndentedScheduleItem,
@@ -100,6 +100,18 @@ function formatClockFromMinutes(totalMinutes: number): string {
   return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
 }
 
+function coerceIsPublic(value: unknown): boolean {
+  return (
+    value === true ||
+    value === 1 ||
+    value === '1' ||
+    value === 'true' ||
+    value === 'True' ||
+    value === 'yes' ||
+    value === 'YES'
+  );
+}
+
 const GreenRoomPage: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
@@ -113,6 +125,18 @@ const GreenRoomPage: React.FC = () => {
     const raw = Number(urlParams.get('day') || '');
     return Number.isFinite(raw) && raw >= 1 ? Math.floor(raw) : null;
   })();
+  const sessionHoursFromUrl = (() => {
+    const raw = Number(urlParams.get('sessionHours') || '');
+    if (!Number.isFinite(raw) || raw <= 0) return null;
+    return Math.min(DISPLAY_SESSION_MAX_HOURS, Math.max(1 / 60, raw));
+  })();
+  const autoFullscreenFromUrl =
+    urlParams.get('fs') === '1' ||
+    urlParams.get('fullscreen') === '1' ||
+    urlParams.get('fs') === 'true';
+  // Same outcome as clicking the on-page Fullscreen button (hide left chrome).
+  const displayKioskMode = autoFullscreenFromUrl;
+  bootstrapApiTokenFromUrl();
   const [brandLayout, setBrandLayout] = useState<GreenRoomLayoutId>(() => getGreenRoomLayoutId());
 
   useEffect(() => {
@@ -266,6 +290,13 @@ const GreenRoomPage: React.FC = () => {
   const loadEvents = useCallback(async (showSuccess = false) => {
     try {
       setEventsLoading(true);
+      // Optional UI only — never required for schedule. Skip when no token so we
+      // do not 401 and poison auth backoff before the public schedule GET runs.
+      if (!getApiAccessToken()) {
+        setEvents([]);
+        return;
+      }
+      apiClient.clearAuthBackoff();
       const calendarEvents = await DatabaseService.getCalendarEvents();
       const mapped: Event[] = (calendarEvents || []).map((calEvent: any) => {
         const dateObj = new Date(calEvent.date);
@@ -439,17 +470,45 @@ const GreenRoomPage: React.FC = () => {
   /** False after auto-disconnect until user reconnects — blocks HTTP poll and socket reconnect. */
   const connectionEnabledRef = useRef(true);
   const { displaySyncEnabledRef, displaySyncPaused } = useEventDisplaySyncGate(event?.id);
-  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(() => displayKioskMode);
+  const hideChrome = isFullscreen || displayKioskMode;
 
-  // Listen for fullscreen changes
+  // Listen for fullscreen changes (on-page Fullscreen button uses the Fullscreen API).
   useEffect(() => {
     const handleFullscreenChange = () => {
-      setIsFullscreen(!!document.fullscreenElement);
+      // In display-kiosk mode keep chrome hidden even if the browser FS gesture fails.
+      setIsFullscreen(!!document.fullscreenElement || displayKioskMode);
     };
 
     document.addEventListener('fullscreenchange', handleFullscreenChange);
     return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
-  }, []);
+  }, [displayKioskMode]);
+
+  // Match the Fullscreen button: request document fullscreen when Start asked for it.
+  useEffect(() => {
+    if (!autoFullscreenFromUrl) return;
+    const tryFs = () => {
+      if (!document.fullscreenElement && document.documentElement.requestFullscreen) {
+        void document.documentElement.requestFullscreen().catch(() => {});
+      }
+    };
+    const t1 = window.setTimeout(tryFs, 300);
+    const t2 = window.setTimeout(tryFs, 1500);
+    // Browsers often require a gesture — retry on first pointer/key.
+    const onGesture = () => {
+      tryFs();
+      window.removeEventListener('pointerdown', onGesture);
+      window.removeEventListener('keydown', onGesture);
+    };
+    window.addEventListener('pointerdown', onGesture, { once: true });
+    window.addEventListener('keydown', onGesture, { once: true });
+    return () => {
+      window.clearTimeout(t1);
+      window.clearTimeout(t2);
+      window.removeEventListener('pointerdown', onGesture);
+      window.removeEventListener('keydown', onGesture);
+    };
+  }, [autoFullscreenFromUrl]);
 
   // Calculate start time function (same as RunOfShowPage)
   const calculateStartTime = (index: number, scheduleData?: any[], masterStartTimeOverride?: string, indentedCuesData?: Record<number, any>) => {
@@ -866,10 +925,11 @@ const GreenRoomPage: React.FC = () => {
                     : 0;
               return {
                 ...item,
-                isPublic: item.isPublic === true || item.isPublic === 'true',
+                isPublic: coerceIsPublic(item.isPublic),
                 durationHours: Math.floor(totalSec / 3600),
                 durationMinutes: Math.floor((totalSec % 3600) / 60),
                 durationSeconds: totalSec % 60,
+                day: Math.max(1, Number(item.day) || 1),
               };
             });
             
@@ -1155,8 +1215,30 @@ const GreenRoomPage: React.FC = () => {
     }
 
     if (!hasShownModalOnce && connectionEnabledRef.current) {
-      setShowDisconnectModal(true);
       setHasShownModalOnce(true);
+      if (sessionHoursFromUrl != null) {
+        // Kiosk Start already chose duration — skip the picker and arm the timer.
+        const totalMinutes = Math.max(1, Math.round(sessionHoursFromUrl * 60));
+        const hours = Math.floor(totalMinutes / 60);
+        const minutes = totalMinutes % 60;
+        connectionEnabledRef.current = true;
+        if (disconnectTimer) clearTimeout(disconnectTimer);
+        const ms = totalMinutes * 60 * 1000;
+        const timer = setTimeout(() => {
+          const timeText = [hours > 0 ? `${hours}h` : '', minutes > 0 ? `${minutes}m` : '']
+            .filter(Boolean)
+            .join(' ');
+          connectionEnabledRef.current = false;
+          setDisconnectDuration(timeText || `${totalMinutes}m`);
+          setShowDisconnectNotification(true);
+          setTimeout(() => {
+            if (event?.id) socketClient.disconnect(event.id);
+          }, 100);
+        }, ms);
+        setDisconnectTimer(timer);
+      } else {
+        setShowDisconnectModal(true);
+      }
     }
 
     const handleVisibilityChange = () => {
@@ -1178,7 +1260,7 @@ const GreenRoomPage: React.FC = () => {
       if (disconnectTimer) clearTimeout(disconnectTimer);
       if (timerStoppedSyncTimeoutRef.current) clearTimeout(timerStoppedSyncTimeoutRef.current);
     };
-  }, [event?.id, reconnectKey, applyActiveTimerPayload]);
+  }, [event?.id, reconnectKey, applyActiveTimerPayload, sessionHoursFromUrl]);
 
   // Always run local timer for smooth updates when timer is running.
   // Depend on startedAt ms so the clock starts once progress arrives (not only on state change).
@@ -1233,8 +1315,16 @@ const GreenRoomPage: React.FC = () => {
     }
 
     try {
+      // Schedule GET is public — clear any poison backoff from optional auth calls.
+      apiClient.clearAuthBackoff();
       apiClient.invalidateSyncDataCache(currentEventId);
       const data = await DatabaseService.getRunOfShowData(currentEventId);
+      if (!data) {
+        setError('No schedule found for this event (API returned empty).');
+        setIsLoading(false);
+        isInitialLoadRef.current = false;
+        return;
+      }
       
       // Load overtime data FIRST before processing schedule
       let freshOvertimeData: Record<number, number> = {};
@@ -1308,11 +1398,11 @@ const GreenRoomPage: React.FC = () => {
       // Load master start time from API data (prioritize database over localStorage)
       let effectiveMasterStartTime = masterStartTime; // Default to current state
       
-      if (data && data.settings && data.settings.masterStartTime) {
+      if (data.settings?.masterStartTime) {
         console.log('📥 Found master start time in API data:', data.settings.masterStartTime);
         effectiveMasterStartTime = data.settings.masterStartTime;
         setMasterStartTime(data.settings.masterStartTime);
-      } else if (data && data.settings && data.settings.dayStartTimes && data.settings.dayStartTimes['1']) {
+      } else if (data.settings?.dayStartTimes?.['1']) {
         console.log('📥 Found day start time for Day 1 in API data:', data.settings.dayStartTimes['1']);
         effectiveMasterStartTime = data.settings.dayStartTimes['1'];
         setMasterStartTime(data.settings.dayStartTimes['1']);
@@ -1324,7 +1414,7 @@ const GreenRoomPage: React.FC = () => {
       }
       
       // Load timezone from settings
-      if (data.settings?.timezone) {
+      if (data?.settings?.timezone) {
         setEventTimezone(data.settings.timezone);
         console.log('🌍 GreenRoom: Loaded timezone from settings:', data.settings.timezone);
       } else {
@@ -1480,7 +1570,8 @@ const GreenRoomPage: React.FC = () => {
             startTime,
             endTime,
             duration,
-            isPublic: item.isPublic === true || item.isPublic === 'true'
+            isPublic: coerceIsPublic(item.isPublic),
+            day: Math.max(1, Number(item.day) || 1),
           };
         }).filter(item => item !== null); // Remove null items
 
@@ -1500,15 +1591,23 @@ const GreenRoomPage: React.FC = () => {
         setError('No schedule data found');
         isInitialLoadRef.current = false;
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('❌ Error loading schedule:', err);
       console.error('❌ Error details:', {
-        message: err.message,
-        stack: err.stack,
+        message: err?.message,
+        status: err?.status,
+        stack: err?.stack,
         eventId: event?.id,
-        eventName: event?.name
+        eventName: event?.name,
+        hasToken: Boolean(getApiAccessToken()),
       });
-      setError(`Failed to load schedule data: ${err.message}`);
+      if (err?.status === 401 || err?.status === 403) {
+        setError(
+          'Schedule API rejected the token (401/403). Confirm the Green Room client Integration token has read access and matches this Admin account.'
+        );
+      } else {
+        setError(`Failed to load schedule data: ${err?.message || String(err)}`);
+      }
       isInitialLoadRef.current = false;
     } finally {
       setIsLoading(false);
@@ -1710,41 +1809,28 @@ const GreenRoomPage: React.FC = () => {
 
   // Dynamically modify isPublic to hide items above the current one
   const publicSchedule = useMemo(() => {
-    // Removed verbose logging to prevent console spam
-    // First filter by selected day
-    const dayFilteredSchedule = schedule.filter(item => item.day === selectedDay);
-    
-    // Find the current item index in the day-filtered schedule
-    // Convert both to strings for comparison since activeItemId might be a string
-    const currentIndex = activeItemId ? dayFilteredSchedule.findIndex(item => String(item.id) === String(activeItemId)) : -1;
-    
-    // Removed verbose logging to prevent console spam
-    
-    // If we have an active item, show only PUBLIC items from that item onwards
+    const dayNum = Math.max(1, Number(selectedDay) || 1);
+    // Coerce day so "1" from JSON still matches selectedDay number 1.
+    const dayFilteredSchedule = schedule.filter(
+      (item) => Math.max(1, Number(item.day) || 1) === dayNum
+    );
+
+    const currentIndex = activeItemId
+      ? dayFilteredSchedule.findIndex((item) => String(item.id) === String(activeItemId))
+      : -1;
+
+    const publicItems = dayFilteredSchedule.filter((item) => coerceIsPublic(item.isPublic));
+
     if (currentIndex >= 0) {
-      // First filter to only public items, then find the current item in that filtered list
-      const publicItems = dayFilteredSchedule.filter(item => item.isPublic === true);
-      const currentItemInPublicList = publicItems.findIndex(item => String(item.id) === String(activeItemId));
-      
-      // If current item is public, show from that item onwards. Otherwise, show all public items.
-      // Use the startTime that's already calculated on each item (from loadSchedule or overtime recalculation)
-      const visibleItems = (currentItemInPublicList >= 0 
-        ? publicItems.slice(currentItemInPublicList)
-        : publicItems
+      const currentItemInPublicList = publicItems.findIndex(
+        (item) => String(item.id) === String(activeItemId)
       );
-      
-      // Removed verbose logging to prevent console spam
-      
-      return visibleItems;
+      return currentItemInPublicList >= 0
+        ? publicItems.slice(currentItemInPublicList)
+        : publicItems;
     }
-    
-    // If no active item, show all public items (fallback behavior)
-    // Use the startTime that's already calculated on each item (from loadSchedule or overtime recalculation)
-    const visibleItems = dayFilteredSchedule.filter(item => item.isPublic === true);
-    
-    // Removed verbose logging to prevent console spam
-    
-    return visibleItems;
+
+    return publicItems;
   }, [schedule, selectedDay, activeItemId, overtimeMinutes, showStartOvertime, startCueId, dayStartTimes, masterStartTime, indentedCues]);
 
   // Calculate expected finish time from active timer
@@ -1967,7 +2053,7 @@ const GreenRoomPage: React.FC = () => {
       )}
 
       <div className="relative z-10 overflow-visible h-full flex flex-col">
-        {!isFullscreen && (
+        {!hideChrome && (
           <div className={`absolute top-4 left-4 backdrop-blur-sm rounded-lg p-3 space-y-2 min-w-[180px] overflow-visible z-50 ${isRos ? 'bg-slate-900/90 border border-slate-600' : 'bg-black/50'}`}>
             {events.length > 1 && (
               <div className="space-y-1 overflow-visible">
@@ -2057,7 +2143,8 @@ const GreenRoomPage: React.FC = () => {
 
             <button
               onClick={() => {
-                document.documentElement.requestFullscreen();
+                setIsFullscreen(true);
+                void document.documentElement.requestFullscreen?.().catch(() => {});
               }}
               className="w-full bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded border border-blue-500 text-lg transition-colors"
               title="Enter Fullscreen"
@@ -2179,7 +2266,9 @@ const GreenRoomPage: React.FC = () => {
         <div className="space-y-3">
         {publicSchedule.length === 0 ? (
           <div className={`text-center text-lg py-12 ${isRos ? 'text-slate-400' : 'text-gray-400'}`}>
-            No public schedule items available
+            {schedule.length === 0
+              ? 'No schedule loaded — check the Integration token on this Green Room client.'
+              : `No public items on day ${selectedDay} (${schedule.length} total cue${schedule.length === 1 ? '' : 's'} loaded).`}
           </div>
         ) : (
           <>

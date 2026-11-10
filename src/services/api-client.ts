@@ -44,6 +44,23 @@ interface CacheEntry<T> {
   ttl: number; // Time to live in milliseconds
 }
 
+/** UUID or legacy calendar id (event-1793…-abc). */
+const EVENT_ID_SEGMENT =
+  '(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|event-[A-Za-z0-9_-]+)';
+
+/** Railway paths that are public for GET (must never be blocked by auth backoff). */
+function isPublicGetEndpoint(endpoint: string, method?: string): boolean {
+  const m = String(method || 'GET').toUpperCase();
+  if (m !== 'GET' && m !== 'HEAD' && m !== '') return false;
+  const path = String(endpoint || '').split('?')[0];
+  if (new RegExp(`^/api/run-of-show-data/${EVENT_ID_SEGMENT}$`, 'i').test(path)) return true;
+  if (new RegExp(`^/api/operator-countdown/${EVENT_ID_SEGMENT}$`, 'i').test(path)) return true;
+  if (new RegExp(`^/api/display-sync/${EVENT_ID_SEGMENT}$`, 'i').test(path)) return true;
+  if (path.startsWith('/api/guest-event/')) return true;
+  if (path.startsWith('/api/public/')) return true;
+  return false;
+}
+
 class ApiClient {
   private cache: Map<string, CacheEntry<any>> = new Map();
   /** After a 401, pause further API calls briefly so expired OBS/tabs don't spam Railway. */
@@ -58,6 +75,11 @@ class ApiClient {
     changeLog: 1 * 60 * 1000,         // 1 minute
     timerMessages: 1 * 60 * 1000,     // 1 minute
   };
+
+  /** Clear poison-pill backoff (e.g. after display-client token bootstrap). */
+  clearAuthBackoff(): void {
+    this.authBackoffUntil = 0;
+  }
 
   private getCacheKey(endpoint: string, params?: any): string {
     return `${endpoint}${params ? `_${JSON.stringify(params)}` : ''}`;
@@ -95,7 +117,10 @@ class ApiClient {
   }
 
   private async request<T>(endpoint: string, options: RequestInit = {}, cacheKey?: string, cacheTTL?: number): Promise<T> {
-    if (Date.now() < this.authBackoffUntil) {
+    const publicGet = isPublicGetEndpoint(endpoint, options.method);
+    // Public display GETs (Green Room schedule, clocks) must still work after a
+    // failed authenticated call (calendar list, etc.) tripped auth backoff.
+    if (!publicGet && Date.now() < this.authBackoffUntil) {
       const err: any = new Error('Authentication required. Sign in again (API auth backoff).');
       err.status = 401;
       throw err;
@@ -129,7 +154,7 @@ class ApiClient {
       const response = await fetch(url, defaultOptions);
       
       if (!response.ok) {
-        if (response.status === 401 || response.status === 429) {
+        if (!publicGet && (response.status === 401 || response.status === 429)) {
           clearApiAccessTokenOnAuthFailure(`${response.status} ${endpoint}`);
           this.authBackoffUntil = Date.now() + 60 * 60 * 1000;
         }
@@ -147,7 +172,7 @@ class ApiClient {
         throw err;
       }
 
-      this.authBackoffUntil = 0;
+      if (!publicGet) this.authBackoffUntil = 0;
       
       const data = await response.json();
       

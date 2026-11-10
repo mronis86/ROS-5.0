@@ -807,8 +807,25 @@ export class DatabaseService {
         }
       }
       return data;
-    } catch (error) {
+    } catch (error: any) {
       console.error('❌ Exception in getRunOfShowData:', error);
+      // Auth backoff is a client poison-pill — clear it and retry once (schedule GET is public).
+      if (
+        error?.status === 401 &&
+        String(error?.message || '').includes('API auth backoff')
+      ) {
+        try {
+          apiClient.clearAuthBackoff();
+          return await apiClient.getRunOfShowData(eventId, { bypassCache: true });
+        } catch (retryErr) {
+          console.error('❌ getRunOfShowData retry after backoff clear failed:', retryErr);
+          throw retryErr;
+        }
+      }
+      // Real 401/403 (e.g. before server public-path fix) — do not fake empty localStorage.
+      if (error?.status === 401 || error?.status === 403) {
+        throw error;
+      }
       console.log('🔄 Falling back to localStorage due to exception...');
       return this.getRunOfShowFromLocalStorageById(eventId);
     }

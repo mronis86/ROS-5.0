@@ -23,6 +23,46 @@ export function setApiAccessToken(token: string | null): void {
   }
 }
 
+const BOOTSTRAP_TOKEN_RE = /^(ros_itok_|ros_nsess_|ros_sess_)/;
+
+/**
+ * Display clients (Green Room tray) open the SPA with an Integration token in the
+ * URL hash so the page can sync without Neon sign-in. Consume once, then strip
+ * from the address bar so the token is not left in history/share UI.
+ */
+export function bootstrapApiTokenFromUrl(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    const hashRaw = window.location.hash.startsWith('#')
+      ? window.location.hash.slice(1)
+      : window.location.hash;
+    const hashParams = new URLSearchParams(hashRaw);
+    const searchParams = new URLSearchParams(window.location.search);
+    const raw = (
+      hashParams.get('ros_api_token') ||
+      hashParams.get('token') ||
+      searchParams.get('apiToken') ||
+      searchParams.get('ros_api_token') ||
+      ''
+    ).trim();
+    if (!raw || !BOOTSTRAP_TOKEN_RE.test(raw)) return false;
+    setApiAccessToken(raw);
+    hashParams.delete('ros_api_token');
+    hashParams.delete('token');
+    searchParams.delete('apiToken');
+    searchParams.delete('ros_api_token');
+    const nextSearch = searchParams.toString();
+    const nextHash = hashParams.toString();
+    const next = `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ''}${
+      nextHash ? `#${nextHash}` : ''
+    }`;
+    window.history.replaceState(null, '', next);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function notifySessionEnded(reason?: string): void {
   if (typeof window === 'undefined') return;
   try {

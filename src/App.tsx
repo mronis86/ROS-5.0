@@ -167,7 +167,7 @@ function AppContent() {
       {/* Render AppHeader outside AuthGuard for pages that need authentication */}
       {!isFullScreenTimer && !isPinNotesPopout && !isOperatorTimerPopout && !isGreenRoom && !isPhotoView && !isDirectorView && !isDirectorControl && !isMicManager && !isOperatorCueDisplay && !isScriptsFollow && !isTeleprompter && !isCueCards && !isPowerPoint && !isGoogleSheets && !isLocalXML && !isNetlifyXML && !isAdmin && !isQuickMode && !isComparison && !isResetPassword && !isAccessPortal && !isGuestEvent && !isMeetingHubPublic && !isStreamRequest && !isTraining && !isLedOutput && !isUltritouchHealth && !isStreamGuide && !isReports && <AppHeader />}
       
-      {!isPinNotesPopout && !isOperatorTimerPopout && !isComparison && !isResetPassword && !isAccessPortal && !isGuestEvent && !isMeetingHubPublic && !isStreamRequest && !isTraining && !isNetlifyXML && !isLocalXML && !isAdmin && !isClock && !isDsmClock && (
+      {!isPinNotesPopout && !isOperatorTimerPopout && !isComparison && !isResetPassword && !isAccessPortal && !isGuestEvent && !isMeetingHubPublic && !isStreamRequest && !isTraining && !isNetlifyXML && !isLocalXML && !isAdmin && !isClock && !isDsmClock && !isGreenRoom && (
         <AuthGuard>
           <div className="min-h-screen bg-slate-900">
           <Routes>
@@ -197,7 +197,6 @@ function AppContent() {
             <Route path="/civics-graphics/top25" element={<CivicsGraphicsSelectPage />} />
             <Route path="/civics-graphics/top10" element={<CivicsGraphicsSelectPage />} />
             <Route path="/civics-graphics/top5" element={<CivicsGraphicsSelectPage />} />
-            <Route path="/green-room" element={<GreenRoomPage />} />
             <Route path="/photo-view" element={<PhotoViewPage />} />
             <Route path="/director-view" element={<DirectorViewPage />} />
             <Route path="/director-control" element={<DirectorControlPopout />} />
@@ -223,6 +222,7 @@ function AppContent() {
         <Route path="/operator-timer" element={<OperatorTimerPopoutPage />} />
         <Route path="/clock" element={<ClockPage />} />
         <Route path="/dsm-clock" element={<DsmClockPage />} />
+        <Route path="/green-room" element={<GreenRoomPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route path="/access" element={<AccessPortalPage />} />
         <Route path="/guest" element={<GuestEventPage />} />

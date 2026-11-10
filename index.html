@@ -36,6 +36,33 @@
           var root = document.getElementById('root');
           if (root) root.style.backgroundColor = 'transparent';
         }
+        // Green Room display client: seed API token before React mounts, then strip from URL.
+        try {
+          var hashRaw = (window.location.hash || '').replace(/^#/, '');
+          var hashParams = new URLSearchParams(hashRaw);
+          var searchParams = new URLSearchParams(window.location.search || '');
+          var raw = (
+            searchParams.get('apiToken') ||
+            searchParams.get('ros_api_token') ||
+            hashParams.get('ros_api_token') ||
+            hashParams.get('token') ||
+            ''
+          ).trim();
+          if (raw && /^(ros_itok_|ros_nsess_|ros_sess_)/.test(raw)) {
+            localStorage.setItem('ros_api_token', raw);
+            searchParams.delete('apiToken');
+            searchParams.delete('ros_api_token');
+            hashParams.delete('ros_api_token');
+            hashParams.delete('token');
+            var nextSearch = searchParams.toString();
+            var nextHash = hashParams.toString();
+            var next =
+              window.location.pathname +
+              (nextSearch ? '?' + nextSearch : '') +
+              (nextHash ? '#' + nextHash : '');
+            window.history.replaceState(null, '', next);
+          }
+        } catch (e) {}
       })();
     </script>
   </head>
