@@ -14,7 +14,8 @@ What it does:
 
 1. Download **Green Room Client Portable** from Graphics Links / OSC.
 2. Unzip and double-click **`Start Green Room Client.bat`**.
-3. First run: paste `ros_itok_...` in the setup window.
+3. First run: paste an Integration token (`ros_itok_...`). It can be its **own** token —
+   it only needs to be created by the **same Admin** as the Offline Kiosk token.
 4. Find the green icon by the clock. Right-click -> Exit to stop.
 
 Rebuild + upload:

@@ -1064,8 +1064,10 @@ function renderDisplayClients() {
     else if (pack?.reason === 'no-token' || (!state.tokenConfigured && !clients.length)) {
       lead.textContent = 'Save an Integration token to see Green Room clients.';
     } else if (pack?.error) lead.textContent = 'Could not reach Green Room clients.';
-    else if (!clients.length) lead.textContent = 'No Green Room clients checking in yet.';
-    else {
+    else if (!clients.length) {
+      lead.textContent =
+        'No Green Room clients checking in yet (token must be from the same Admin account).';
+    } else {
       lead.textContent = `${online.length} online · ${standby} standby · ${active} active`;
     }
   }
