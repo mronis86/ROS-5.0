@@ -1,8 +1,7 @@
 ﻿import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { DatabaseService } from '../services/database';
-import { apiClient, getApiBaseUrl } from '../services/api-client';
-import { apiAuthFetch } from '../lib/sessionAuth';
+import { apiClient } from '../services/api-client';
 import { Event } from '../types/Event';
 import { EventSelectorDropdown } from '../components/EventSelectorDropdown';
 // import { driftDetector } from '../services/driftDetector'; // REMOVED: Using WebSocket-only approach
@@ -1369,65 +1368,50 @@ const PhotoViewPage: React.FC = () => {
       if (!connectionEnabledRef.current || !displaySyncEnabledRef.current) return;
       try {
         console.log('🔄 PhotoView: Loading active timer state on mount...');
-        const activeTimerResponse = await apiAuthFetch(`${getApiBaseUrl()}/api/active-timers/${event.id}`);
-        if (!activeTimerResponse) return;
+        // Public display GET (same as DSM/Green Room) — no Neon session required.
+        const activeTimerData = await DatabaseService.getActiveTimerRow(event.id);
+        console.log('🔄 PhotoView: Processed active timer data:', activeTimerData);
 
-        if (activeTimerResponse.ok) {
-          const activeTimerResponseData = await activeTimerResponse.json();
-          console.log('🔄 PhotoView: Loaded active timer on mount:', activeTimerResponseData);
-          
-          // Handle the actual API response format - check if it's an array or object
-          let activeTimerData;
-          if (Array.isArray(activeTimerResponseData)) {
-            // Direct array response
-            activeTimerData = activeTimerResponseData.length > 0 ? activeTimerResponseData[0] : null;
-          } else if (activeTimerResponseData.value && Array.isArray(activeTimerResponseData.value)) {
-            // Wrapped in value property
-            activeTimerData = activeTimerResponseData.value.length > 0 ? activeTimerResponseData.value[0] : null;
-          } else {
-            // Direct object response
-            activeTimerData = activeTimerResponseData;
-          }
-          
-          console.log('🔄 PhotoView: Processed active timer data:', activeTimerData);
-          
-          if (activeTimerData && activeTimerData.item_id) {
-            setActiveItemId(parseInt(activeTimerData.item_id));
-            rememberPreviewCue(activeTimerData.item_id);
-            setTimerState(activeTimerData.timer_state);
-            setLoadedItems({ [parseInt(activeTimerData.item_id)]: true });
-            
-            // Set hybrid timer data (same pattern as RunOfShowPage)
-            setHybridTimerData(prev => ({
-              ...prev,
-              activeTimer: activeTimerData
-            }));
-            
-            setTimerProgress({
-              [parseInt(activeTimerData.item_id)]: {
-                elapsed: activeTimerData.elapsed_seconds || 0,
-                total: activeTimerData.duration_seconds || 0,
-                startedAt: activeTimerData.started_at ? new Date(activeTimerData.started_at) : null
-              }
+        const isLive =
+          activeTimerData?.item_id != null &&
+          activeTimerData.is_active !== false &&
+          activeTimerData.timer_state !== 'stopped';
+
+        if (isLive) {
+          setActiveItemId(parseInt(activeTimerData.item_id));
+          rememberPreviewCue(activeTimerData.item_id);
+          setTimerState(activeTimerData.timer_state);
+          setLoadedItems({ [parseInt(activeTimerData.item_id)]: true });
+
+          setHybridTimerData((prev) => ({
+            ...prev,
+            activeTimer: activeTimerData,
+          }));
+
+          setTimerProgress({
+            [parseInt(activeTimerData.item_id)]: {
+              elapsed: activeTimerData.elapsed_seconds || 0,
+              total: activeTimerData.duration_seconds || 0,
+              startedAt: activeTimerData.started_at ? new Date(activeTimerData.started_at) : null,
+            },
+          });
+
+          console.log('✅ PhotoView: Active timer state loaded on mount');
+        } else {
+          setActiveItemId(null);
+          setTimerState(null);
+          setLoadedItems({});
+          setHybridTimerData((prev) => ({ ...prev, activeTimer: null }));
+          setTimerProgress({});
+          rememberPreviewCue(activeTimerData?.last_loaded_cue_id);
+          if (activeTimerData?.last_loaded_cue_id == null && event?.id) {
+            void DatabaseService.getLastLoadedCue(event.id).then((res) => {
+              if (res?.data?.item_id) rememberPreviewCue(res.data.item_id);
             });
-            
-            console.log('✅ PhotoView: Active timer state loaded on mount');
-      } else {
-            setActiveItemId(null);
-            setTimerState(null);
-            setLoadedItems({});
-            setHybridTimerData(prev => ({ ...prev, activeTimer: null }));
-            setTimerProgress({});
-            rememberPreviewCue(activeTimerData?.last_loaded_cue_id);
-            if (activeTimerData?.last_loaded_cue_id == null && event?.id) {
-              void DatabaseService.getLastLoadedCue(event.id).then((res) => {
-                if (res?.data?.item_id) rememberPreviewCue(res.data.item_id);
-              });
-            }
-            console.log('✅ PhotoView: No active timer found on mount');
           }
-      }
-    } catch (error) {
+          console.log('✅ PhotoView: No active timer found on mount');
+        }
+      } catch (error) {
         console.error('❌ PhotoView: Error loading active timer on mount:', error);
       }
     };
@@ -1741,67 +1725,52 @@ const PhotoViewPage: React.FC = () => {
             }
           });
         }
-        // Load current active timer
+        // Load current active timer (public GET — no session token required)
         try {
-          const activeTimerResponse = await apiAuthFetch(`${getApiBaseUrl()}/api/active-timers/${event?.id}`);
-          if (!activeTimerResponse) return;
-          if (activeTimerResponse.ok) {
-            const activeTimerResponseData = await activeTimerResponse.json();
-            console.log('🔄 PhotoView initial sync: Loaded active timer:', activeTimerResponseData);
-            
-            // Handle the actual API response format - check if it's an array or object
-            let activeTimerData;
-            if (Array.isArray(activeTimerResponseData)) {
-              // Direct array response
-              activeTimerData = activeTimerResponseData.length > 0 ? activeTimerResponseData[0] : null;
-            } else if (activeTimerResponseData.value && Array.isArray(activeTimerResponseData.value)) {
-              // Wrapped in value property
-              activeTimerData = activeTimerResponseData.value.length > 0 ? activeTimerResponseData.value[0] : null;
-            } else {
-              // Direct object response
-              activeTimerData = activeTimerResponseData;
-            }
-            
-            console.log('🔄 PhotoView initial sync: Processed active timer data:', activeTimerData);
-            
-            if (activeTimerData && activeTimerData.item_id) {
-              setActiveItemId(parseInt(activeTimerData.item_id));
-              rememberPreviewCue(activeTimerData.item_id);
-              setTimerState(activeTimerData.timer_state);
-              setLoadedItems({ [parseInt(activeTimerData.item_id)]: true });
-              
-              // Set hybrid timer data (same pattern as RunOfShowPage)
-              setHybridTimerData(prev => ({
-                ...prev,
-                activeTimer: activeTimerData
-              }));
-              
-              // Update timer progress
-              setTimerProgress({
-                [parseInt(activeTimerData.item_id)]: {
-                  elapsed: activeTimerData.elapsed_seconds || 0,
-                  total: activeTimerData.duration_seconds || 0,
-                  startedAt: activeTimerData.started_at ? new Date(activeTimerData.started_at) : null
-                }
+          if (!event?.id) return;
+          const activeTimerData = await DatabaseService.getActiveTimerRow(event.id);
+          console.log('🔄 PhotoView initial sync: Processed active timer data:', activeTimerData);
+
+          const isLive =
+            activeTimerData?.item_id != null &&
+            activeTimerData.is_active !== false &&
+            activeTimerData.timer_state !== 'stopped';
+
+          if (isLive) {
+            setActiveItemId(parseInt(activeTimerData.item_id));
+            rememberPreviewCue(activeTimerData.item_id);
+            setTimerState(activeTimerData.timer_state);
+            setLoadedItems({ [parseInt(activeTimerData.item_id)]: true });
+
+            setHybridTimerData((prev) => ({
+              ...prev,
+              activeTimer: activeTimerData,
+            }));
+
+            setTimerProgress({
+              [parseInt(activeTimerData.item_id)]: {
+                elapsed: activeTimerData.elapsed_seconds || 0,
+                total: activeTimerData.duration_seconds || 0,
+                startedAt: activeTimerData.started_at ? new Date(activeTimerData.started_at) : null,
+              },
+            });
+
+            console.log('🔄 PhotoView: Initial sync completed - timer state restored');
+          } else {
+            // No active timer — keep last cue for preview so we do not snap back to PreShow
+            setActiveItemId(null);
+            setTimerState(null);
+            setLoadedItems({});
+            setTimerProgress({});
+            rememberPreviewCue(activeTimerData?.last_loaded_cue_id);
+            if (activeTimerData?.last_loaded_cue_id == null && event?.id) {
+              void DatabaseService.getLastLoadedCue(event.id).then((res) => {
+                if (res?.data?.item_id) rememberPreviewCue(res.data.item_id);
               });
-              
-              console.log('🔄 PhotoView: Initial sync completed - timer state restored');
-      } else {
-              // No active timer — keep last cue for preview so we do not snap back to PreShow
-        setActiveItemId(null);
-        setTimerState(null);
-        setLoadedItems({});
-        setTimerProgress({});
-              rememberPreviewCue(activeTimerData?.last_loaded_cue_id);
-              if (activeTimerData?.last_loaded_cue_id == null && event?.id) {
-                void DatabaseService.getLastLoadedCue(event.id).then((res) => {
-                  if (res?.data?.item_id) rememberPreviewCue(res.data.item_id);
-                });
-              }
-              console.log('🔄 PhotoView: Initial sync completed - no active timer');
             }
-      }
-    } catch (error) {
+            console.log('🔄 PhotoView: Initial sync completed - no active timer');
+          }
+        } catch (error) {
           console.error('❌ PhotoView: Initial sync failed to load active timer:', error);
         }
         

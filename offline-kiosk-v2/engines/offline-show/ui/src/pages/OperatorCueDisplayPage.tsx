@@ -1,8 +1,7 @@
 ﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { DatabaseService } from '../services/database';
-import { apiClient, getApiBaseUrl } from '../services/api-client';
-import { apiAuthFetch } from '../lib/sessionAuth';
+import { apiClient } from '../services/api-client';
 import { socketClient } from '../services/socket-client';
 import {
   calculateScheduleStartTime,
@@ -762,10 +761,8 @@ const OperatorCueDisplayPage: React.FC = () => {
     const boot = async () => {
       if (!connectionEnabledRef.current || !displaySyncEnabledRef.current) return;
       try {
-        const res = await apiAuthFetch(`${getApiBaseUrl()}/api/active-timers/${event.id}`);
-        if (!res || !res.ok || dead) return;
-        const raw = await res.json();
-        const t = Array.isArray(raw) ? raw[0] : raw?.value?.[0] || (raw?.item_id ? raw : null);
+        // Public display GET (same as DSM/Green Room) — no Neon session required.
+        const t = await DatabaseService.getActiveTimerRow(event.id);
         if (!dead) apply(t);
       } catch (e) {
         console.error(e);

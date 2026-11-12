@@ -1293,21 +1293,34 @@ export class DatabaseService {
     }
   }
 
-  // Get current active timer for an event with real-time elapsed/remaining calculations
-  static async getActiveTimer(eventId: string): Promise<any | null> {
+  /**
+   * First active-timers row for an event (including stopped / last_loaded metadata).
+   * Public GET — raw fetch so Photo/Ops/DSM work without a Neon session.
+   */
+  static async getActiveTimerRow(eventId: string): Promise<any | null> {
     try {
-      console.log('🔄 Getting active timer via API:', eventId);
-      // Green Room / Clock / OBS: GET is public display state. Do not use apiFetch's
-      // hard 401 short-circuit when the Integration token is missing or cleared.
       const response = await fetch(`${API_BASE_URL}/api/active-timers/${encodeURIComponent(eventId)}`, {
         headers: apiJsonHeaders(),
       });
       if (!response.ok) {
-        console.warn('⚠️ getActiveTimer failed:', response.status, response.statusText);
+        console.warn('⚠️ getActiveTimerRow failed:', response.status, response.statusText);
         return null;
       }
       const timers = await response.json();
-      const timer = Array.isArray(timers) ? timers[0] : null;
+      if (Array.isArray(timers)) return timers[0] || null;
+      if (timers?.value && Array.isArray(timers.value)) return timers.value[0] || null;
+      return timers?.item_id || timers?.last_loaded_cue_id != null ? timers : null;
+    } catch (error) {
+      console.error('Error getting active timer row:', error);
+      return null;
+    }
+  }
+
+  // Get current active timer for an event with real-time elapsed/remaining calculations
+  static async getActiveTimer(eventId: string): Promise<any | null> {
+    try {
+      console.log('🔄 Getting active timer via API:', eventId);
+      const timer = await DatabaseService.getActiveTimerRow(eventId);
       if (!timer || timer.is_active === false || timer.timer_state === 'stopped') return null;
       return timer;
     } catch (error) {
@@ -1757,12 +1770,13 @@ export class DatabaseService {
     }
   }
 
-  /** When each cue actually started running: item id → epoch ms. */
+  /** When each cue actually started running: item id → epoch ms. Public GET for displays. */
   static async getCueActualStarts(eventId: string): Promise<Record<number, number>> {
     try {
-      const response = await DatabaseService.apiFetch(`${API_BASE_URL}/api/cue-actual-starts/${eventId}`, {
-        headers: apiJsonHeaders(),
-      });
+      const response = await fetch(
+        `${API_BASE_URL}/api/cue-actual-starts/${encodeURIComponent(eventId)}`,
+        { headers: apiJsonHeaders() }
+      );
       if (!response.ok) return {};
       const rows = await response.json();
       const out: Record<number, number> = {};
@@ -2067,29 +2081,18 @@ export class DatabaseService {
   static async getLastLoadedCue(eventId: string) {
     try {
       console.log('🔄 Getting last loaded CUE via API:', eventId);
-      
-      const response = await DatabaseService.apiFetch(`${API_BASE_URL}/api/active-timers/${eventId}`);
-      
-      if (!response.ok) {
-        console.log('ℹ️ No active timer found in database');
-        return { data: null, error: null };
-      }
-      
-      const data = await response.json();
-      
-      // Check if there's a last loaded cue in the active timer
-      if (data && data.length > 0 && data[0].last_loaded_cue_id) {
+      const row = await DatabaseService.getActiveTimerRow(eventId);
+      if (row?.last_loaded_cue_id) {
         const lastLoadedCue = {
-          item_id: data[0].last_loaded_cue_id,
-          timer_state: data[0].timer_state,
-          is_active: data[0].is_active
+          item_id: row.last_loaded_cue_id,
+          timer_state: row.timer_state,
+          is_active: row.is_active,
         };
         console.log('✅ Last loaded cue retrieved from active timer:', lastLoadedCue);
         return { data: lastLoadedCue, error: null };
-      } else {
-        console.log('ℹ️ No last loaded cue found in active timer');
-        return { data: null, error: null };
       }
+      console.log('ℹ️ No last loaded cue found in active timer');
+      return { data: null, error: null };
     } catch (error) {
       console.error('❌ Error getting last loaded CUE:', error);
       return { data: null, error };

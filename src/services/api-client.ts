@@ -65,6 +65,7 @@ function isPublicGetEndpoint(endpoint: string, method?: string): boolean {
   if (new RegExp(`^/api/completed-cues/${EVENT_ID_SEGMENT}$`, 'i').test(path)) return true;
   if (new RegExp(`^/api/timer-messages/${EVENT_ID_SEGMENT}$`, 'i').test(path)) return true;
   if (new RegExp(`^/api/sub-cue-timers/${EVENT_ID_SEGMENT}$`, 'i').test(path)) return true;
+  if (new RegExp(`^/api/cue-actual-starts/${EVENT_ID_SEGMENT}$`, 'i').test(path)) return true;
   if (path.startsWith('/api/guest-event/')) return true;
   if (path.startsWith('/api/public/')) return true;
   return false;
