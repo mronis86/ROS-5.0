@@ -289,7 +289,7 @@ function Show-SettingsForm {
   if ($Cfg.token -and $Cfg.token -notmatch 'REPLACE') { $tokenBox.Text = $Cfg.token }
 
   $nameLbl = New-Object System.Windows.Forms.Label
-  $nameLbl.Text = 'Display name'
+  $nameLbl.Text = 'Kiosk display name (shown on Offline Kiosk Status — not the PC name)'
   $nameLbl.Location = New-Object System.Drawing.Point(16, 100)
   $nameLbl.Size = New-Object System.Drawing.Size(490, 18)
 
@@ -299,7 +299,7 @@ function Show-SettingsForm {
   $nameBox.Text = $Cfg.name
 
   $idLbl = New-Object System.Windows.Forms.Label
-  $idLbl.Text = 'Client id (stable id for this PC)'
+  $idLbl.Text = 'Client id (stable; Start/Stop targeting — change if you want a custom id)'
   $idLbl.Location = New-Object System.Drawing.Point(16, 150)
   $idLbl.Size = New-Object System.Drawing.Size(490, 18)
 
@@ -450,9 +450,11 @@ function Ensure-Config {
 function Invoke-RosApi {
   param($Cfg, [string]$Method, [string]$UrlPath, $Body = $null)
   $uri = "$($Cfg.apiUrl)$UrlPath"
+  $token = ("$($Cfg.token)").Trim()
   $headers = @{
     Accept        = 'application/json'
-    Authorization = "Bearer $($Cfg.token)"
+    Authorization = "Bearer $token"
+    'User-Agent'  = 'ROS-GreenRoom-Client/1.0'
   }
   $params = @{
     Method  = $Method
@@ -467,13 +469,19 @@ function Invoke-RosApi {
     return Invoke-RestMethod @params
   } catch {
     $msg = $_.Exception.Message
+    $statusCode = $null
+    try { $statusCode = [int]$_.Exception.Response.StatusCode } catch { }
     if ($_.ErrorDetails -and $_.ErrorDetails.Message) {
       try {
         $errObj = $_.ErrorDetails.Message | ConvertFrom-Json
-        if ($errObj.error) { $msg = $errObj.error }
+        if ($errObj.message) { $msg = $errObj.message }
+        elseif ($errObj.error) { $msg = $errObj.error }
       } catch {
         $msg = $_.ErrorDetails.Message
       }
+    }
+    if ($statusCode -eq 401 -or $statusCode -eq 403) {
+      $msg = "$msg — Open Settings and paste a fresh Integration token with read + control."
     }
     throw [Exception]::new($msg)
   }

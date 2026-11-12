@@ -1137,11 +1137,14 @@ function renderDisplayClients() {
     meta.className = 'gr-client-meta';
     const name = document.createElement('p');
     name.className = 'gr-client-name';
-    name.textContent = c.name || c.hostname || c.clientId || 'Client';
+    // Prefer the name/id set in Green Room Client Settings over the Windows computer name.
+    const customName = String(c.name || '').trim();
+    const customId = String(c.clientId || '').trim();
+    name.textContent = customName || customId || c.hostname || 'Client';
     const sub = document.createElement('p');
     sub.className = 'gr-client-sub';
     const parts = [];
-    if (c.hostname && c.hostname !== c.name) parts.push(c.hostname);
+    if (customId) parts.push(`id ${customId}`);
     parts.push(formatAgeMs(c.lastSeenAgeMs));
     if (c.eventId) parts.push(`event ${c.eventId}`);
     if (c.queuedCommand?.action) parts.push(`queued ${c.queuedCommand.action}`);
@@ -1268,7 +1271,7 @@ function openGrStartModal(client) {
     err.textContent = '';
   }
   if (lead) {
-    lead.textContent = `Start ${client?.name || client?.clientId || 'client'} on ${ev?.name || state.eventId}.`;
+    lead.textContent = `Start ${client?.name || client?.clientId || client?.hostname || 'client'} on ${ev?.name || state.eventId}.`;
   }
   if (daySelect) {
     daySelect.innerHTML = '';

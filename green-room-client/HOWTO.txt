@@ -4,8 +4,12 @@ ROS Green Room Client - portable (no install)
 2. Double-click "Start Green Room Client.bat".
 3. First run: paste an Integration token (ros_itok_...).
    Same Admin account as the Offline Kiosk token (read + control).
-4. Look by the Windows clock (system tray) for the green icon.
-5. Right-click tray icon: Settings / Test connection / Open Green Room now / Exit.
+   If heartbeat warns "unauthorized", the token was rejected — paste a fresh
+   one in Settings (revoked/expired/wrong paste) and Test connection.
+4. In Settings set "Kiosk display name" and optionally "Client id" — those
+   are what Offline Kiosk Status shows (not the Windows computer name).
+5. Look by the Windows clock (system tray) for the green icon.
+6. Right-click tray icon: Settings / Test connection / Open Green Room now / Exit.
 
 From Offline Kiosk Status: select an Event, then Start.
 Start asks for duration (2-24h), event day, which display, and full screen.
