@@ -168,6 +168,28 @@ function logicalEventId(calendarRow) {
   return calendarRow.id;
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+/** Prefer Neon calendar UUID when a legacy event-… id is supplied. */
+function calendarIdForLogicalEvent(db, eventId) {
+  const id = String(eventId || '').trim();
+  if (!id) return null;
+  if (UUID_RE.test(id)) return id;
+  try {
+    const rows = db.prepare('SELECT id, schedule_data FROM calendar_events').all();
+    for (const row of rows) {
+      let sd = row.schedule_data;
+      if (typeof sd === 'string') sd = parseJson(sd, {});
+      if (sd && typeof sd === 'object' && String(sd.eventId || '') === id) {
+        return String(row.id);
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
 module.exports = {
   upsertCalendarEvent,
   deleteCalendarEventLocal,
@@ -175,4 +197,5 @@ module.exports = {
   upsertRunOfShow,
   upsertActiveTimer,
   logicalEventId,
+  calendarIdForLogicalEvent,
 };

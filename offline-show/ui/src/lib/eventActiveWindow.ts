@@ -4,14 +4,21 @@ export function startOfTodayLocal(now: Date = new Date()): Date {
   return new Date(now.getFullYear(), now.getMonth(), now.getDate());
 }
 
-/** Parse YYYY-MM-DD as a local calendar date (no UTC shift). */
+/** Parse YYYY-MM-DD (or ISO …T00:00:00.000Z) as a local calendar date (no UTC→local day shift). */
 export function parseEventDateLocal(dateStr: string): Date | null {
-  const parts = String(dateStr || '')
-    .trim()
-    .split('-')
-    .map(Number);
-  if (parts.length < 3 || parts.some((n) => !Number.isFinite(n))) return null;
-  return new Date(parts[0], parts[1] - 1, parts[2]);
+  const raw = String(dateStr || '').trim();
+  if (!raw) return null;
+  const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) {
+    const y = Number(m[1]);
+    const mo = Number(m[2]);
+    const d = Number(m[3]);
+    if (![y, mo, d].every((n) => Number.isFinite(n))) return null;
+    return new Date(y, mo - 1, d);
+  }
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return new Date(parsed.getUTCFullYear(), parsed.getUTCMonth(), parsed.getUTCDate());
 }
 
 /**
@@ -46,4 +53,26 @@ export function isEventPast(
   const start = parseEventDateLocal(dateStr);
   if (!start) return false;
   return getEventLastDay(start, numberOfDays) < today;
+}
+
+/** Sort key for YYYY-MM-DD (local). Missing/invalid dates sort last. */
+export function eventDateSortKey(dateStr: string | null | undefined): number {
+  const d = parseEventDateLocal(String(dateStr || ''));
+  return d ? d.getTime() : Number.POSITIVE_INFINITY;
+}
+
+/**
+ * Upcoming: soonest first. Past: most recent first. All: chronological ascending.
+ */
+export function compareEventsByDateForFilter(
+  a: { date?: string | null },
+  b: { date?: string | null },
+  filter: 'all' | 'upcoming' | 'past'
+): number {
+  const ka = eventDateSortKey(a.date);
+  const kb = eventDateSortKey(b.date);
+  if (ka !== kb) {
+    return filter === 'past' ? kb - ka : ka - kb;
+  }
+  return 0;
 }

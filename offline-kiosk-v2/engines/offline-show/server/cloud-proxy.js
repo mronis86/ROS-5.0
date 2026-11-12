@@ -2,8 +2,34 @@
 
 const { getCloudMode } = require('./cloud-mode');
 const { railwayFetch, RAILWAY_BASE_URL } = require('./railway-client');
-const { upsertCalendarEvent, upsertRunOfShow, deleteCalendarEventLocal, deleteRunOfShowLocal, logicalEventId } = require('./sqlite-mirror');
+const {
+  upsertCalendarEvent,
+  upsertRunOfShow,
+  deleteCalendarEventLocal,
+  deleteRunOfShowLocal,
+  logicalEventId,
+  calendarIdForLogicalEvent,
+} = require('./sqlite-mirror');
 const { nowIso, stringifyJson, boolToInt, parseJson } = require('./db');
+
+const EVENT_PATH_RE =
+  /^(\/api\/(?:run-of-show-data|active-timers|completed-cues|overtime-minutes|show-start-overtime|timer-messages|indented-cues|sub-cue-timers|show-mode)\/)([^/]+)(.*)$/;
+
+/** Rewrite legacy event-… path segments to calendar UUID before hitting Railway. */
+function resolveRailwayPathname(db, pathname) {
+  const m = String(pathname || '').match(EVENT_PATH_RE);
+  if (!m) return pathname;
+  let rawId = m[2];
+  try {
+    rawId = decodeURIComponent(rawId);
+  } catch {
+    /* keep raw */
+  }
+  const resolved = calendarIdForLogicalEvent(db, rawId);
+  if (!resolved || resolved === rawId) return pathname;
+  console.log(`☁️ rewrite ${rawId} → ${resolved} for Railway`);
+  return `${m[1]}${encodeURIComponent(resolved)}${m[3]}`;
+}
 
 const LOCAL_EXACT = new Set([
   '/api/connectivity-status',
@@ -13,8 +39,6 @@ const LOCAL_EXACT = new Set([
   '/api/reconnect-push',
   '/api/lan-info',
   '/api/railway-api-token',
-  '/api/kiosk/ppt-bridge-status',
-  '/api/kiosk/display-clients',
 ]);
 
 const LOCAL_PREFIXES = ['/api/dev/'];
@@ -395,17 +419,19 @@ function mirrorShowMode(db, eventId, data) {
 
 async function proxyToRailway(req, res, db, broadcastUpdate) {
   const pathname = pathnameOf(req);
+  const resolvedPath = resolveRailwayPathname(db, pathname);
   const query = (req.originalUrl || req.url || '').includes('?')
     ? (req.originalUrl || req.url || '').slice((req.originalUrl || req.url || '').indexOf('?'))
     : '';
-  const pathWithQuery = `${pathname}${query}`;
+  const pathWithQuery = `${resolvedPath}${query}`;
 
   console.log(`☁️ → Railway ${req.method} ${pathWithQuery}`);
 
   const result = await railwayFetch(req.method, pathWithQuery, req.body);
-  mirrorToSqlite(db, req.method, pathname, req.body, result.data);
+  // Mirror under the Railway (UUID) path so local SQLite matches Neon keys.
+  mirrorToSqlite(db, req.method, resolvedPath, req.body, result.data);
   // Fan out to LAN clients immediately (operator + iPads) — don't wait only on Railway→bridge round-trip
-  broadcastLanFromProxy(broadcastUpdate, req.method, pathname, req.body, result.data);
+  broadcastLanFromProxy(broadcastUpdate, req.method, resolvedPath, req.body, result.data);
 
   if (result.noContent) {
     return res.status(result.status === 200 ? 204 : result.status).send();

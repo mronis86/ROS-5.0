@@ -2267,7 +2267,7 @@ const GreenRoomPage: React.FC = () => {
         {publicSchedule.length === 0 ? (
           <div className={`text-center text-lg py-12 ${isRos ? 'text-slate-400' : 'text-gray-400'}`}>
             {schedule.length === 0
-              ? 'No schedule loaded — check the Integration token on this Green Room client.'
+              ? 'This event id has an empty schedule (0 cues). If the rundown looks fine in ROS, the kiosk may be opening a duplicate event-… id instead of the calendar UUID.'
               : `No public items on day ${selectedDay} (${schedule.length} total cue${schedule.length === 1 ? '' : 's'} loaded).`}
           </div>
         ) : (

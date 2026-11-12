@@ -26,6 +26,7 @@ function loadSocketIoClient() {
 
 const { getCloudMode } = require('./cloud-mode');
 const { RAILWAY_BASE_URL } = require('./railway-client');
+const { calendarIdForLogicalEvent } = require('./sqlite-mirror');
 
 /** Client → Railway events (same names as api-server.js) */
 const CLIENT_TO_RAILWAY = [
@@ -128,11 +129,29 @@ function createRailwaySocketBridge(localIo, db) {
     railwaySocket = null;
   }
 
+  function railwayJoinIds(eventId) {
+    const id = String(eventId || '').trim();
+    if (!id) return [];
+    const ids = [id];
+    try {
+      const calendarId = calendarIdForLogicalEvent(db, id);
+      if (calendarId && calendarId !== id) ids.push(calendarId);
+    } catch {
+      /* ignore */
+    }
+    return ids;
+  }
+
   function rejoinRailwayRooms() {
     if (!railwaySocket?.connected) return;
+    const joined = new Set();
     for (const eventId of localJoinedEvents) {
-      railwaySocket.emit('joinEvent', eventId);
-      console.log(`☁️ Bridge joined Railway room event:${eventId}`);
+      for (const id of railwayJoinIds(eventId)) {
+        if (joined.has(id)) continue;
+        joined.add(id);
+        railwaySocket.emit('joinEvent', id);
+        console.log(`☁️ Bridge joined Railway room event:${id}`);
+      }
     }
   }
 
@@ -216,8 +235,10 @@ function createRailwaySocketBridge(localIo, db) {
     if (cloudConnected()) {
       const rs = ensureRailwayConnection();
       if (rs?.connected) {
-        rs.emit('joinEvent', id);
-        console.log(`☁️ Bridge trackJoin → Railway event:${id}`);
+        for (const joinId of railwayJoinIds(id)) {
+          rs.emit('joinEvent', joinId);
+          console.log(`☁️ Bridge trackJoin → Railway event:${joinId}`);
+        }
       }
     }
   }

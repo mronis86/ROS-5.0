@@ -1,7 +1,8 @@
-const { app, BrowserWindow, BrowserView, ipcMain, session, screen } = require('electron');
+const { app, BrowserWindow, BrowserView, ipcMain, session, screen, powerSaveBlocker } = require('electron');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
+const { spawn } = require('child_process');
 const offlineShow = require('./offline-show');
 const weblinked = require('./weblinked');
 const systemHealth = require('./system-health');
@@ -13,6 +14,10 @@ const {
   clampLiveHours,
 } = require('./session-schedule');
 const { injectRemoteWebrtcCodecShim } = require('./remote-webrtc-codec-shim');
+
+/** Keep display awake (Electron powerSaveBlocker + optional 1px mouse nudge). */
+let powerSaveId = null;
+let mouseJiggleTimer = null;
 
 const userDataRoot = path.join(
   process.env.LOCALAPPDATA || os.tmpdir(),
@@ -359,6 +364,58 @@ function allowMediaPermission(_wc, permission, callback) {
   return allow;
 }
 
+function startKeepAwake() {
+  try {
+    if (powerSaveId == null || !powerSaveBlocker.isStarted(powerSaveId)) {
+      // prevent-display-sleep maps to SetThreadExecutionState(ES_DISPLAY_REQUIRED) on Windows.
+      powerSaveId = powerSaveBlocker.start('prevent-display-sleep');
+    }
+  } catch (err) {
+    console.warn('[kiosk] powerSaveBlocker failed', err?.message || err);
+  }
+  if (process.platform !== 'win32') return;
+  if (mouseJiggleTimer) return;
+  // GitHub-style StayActive nudge: ±1px cursor move resets idle/display sleep timers
+  // when Group Policy ignores execution-state flags.
+  const jigglePs = [
+    "Add-Type -AssemblyName System.Windows.Forms;",
+    "$p=[System.Windows.Forms.Cursor]::Position;",
+    "[System.Windows.Forms.Cursor]::Position=New-Object System.Drawing.Point(($p.X+1),$p.Y);",
+    "Start-Sleep -Milliseconds 40;",
+    "[System.Windows.Forms.Cursor]::Position=$p;",
+  ].join(' ');
+  const runJiggle = () => {
+    try {
+      const child = spawn(
+        'powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command', jigglePs],
+        { windowsHide: true, stdio: 'ignore' }
+      );
+      child.unref();
+    } catch {
+      /* ignore */
+    }
+  };
+  mouseJiggleTimer = setInterval(runJiggle, 55_000);
+  if (typeof mouseJiggleTimer.unref === 'function') mouseJiggleTimer.unref();
+  setTimeout(runJiggle, 8_000);
+}
+
+function stopKeepAwake() {
+  if (mouseJiggleTimer) {
+    clearInterval(mouseJiggleTimer);
+    mouseJiggleTimer = null;
+  }
+  try {
+    if (powerSaveId != null && powerSaveBlocker.isStarted(powerSaveId)) {
+      powerSaveBlocker.stop(powerSaveId);
+    }
+  } catch {
+    /* ignore */
+  }
+  powerSaveId = null;
+}
+
 app.whenReady().then(() => {
   // VDO / Meshcast need camera + mic inside the embed (default + remoteop partition).
   session.defaultSession.setPermissionRequestHandler(allowMediaPermission);
@@ -371,6 +428,7 @@ app.whenReady().then(() => {
     allowMediaPermission(null, permission)
   );
 
+  startKeepAwake();
   createWindow();
   const existing = getSessionState();
   if (existing.active) armSessionTimer(existing.endsAt);
@@ -386,6 +444,7 @@ let shuttingDown = false;
  * (otherwise sinor-weblinked / node keep the install folder locked until reboot).
  */
 async function shutdownKiosk(reason = 'shutdown') {
+  stopKeepAwake();
   clearSessionTimer();
   destroyRemoteView();
   try {
@@ -785,7 +844,12 @@ ipcMain.handle('kiosk:setOutputArmed', async (_evt, payload) => {
     return { ok: false, error: 'Enter a valid http(s) URL before pushing to WebLinked.' };
   }
 
-  const set = await weblinked.setUrl(url, { source });
+  // Force reload when operator Push / re-arm so stale event-… URLs are replaced
+  // after syncPresetDisplayUrls switches to calendar UUID.
+  const set = await weblinked.setUrl(url, {
+    source,
+    force: Boolean(payload?.force) || Boolean(payload?.reload),
+  });
   reclaimKioskFocus();
   return {
     ok: set.ok,

@@ -20,31 +20,39 @@ async function syncFromCloud(db) {
   let runOfShow = 0;
   let liveState = 0;
   for (const ev of list) {
-    const eventId = logicalEventId(ev);
-    try {
-      const ros = await railwayRequest('GET', `/api/run-of-show-data/${encodeURIComponent(eventId)}`);
-      upsertRunOfShow(db, ros);
-      runOfShow += 1;
-    } catch (e) {
-      if (e.status !== 404) console.warn(`⚠️ ROS sync skip ${eventId}:`, e.message);
-    }
+    const logicalId = logicalEventId(ev);
+    const calendarId = ev?.id ? String(ev.id) : '';
+    // Neon keys live state by calendar UUID; nested event-… ids often have empty shells.
+    const ids = [];
+    if (calendarId) ids.push(calendarId);
+    if (logicalId && logicalId !== calendarId) ids.push(logicalId);
 
-    const statePaths = [
-      `/api/active-timers/${encodeURIComponent(eventId)}`,
-      `/api/completed-cues/${encodeURIComponent(eventId)}`,
-      `/api/overtime-minutes/${encodeURIComponent(eventId)}`,
-      `/api/show-start-overtime/${encodeURIComponent(eventId)}`,
-      `/api/timer-messages/${encodeURIComponent(eventId)}`,
-      `/api/indented-cues/${encodeURIComponent(eventId)}`,
-      `/api/sub-cue-timers/${encodeURIComponent(eventId)}`,
-    ];
-    for (const p of statePaths) {
+    for (const eventId of ids) {
       try {
-        const data = await railwayRequest('GET', p);
-        mirrorToSqlite(db, 'GET', p, null, data);
-        liveState += 1;
+        const ros = await railwayRequest('GET', `/api/run-of-show-data/${encodeURIComponent(eventId)}`);
+        upsertRunOfShow(db, ros);
+        runOfShow += 1;
       } catch (e) {
-        if (e.status !== 404) console.warn(`⚠️ Live state sync skip ${p}:`, e.message);
+        if (e.status !== 404) console.warn(`⚠️ ROS sync skip ${eventId}:`, e.message);
+      }
+
+      const statePaths = [
+        `/api/active-timers/${encodeURIComponent(eventId)}`,
+        `/api/completed-cues/${encodeURIComponent(eventId)}`,
+        `/api/overtime-minutes/${encodeURIComponent(eventId)}`,
+        `/api/show-start-overtime/${encodeURIComponent(eventId)}`,
+        `/api/timer-messages/${encodeURIComponent(eventId)}`,
+        `/api/indented-cues/${encodeURIComponent(eventId)}`,
+        `/api/sub-cue-timers/${encodeURIComponent(eventId)}`,
+      ];
+      for (const p of statePaths) {
+        try {
+          const data = await railwayRequest('GET', p);
+          mirrorToSqlite(db, 'GET', p, null, data);
+          liveState += 1;
+        } catch (e) {
+          if (e.status !== 404) console.warn(`⚠️ Live state sync skip ${p}:`, e.message);
+        }
       }
     }
   }

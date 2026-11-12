@@ -12,6 +12,23 @@ Start asks for duration (2-24h), event day, which display, and full screen.
 
 The client opens Green Room on https://ros1615.pages.dev (not Railway),
 on the display you picked, using your Integration token so you do not need
-to sign in on that PC. Re-download this zip after updates.
+to sign in on that PC. It also brings the browser to the front.
+
+Nightly sleep (local time): 12:00am-6:00am by default. During sleep the
+browser closes and Start commands are ignored.
+
+Weekly schedule (Settings or config.json sleepSchedule): each day can be
+  window  - use sleepStartHour/sleepEndHour (default 0-6)
+  allDay  - sleep the entire day (e.g. Sat/Sun)
+  off     - never sleep that day
+Example in config.example.json: Mon-Fri nightly window, Sat+Sun all day.
+Or set sleepEnabled to false to disable sleep entirely.
+
+While awake, the client keeps the display on (Windows keep-awake + a tiny
+mouse nudge every ~55s). During the sleep window that stops so the PC can
+dim/sleep normally.
+
+Re-download this zip after updates.
+
 
 No Node or npm install required.

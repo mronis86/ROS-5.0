@@ -335,13 +335,21 @@ async function runSyncDecks({ reason } = {}) {
 
 function eventDateMs(ev) {
   const raw = String(ev?.date || ev?.event_date || ev?.eventDate || '').trim();
-  const parts = raw.split('-').map(Number);
-  if (parts.length >= 3 && parts.every((n) => Number.isFinite(n))) {
-    return new Date(parts[0], parts[1] - 1, parts[2]).getTime();
+  if (!raw) return null;
+  // Calendar dates are stored as YYYY-MM-DD or …T00:00:00.000Z meaning that calendar day.
+  // Do not use local getFullYear/Month/Date on the Date — UTC midnight becomes "yesterday" in US timezones.
+  const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) {
+    const y = Number(m[1]);
+    const mo = Number(m[2]);
+    const d = Number(m[3]);
+    if ([y, mo, d].every((n) => Number.isFinite(n))) {
+      return new Date(y, mo - 1, d).getTime();
+    }
   }
   const d = new Date(raw);
   if (Number.isNaN(d.getTime())) return null;
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()).getTime();
 }
 
 function eventNumberOfDays(ev) {

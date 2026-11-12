@@ -230,7 +230,9 @@ function pageUrlForDisplay(row) {
   const base = 'http://127.0.0.1:3004';
   const ev = selectedEvent();
   const params = new URLSearchParams();
-  params.set('eventId', state.eventId);
+  // Prefer calendar UUID — Neon timers / ROS live under calEvent.id.
+  // Nested schedule_data.eventId (event-…) is often an empty shell (HOH Gala).
+  params.set('eventId', rosDisplayEventId() || state.eventId);
 
   if (row.id === 'timer') {
     const path = timerModeMeta(row.timerMode).route;
@@ -353,10 +355,19 @@ function selectedEvent() {
   return state.events.find((e) => e.id === state.eventId) || null;
 }
 
-/** PPT Bridge heartbeats use the calendar UUID, not the logical ROS event-… id. */
-function pptStatusEventId() {
+/**
+ * Prefer calendar UUID over nested schedule_data.eventId (event-…).
+ * Web ROS saves under the calendar id; the event-… row is often an empty shell.
+ * PPT Bridge already used this; Green Room Start must too.
+ */
+function rosDisplayEventId() {
   const ev = selectedEvent();
   return String(ev?.calendarId || state.eventId || '').trim();
+}
+
+/** PPT Bridge heartbeats use the calendar UUID, not the logical ROS event-… id. */
+function pptStatusEventId() {
+  return rosDisplayEventId();
 }
 
 function findDisplay(id) {
@@ -590,12 +601,21 @@ function startOfTodayLocal() {
 }
 
 function parseEventDateLocal(dateStr) {
-  const parts = String(dateStr || '')
-    .trim()
-    .split('-')
-    .map(Number);
-  if (parts.length < 3 || parts.some((n) => !Number.isFinite(n))) return null;
-  return new Date(parts[0], parts[1] - 1, parts[2]);
+  const raw = String(dateStr || '').trim();
+  if (!raw) return null;
+  // YYYY-MM-DD or ISO midnight-Z: use the calendar date prefix, not local Date parts
+  // (UTC midnight is "yesterday" in US timezones — HOH Gala showed as Past).
+  const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) {
+    const y = Number(m[1]);
+    const mo = Number(m[2]);
+    const d = Number(m[3]);
+    if (![y, mo, d].every((n) => Number.isFinite(n))) return null;
+    return new Date(y, mo - 1, d);
+  }
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return new Date(parsed.getUTCFullYear(), parsed.getUTCMonth(), parsed.getUTCDate());
 }
 
 function getEventLastDay(start, numberOfDays) {
@@ -1381,7 +1401,8 @@ async function commandDisplayClient(clientId, action, extras = {}) {
     const result = await window.kiosk.commandDisplayClient({
       clientId: id,
       action,
-      eventId: action === 'start' || action === 'assign' ? state.eventId : undefined,
+      eventId:
+        action === 'start' || action === 'assign' ? rosDisplayEventId() || state.eventId : undefined,
       page: 'green-room',
       ...extras,
     });
@@ -1775,6 +1796,8 @@ function renderEventBrowser() {
       renderPptBridgeStatus();
       renderDisplayClients();
       startPptBridgePoll();
+      // Re-push armed WebLinked views onto the calendar UUID (fixes 00:00 clocks).
+      void rearmArmedDisplaysForEvent();
     });
     actions.appendChild(selectBtn);
     list.appendChild(tr);
@@ -1794,6 +1817,36 @@ function syncEventChrome() {
       : 'No event selected';
   syncPresetDisplayUrls();
   renderDisplays();
+}
+
+/** After event select, reload any armed Clock/DSM/Photo/OpLarge onto rosDisplayEventId(). */
+async function rearmArmedDisplaysForEvent() {
+  if (!window.kiosk?.setOutputArmed || !state.eventId) return;
+  if (!state.weblinked?.running) return;
+  const armed = state.displays.filter((d) => isDisplayArmed(d.id) && d.preset && d.route !== 'custom');
+  if (!armed.length) return;
+  let ok = 0;
+  for (const row of armed) {
+    const url = (row.url || pageUrlForDisplay(row) || '').trim();
+    if (!/^https?:\/\//i.test(url)) continue;
+    try {
+      const result = await window.kiosk.setOutputArmed({
+        id: row.id,
+        source: wlSourceId(row),
+        name: row.name,
+        armed: true,
+        url,
+        force: true,
+      });
+      if (result?.ok) ok += 1;
+    } catch {
+      /* ignore one card */
+    }
+  }
+  if (ok) {
+    setDisplayNote(`Reloaded ${ok} WebLinked view(s) for ${selectedEvent()?.name || 'event'}.`);
+    void refreshWebLinkedStatus();
+  }
 }
 
 function renderDisplays() {
@@ -2938,6 +2991,7 @@ async function togglePushWebLinked(id) {
         name: row.name,
         armed: true,
         url,
+        force: true,
       })
     : { ok: false, error: 'WebLinked bridge not available.' };
   if (!result?.ok) {

@@ -14,6 +14,8 @@ const prefix = 'powerpoint-bridge-v2';
 
 function findUnpacked() {
   const candidates = [
+    // Prefer a fresh `npm run pack` / electron-builder --dir output first.
+    path.join(bridgeRoot, 'dist', 'win-unpacked'),
     path.join(bridgeRoot, 'dist-openfix10', 'win-unpacked'),
     path.join(bridgeRoot, 'dist-openfix9', 'win-unpacked'),
     path.join(bridgeRoot, 'dist-openfix8', 'win-unpacked'),
@@ -27,7 +29,6 @@ function findUnpacked() {
     path.join(bridgeRoot, 'dist-syncfix', 'win-unpacked'),
     path.join(bridgeRoot, 'dist-cuefix', 'win-unpacked'),
     path.join(bridgeRoot, 'dist-daypick', 'win-unpacked'),
-    path.join(bridgeRoot, 'dist', 'win-unpacked'),
     path.join(bridgeRoot, 'dist-ready', 'win-unpacked'),
   ];
   return candidates.find((p) => fs.existsSync(p)) || null;

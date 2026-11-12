@@ -192,9 +192,13 @@ function cueMatchesSelectedDay(cueDay, selectedDay, numberOfDays) {
 
 function calendarShowDay(eventDate, numberOfDays, now = new Date()) {
   const raw = String(eventDate || '').trim();
-  const parts = raw.split('-').map(Number);
-  if (parts.length < 3 || parts.some((n) => !Number.isFinite(n))) return null;
-  const start = new Date(parts[0], parts[1] - 1, parts[2]).getTime();
+  const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return null;
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  const d = Number(m[3]);
+  if (![y, mo, d].every((n) => Number.isFinite(n))) return null;
+  const start = new Date(y, mo - 1, d).getTime();
   const days = Math.max(1, Math.floor(Number(numberOfDays) || 1));
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   const dayIndex = Math.round((today - start) / 86400000);

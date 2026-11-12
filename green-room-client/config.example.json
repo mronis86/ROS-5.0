@@ -5,5 +5,17 @@
   "clientId": "gr-test-laptop-1",
   "name": "Green Room - Test Laptop",
   "heartbeatMs": 20000,
-  "openBrowser": true
+  "openBrowser": true,
+  "sleepEnabled": true,
+  "sleepStartHour": 0,
+  "sleepEndHour": 6,
+  "sleepSchedule": {
+    "mon": "window",
+    "tue": "window",
+    "wed": "window",
+    "thu": "window",
+    "fri": "window",
+    "sat": "allDay",
+    "sun": "allDay"
+  }
 }

@@ -45,29 +45,182 @@ function Read-Config {
   if ($env:OPEN_BROWSER -eq '0') { $openBrowser = $false }
   elseif ($file -and $null -ne $file.openBrowser) { $openBrowser = [bool]$file.openBrowser }
 
-  return [pscustomobject]@{
-    apiUrl      = ("$apiUrl").TrimEnd('/')
-    appUrl      = ("$appUrl").TrimEnd('/')
-    token       = ("$token").Trim()
-    clientId    = ("$clientId").Trim()
-    name        = ("$name").Trim()
-    heartbeatMs = $heartbeatMs
-    openBrowser = $openBrowser
+  # Nightly sleep window (local time). Default 12:00am-6:00am.
+  # Optional sleepSchedule overrides per weekday (mon..sun).
+  $sleepEnabled = $true
+  if ($env:SLEEP_ENABLED -eq '0') { $sleepEnabled = $false }
+  elseif ($file -and $null -ne $file.sleepEnabled) { $sleepEnabled = [bool]$file.sleepEnabled }
+  $sleepStartHour = 0
+  if ($env:SLEEP_START_HOUR) { $sleepStartHour = [int]$env:SLEEP_START_HOUR }
+  elseif ($file -and $null -ne $file.sleepStartHour) { $sleepStartHour = [int]$file.sleepStartHour }
+  $sleepEndHour = 6
+  if ($env:SLEEP_END_HOUR) { $sleepEndHour = [int]$env:SLEEP_END_HOUR }
+  elseif ($file -and $null -ne $file.sleepEndHour) { $sleepEndHour = [int]$file.sleepEndHour }
+  if ($sleepStartHour -lt 0) { $sleepStartHour = 0 }
+  if ($sleepStartHour -gt 23) { $sleepStartHour = 23 }
+  if ($sleepEndHour -lt 0) { $sleepEndHour = 0 }
+  if ($sleepEndHour -gt 23) { $sleepEndHour = 23 }
+
+  $sleepSchedule = $null
+  if ($file -and $file.sleepSchedule) {
+    $sleepSchedule = Normalize-SleepSchedule -Raw $file.sleepSchedule -DefaultStart $sleepStartHour -DefaultEnd $sleepEndHour
+  } else {
+    $sleepSchedule = New-DefaultSleepSchedule -DefaultStart $sleepStartHour -DefaultEnd $sleepEndHour
   }
+
+  return [pscustomobject]@{
+    apiUrl          = ("$apiUrl").TrimEnd('/')
+    appUrl          = ("$appUrl").TrimEnd('/')
+    token           = ("$token").Trim()
+    clientId        = ("$clientId").Trim()
+    name            = ("$name").Trim()
+    heartbeatMs     = $heartbeatMs
+    openBrowser     = $openBrowser
+    sleepEnabled    = $sleepEnabled
+    sleepStartHour  = $sleepStartHour
+    sleepEndHour    = $sleepEndHour
+    sleepSchedule   = $sleepSchedule
+  }
+}
+
+function Get-SleepDayKeys {
+  return @('mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun')
+}
+
+function New-DefaultSleepSchedule {
+  param([int]$DefaultStart = 0, [int]$DefaultEnd = 6)
+  $sched = [ordered]@{}
+  foreach ($k in (Get-SleepDayKeys)) {
+    $sched[$k] = [ordered]@{ mode = 'window'; startHour = $DefaultStart; endHour = $DefaultEnd }
+  }
+  return $sched
+}
+
+function Normalize-SleepDayRule {
+  param($Raw, [int]$DefaultStart = 0, [int]$DefaultEnd = 6)
+  $mode = 'window'
+  $start = $DefaultStart
+  $end = $DefaultEnd
+  if ($null -eq $Raw) {
+    return [ordered]@{ mode = $mode; startHour = $start; endHour = $end }
+  }
+  if ($Raw -is [string]) {
+    $s = $Raw.Trim().ToLowerInvariant()
+    if ($s -eq 'all' -or $s -eq 'allday' -or $s -eq '24' -or $s -eq '24h') {
+      return [ordered]@{ mode = 'allDay'; startHour = 0; endHour = 0 }
+    }
+    if ($s -eq 'off' -or $s -eq 'none' -or $s -eq 'awake') {
+      return [ordered]@{ mode = 'off'; startHour = 0; endHour = 0 }
+    }
+    if ($s -eq 'window' -or $s -eq 'default' -or $s -eq 'nightly') {
+      return [ordered]@{ mode = 'window'; startHour = $DefaultStart; endHour = $DefaultEnd }
+    }
+    if ($s -match '^(\d{1,2})\s*[-:]\s*(\d{1,2})$') {
+      $start = [Math]::Max(0, [Math]::Min(23, [int]$Matches[1]))
+      $end = [Math]::Max(0, [Math]::Min(23, [int]$Matches[2]))
+      return [ordered]@{ mode = 'window'; startHour = $start; endHour = $end }
+    }
+    return [ordered]@{ mode = 'window'; startHour = $DefaultStart; endHour = $DefaultEnd }
+  }
+  $modeRaw = ''
+  if ($null -ne $Raw.mode) { $modeRaw = ("$($Raw.mode)").Trim().ToLowerInvariant() }
+  if ($modeRaw -eq 'all' -or $modeRaw -eq 'allday') { $mode = 'allDay' }
+  elseif ($modeRaw -eq 'off' -or $modeRaw -eq 'none' -or $modeRaw -eq 'awake') { $mode = 'off' }
+  else { $mode = 'window' }
+  if ($null -ne $Raw.startHour) { $start = [int]$Raw.startHour }
+  if ($null -ne $Raw.endHour) { $end = [int]$Raw.endHour }
+  if ($start -lt 0) { $start = 0 }
+  if ($start -gt 23) { $start = 23 }
+  if ($end -lt 0) { $end = 0 }
+  if ($end -gt 23) { $end = 23 }
+  if ($mode -eq 'allDay') { return [ordered]@{ mode = 'allDay'; startHour = 0; endHour = 0 } }
+  if ($mode -eq 'off') { return [ordered]@{ mode = 'off'; startHour = 0; endHour = 0 } }
+  return [ordered]@{ mode = 'window'; startHour = $start; endHour = $end }
+}
+
+function Normalize-SleepSchedule {
+  param($Raw, [int]$DefaultStart = 0, [int]$DefaultEnd = 6)
+  $sched = New-DefaultSleepSchedule -DefaultStart $DefaultStart -DefaultEnd $DefaultEnd
+  if (-not $Raw) { return $sched }
+  foreach ($k in (Get-SleepDayKeys)) {
+    $dayRaw = $null
+    if ($Raw.PSObject -and $Raw.PSObject.Properties.Name -contains $k) { $dayRaw = $Raw.$k }
+    elseif ($Raw -is [System.Collections.IDictionary] -and $Raw.Contains($k)) { $dayRaw = $Raw[$k] }
+    $sched[$k] = Normalize-SleepDayRule -Raw $dayRaw -DefaultStart $DefaultStart -DefaultEnd $DefaultEnd
+  }
+  return $sched
+}
+
+function Get-SleepDayKey {
+  param([datetime]$When = $(Get-Date))
+  switch ($When.DayOfWeek) {
+    'Monday' { return 'mon' }
+    'Tuesday' { return 'tue' }
+    'Wednesday' { return 'wed' }
+    'Thursday' { return 'thu' }
+    'Friday' { return 'fri' }
+    'Saturday' { return 'sat' }
+    default { return 'sun' }
+  }
+}
+
+function Get-SleepRuleForToday {
+  param($Cfg, [datetime]$When = $(Get-Date))
+  $key = Get-SleepDayKey -When $When
+  $defaultStart = 0
+  $defaultEnd = 6
+  if ($Cfg -and $null -ne $Cfg.sleepStartHour) { $defaultStart = [int]$Cfg.sleepStartHour }
+  if ($Cfg -and $null -ne $Cfg.sleepEndHour) { $defaultEnd = [int]$Cfg.sleepEndHour }
+  $raw = $null
+  if ($Cfg -and $Cfg.sleepSchedule) {
+    if ($Cfg.sleepSchedule.PSObject -and $Cfg.sleepSchedule.PSObject.Properties.Name -contains $key) {
+      $raw = $Cfg.sleepSchedule.$key
+    } elseif ($Cfg.sleepSchedule -is [System.Collections.IDictionary] -and $Cfg.sleepSchedule.Contains($key)) {
+      $raw = $Cfg.sleepSchedule[$key]
+    }
+  }
+  return Normalize-SleepDayRule -Raw $raw -DefaultStart $defaultStart -DefaultEnd $defaultEnd
+}
+
+function Format-SleepRuleLabel {
+  param($Rule, [string]$DayKey = '')
+  if (-not $Rule) { return 'off' }
+  $prefix = if ($DayKey) { "$DayKey " } else { '' }
+  if ($Rule.mode -eq 'allDay') { return "${prefix}all day" }
+  if ($Rule.mode -eq 'off') { return "${prefix}off" }
+  return ("{0}{1}:00-{2}:00" -f $prefix, [int]$Rule.startHour, [int]$Rule.endHour)
 }
 
 function Save-Config {
   param($Cfg)
-  $obj = [ordered]@{
-    apiUrl      = $Cfg.apiUrl
-    appUrl      = $Cfg.appUrl
-    token       = $Cfg.token
-    clientId    = $Cfg.clientId
-    name        = $Cfg.name
-    heartbeatMs = $Cfg.heartbeatMs
-    openBrowser = $Cfg.openBrowser
+  $schedOut = [ordered]@{}
+  $normalized = Normalize-SleepSchedule -Raw $Cfg.sleepSchedule -DefaultStart ([int]$Cfg.sleepStartHour) -DefaultEnd ([int]$Cfg.sleepEndHour)
+  foreach ($k in (Get-SleepDayKeys)) {
+    $r = $normalized[$k]
+    if ($r.mode -eq 'allDay') {
+      $schedOut[$k] = 'allDay'
+    } elseif ($r.mode -eq 'off') {
+      $schedOut[$k] = 'off'
+    } elseif ([int]$r.startHour -eq [int]$Cfg.sleepStartHour -and [int]$r.endHour -eq [int]$Cfg.sleepEndHour) {
+      $schedOut[$k] = 'window'
+    } else {
+      $schedOut[$k] = [ordered]@{ mode = 'window'; startHour = [int]$r.startHour; endHour = [int]$r.endHour }
+    }
   }
-  $json = $obj | ConvertTo-Json
+  $obj = [ordered]@{
+    apiUrl         = $Cfg.apiUrl
+    appUrl         = $Cfg.appUrl
+    token          = $Cfg.token
+    clientId       = $Cfg.clientId
+    name           = $Cfg.name
+    heartbeatMs    = $Cfg.heartbeatMs
+    openBrowser    = $Cfg.openBrowser
+    sleepEnabled   = [bool]$Cfg.sleepEnabled
+    sleepStartHour = [int]$Cfg.sleepStartHour
+    sleepEndHour   = [int]$Cfg.sleepEndHour
+    sleepSchedule  = $schedOut
+  }
+  $json = $obj | ConvertTo-Json -Depth 6
   $utf8 = New-Object System.Text.UTF8Encoding $false
   [System.IO.File]::WriteAllText($ConfigPath, $json, $utf8)
 }
@@ -112,7 +265,7 @@ function Show-SettingsForm {
 
   $form = New-Object System.Windows.Forms.Form
   $form.Text = $Title
-  $form.Size = New-Object System.Drawing.Size(520, 360)
+  $form.Size = New-Object System.Drawing.Size(540, 620)
   $form.StartPosition = 'CenterScreen'
   $form.FormBorderStyle = 'FixedDialog'
   $form.MaximizeBox = $false
@@ -122,62 +275,130 @@ function Show-SettingsForm {
   $lbl = New-Object System.Windows.Forms.Label
   $lbl.Text = "Integration token (ros_itok_...). Can be its own token - just created by the same Admin as the Offline Kiosk token."
   $lbl.Location = New-Object System.Drawing.Point(16, 12)
-  $lbl.Size = New-Object System.Drawing.Size(470, 40)
+  $lbl.Size = New-Object System.Drawing.Size(490, 36)
 
   $tokenLbl = New-Object System.Windows.Forms.Label
   $tokenLbl.Text = 'Token'
-  $tokenLbl.Location = New-Object System.Drawing.Point(16, 56)
-  $tokenLbl.Size = New-Object System.Drawing.Size(470, 18)
+  $tokenLbl.Location = New-Object System.Drawing.Point(16, 50)
+  $tokenLbl.Size = New-Object System.Drawing.Size(490, 18)
 
   $tokenBox = New-Object System.Windows.Forms.TextBox
-  $tokenBox.Location = New-Object System.Drawing.Point(16, 76)
-  $tokenBox.Size = New-Object System.Drawing.Size(470, 24)
+  $tokenBox.Location = New-Object System.Drawing.Point(16, 70)
+  $tokenBox.Size = New-Object System.Drawing.Size(490, 24)
   $tokenBox.UseSystemPasswordChar = $true
   if ($Cfg.token -and $Cfg.token -notmatch 'REPLACE') { $tokenBox.Text = $Cfg.token }
 
   $nameLbl = New-Object System.Windows.Forms.Label
   $nameLbl.Text = 'Display name'
-  $nameLbl.Location = New-Object System.Drawing.Point(16, 110)
-  $nameLbl.Size = New-Object System.Drawing.Size(470, 18)
+  $nameLbl.Location = New-Object System.Drawing.Point(16, 100)
+  $nameLbl.Size = New-Object System.Drawing.Size(490, 18)
 
   $nameBox = New-Object System.Windows.Forms.TextBox
-  $nameBox.Location = New-Object System.Drawing.Point(16, 130)
-  $nameBox.Size = New-Object System.Drawing.Size(470, 24)
+  $nameBox.Location = New-Object System.Drawing.Point(16, 120)
+  $nameBox.Size = New-Object System.Drawing.Size(490, 24)
   $nameBox.Text = $Cfg.name
 
   $idLbl = New-Object System.Windows.Forms.Label
   $idLbl.Text = 'Client id (stable id for this PC)'
-  $idLbl.Location = New-Object System.Drawing.Point(16, 164)
-  $idLbl.Size = New-Object System.Drawing.Size(470, 18)
+  $idLbl.Location = New-Object System.Drawing.Point(16, 150)
+  $idLbl.Size = New-Object System.Drawing.Size(490, 18)
 
   $idBox = New-Object System.Windows.Forms.TextBox
-  $idBox.Location = New-Object System.Drawing.Point(16, 184)
-  $idBox.Size = New-Object System.Drawing.Size(470, 24)
+  $idBox.Location = New-Object System.Drawing.Point(16, 170)
+  $idBox.Size = New-Object System.Drawing.Size(490, 24)
   $idBox.Text = $Cfg.clientId
 
   $apiLbl = New-Object System.Windows.Forms.Label
   $apiLbl.Text = 'API URL'
-  $apiLbl.Location = New-Object System.Drawing.Point(16, 218)
-  $apiLbl.Size = New-Object System.Drawing.Size(470, 18)
+  $apiLbl.Location = New-Object System.Drawing.Point(16, 200)
+  $apiLbl.Size = New-Object System.Drawing.Size(490, 18)
 
   $apiBox = New-Object System.Windows.Forms.TextBox
-  $apiBox.Location = New-Object System.Drawing.Point(16, 238)
-  $apiBox.Size = New-Object System.Drawing.Size(470, 24)
+  $apiBox.Location = New-Object System.Drawing.Point(16, 220)
+  $apiBox.Size = New-Object System.Drawing.Size(490, 24)
   $apiBox.Text = $Cfg.apiUrl
+
+  $sleepChk = New-Object System.Windows.Forms.CheckBox
+  $sleepChk.Text = 'Enable sleep mode'
+  $sleepChk.Location = New-Object System.Drawing.Point(16, 256)
+  $sleepChk.Size = New-Object System.Drawing.Size(200, 22)
+  $sleepChk.Checked = [bool]$Cfg.sleepEnabled
+
+  $winLbl = New-Object System.Windows.Forms.Label
+  $winLbl.Text = 'Default window (hours, local)'
+  $winLbl.Location = New-Object System.Drawing.Point(220, 258)
+  $winLbl.Size = New-Object System.Drawing.Size(160, 20)
+
+  $startNum = New-Object System.Windows.Forms.NumericUpDown
+  $startNum.Location = New-Object System.Drawing.Point(384, 254)
+  $startNum.Size = New-Object System.Drawing.Size(48, 24)
+  $startNum.Minimum = 0
+  $startNum.Maximum = 23
+  $startNum.Value = [Math]::Max(0, [Math]::Min(23, [int]$Cfg.sleepStartHour))
+
+  $toLbl = New-Object System.Windows.Forms.Label
+  $toLbl.Text = 'to'
+  $toLbl.Location = New-Object System.Drawing.Point(434, 258)
+  $toLbl.Size = New-Object System.Drawing.Size(24, 20)
+
+  $endNum = New-Object System.Windows.Forms.NumericUpDown
+  $endNum.Location = New-Object System.Drawing.Point(458, 254)
+  $endNum.Size = New-Object System.Drawing.Size(48, 24)
+  $endNum.Minimum = 0
+  $endNum.Maximum = 23
+  $endNum.Value = [Math]::Max(0, [Math]::Min(23, [int]$Cfg.sleepEndHour))
+
+  $schedLbl = New-Object System.Windows.Forms.Label
+  $schedLbl.Text = 'Weekly schedule (Default = window above; All day = sleep 24h; Off = never sleep that day)'
+  $schedLbl.Location = New-Object System.Drawing.Point(16, 290)
+  $schedLbl.Size = New-Object System.Drawing.Size(490, 32)
+
+  $dayLabels = [ordered]@{
+    mon = 'Mon'; tue = 'Tue'; wed = 'Wed'; thu = 'Thu'
+    fri = 'Fri'; sat = 'Sat'; sun = 'Sun'
+  }
+  $modeChoices = @('Default', 'All day', 'Off')
+  $dayCombos = @{}
+  $row = 0
+  $sched = Normalize-SleepSchedule -Raw $Cfg.sleepSchedule -DefaultStart ([int]$Cfg.sleepStartHour) -DefaultEnd ([int]$Cfg.sleepEndHour)
+  foreach ($k in (Get-SleepDayKeys)) {
+    $y = 326 + ($row * 28)
+    $dLbl = New-Object System.Windows.Forms.Label
+    $dLbl.Text = $dayLabels[$k]
+    $dLbl.Location = New-Object System.Drawing.Point(16, ($y + 2))
+    $dLbl.Size = New-Object System.Drawing.Size(40, 20)
+    $form.Controls.Add($dLbl)
+
+    $combo = New-Object System.Windows.Forms.ComboBox
+    $combo.DropDownStyle = 'DropDownList'
+    $combo.Location = New-Object System.Drawing.Point(60, $y)
+    $combo.Size = New-Object System.Drawing.Size(120, 24)
+    [void]$combo.Items.AddRange($modeChoices)
+    $rule = $sched[$k]
+    if ($rule.mode -eq 'allDay') { $combo.SelectedIndex = 1 }
+    elseif ($rule.mode -eq 'off') { $combo.SelectedIndex = 2 }
+    else { $combo.SelectedIndex = 0 }
+    $form.Controls.Add($combo)
+    $dayCombos[$k] = $combo
+    $row++
+  }
 
   $ok = New-Object System.Windows.Forms.Button
   $ok.Text = 'Save'
-  $ok.Location = New-Object System.Drawing.Point(310, 280)
+  $ok.Location = New-Object System.Drawing.Point(330, 536)
   $ok.Size = New-Object System.Drawing.Size(90, 32)
   $ok.DialogResult = [System.Windows.Forms.DialogResult]::OK
 
   $cancel = New-Object System.Windows.Forms.Button
   $cancel.Text = 'Cancel'
-  $cancel.Location = New-Object System.Drawing.Point(410, 280)
+  $cancel.Location = New-Object System.Drawing.Point(430, 536)
   $cancel.Size = New-Object System.Drawing.Size(76, 32)
   $cancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
 
-  $form.Controls.AddRange(@($lbl, $tokenLbl, $tokenBox, $nameLbl, $nameBox, $idLbl, $idBox, $apiLbl, $apiBox, $ok, $cancel))
+  $form.Controls.AddRange(@(
+      $lbl, $tokenLbl, $tokenBox, $nameLbl, $nameBox, $idLbl, $idBox, $apiLbl, $apiBox,
+      $sleepChk, $winLbl, $startNum, $toLbl, $endNum, $schedLbl, $ok, $cancel
+    ))
   $form.AcceptButton = $ok
   $form.CancelButton = $cancel
 
@@ -190,6 +411,16 @@ function Show-SettingsForm {
   $name = ("$($nameBox.Text)").Trim()
   $clientId = ("$($idBox.Text)").Trim()
   $apiUrl = ("$($apiBox.Text)").Trim().TrimEnd('/')
+  $sleepEnabled = [bool]$sleepChk.Checked
+  $sleepStartHour = [int]$startNum.Value
+  $sleepEndHour = [int]$endNum.Value
+  $newSched = [ordered]@{}
+  foreach ($k in (Get-SleepDayKeys)) {
+    $sel = $dayCombos[$k].SelectedItem
+    if ($sel -eq 'All day') { $newSched[$k] = 'allDay' }
+    elseif ($sel -eq 'Off') { $newSched[$k] = 'off' }
+    else { $newSched[$k] = 'window' }
+  }
   $form.Dispose()
   if (-not $token) { return $null }
   $Cfg.token = $token
@@ -199,6 +430,10 @@ function Show-SettingsForm {
     $Cfg.apiUrl = $apiUrl
     if (-not $Cfg.appUrl) { $Cfg.appUrl = $apiUrl }
   }
+  $Cfg.sleepEnabled = $sleepEnabled
+  $Cfg.sleepStartHour = $sleepStartHour
+  $Cfg.sleepEndHour = $sleepEndHour
+  $Cfg.sleepSchedule = Normalize-SleepSchedule -Raw $newSched -DefaultStart $sleepStartHour -DefaultEnd $sleepEndHour
   if (-not (Test-Path -LiteralPath $ConfigPath) -and (Test-Path -LiteralPath $ExamplePath)) {
     Copy-Item -LiteralPath $ExamplePath -Destination $ConfigPath -Force
   }
@@ -295,6 +530,151 @@ function Stop-BrowserSession {
   $script:State.browserPid = $null
 }
 
+function Ensure-FocusApi {
+  if ($script:FocusApiReady) { return }
+  try {
+    Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class RosGrFocus {
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+  [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
+  [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
+  [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+  public const int SW_RESTORE = 9;
+  public const int SW_SHOW = 5;
+}
+"@ -ErrorAction SilentlyContinue
+  } catch {}
+  $script:FocusApiReady = $true
+}
+
+function Focus-ProcessWindow {
+  param([int]$ProcessId, [int]$Tries = 12)
+  if ($ProcessId -le 0) { return $false }
+  Ensure-FocusApi
+  if (-not ([System.Management.Automation.PSTypeName]'RosGrFocus').Type) { return $false }
+  for ($i = 0; $i -lt $Tries; $i++) {
+    Start-Sleep -Milliseconds 400
+    try {
+      $proc = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
+      if (-not $proc) { continue }
+      $hwnd = $proc.MainWindowHandle
+      if (-not $hwnd -or [int64]$hwnd -eq 0) {
+        # Chromium often spawns a launcher then a child with the real window.
+        $child = Get-CimInstance Win32_Process -Filter ("ParentProcessId = {0}" -f $ProcessId) -ErrorAction SilentlyContinue |
+          Where-Object { $_.Name -match 'msedge|chrome' } |
+          Select-Object -First 1
+        if ($child) {
+          $proc = Get-Process -Id ([int]$child.ProcessId) -ErrorAction SilentlyContinue
+          if ($proc) {
+            $script:State.browserPid = $proc.Id
+            $hwnd = $proc.MainWindowHandle
+          }
+        }
+      }
+      if (-not $hwnd -or [int64]$hwnd -eq 0) { continue }
+      if ([RosGrFocus]::IsIconic($hwnd)) { [void][RosGrFocus]::ShowWindow($hwnd, [RosGrFocus]::SW_RESTORE) }
+      else { [void][RosGrFocus]::ShowWindow($hwnd, [RosGrFocus]::SW_SHOW) }
+      [void][RosGrFocus]::BringWindowToTop($hwnd)
+      $fg = [RosGrFocus]::GetForegroundWindow()
+      $fgPid = [uint32]0
+      $fgTid = [RosGrFocus]::GetWindowThreadProcessId($fg, [ref]$fgPid)
+      $curTid = [RosGrFocus]::GetCurrentThreadId()
+      if ($fgTid -ne 0 -and $fgTid -ne $curTid) {
+        [void][RosGrFocus]::AttachThreadInput($curTid, $fgTid, $true)
+        [void][RosGrFocus]::SetForegroundWindow($hwnd)
+        [void][RosGrFocus]::AttachThreadInput($curTid, $fgTid, $false)
+      } else {
+        [void][RosGrFocus]::SetForegroundWindow($hwnd)
+      }
+      Write-Log 'focus' "pid=$($proc.Id)" "hwnd=$hwnd"
+      return $true
+    } catch {
+      Write-Log 'focus failed' $_.Exception.Message
+    }
+  }
+  return $false
+}
+
+function Test-SleepWindow {
+  param($Cfg, [datetime]$When = $(Get-Date))
+  if (-not $Cfg -or -not $Cfg.sleepEnabled) { return $false }
+  $rule = Get-SleepRuleForToday -Cfg $Cfg -When $When
+  if ($rule.mode -eq 'off') { return $false }
+  if ($rule.mode -eq 'allDay') { return $true }
+  $hour = [int]$When.Hour
+  $start = [int]$rule.startHour
+  $end = [int]$rule.endHour
+  if ($start -eq $end) { return $false }
+  if ($start -lt $end) { return ($hour -ge $start -and $hour -lt $end) }
+  # Overnight window e.g. 22 -> 6
+  return ($hour -ge $start -or $hour -lt $end)
+}
+
+# Keep displays awake while the client is not in its sleep window.
+# Pattern from StayActive.ps1 / PSMouseJiggler: SetThreadExecutionState + 1px nudge.
+function Ensure-KeepAwakeApi {
+  if ($script:KeepAwakeReady) { return $true }
+  try {
+    Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class RosKeepAwake {
+  public const uint ES_CONTINUOUS = 0x80000000;
+  public const uint ES_SYSTEM_REQUIRED = 0x00000001;
+  public const uint ES_DISPLAY_REQUIRED = 0x00000002;
+  [StructLayout(LayoutKind.Sequential)]
+  public struct POINT { public int X; public int Y; }
+  [DllImport("kernel32.dll")]
+  public static extern uint SetThreadExecutionState(uint esFlags);
+  [DllImport("user32.dll")]
+  public static extern bool GetCursorPos(out POINT lpPoint);
+  [DllImport("user32.dll")]
+  public static extern bool SetCursorPos(int X, int Y);
+}
+"@ -ErrorAction Stop
+    $script:KeepAwakeReady = $true
+  } catch {
+    if ("$($_.Exception.Message)" -match 'already exists') { $script:KeepAwakeReady = $true }
+    else { Write-Log 'keep-awake API load failed' "$($_.Exception.Message)"; return $false }
+  }
+  return [bool]$script:KeepAwakeReady
+}
+
+function Update-KeepAwake {
+  param([bool]$Allow)
+  if (-not (Ensure-KeepAwakeApi)) { return }
+  try {
+    if ($Allow) {
+      [void][RosKeepAwake]::SetThreadExecutionState(
+        [RosKeepAwake]::ES_CONTINUOUS -bor [RosKeepAwake]::ES_SYSTEM_REQUIRED -bor [RosKeepAwake]::ES_DISPLAY_REQUIRED
+      )
+      $now = Get-Date
+      $last = $script:State.lastJiggleAt
+      if (-not $last -or ($now - $last).TotalSeconds -ge 55) {
+        $pt = New-Object RosKeepAwake+POINT
+        if ([RosKeepAwake]::GetCursorPos([ref]$pt)) {
+          [void][RosKeepAwake]::SetCursorPos(($pt.X + 1), $pt.Y)
+          Start-Sleep -Milliseconds 40
+          [void][RosKeepAwake]::SetCursorPos($pt.X, $pt.Y)
+        }
+        $script:State.lastJiggleAt = $now
+      }
+      $script:State.keepAwake = $true
+    } else {
+      [void][RosKeepAwake]::SetThreadExecutionState([RosKeepAwake]::ES_CONTINUOUS)
+      $script:State.keepAwake = $false
+    }
+  } catch {
+    Write-Log 'keep-awake update failed' "$($_.Exception.Message)"
+  }
+}
+
 function Open-GreenRoomWindow {
   param(
     [string]$Url,
@@ -338,6 +718,7 @@ function Open-GreenRoomWindow {
       if ($p -and $p.Id) {
         $script:State.browserPid = $p.Id
         Write-Log 'browser' $browser "pid=$($p.Id)" "pos=$x,$y" "size=${w}x${h}" "fs=$Fullscreen" "profile=$profileDir"
+        $null = Focus-ProcessWindow -ProcessId $p.Id
         return $true
       }
     } catch {
@@ -366,7 +747,13 @@ $script:State = @{
   lastMessage   = 'Starting...'
   browserPid    = $null
   activeUntil   = $null
+  sleeping      = $false
+  sleepNotified = $false
+  keepAwake     = $false
+  lastJiggleAt  = $null
 }
+$script:FocusApiReady = $false
+$script:KeepAwakeReady = $false
 
 function Clear-ActiveSession {
   $script:State.status = 'standby'
@@ -386,6 +773,18 @@ function Apply-Command {
     $script:State.status = 'standby'
     $script:State.lastError = ''
   } elseif ($action -eq 'start') {
+    if (Test-SleepWindow -Cfg $Cfg) {
+      $rule = Get-SleepRuleForToday -Cfg $Cfg
+      $script:State.eventId = $eventId
+      $script:State.status = 'standby'
+      $script:State.lastError = ("Sleep mode ({0}) - Start ignored" -f (Format-SleepRuleLabel -Rule $rule -DayKey (Get-SleepDayKey)))
+      $script:State.lastCommandId = $Command.id
+      Write-Log 'sleep: ignoring start command' $Command.id
+      if ($Notify) {
+        $Notify.ShowBalloonTip(5000, 'Green Room sleeping', $script:State.lastError, [System.Windows.Forms.ToolTipIcon]::Info)
+      }
+      return
+    }
     $script:State.eventId = $eventId
     $day = [Math]::Max(1, [int]($Command.day))
     if (-not $day) { $day = 1 }
@@ -488,6 +887,40 @@ function Send-Heartbeat {
     }
   }
 
+  $nowSleeping = Test-SleepWindow -Cfg $Cfg
+  $todayRule = Get-SleepRuleForToday -Cfg $Cfg
+  $todayKey = Get-SleepDayKey
+  if ($nowSleeping) {
+    if (-not $script:State.sleeping) {
+      $label = Format-SleepRuleLabel -Rule $todayRule -DayKey $todayKey
+      Write-Log 'entering sleep window' $label
+      Clear-ActiveSession
+      $script:State.sleeping = $true
+      Update-KeepAwake -Allow $false
+      if (-not $script:State.sleepNotified -and $Notify) {
+        $tipMsg = if ($todayRule.mode -eq 'allDay') {
+          ("Sleeping all day ({0}). Browser closed; Start ignored." -f $todayKey)
+        } else {
+          ("Sleeping {0}. Browser closed; Start ignored until awake." -f $label)
+        }
+        $Notify.ShowBalloonTip(6000, 'Green Room sleep', $tipMsg, [System.Windows.Forms.ToolTipIcon]::Info)
+        $script:State.sleepNotified = $true
+      }
+    }
+    $script:State.status = 'standby'
+  } elseif ($script:State.sleeping) {
+    Write-Log 'leaving sleep window'
+    $script:State.sleeping = $false
+    $script:State.sleepNotified = $false
+    $script:State.lastError = ''
+    Update-KeepAwake -Allow $true
+    if ($Notify) {
+      $Notify.ShowBalloonTip(4000, 'Green Room awake', 'Sleep window ended - ready for Start.', [System.Windows.Forms.ToolTipIcon]::Info)
+    }
+  } else {
+    Update-KeepAwake -Allow $true
+  }
+
   $displays = @(Get-ClientDisplays)
   $body = @{
     clientId      = $Cfg.clientId
@@ -499,9 +932,14 @@ function Send-Heartbeat {
     lastCommandId = $script:State.lastCommandId
     lastError     = $script:State.lastError
     meta          = @{
-      displays    = $displays
-      activeUntil = if ($script:State.activeUntil) { ([datetime]$script:State.activeUntil).ToString('o') } else { $null }
-      openedUrl   = $script:State.openedUrl
+      displays       = $displays
+      activeUntil    = if ($script:State.activeUntil) { ([datetime]$script:State.activeUntil).ToString('o') } else { $null }
+      openedUrl      = $script:State.openedUrl
+      sleeping       = [bool]$script:State.sleeping
+      sleepDay       = $todayKey
+      sleepMode      = $todayRule.mode
+      sleepStartHour = [int]$todayRule.startHour
+      sleepEndHour   = [int]$todayRule.endHour
     }
   }
   $data = Invoke-RosApi -Cfg $Cfg -Method 'POST' -UrlPath '/api/display-clients/heartbeat' -Body $body
@@ -523,7 +961,11 @@ function Send-Heartbeat {
 function Update-TrayText {
   param($Notify, $Cfg)
   $status = $script:State.status
+  if ($script:State.sleeping) { $status = 'sleep' }
   $tip = "ROS Green Room`n$($Cfg.name)`n$status"
+  if ($script:State.sleeping) {
+    $tip += ("`n{0}" -f (Format-SleepRuleLabel -Rule (Get-SleepRuleForToday -Cfg $Cfg) -DayKey (Get-SleepDayKey)))
+  }
   if ($script:State.eventId) { $tip += "`nevent $($script:State.eventId)" }
   if (-not $script:State.lastOk) { $tip += "`n$($script:State.lastMessage)" }
   if ($tip.Length -gt 60) { $tip = $tip.Substring(0, 57) + '...' }
@@ -641,6 +1083,7 @@ $itemExit = New-Object System.Windows.Forms.ToolStripMenuItem
 $itemExit.Text = 'Exit'
 $itemExit.Add_Click({
   $script:ShouldExit = $true
+  try { Update-KeepAwake -Allow $false } catch {}
   $timer.Stop()
   $notify.Visible = $false
   $notify.Dispose()
