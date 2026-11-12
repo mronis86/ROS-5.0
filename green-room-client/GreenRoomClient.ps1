@@ -802,10 +802,29 @@ function Apply-Command {
     }
 
     # Always open the live Cloudflare Green Room page (fetches Railway directly).
-    # Do not reuse Command.url — stale event-* / Railway links break timers/schedule.
+    # Rebuild query (ignore stale Command.url hosts) but keep title metadata from Start.
     $appBase = if ($Cfg.appUrl -and $Cfg.appUrl -notmatch 'up\.railway\.app') { $Cfg.appUrl } else { 'https://ros1615.pages.dev' }
     $fsFlag = if ($fullscreen) { '1' } else { '0' }
+    $eventName = ("$($Command.eventName)").Trim()
+    $eventDate = ("$($Command.eventDate)").Trim()
+    $eventLocation = ("$($Command.eventLocation)").Trim()
+    # If kiosk already built a Pages URL, pull title fields from it when command omits them.
+    if ($Command.url -and "$($Command.url)" -match 'pages\.dev/green-room') {
+      $rawUrl = "$($Command.url)"
+      if (-not $eventName -and $rawUrl -match '[?&]eventName=([^&]+)') {
+        try { $eventName = [Uri]::UnescapeDataString(($Matches[1] -replace '\+', ' ')).Trim() } catch { $eventName = $Matches[1] }
+      }
+      if (-not $eventDate -and $rawUrl -match '[?&]eventDate=([^&]+)') {
+        try { $eventDate = [Uri]::UnescapeDataString(($Matches[1] -replace '\+', ' ')).Trim() } catch { $eventDate = $Matches[1] }
+      }
+      if (-not $eventLocation -and $rawUrl -match '[?&]eventLocation=([^&]+)') {
+        try { $eventLocation = [Uri]::UnescapeDataString(($Matches[1] -replace '\+', ' ')).Trim() } catch { $eventLocation = $Matches[1] }
+      }
+    }
     $url = "$appBase/green-room?eventId=$([Uri]::EscapeDataString($eventId))&day=$day&sessionHours=$hours&fs=$fsFlag"
+    if ($eventName) { $url += "&eventName=$([Uri]::EscapeDataString($eventName))" }
+    if ($eventDate) { $url += "&eventDate=$([Uri]::EscapeDataString($eventDate))" }
+    if ($eventLocation) { $url += "&eventLocation=$([Uri]::EscapeDataString($eventLocation))" }
     # Bootstrap SPA API auth from this client's Integration token (no Neon sign-in).
     # Prefer query apiToken (hash fragments are sometimes dropped by Windows shell launches).
     if ($Cfg.token) {

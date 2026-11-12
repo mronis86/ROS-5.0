@@ -327,6 +327,23 @@ const GreenRoomPage: React.FC = () => {
     loadEvents();
   }, [loadEvents]);
 
+  // Tray Start often only has eventId — fill title from calendar list once it loads.
+  useEffect(() => {
+    if (!eventId || !events.length) return;
+    const blankName = !eventName || eventName === 'Current Event';
+    if (!blankName && eventDate) return;
+    const match = events.find((e) => e.id === eventId);
+    if (!match?.name) return;
+    const params = new URLSearchParams(location.search);
+    params.set('eventName', match.name);
+    if (match.date) params.set('eventDate', match.date);
+    if (match.location) params.set('eventLocation', match.location);
+    navigate(`/green-room?${params.toString()}`, {
+      replace: true,
+      state: { event: match },
+    });
+  }, [eventId, eventName, eventDate, events, location.search, navigate]);
+
   useEffect(() => {
     if (eventsRefreshSuccessAt == null) return;
     const t = setTimeout(() => setEventsRefreshSuccessAt(null), 2500);
