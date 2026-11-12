@@ -2055,6 +2055,35 @@ body {
   flex: 1;
 }
 
+.wl-zoom-group {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid #334155;
+  border-radius: 0.4rem;
+  overflow: hidden;
+}
+
+.wl-zoom-btn {
+  min-width: 2rem;
+  padding: 0.25rem 0.45rem !important;
+  margin: 0 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  border-right: 1px solid #334155 !important;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.wl-zoom-btn:last-child {
+  border-right: none !important;
+}
+
+.wl-zoom-reset {
+  min-width: 2.75rem;
+  font-size: 0.72rem !important;
+  font-weight: 600;
+}
+
 .wl-live-preview-slot {
   /* Padding-box 16:9 — avoids max-height widening the frame past 16:9. */
   position: relative;

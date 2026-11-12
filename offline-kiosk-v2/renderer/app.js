@@ -278,6 +278,8 @@ const state = {
   armedDisplayIds: [],
   /** which card's pipeline the dock/overlay preview is showing */
   previewDisplayId: null,
+  /** Chromium page-zoom steps per display id (0 = 100%). */
+  pageZoomStepsByDisplay: {},
   settingsDisplayId: null,
   weblinked: { running: false, baseUrl: null, port: null, error: '' },
   remoteProvider: null,
@@ -2615,6 +2617,7 @@ async function selectDisplayForPreview(id) {
     return;
   }
   state.previewDisplayId = row.id;
+  syncWlPageZoomButtons();
   renderDisplays();
   if (isDisplayArmed(row.id) && state.weblinked?.running) {
     placeWlLivePreview('dock');
@@ -2626,6 +2629,94 @@ async function selectDisplayForPreview(id) {
   setDisplayNote(
     `${row.name} selected for preview — click Preview or Push WL to load it into WebLinked.`
   );
+}
+
+const WL_MOD_CTRL = 1 << 2;
+/** Windows VK codes for Chromium Ctrl+/- / Ctrl+0 page zoom. */
+const WL_VK_OEM_PLUS = 0xbb;
+const WL_VK_OEM_MINUS = 0xbd;
+const WL_VK_0 = 0x30;
+
+function wlPageZoomLabel(steps) {
+  const n = Number(steps) || 0;
+  // Chromium default zoom steps are ~20% each from 100%.
+  const pct = Math.round(100 * Math.pow(1.2, n));
+  return `${pct}%`;
+}
+
+function syncWlPageZoomButtons() {
+  const id = activePreviewDisplayId();
+  const steps = id ? Number(state.pageZoomStepsByDisplay[id]) || 0 : 0;
+  const label = wlPageZoomLabel(steps);
+  for (const el of [$('#wlPageZoomResetBtn'), $('#wlPageZoomResetBtnPop')]) {
+    if (el) el.textContent = label;
+  }
+}
+
+async function wlSendCtrlKey(keyCode) {
+  const id = activePreviewDisplayId();
+  const source = id ? wlSourceId(id) : '';
+  if (!state.weblinked?.running) {
+    setDisplayNote('Start WebLinked first.');
+    return { ok: false };
+  }
+  if (!source) {
+    setDisplayNote('Select a display card (or Preview / Push) first.');
+    return { ok: false };
+  }
+  if (!window.kiosk?.weblinkedSendInput) {
+    setDisplayNote('Page zoom only available in the Electron kiosk.');
+    return { ok: false };
+  }
+  try {
+    if (!wlInteractive) setWlInteractive(true);
+    await window.kiosk.weblinkedSendInput({ type: 'focus', focused: true, source });
+    const mods = WL_MOD_CTRL;
+    await window.kiosk.weblinkedSendInput({
+      type: 'key',
+      action: 'down',
+      key_code: keyCode,
+      character: 0,
+      modifiers: mods,
+      source,
+    });
+    await window.kiosk.weblinkedSendInput({
+      type: 'key',
+      action: 'up',
+      key_code: keyCode,
+      character: 0,
+      modifiers: mods,
+      source,
+    });
+    return { ok: true, source, id };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Zoom failed';
+    setDisplayNote(msg);
+    return { ok: false, error: msg };
+  }
+}
+
+/** Zoom the selected WebLinked display page in / out / reset (Chromium Ctrl± / Ctrl+0). */
+async function wlPageZoom(delta) {
+  const id = activePreviewDisplayId();
+  if (!id) {
+    setDisplayNote('Select a display card (or Preview / Push) first.');
+    return { ok: false };
+  }
+  const keyCode = delta === 0 ? WL_VK_0 : delta > 0 ? WL_VK_OEM_PLUS : WL_VK_OEM_MINUS;
+  const result = await wlSendCtrlKey(keyCode);
+  if (!result?.ok) return result;
+  const prev = Number(state.pageZoomStepsByDisplay[id]) || 0;
+  const next = delta === 0 ? 0 : Math.max(-8, Math.min(8, prev + (delta > 0 ? 1 : -1)));
+  state.pageZoomStepsByDisplay[id] = next;
+  syncWlPageZoomButtons();
+  const row = findDisplay(id);
+  setDisplayNote(
+    delta === 0
+      ? `Zoom reset · ${row?.name || id}`
+      : `Zoom ${wlPageZoomLabel(next)} · ${row?.name || id}`
+  );
+  return { ok: true, steps: next };
 }
 
 /** Turn off this card’s Screen (monitor) output — leaves NDI / Shared / URL alone. */
@@ -3727,6 +3818,13 @@ async function bootstrap() {
     setWlInteractive(true);
     placeWlLivePreview('overlay');
   });
+  $('#wlPageZoomOutBtn')?.addEventListener('click', () => void wlPageZoom(-1));
+  $('#wlPageZoomInBtn')?.addEventListener('click', () => void wlPageZoom(1));
+  $('#wlPageZoomResetBtn')?.addEventListener('click', () => void wlPageZoom(0));
+  $('#wlPageZoomOutBtnPop')?.addEventListener('click', () => void wlPageZoom(-1));
+  $('#wlPageZoomInBtnPop')?.addEventListener('click', () => void wlPageZoom(1));
+  $('#wlPageZoomResetBtnPop')?.addEventListener('click', () => void wlPageZoom(0));
+  syncWlPageZoomButtons();
   $('#wlExitPageFullscreenBtn')?.addEventListener('click', () => void exitWlPageFullscreen());
   $('#wlExitPageFullscreenBtnPop')?.addEventListener('click', () => void exitWlPageFullscreen());
   $('#wlPreviewOverlayCloseBtn')?.addEventListener('click', () => placeWlLivePreview('dock'));

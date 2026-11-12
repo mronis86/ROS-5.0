@@ -172,6 +172,11 @@
             >
               Exit fullscreen
             </button>
+            <span class="wl-zoom-group" title="Zoom the live display page (Ctrl − / Ctrl +)">
+              <button type="button" class="ghost-btn wl-zoom-btn" id="wlPageZoomOutBtn" aria-label="Zoom out">−</button>
+              <button type="button" class="ghost-btn wl-zoom-btn wl-zoom-reset" id="wlPageZoomResetBtn" title="Reset zoom to 100%">100%</button>
+              <button type="button" class="ghost-btn wl-zoom-btn" id="wlPageZoomInBtn" aria-label="Zoom in">+</button>
+            </span>
             <button type="button" class="ghost-btn" id="wlLivePreviewLargerBtn">Larger</button>
           </div>
           <div class="wl-live-preview-slot" id="wlLivePreviewSlot">
@@ -189,7 +194,7 @@
           </p>
           <p class="wl-settings-hint" id="wlLivePreviewHint">
             Same picture as NDI / SDI / Spout. Card <strong>Preview</strong> loads that URL here;
-            <strong>Larger</strong> expands it.
+            <strong>− / +</strong> zoom the display page; <strong>Larger</strong> expands this preview.
           </p>
         </div>
 
@@ -217,6 +222,11 @@
         >
           Exit fullscreen
         </button>
+        <span class="wl-zoom-group" title="Zoom the live display page (Ctrl − / Ctrl +)">
+          <button type="button" class="ghost-btn wl-zoom-btn" id="wlPageZoomOutBtnPop" aria-label="Zoom out">−</button>
+          <button type="button" class="ghost-btn wl-zoom-btn wl-zoom-reset" id="wlPageZoomResetBtnPop" title="Reset zoom to 100%">100%</button>
+          <button type="button" class="ghost-btn wl-zoom-btn" id="wlPageZoomInBtnPop" aria-label="Zoom in">+</button>
+        </span>
         <button type="button" class="primary-btn" id="wlPreviewOverlayCloseBtn">Close</button>
       </div>
       <div class="wl-live-preview-slot wl-preview-overlay-slot" id="wlPreviewOverlaySlot"></div>
