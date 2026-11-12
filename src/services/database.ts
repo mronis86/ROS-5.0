@@ -1297,8 +1297,11 @@ export class DatabaseService {
   static async getActiveTimer(eventId: string): Promise<any | null> {
     try {
       console.log('🔄 Getting active timer via API:', eventId);
-      
-      const response = await DatabaseService.apiFetch(`${API_BASE_URL}/api/active-timers/${eventId}`);
+      // Green Room / Clock / OBS: GET is public display state. Do not use apiFetch's
+      // hard 401 short-circuit when the Integration token is missing or cleared.
+      const response = await fetch(`${API_BASE_URL}/api/active-timers/${encodeURIComponent(eventId)}`, {
+        headers: apiJsonHeaders(),
+      });
       if (!response.ok) {
         console.warn('⚠️ getActiveTimer failed:', response.status, response.statusText);
         return null;

@@ -56,6 +56,15 @@ function isPublicGetEndpoint(endpoint: string, method?: string): boolean {
   if (new RegExp(`^/api/run-of-show-data/${EVENT_ID_SEGMENT}$`, 'i').test(path)) return true;
   if (new RegExp(`^/api/operator-countdown/${EVENT_ID_SEGMENT}$`, 'i').test(path)) return true;
   if (new RegExp(`^/api/display-sync/${EVENT_ID_SEGMENT}$`, 'i').test(path)) return true;
+  // Green Room / clocks: live timer + schedule helpers (read-only)
+  if (new RegExp(`^/api/active-timers/${EVENT_ID_SEGMENT}$`, 'i').test(path)) return true;
+  if (new RegExp(`^/api/overtime-minutes/${EVENT_ID_SEGMENT}$`, 'i').test(path)) return true;
+  if (new RegExp(`^/api/show-start-overtime/${EVENT_ID_SEGMENT}$`, 'i').test(path)) return true;
+  if (new RegExp(`^/api/indented-cues/${EVENT_ID_SEGMENT}$`, 'i').test(path)) return true;
+  if (new RegExp(`^/api/show-mode/${EVENT_ID_SEGMENT}$`, 'i').test(path)) return true;
+  if (new RegExp(`^/api/completed-cues/${EVENT_ID_SEGMENT}$`, 'i').test(path)) return true;
+  if (new RegExp(`^/api/timer-messages/${EVENT_ID_SEGMENT}$`, 'i').test(path)) return true;
+  if (new RegExp(`^/api/sub-cue-timers/${EVENT_ID_SEGMENT}$`, 'i').test(path)) return true;
   if (path.startsWith('/api/guest-event/')) return true;
   if (path.startsWith('/api/public/')) return true;
   return false;

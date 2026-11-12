@@ -801,32 +801,15 @@ function Apply-Command {
       else { $fullscreen = $true }
     }
 
+    # Always open the live Cloudflare Green Room page (fetches Railway directly).
+    # Do not reuse Command.url — stale event-* / Railway links break timers/schedule.
     $appBase = if ($Cfg.appUrl -and $Cfg.appUrl -notmatch 'up\.railway\.app') { $Cfg.appUrl } else { 'https://ros1615.pages.dev' }
-    $url = if ($Command.url -and "$($Command.url)" -notmatch 'up\.railway\.app/green-room') {
-      "$($Command.url)"
-    } else {
-      "$appBase/green-room?eventId=$([Uri]::EscapeDataString($eventId))&day=$day&sessionHours=$hours&fs=$(if ($fullscreen) { '1' } else { '0' })"
-    }
-    if ($url -match 'up\.railway\.app/green-room') {
-      $url = "$appBase/green-room?eventId=$([Uri]::EscapeDataString($eventId))&day=$day&sessionHours=$hours&fs=$(if ($fullscreen) { '1' } else { '0' })"
-    }
-    if ($url -notmatch '[?&]day=') {
-      $join = if ($url -match '\?') { '&' } else { '?' }
-      $url = "$url${join}day=$day"
-    }
-    if ($url -notmatch '[?&]sessionHours=') {
-      $join = if ($url -match '\?') { '&' } else { '?' }
-      $url = "$url${join}sessionHours=$hours"
-    }
-    if ($fullscreen -and $url -notmatch '[?&]fs=') {
-      $join = if ($url -match '\?') { '&' } else { '?' }
-      $url = "$url${join}fs=1"
-    }
+    $fsFlag = if ($fullscreen) { '1' } else { '0' }
+    $url = "$appBase/green-room?eventId=$([Uri]::EscapeDataString($eventId))&day=$day&sessionHours=$hours&fs=$fsFlag"
     # Bootstrap SPA API auth from this client's Integration token (no Neon sign-in).
     # Prefer query apiToken (hash fragments are sometimes dropped by Windows shell launches).
-    if ($Cfg.token -and $url -notmatch 'apiToken=' -and $url -notmatch 'ros_api_token=') {
-      $join = if ($url -match '\?') { '&' } else { '?' }
-      $url = "$url${join}apiToken=$([Uri]::EscapeDataString($Cfg.token))"
+    if ($Cfg.token) {
+      $url = "$url&apiToken=$([Uri]::EscapeDataString($Cfg.token))"
     }
     $script:State.openedUrl = $url
 
