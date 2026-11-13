@@ -1544,9 +1544,13 @@ const Clock: React.FC<ClockProps> = ({
           
           <div 
             className={`font-mono font-bold transition-all duration-500 ease-in-out text-3xl md:text-4xl leading-none ${
-              usePreshowRainbow ? 'ros-rainbow-text' : ''
+              usePreshowRainbow && getRemainingTime() >= 0 ? 'ros-rainbow-text' : ''
             }`}
-            style={usePreshowRainbow ? undefined : { color: getProgressBarColor() }}
+            style={
+              usePreshowRainbow && getRemainingTime() >= 0
+                ? undefined
+                : { color: getProgressBarColor() }
+            }
           >
             {renderSignedTime(getRemainingTime())}
           </div>
@@ -1681,7 +1685,11 @@ const Clock: React.FC<ClockProps> = ({
                     OVER TIME
                   </div>
                   <div className="font-mono text-red-400 text-2xl mt-1 leading-none">
-                    +{formatTime(overtimeAmount)}
+                    <OvertimeClockText
+                      seconds={-Math.max(1, overtimeAmount || 1)}
+                      body={formatTimeBody(overtimeAmount)}
+                      sign={overtimeSign}
+                    />
                   </div>
                 </div>
               ) : usePreshowRainbow ? (
@@ -1734,14 +1742,20 @@ const Clock: React.FC<ClockProps> = ({
               {/* Countdown Timer - Centered */}
               <div className="text-center">
                 <div 
-                  className={`font-mono font-bold ${usePreshowRainbow ? 'ros-rainbow-text' : ''} ${(() => {
+                  className={`font-mono font-bold ${
+                    usePreshowRainbow && getRemainingTime() >= 0 ? 'ros-rainbow-text' : ''
+                  } ${(() => {
                     const remaining = getRemainingTime();
                     const hours = Math.floor(Math.abs(remaining) / 3600);
                     return hours === 0
                       ? 'text-[15rem] md:text-[16.875rem] lg:text-[22.5rem]'
                       : 'text-[12rem] md:text-[13.5rem] lg:text-[18rem]';
                   })()}`}
-                  style={usePreshowRainbow ? undefined : { color: getProgressBarColor() }}
+                  style={
+                    usePreshowRainbow && getRemainingTime() >= 0
+                      ? undefined
+                      : { color: getProgressBarColor() }
+                  }
                 >
                   {renderSignedTime(getRemainingTime())}
                 </div>

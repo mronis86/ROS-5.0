@@ -28,10 +28,15 @@ contextBridge.exposeInMainWorld('kiosk', {
   weblinkedGetPreviewFrame: (payload) =>
     ipcRenderer.invoke('kiosk:weblinkedGetPreviewFrame', payload || {}),
   weblinkedSendInput: (payload) => ipcRenderer.invoke('kiosk:weblinkedSendInput', payload),
+  weblinkedExecuteScript: (payload) =>
+    ipcRenderer.invoke('kiosk:weblinkedExecuteScript', payload),
+  weblinkedRemoveOrphans: (payload) =>
+    ipcRenderer.invoke('kiosk:weblinkedRemoveOrphans', payload || {}),
   weblinkedStatus: () => ipcRenderer.invoke('kiosk:weblinkedStatus'),
   weblinkedDiagnostics: () => ipcRenderer.invoke('kiosk:weblinkedDiagnostics'),
   listSystemDisplays: () => ipcRenderer.invoke('kiosk:listSystemDisplays'),
   pptBridgeStatus: (payload) => ipcRenderer.invoke('kiosk:pptBridgeStatus', payload || {}),
+  vmixBridgeStatus: (payload) => ipcRenderer.invoke('kiosk:vmixBridgeStatus', payload || {}),
   listDisplayClients: (payload) => ipcRenderer.invoke('kiosk:listDisplayClients', payload || {}),
   commandDisplayClient: (payload) =>
     ipcRenderer.invoke('kiosk:commandDisplayClient', payload || {}),

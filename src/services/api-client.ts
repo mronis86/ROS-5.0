@@ -554,6 +554,23 @@ class ApiClient {
     return result;
   }
 
+  /** First client wins Pre-Show auto-start for this cue/start key (server single-flight). */
+  async claimPreshowAutoStart(
+    eventId: string,
+    payload: {
+      key: string;
+      cueId: number;
+      startHHMM?: string;
+      claimedBy?: string | null;
+      claimedByName?: string | null;
+    }
+  ): Promise<{ won: boolean; reason?: string; claim?: unknown; startedAt?: string }> {
+    return this.request(`/api/show-mode/${eventId}/preshow-auto-claim`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
   async saveTrackWasDurations(eventId: string, trackWasDurations: boolean) {
     const result = await this.request(`/api/show-mode/${eventId}`, {
       method: 'PATCH',
@@ -1384,19 +1401,39 @@ class ApiClient {
   }
 
   async getDsmClockLayout(eventId: string) {
-    return this.request<{ event_id: string; mode: '16x9' | 'full' | null }>(
-      `/api/dsm-clock/layout/${encodeURIComponent(eventId)}`
-    );
+    return this.request<{
+      event_id: string;
+      mode: '16x9' | 'full' | string | null;
+      fullZoom?: number;
+    }>(`/api/dsm-clock/layout/${encodeURIComponent(eventId)}`);
   }
 
-  async setDsmClockLayout(eventId: string, mode: 'full' | 'led' | 'vid' | 'ppt' | '16x9') {
-    return this.request<{ ok: boolean; event_id: string; mode: string }>(
-      '/api/dsm-clock/layout',
-      {
-        method: 'POST',
-        body: JSON.stringify({ event_id: eventId, mode }),
-      }
-    );
+  async setDsmClockLayout(
+    eventId: string,
+    modeOrOpts:
+      | 'full'
+      | 'led'
+      | 'vid'
+      | 'ppt'
+      | '16x9'
+      | { mode?: 'full' | 'led' | 'vid' | 'ppt' | '16x9'; fullZoom?: number }
+  ) {
+    const opts =
+      typeof modeOrOpts === 'string' || modeOrOpts == null
+        ? { mode: modeOrOpts as 'full' | 'led' | 'vid' | 'ppt' | '16x9' | undefined }
+        : modeOrOpts;
+    const body: Record<string, unknown> = { event_id: eventId };
+    if (opts.mode != null) body.mode = opts.mode;
+    if (opts.fullZoom != null) body.full_zoom = opts.fullZoom;
+    return this.request<{
+      ok: boolean;
+      event_id: string;
+      mode: string;
+      fullZoom: number;
+    }>('/api/dsm-clock/layout', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
   }
 
   async requestEventAccess(eventId: string) {

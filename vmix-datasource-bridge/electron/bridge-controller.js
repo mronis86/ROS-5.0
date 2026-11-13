@@ -1,16 +1,19 @@
 const { normalizeBaseUrl } = require('./auth-session');
+const os = require('os');
 const {
   getRunOfShowData,
   getActiveTimer,
   listCalendarEvents,
   validateApi,
   httpFetch,
+  reportVmixBridgeLive,
 } = require('./railway-client');
 const vmix = require('./vmix-client');
 const { resolveRowIndex } = require('./row-matcher');
 const { parseFeed, withDayQuery } = require('./feed-parser');
 
 const FEED_CACHE_MS = 15_000;
+const LIVE_HEARTBEAT_MS = 10_000;
 
 /**
  * Orchestrates Railway cue follow → feed/schedule row match → vMix DataSourceSelectRow.
@@ -25,6 +28,8 @@ class BridgeController {
     this.running = false;
     this.config = null;
     this.pollTimer = null;
+    this.liveTimer = null;
+    this.helperInstanceId = `vmix-${process.pid}-${Date.now().toString(36)}`;
     this.scheduleItems = [];
     /** @type {Map<string, { fetchedAt: number, parsed: object, url: string, error?: string }>} */
     this.feedCache = new Map();
@@ -387,7 +392,9 @@ class BridgeController {
     }
 
     this.resyncPollInterval();
+    this.startLiveHeartbeat();
     await this.pollOnce();
+    void this.pushLiveHeartbeat();
     this.emit();
     return {
       ok: true,
@@ -398,6 +405,45 @@ class BridgeController {
         apiToken: this.config.apiToken || '',
       },
     };
+  }
+
+  startLiveHeartbeat() {
+    this.stopLiveHeartbeat();
+    if (!this.running || !this.config?.eventId) return;
+    this.liveTimer = setInterval(() => void this.pushLiveHeartbeat(), LIVE_HEARTBEAT_MS);
+  }
+
+  stopLiveHeartbeat() {
+    if (this.liveTimer) {
+      clearInterval(this.liveTimer);
+      this.liveTimer = null;
+    }
+  }
+
+  async pushLiveHeartbeat({ connected = true } = {}) {
+    if (!this.config?.eventId || !this.config?.apiBaseUrl) return;
+    const bindings = (Array.isArray(this.config.bindings) ? this.config.bindings : []).filter(
+      (b) => b && b.enabled !== false
+    );
+    const matchOkCount = Array.isArray(this.status.matches)
+      ? this.status.matches.filter((m) => m && m.ok).length
+      : 0;
+    try {
+      await reportVmixBridgeLive(this.config.apiBaseUrl, this.config.apiToken, this.config.eventId, {
+        connected: connected !== false && this.running,
+        vmixOk: this.status?.vmix?.ok === true,
+        vmixHost: `${this.config.vmixHost || '127.0.0.1'}:${this.config.vmixPort || 8088}`,
+        cueItemId: this.status?.cue?.itemId ?? null,
+        cueLabel: this.status?.cue?.cueIs || '',
+        matchOkCount,
+        bindingCount: bindings.length,
+        lastError: this.status?.lastError || null,
+        hostname: os.hostname(),
+        helperInstanceId: this.helperInstanceId,
+      });
+    } catch {
+      /* presence is best-effort — cue follow must keep running */
+    }
   }
 
   resyncPollInterval() {
@@ -415,9 +461,13 @@ class BridgeController {
 
   async stop() {
     this.running = false;
+    this.stopLiveHeartbeat();
     if (this.pollTimer) {
       clearInterval(this.pollTimer);
       this.pollTimer = null;
+    }
+    if (this.config?.eventId) {
+      void this.pushLiveHeartbeat({ connected: false });
     }
     this.status.running = false;
     this.status.socket = { ok: false, message: 'Stopped' };

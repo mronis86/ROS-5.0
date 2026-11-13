@@ -56,3 +56,17 @@ export function applyDsmLayoutModeToForce16x9(mode: unknown): boolean | null {
   if (mode == null || mode === '') return null;
   return dsmLayoutUsesSixteenByNine(mode);
 }
+
+/** Full DSM clock zoom percent (event setting). Steps of 5 from 80–100; default 100. */
+export const DSM_FULL_ZOOM_MIN = 80;
+export const DSM_FULL_ZOOM_MAX = 100;
+export const DSM_FULL_ZOOM_STEP = 5;
+export const DSM_FULL_ZOOM_DEFAULT = 100;
+export const DSM_FULL_ZOOM_LEVELS = [80, 85, 90, 95, 100] as const;
+
+export function normalizeDsmFullZoom(raw: unknown): number {
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return DSM_FULL_ZOOM_DEFAULT;
+  const clamped = Math.min(DSM_FULL_ZOOM_MAX, Math.max(DSM_FULL_ZOOM_MIN, n));
+  return Math.round(clamped / DSM_FULL_ZOOM_STEP) * DSM_FULL_ZOOM_STEP;
+}

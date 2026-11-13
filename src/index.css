@@ -279,6 +279,21 @@ html.led-output-broadcast #root,
   background-clip: text;
   color: transparent !important;
 }
+/* Nested overtime sign must inherit clip or +/− vanishes under rainbow */
+.ros-rainbow-text .ot-sign,
+.ros-preshow-brand-text .ot-sign {
+  background-image: inherit;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent !important;
+}
+.ot-sign {
+  margin-right: 0.12em;
+}
+.ot-sign-plus {
+  display: inline-block;
+  transform: translateY(-0.02em);
+}
 .ros-rainbow-fill,
 .ros-preshow-brand-fill {
   background-image: linear-gradient(

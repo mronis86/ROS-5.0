@@ -18,7 +18,11 @@ interface SocketCallbacks {
   onActiveTimersUpdated?: (data: any) => void; // NEW!
   onResetAllStates?: (data: any) => void; // NEW! For reset events
   onLedOutputClear?: (data: { eventId: string }) => void;
-  onDsmClockLayout?: (data: { event_id?: string; mode?: '16x9' | 'full' | string }) => void;
+  onDsmClockLayout?: (data: {
+    event_id?: string;
+    mode?: '16x9' | 'full' | string;
+    fullZoom?: number;
+  }) => void;
   onConnectionChange?: (connected: boolean) => void;
   onInitialSync?: () => Promise<void>; // NEW! For initial sync on connect
   onTimerMessageUpdated?: (data: any) => void; // NEW! For ClockPage messages

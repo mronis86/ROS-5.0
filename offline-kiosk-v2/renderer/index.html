@@ -59,6 +59,9 @@
       <button type="button" class="tab" role="tab" aria-selected="false" data-tab="ppt">
         PPT Bridge
       </button>
+      <button type="button" class="tab" role="tab" aria-selected="false" data-tab="vmix">
+        vMix Bridge
+      </button>
       <button type="button" class="tab is-active" role="tab" aria-selected="true" data-tab="status">
         Status
       </button>
@@ -172,9 +175,9 @@
             >
               Exit fullscreen
             </button>
-            <span class="wl-zoom-group" title="Zoom the live display page (Ctrl − / Ctrl +)">
+            <span class="wl-zoom-group" title="Zoom this display card only (independent per page)">
               <button type="button" class="ghost-btn wl-zoom-btn" id="wlPageZoomOutBtn" aria-label="Zoom out">−</button>
-              <button type="button" class="ghost-btn wl-zoom-btn wl-zoom-reset" id="wlPageZoomResetBtn" title="Reset zoom to 100%">100%</button>
+              <button type="button" class="ghost-btn wl-zoom-btn wl-zoom-reset" id="wlPageZoomResetBtn" title="Reset this card’s zoom to 100%">100%</button>
               <button type="button" class="ghost-btn wl-zoom-btn" id="wlPageZoomInBtn" aria-label="Zoom in">+</button>
             </span>
             <button type="button" class="ghost-btn" id="wlLivePreviewLargerBtn">Larger</button>
@@ -194,7 +197,7 @@
           </p>
           <p class="wl-settings-hint" id="wlLivePreviewHint">
             Same picture as NDI / SDI / Spout. Card <strong>Preview</strong> loads that URL here;
-            <strong>− / +</strong> zoom the display page; <strong>Larger</strong> expands this preview.
+            <strong>− / +</strong> zoom this card only; <strong>Larger</strong> expands this preview.
           </p>
         </div>
 
@@ -222,9 +225,9 @@
         >
           Exit fullscreen
         </button>
-        <span class="wl-zoom-group" title="Zoom the live display page (Ctrl − / Ctrl +)">
+        <span class="wl-zoom-group" title="Zoom this display card only (independent per page)">
           <button type="button" class="ghost-btn wl-zoom-btn" id="wlPageZoomOutBtnPop" aria-label="Zoom out">−</button>
-          <button type="button" class="ghost-btn wl-zoom-btn wl-zoom-reset" id="wlPageZoomResetBtnPop" title="Reset zoom to 100%">100%</button>
+          <button type="button" class="ghost-btn wl-zoom-btn wl-zoom-reset" id="wlPageZoomResetBtnPop" title="Reset this card’s zoom to 100%">100%</button>
           <button type="button" class="ghost-btn wl-zoom-btn" id="wlPageZoomInBtnPop" aria-label="Zoom in">+</button>
         </span>
         <button type="button" class="primary-btn" id="wlPreviewOverlayCloseBtn">Close</button>
@@ -391,6 +394,70 @@
         </div>
       </section>
 
+      <section class="tab-panel" id="panel-vmix" role="tabpanel" hidden>
+        <div class="ppt-page">
+          <div class="section-intro">
+            <h2>vMix Bridge</h2>
+            <p>Is the vMix DataSource Bridge online for this event (same calendar event as PPT)?</p>
+          </div>
+
+          <div class="ppt-hero" id="vmixHero" data-state="skip" aria-live="polite">
+            <div class="ppt-hero-main">
+              <p class="ppt-status-word" id="vmixStatusWord">—</p>
+              <p class="ppt-hero-label" id="vmixHeroLabel">Checking…</p>
+              <p class="ppt-hero-detail" id="vmixHeroDetail">Waiting for vMix Bridge status.</p>
+            </div>
+            <div class="ppt-hero-actions">
+              <span class="ppt-mode-pill" id="vmixModePill">—</span>
+              <button type="button" class="ghost-btn" id="refreshVmixBtn">Recheck</button>
+            </div>
+          </div>
+
+          <div class="ppt-primary">
+            <div class="ppt-primary-row">
+              <span>Event</span>
+              <strong id="vmixEventValue">—</strong>
+            </div>
+            <div class="ppt-primary-row">
+              <span>vMix API</span>
+              <strong id="vmixHostValue">—</strong>
+            </div>
+            <div class="ppt-primary-row">
+              <span>Host PC</span>
+              <strong id="vmixHostnameValue">—</strong>
+            </div>
+            <div class="ppt-primary-row">
+              <span>Sources</span>
+              <strong id="vmixBindingsValue">—</strong>
+            </div>
+            <div class="ppt-primary-row">
+              <span>Cue</span>
+              <strong id="vmixCueValue">—</strong>
+            </div>
+          </div>
+
+          <details class="ppt-more" id="vmixMoreDetails">
+            <summary>More detail</summary>
+            <dl class="ppt-detail-list">
+              <div>
+                <dt>Heartbeat</dt>
+                <dd id="vmixHeartbeatValue">—</dd>
+              </div>
+              <div>
+                <dt>Last seen</dt>
+                <dd id="vmixLastSeenValue">—</dd>
+              </div>
+              <div>
+                <dt>Matches</dt>
+                <dd id="vmixMatchesValue">—</dd>
+              </div>
+            </dl>
+          </details>
+
+          <p class="note ppt-error-note" id="vmixErrorNote" hidden></p>
+        </div>
+      </section>
+
       <section class="tab-panel is-active" id="panel-status" role="tabpanel">
         <div class="status-dash">
           <div class="status-hero" id="statusHero" data-state="off">
@@ -415,9 +482,11 @@
             <div class="svc" data-svc="neon"><span class="svc-dot"></span><strong>Neon</strong><em id="svcNeon">—</em></div>
             <div class="svc" data-svc="lan"><span class="svc-dot"></span><strong>Local LAN</strong><em id="svcLan">—</em></div>
             <div class="svc" data-svc="ppt"><span class="svc-dot"></span><strong>PPT Bridge</strong><em id="svcPpt">—</em></div>
+            <div class="svc" data-svc="vmix"><span class="svc-dot"></span><strong>vMix Bridge</strong><em id="svcVmix">—</em></div>
             <div class="svc" data-svc="gr"><span class="svc-dot"></span><strong>Green Room</strong><em id="svcGr">—</em></div>
           </div>
           <p class="note status-ppt-note" id="pptBridgeNote" hidden></p>
+          <p class="note status-ppt-note" id="vmixBridgeNote" hidden></p>
 
           <div class="gr-panel" id="grClientsPanel" aria-live="polite">
             <div class="gr-panel-head">
@@ -439,6 +508,14 @@
                 <p class="perf-tip" id="perfTip">Sampling CPU and memory for this kiosk.</p>
               </div>
               <button type="button" class="ghost-btn" id="refreshPerfBtn">Recheck load</button>
+              <button
+                type="button"
+                class="ghost-btn"
+                id="cleanWlOrphansBtn"
+                title="Remove WebLinked sources that are not Enabled (ghost NDI / CPU)"
+              >
+                Clean unused WL
+              </button>
             </div>
             <div class="perf-meters">
               <div class="perf-meter">
@@ -524,6 +601,11 @@
                 <span class="session-card-kicker">PPT Bridge</span>
                 <span class="session-card-value" id="statusPptCard">—</span>
                 <span class="session-card-hint" id="statusPptCardHint">Open PPT Bridge tab</span>
+              </button>
+              <button type="button" class="session-card" data-goto="vmix" id="sessionVmixCard" data-state="empty">
+                <span class="session-card-kicker">vMix Bridge</span>
+                <span class="session-card-value" id="statusVmixCard">—</span>
+                <span class="session-card-hint" id="statusVmixCardHint">Open vMix Bridge tab</span>
               </button>
             </div>
           </div>

@@ -622,6 +622,18 @@ ipcMain.handle('kiosk:pptBridgeStatus', async (_evt, payload) => {
   }
 });
 
+ipcMain.handle('kiosk:vmixBridgeStatus', async (_evt, payload) => {
+  try {
+    return await offlineShow.getVmixBridgeStatus(payload?.eventId);
+  } catch (e) {
+    return {
+      ok: false,
+      online: false,
+      error: e instanceof Error ? e.message : 'vMix Bridge status failed',
+    };
+  }
+});
+
 ipcMain.handle('kiosk:listDisplayClients', async (_evt, payload) => {
   try {
     return await offlineShow.listDisplayClients({ kind: payload?.kind || 'green-room' });
@@ -822,13 +834,44 @@ ipcMain.handle('kiosk:weblinkedSendInput', async (_evt, payload) => {
   }
 });
 
+ipcMain.handle('kiosk:weblinkedExecuteScript', async (_evt, payload) => {
+  try {
+    return await weblinked.executeScript(payload?.script || payload?.js || '', {
+      source: payload?.source || payload?.id || null,
+    });
+  } catch (e) {
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : 'Failed to run WebLinked script',
+    };
+  }
+});
+
+ipcMain.handle('kiosk:weblinkedRemoveOrphans', async (_evt, payload) => {
+  try {
+    const result = await weblinked.removeOrphanSources({
+      keepIds: Array.isArray(payload?.keepIds) ? payload.keepIds : [],
+    });
+    reclaimKioskFocus();
+    return result;
+  } catch (e) {
+    reclaimKioskFocus();
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : 'Failed to remove orphan WebLinked sources',
+      removed: [],
+    };
+  }
+});
+
 ipcMain.handle('kiosk:setOutputArmed', async (_evt, payload) => {
   const armed = Boolean(payload?.armed);
   const url = typeof payload?.url === 'string' ? payload.url.trim() : '';
   const source = payload?.source || payload?.id || null;
 
   if (!armed) {
-    const cleared = await weblinked.clearUrl({ source });
+    // Full disable: tear down NDI/outputs + remove source (not just about:blank).
+    const cleared = await weblinked.disableDisplaySource(source);
     reclaimKioskFocus();
     return {
       ok: cleared.ok,

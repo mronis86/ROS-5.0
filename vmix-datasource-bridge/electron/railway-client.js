@@ -164,11 +164,26 @@ async function validateApi(apiBaseUrl, apiToken) {
   }
 }
 
+/** Heartbeat so Offline Kiosk / Admin can see this bridge online for the event. */
+async function reportVmixBridgeLive(apiBaseUrl, apiToken, eventId, payload = {}) {
+  return railwayFetch(
+    apiBaseUrl,
+    apiToken,
+    `/api/vmix-datasource/${encodeURIComponent(eventId)}/live`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload && typeof payload === 'object' ? payload : {}),
+    }
+  );
+}
+
 module.exports = {
   railwayFetch,
   listCalendarEvents,
   getRunOfShowData,
   getActiveTimer,
+  reportVmixBridgeLive,
   validateApi,
   normalizeApiToken,
   httpFetch,

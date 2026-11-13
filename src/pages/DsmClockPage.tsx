@@ -15,7 +15,11 @@ import {
   DISPLAY_SESSION_PICK_TIME_ALERT,
 } from '../lib/displaySession';
 
-import { applyDsmLayoutModeToForce16x9 } from '../lib/dsmClockLayout';
+import {
+  applyDsmLayoutModeToForce16x9,
+  DSM_FULL_ZOOM_DEFAULT,
+  normalizeDsmFullZoom,
+} from '../lib/dsmClockLayout';
 
 function applyDsmLayoutMode(mode: unknown): boolean | null {
   return applyDsmLayoutModeToForce16x9(mode);
@@ -64,6 +68,7 @@ const DsmClockPage: React.FC = () => {
 
   // DSM layout reference controls (hidden in fullscreen with the rest of page chrome)
   const [force16x9Ref, setForce16x9Ref] = useState(true);
+  const [fullZoomPercent, setFullZoomPercent] = useState(DSM_FULL_ZOOM_DEFAULT);
   const [simSecondary, setSimSecondary] = useState(false);
   const [simOvertime, setSimOvertime] = useState(false);
 
@@ -272,9 +277,11 @@ const DsmClockPage: React.FC = () => {
         const next = applyDsmLayoutMode(res?.mode ?? '16x9');
         if (next != null) setForce16x9Ref(next);
         else setForce16x9Ref(true);
+        setFullZoomPercent(normalizeDsmFullZoom(res?.fullZoom));
       } catch (error) {
         console.warn('DSM layout load failed — keeping 16:9 default:', error);
         setForce16x9Ref(true);
+        setFullZoomPercent(DSM_FULL_ZOOM_DEFAULT);
       }
     };
 
@@ -293,9 +300,14 @@ const DsmClockPage: React.FC = () => {
       },
       onDsmClockLayout: (data: any) => {
         if (!data || String(data.event_id || '') !== String(eventId)) return;
-        const next = applyDsmLayoutMode(data.mode ?? '16x9');
-        if (next != null) setForce16x9Ref(next);
-        else setForce16x9Ref(true);
+        if (data.mode != null && data.mode !== '') {
+          const next = applyDsmLayoutMode(data.mode ?? '16x9');
+          if (next != null) setForce16x9Ref(next);
+          else setForce16x9Ref(true);
+        }
+        if (data.fullZoom != null && data.fullZoom !== '') {
+          setFullZoomPercent(normalizeDsmFullZoom(data.fullZoom));
+        }
       },
       onConnectionChange: (connected: boolean) => {
         console.log('📨 ClockPage: WebSocket connection status:', connected);
@@ -457,6 +469,7 @@ const DsmClockPage: React.FC = () => {
         scheduleItems={scheduleItems}
         networkEnabled={!showDisconnectNotification && !displaySyncPaused}
         force16x9Ref={force16x9Ref}
+        fullZoomPercent={fullZoomPercent}
         simSecondary={simSecondary}
         simOvertime={simOvertime}
       />

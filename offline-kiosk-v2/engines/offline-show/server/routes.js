@@ -504,6 +504,92 @@ function registerRoutes(app, db, helpers) {
     }
   });
 
+  /**
+   * Kiosk Status: is the vMix DataSource Bridge online for this event?
+   */
+  app.get('/api/kiosk/vmix-bridge-status', async (req, res) => {
+    const eventId = String(req.query.eventId || '').trim();
+    if (!eventId) {
+      return res.status(400).json({ ok: false, error: 'eventId is required' });
+    }
+    const tokenStatus = getRailwayApiTokenStatus(db);
+    if (!tokenStatus.configured) {
+      return res.json({
+        ok: true,
+        eventId,
+        online: false,
+        reason: 'no-token',
+        message: 'Add an Integration token to check vMix Bridge status.',
+      });
+    }
+    try {
+      const { data } = await railwayFetch(
+        'GET',
+        `/api/vmix-datasource/${encodeURIComponent(eventId)}`
+      );
+      const session = data?.session || data || {};
+      const lastSeen = session.lastSeen || session.last_seen || null;
+      const lastSeenMs = lastSeen ? new Date(lastSeen).getTime() : 0;
+      const lastSeenAgeMs =
+        lastSeenMs > 0 && Number.isFinite(lastSeenMs) ? Math.max(0, Date.now() - lastSeenMs) : null;
+      const online =
+        session.online === true ||
+        (session.connected === true &&
+          lastSeenMs > 0 &&
+          Date.now() - lastSeenMs <= 25_000);
+
+      let eventName = '';
+      try {
+        const local = db
+          .prepare('SELECT name FROM calendar_events WHERE id = ? OR id LIKE ? LIMIT 1')
+          .get(eventId, `${eventId}%`);
+        eventName = local?.name || '';
+      } catch {
+        /* ignore */
+      }
+      if (!eventName) {
+        try {
+          const cal = await railwayFetch('GET', `/api/calendar-events/${encodeURIComponent(eventId)}`);
+          eventName = cal?.data?.name || '';
+        } catch {
+          /* ignore */
+        }
+      }
+
+      return res.json({
+        ok: true,
+        eventId,
+        eventName: eventName || null,
+        online,
+        lastSeen: lastSeen || null,
+        lastSeenAgeMs,
+        vmixOk: online ? session.vmixOk === true || session.vmix_ok === true : false,
+        vmixHost: online ? session.vmixHost || session.vmix_host || null : null,
+        cueItemId: online ? session.cueItemId ?? session.cue_item_id ?? null : null,
+        cueLabel: online ? session.cueLabel || session.cue_label || null : null,
+        matchOkCount: online
+          ? Number(session.matchOkCount ?? session.match_ok_count) || 0
+          : 0,
+        bindingCount: online
+          ? Number(session.bindingCount ?? session.binding_count) || 0
+          : 0,
+        hostname: online ? session.hostname || null : null,
+        lastError: session.lastError || session.last_error || null,
+        message: online
+          ? 'vMix DataSource Bridge online'
+          : 'No vMix Bridge heartbeat for this event (last ~25s).',
+      });
+    } catch (e) {
+      const status = e?.status || 500;
+      return res.status(status >= 400 && status < 600 ? status : 502).json({
+        ok: false,
+        eventId,
+        online: false,
+        error: e instanceof Error ? e.message : 'Failed to reach Railway vMix status',
+      });
+    }
+  });
+
   app.put('/api/railway-api-token', async (req, res) => {
     const { token } = req.body || {};
     const status = getRailwayApiTokenStatus(db);

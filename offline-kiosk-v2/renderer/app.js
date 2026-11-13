@@ -140,6 +140,7 @@ function presetTemplate(p) {
     row.route = timerModeMeta(row.timerMode).route;
   }
   row.wlSettings = defaultWlSettingsForDisplay(row);
+  row.pageZoomSteps = 0;
   return row;
 }
 
@@ -161,6 +162,7 @@ function normalizeDisplayRow(row, i = 0) {
       next.route = timerModeMeta(mode).route;
     }
     next.wlSettings = normalizeWlSettings(row?.wlSettings, next);
+    next.pageZoomSteps = normalizePageZoomSteps(row?.pageZoomSteps);
     return next;
   }
   const extra = {
@@ -173,7 +175,15 @@ function normalizeDisplayRow(row, i = 0) {
     url: typeof row?.url === 'string' ? row.url.trim() : '',
   };
   extra.wlSettings = normalizeWlSettings(row?.wlSettings, extra);
+  extra.pageZoomSteps = normalizePageZoomSteps(row?.pageZoomSteps);
   return extra;
+}
+
+/** Chromium-like zoom ladder steps (−8…+8). Per display card — not shared. */
+function normalizePageZoomSteps(raw) {
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(-8, Math.min(8, Math.round(n)));
 }
 
 function loadDisplays() {
@@ -213,6 +223,7 @@ function saveDisplays() {
           route: d.route || 'custom',
           timerMode: d.id === 'timer' ? normalizeTimerMode(d.timerMode) : undefined,
           wlSettings: normalizeWlSettings(d.wlSettings, d),
+          pageZoomSteps: normalizePageZoomSteps(d.pageZoomSteps),
           preset: Boolean(d.preset),
         }))
       )
@@ -278,8 +289,6 @@ const state = {
   armedDisplayIds: [],
   /** which card's pipeline the dock/overlay preview is showing */
   previewDisplayId: null,
-  /** Chromium page-zoom steps per display id (0 = 100%). */
-  pageZoomStepsByDisplay: {},
   settingsDisplayId: null,
   weblinked: { running: false, baseUrl: null, port: null, error: '' },
   remoteProvider: null,
@@ -298,6 +307,8 @@ const state = {
   connectivity: null,
   /** @type {Record<string, any> | null} */
   pptBridge: null,
+  /** @type {Record<string, any> | null} */
+  vmixBridge: null,
   /** @type {{ ok?: boolean, clients?: any[], error?: string, reason?: string, message?: string } | null} */
   displayClients: null,
   displayClientBusyId: '',
@@ -307,6 +318,8 @@ const state = {
 
 let pptBridgePollTimer = null;
 let pptBridgeFetchSeq = 0;
+let vmixBridgePollTimer = null;
+let vmixBridgeFetchSeq = 0;
 let displayClientsPollTimer = null;
 let displayClientsFetchSeq = 0;
 
@@ -578,6 +591,26 @@ async function stopWebLinkedEngine() {
   state.weblinked = { ...state.weblinked, stopping: true, starting: false, error: '' };
   renderWebLinkedStatus();
   setDisplayNote('Stopping WebLinked…');
+
+  // Tear down each armed card (NDI/outputs) before killing the process when possible.
+  const armedIds = [...(state.armedDisplayIds || [])];
+  for (const id of armedIds) {
+    try {
+      if (window.kiosk?.setOutputArmed) {
+        await window.kiosk.setOutputArmed({
+          id,
+          source: wlSourceId(id),
+          armed: false,
+          url: '',
+        });
+      }
+    } catch {
+      /* process may already be gone */
+    }
+    markDisplayDisarmed(id);
+  }
+  state.previewDisplayId = null;
+
   const result = await window.kiosk.stopWebLinked();
   state.weblinked = {
     running: Boolean(result?.running),
@@ -588,11 +621,12 @@ async function stopWebLinkedEngine() {
     stopping: false,
   };
   renderWebLinkedStatus();
+  renderDisplays();
   setDisplayNote(
     result?.ok
       ? result.alreadyStopped
         ? 'WebLinked was already stopped.'
-        : 'WebLinked stopped.'
+        : 'WebLinked stopped — all display cards disabled.'
       : result?.error || 'Could not stop WebLinked.'
   );
 }
@@ -1064,6 +1098,269 @@ function stopPptBridgePoll() {
   }
 }
 
+function setVmixText(sel, text) {
+  const el = $(sel);
+  if (el) el.textContent = text == null || text === '' ? '—' : String(text);
+}
+
+function renderVmixBridgeTab(view) {
+  const hero = $('#vmixHero');
+  if (hero) hero.dataset.state = view.state || 'skip';
+  setVmixText('#vmixStatusWord', view.statusWord || '—');
+  setVmixText('#vmixHeroLabel', view.label || '—');
+  setVmixText('#vmixHeroDetail', view.detail || '');
+  setVmixText('#vmixModePill', view.mode || '—');
+  setVmixText('#vmixEventValue', view.event || '—');
+  setVmixText('#vmixHostValue', view.host || '—');
+  setVmixText('#vmixHostnameValue', view.hostname || '—');
+  setVmixText('#vmixBindingsValue', view.bindings || '—');
+  setVmixText('#vmixCueValue', view.cue || '—');
+  setVmixText('#vmixHeartbeatValue', view.heartbeat || '—');
+  setVmixText('#vmixLastSeenValue', view.lastSeen || '—');
+  setVmixText('#vmixMatchesValue', view.matches || '—');
+
+  const err = $('#vmixErrorNote');
+  if (err) {
+    if (view.error) {
+      err.hidden = false;
+      err.textContent = view.error;
+    } else {
+      err.hidden = true;
+      err.textContent = '';
+    }
+  }
+
+  const card = $('#sessionVmixCard');
+  if (card) card.dataset.state = view.state === 'ok' ? 'ready' : view.state === 'bad' ? 'warn' : 'empty';
+  setVmixText('#statusVmixCard', view.cardValue || view.statusWord || view.label || '—');
+  setVmixText('#statusVmixCardHint', view.cardHint || 'Open vMix Bridge tab');
+}
+
+function renderVmixBridgeStatus() {
+  const note = $('#vmixBridgeNote');
+  const vmix = state.vmixBridge;
+  const ev = selectedEvent();
+
+  const blankTab = (partial) => {
+    renderVmixBridgeTab({
+      state: 'skip',
+      statusWord: '—',
+      label: '—',
+      detail: '',
+      mode: '—',
+      event: '—',
+      host: '—',
+      hostname: '—',
+      bindings: '—',
+      cue: '—',
+      heartbeat: '—',
+      lastSeen: '—',
+      matches: '—',
+      cardValue: '—',
+      cardHint: 'Open vMix Bridge tab',
+      ...partial,
+    });
+  };
+
+  if (!state.offlineShowRunning) {
+    setSvc('vmix', 'skip', '—');
+    if (note) {
+      note.hidden = true;
+      note.textContent = '';
+    }
+    blankTab({
+      statusWord: 'Off',
+      label: 'Offline Show not started',
+      detail: 'Start Offline Show on Status first.',
+      cardValue: 'Show off',
+      cardHint: 'Start Offline Show first',
+    });
+    return;
+  }
+  if (!state.eventId) {
+    setSvc('vmix', 'skip', 'Pick event');
+    if (note) {
+      note.hidden = false;
+      note.textContent = 'Select an event on the Event tab to see vMix Bridge status.';
+    }
+    blankTab({
+      statusWord: 'Wait',
+      label: 'Pick an event',
+      detail: 'Select an event on the Event tab.',
+      cardValue: 'Pick event',
+      cardHint: 'Needs a selected event',
+    });
+    return;
+  }
+  if (!vmix) {
+    setSvc('vmix', 'skip', 'Checking…');
+    if (note) {
+      note.hidden = false;
+      note.textContent = `Checking vMix Bridge for ${ev?.name || state.eventId}…`;
+    }
+    blankTab({
+      statusWord: '…',
+      label: 'Checking…',
+      detail: `Looking up ${ev?.name || state.eventId}.`,
+      event: ev?.name || state.eventId,
+      cardValue: 'Checking…',
+      cardHint: 'Polling Railway',
+    });
+    return;
+  }
+  if (vmix.reason === 'no-token' || (!state.tokenConfigured && vmix.online !== true)) {
+    setSvc('vmix', 'skip', 'Need token');
+    if (note) {
+      note.hidden = false;
+      note.textContent = vmix.message || 'Save an Integration token to check vMix Bridge on Railway.';
+    }
+    blankTab({
+      statusWord: 'Token',
+      label: 'Need Integration token',
+      detail: 'Save a token on Status to check Railway.',
+      event: vmix.eventName || ev?.name || state.eventId,
+      cardValue: 'Need token',
+      cardHint: 'Save token on Status',
+      error: vmix.message || null,
+    });
+    return;
+  }
+  if (vmix.error && vmix.online !== true) {
+    setSvc('vmix', 'bad', 'Error');
+    if (note) {
+      note.hidden = false;
+      note.textContent = vmix.error;
+    }
+    blankTab({
+      state: 'bad',
+      statusWord: 'Error',
+      label: 'Could not check vMix Bridge',
+      detail: vmix.error,
+      event: vmix.eventName || ev?.name || state.eventId,
+      cardValue: 'Error',
+      cardHint: vmix.error,
+      error: vmix.error,
+    });
+    return;
+  }
+
+  const eventLabel = vmix.eventName || ev?.name || state.eventId;
+  const age = formatPptAge(vmix.lastSeenAgeMs);
+  const lastSeenText = vmix.lastSeen
+    ? (() => {
+        try {
+          return new Date(vmix.lastSeen).toLocaleTimeString();
+        } catch {
+          return String(vmix.lastSeen);
+        }
+      })()
+    : 'Never';
+  const live = vmix.online === true;
+
+  if (live) {
+    setSvc('vmix', 'ok', 'Online');
+    if (note) {
+      note.hidden = false;
+      const host = vmix.vmixHost ? ` · ${vmix.vmixHost}` : '';
+      note.textContent = `vMix Bridge online · ${eventLabel}${host}`;
+    }
+  } else {
+    setSvc('vmix', 'bad', 'Offline');
+    if (note) {
+      note.hidden = false;
+      note.textContent = `No vMix Bridge online for ${eventLabel} (last ~25s).`;
+    }
+  }
+
+  const bindingsLine = live
+    ? Number(vmix.bindingCount) > 0
+      ? `${vmix.bindingCount} source${Number(vmix.bindingCount) === 1 ? '' : 's'}`
+      : 'No sources bound'
+    : '—';
+  const cueLine = live
+    ? vmix.cueLabel
+      ? String(vmix.cueLabel)
+      : vmix.cueItemId != null
+        ? `Item ${vmix.cueItemId}`
+        : 'Waiting for cue'
+    : '—';
+  const matchesLine = live
+    ? `${Number(vmix.matchOkCount) || 0} ok`
+    : '—';
+
+  renderVmixBridgeTab({
+    state: live ? 'ok' : 'bad',
+    statusWord: live ? 'Online' : 'Offline',
+    label: live ? 'vMix DataSource Bridge' : 'vMix Bridge offline',
+    detail: live
+      ? `Seen ${age}${vmix.vmixOk === false ? ' · vMix API not OK' : ''}`
+      : vmix.lastSeen
+        ? `Last seen ${age}. Start the vMix DataSource Bridge on the show PC for this event.`
+        : 'No bridge heartbeat yet for this event.',
+    mode: live ? (vmix.vmixOk ? 'vMix OK' : 'vMix warn') : '—',
+    event: eventLabel,
+    host: live ? vmix.vmixHost || '—' : '—',
+    hostname: live ? vmix.hostname || '—' : '—',
+    bindings: bindingsLine,
+    cue: cueLine,
+    lastSeen: lastSeenText,
+    heartbeat: live ? `Fresh · ${age}` : vmix.lastSeen ? `Stale · ${age}` : 'None',
+    matches: matchesLine,
+    cardValue: live ? 'Online' : 'Offline',
+    cardHint: live ? bindingsLine : 'No heartbeat',
+    error: !live
+      ? 'Start ros-vmix-datasource-bridge on the show PC, pick this event, and press Start.'
+      : vmix.lastError
+        ? String(vmix.lastError)
+        : vmix.vmixOk === false
+          ? 'Bridge is online but vMix API reported not OK.'
+          : null,
+  });
+}
+
+async function refreshVmixBridgeStatus() {
+  if (!window.kiosk?.vmixBridgeStatus) {
+    state.vmixBridge = { online: false, error: 'vMix status not available in this build.' };
+    renderVmixBridgeStatus();
+    return;
+  }
+  if (!state.offlineShowRunning || !state.eventId) {
+    state.vmixBridge = null;
+    renderVmixBridgeStatus();
+    return;
+  }
+  const seq = ++vmixBridgeFetchSeq;
+  const askedId = pptStatusEventId();
+  try {
+    const result = await window.kiosk.vmixBridgeStatus({ eventId: askedId });
+    if (seq !== vmixBridgeFetchSeq || pptStatusEventId() !== askedId) return;
+    state.vmixBridge = result && typeof result === 'object' ? result : { online: false, error: 'Bad response' };
+  } catch (e) {
+    if (seq !== vmixBridgeFetchSeq || pptStatusEventId() !== askedId) return;
+    state.vmixBridge = {
+      online: false,
+      error: e instanceof Error ? e.message : 'vMix status failed',
+    };
+  }
+  renderVmixBridgeStatus();
+}
+
+function startVmixBridgePoll() {
+  stopVmixBridgePoll();
+  void refreshVmixBridgeStatus();
+  const ms = state.tab === 'vmix' ? 5_000 : 12_000;
+  vmixBridgePollTimer = window.setInterval(() => {
+    void refreshVmixBridgeStatus();
+  }, ms);
+}
+
+function stopVmixBridgePoll() {
+  if (vmixBridgePollTimer) {
+    clearInterval(vmixBridgePollTimer);
+    vmixBridgePollTimer = null;
+  }
+}
+
 function formatAgeMs(ms) {
   if (ms == null || !Number.isFinite(ms)) return 'never';
   const s = Math.max(0, Math.round(ms / 1000));
@@ -1488,6 +1785,7 @@ function renderConnectivity() {
 
   const c = state.connectivity;
   renderPptBridgeStatus();
+  renderVmixBridgeStatus();
   renderDisplayClients();
 
   if (!running) {
@@ -1725,6 +2023,11 @@ async function setTab(tabId) {
   } else {
     stopPptBridgePoll();
   }
+  if (tabId === 'vmix' || tabId === 'status' || (state.offlineShowRunning && state.eventId)) {
+    startVmixBridgePoll();
+  } else {
+    stopVmixBridgePoll();
+  }
   if (tabId === 'status' || state.offlineShowRunning) {
     startDisplayClientsPoll();
   } else {
@@ -1733,6 +2036,8 @@ async function setTab(tabId) {
   if (tabId === 'displays') {
     void refreshWebLinkedStatus();
     startWlLivePreviewLoop();
+    // Prune leftover engine sources when opening Displays.
+    if (state.weblinked?.running) void reconcileWebLinkedOrphans({ quiet: true });
   } else {
     stopWlLivePreviewLoop();
   }
@@ -1796,11 +2101,14 @@ function renderEventBrowser() {
     selectBtn.addEventListener('click', () => {
       state.eventId = ev.id;
       state.pptBridge = null;
+      state.vmixBridge = null;
       syncEventChrome();
       renderEventBrowser();
       renderPptBridgeStatus();
+      renderVmixBridgeStatus();
       renderDisplayClients();
       startPptBridgePoll();
+      startVmixBridgePoll();
       // Re-push armed WebLinked views onto the calendar UUID (fixes 00:00 clocks).
       void rearmArmedDisplaysForEvent();
     });
@@ -1843,7 +2151,12 @@ async function rearmArmedDisplaysForEvent() {
         url,
         force: true,
       });
-      if (result?.ok) ok += 1;
+      if (result?.ok) {
+        ok += 1;
+        if (getDisplayZoomSteps(row.id) !== 0) {
+          window.setTimeout(() => void applyWlPageZoom(row.id, { quiet: true }), 400);
+        }
+      }
     } catch {
       /* ignore one card */
     }
@@ -1907,8 +2220,8 @@ function renderDisplays() {
           ? 'Preview'
           : 'Selected'
         : isDisplayArmed(row.id)
-          ? 'On WebLinked'
-          : 'Standby';
+          ? 'Enabled'
+          : 'Disabled';
 
     const urlInput = document.createElement('input');
     urlInput.className = 'display-card-url';
@@ -1963,9 +2276,13 @@ function renderDisplays() {
 
     const pushBtn = document.createElement('button');
     pushBtn.type = 'button';
-    pushBtn.className = 'ghost-btn display-row-btn';
-    pushBtn.textContent = isDisplayArmed(row.id) ? 'Clear WL' : 'Push WL';
-    pushBtn.title = 'Push or clear this card’s WebLinked source (other cards stay up)';
+    pushBtn.className = isDisplayArmed(row.id)
+      ? 'ghost-btn display-row-btn'
+      : 'primary-btn display-row-btn';
+    pushBtn.textContent = isDisplayArmed(row.id) ? 'Disable' : 'Enable';
+    pushBtn.title = isDisplayArmed(row.id)
+      ? 'Fully disable this card (removes NDI / outputs / WebLinked source)'
+      : 'Enable this card (load page + apply NDI / outputs)';
     pushBtn.disabled = !ready;
     pushBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -2448,14 +2765,22 @@ async function applySimpleWlSettings() {
   row.wlSettings = settings;
   saveDisplays();
 
-  // Each card owns its WebLinked source — Apply always targets this card only.
+  // Disabled cards: persist settings only — do not create WebLinked sources / NDI ghosts.
+  if (!isDisplayArmed(row.id)) {
+    if (applyBtn) applyBtn.disabled = false;
+    setWlSettingsNote(`Saved ${row.name} (card disabled — Enable to push outputs).`);
+    setDisplayNote(`${row.name} settings saved. Enable the card to start NDI/outputs.`);
+    renderDisplays();
+    return;
+  }
+
+  // Enabled card: Apply targets this card’s live WebLinked source only.
   let result = await window.kiosk.weblinkedApplySimpleSettings(
     wlSettingsToPayload(settings, row, { save: true })
   );
   if (result?.ok) {
     const notes = Array.isArray(result.notes) ? result.notes.filter(Boolean) : [];
     result.notes = [`Saved ${row.name}`, ...notes];
-    markDisplayArmed(row.id);
   }
 
   if (applyBtn) applyBtn.disabled = false;
@@ -2631,90 +2956,96 @@ async function selectDisplayForPreview(id) {
   );
 }
 
-const WL_MOD_CTRL = 1 << 2;
-/** Windows VK codes for Chromium Ctrl+/- / Ctrl+0 page zoom. */
-const WL_VK_OEM_PLUS = 0xbb;
-const WL_VK_OEM_MINUS = 0xbd;
-const WL_VK_0 = 0x30;
+function getDisplayZoomSteps(id) {
+  return normalizePageZoomSteps(findDisplay(id)?.pageZoomSteps);
+}
+
+function setDisplayZoomSteps(id, steps) {
+  const row = findDisplay(id);
+  if (!row) return 0;
+  row.pageZoomSteps = normalizePageZoomSteps(steps);
+  saveDisplays();
+  return row.pageZoomSteps;
+}
 
 function wlPageZoomLabel(steps) {
-  const n = Number(steps) || 0;
-  // Chromium default zoom steps are ~20% each from 100%.
+  const n = normalizePageZoomSteps(steps);
+  // Chromium-like ~20% steps from 100%.
   const pct = Math.round(100 * Math.pow(1.2, n));
   return `${pct}%`;
 }
 
 function syncWlPageZoomButtons() {
   const id = activePreviewDisplayId();
-  const steps = id ? Number(state.pageZoomStepsByDisplay[id]) || 0 : 0;
+  const steps = id ? getDisplayZoomSteps(id) : 0;
   const label = wlPageZoomLabel(steps);
   for (const el of [$('#wlPageZoomResetBtn'), $('#wlPageZoomResetBtnPop')]) {
-    if (el) el.textContent = label;
+    if (el) {
+      el.textContent = label;
+      el.title = id
+        ? `Zoom for ${findDisplay(id)?.name || id} only (reset to 100%)`
+        : 'Reset zoom to 100%';
+    }
   }
 }
 
-async function wlSendCtrlKey(keyCode) {
-  const id = activePreviewDisplayId();
+/**
+ * Apply absolute CSS zoom on one WebLinked source via /api/script?source=…
+ * (not Ctrl± — that could leak across sources).
+ */
+async function applyWlPageZoom(id, { quiet = false } = {}) {
+  const row = findDisplay(id);
   const source = id ? wlSourceId(id) : '';
+  if (!row || !source) return { ok: false, error: 'No display' };
   if (!state.weblinked?.running) {
-    setDisplayNote('Start WebLinked first.');
-    return { ok: false };
+    if (!quiet) setDisplayNote('Start WebLinked first.');
+    return { ok: false, error: 'WebLinked not running' };
   }
-  if (!source) {
-    setDisplayNote('Select a display card (or Preview / Push) first.');
-    return { ok: false };
+  if (!isDisplayArmed(id)) {
+    if (!quiet) setDisplayNote(`Enable ${row.name} before zooming.`);
+    return { ok: false, error: 'Display disabled' };
   }
-  if (!window.kiosk?.weblinkedSendInput) {
-    setDisplayNote('Page zoom only available in the Electron kiosk.');
-    return { ok: false };
+  if (!window.kiosk?.weblinkedExecuteScript) {
+    if (!quiet) setDisplayNote('Page zoom only available in the Electron kiosk.');
+    return { ok: false, error: 'Bridge unavailable' };
   }
+  const steps = getDisplayZoomSteps(id);
+  const factor = Math.pow(1.2, steps);
+  const zoomCss = Number(factor.toFixed(6));
+  const script = `(function(){var z=${JSON.stringify(String(zoomCss))};try{document.documentElement.style.zoom=z;if(document.body)document.body.style.zoom=z;}catch(e){}})();`;
   try {
-    if (!wlInteractive) setWlInteractive(true);
-    await window.kiosk.weblinkedSendInput({ type: 'focus', focused: true, source });
-    const mods = WL_MOD_CTRL;
-    await window.kiosk.weblinkedSendInput({
-      type: 'key',
-      action: 'down',
-      key_code: keyCode,
-      character: 0,
-      modifiers: mods,
-      source,
-    });
-    await window.kiosk.weblinkedSendInput({
-      type: 'key',
-      action: 'up',
-      key_code: keyCode,
-      character: 0,
-      modifiers: mods,
-      source,
-    });
-    return { ok: true, source, id };
+    const result = await window.kiosk.weblinkedExecuteScript({ source, script });
+    if (!result?.ok) {
+      if (!quiet) setDisplayNote(result?.error || `Zoom failed · ${row.name}`);
+      return result || { ok: false };
+    }
+    return { ok: true, steps, factor: zoomCss, source };
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Zoom failed';
-    setDisplayNote(msg);
+    if (!quiet) setDisplayNote(msg);
     return { ok: false, error: msg };
   }
 }
 
-/** Zoom the selected WebLinked display page in / out / reset (Chromium Ctrl± / Ctrl+0). */
+/** Zoom the selected WebLinked display page in / out / reset — this card only. */
 async function wlPageZoom(delta) {
   const id = activePreviewDisplayId();
   if (!id) {
-    setDisplayNote('Select a display card (or Preview / Push) first.');
+    setDisplayNote('Select a display card (or Preview / Enable) first.');
     return { ok: false };
   }
-  const keyCode = delta === 0 ? WL_VK_0 : delta > 0 ? WL_VK_OEM_PLUS : WL_VK_OEM_MINUS;
-  const result = await wlSendCtrlKey(keyCode);
-  if (!result?.ok) return result;
-  const prev = Number(state.pageZoomStepsByDisplay[id]) || 0;
-  const next = delta === 0 ? 0 : Math.max(-8, Math.min(8, prev + (delta > 0 ? 1 : -1)));
-  state.pageZoomStepsByDisplay[id] = next;
+  const prev = getDisplayZoomSteps(id);
+  const next =
+    delta === 0 ? 0 : normalizePageZoomSteps(prev + (delta > 0 ? 1 : -1));
+  setDisplayZoomSteps(id, next);
   syncWlPageZoomButtons();
+  const result = await applyWlPageZoom(id);
+  if (!result?.ok) return result;
   const row = findDisplay(id);
   setDisplayNote(
     delta === 0
-      ? `Zoom reset · ${row?.name || id}`
-      : `Zoom ${wlPageZoomLabel(next)} · ${row?.name || id}`
+      ? `Zoom reset · ${row?.name || id} only`
+      : `Zoom ${wlPageZoomLabel(next)} · ${row?.name || id} only`
   );
   return { ok: true, steps: next };
 }
@@ -2971,6 +3302,7 @@ async function openDisplayPreview(id) {
   // or re-POST /api/url when this pipeline is already up.
   if (isDisplayArmed(row.id)) {
     state.previewDisplayId = row.id;
+    syncWlPageZoomButtons();
     renderDisplays();
     await setTab('displays');
     placeWlLivePreview('dock');
@@ -2991,6 +3323,10 @@ async function openDisplayPreview(id) {
       );
     } else {
       setDisplayNote(`Live preview · ${row.name} (already loaded — no reload)`);
+    }
+    // Re-assert this card's own zoom (does not touch other sources).
+    if (getDisplayZoomSteps(row.id) !== 0) {
+      void applyWlPageZoom(row.id, { quiet: true });
     }
     return;
   }
@@ -3018,6 +3354,7 @@ async function openDisplayPreview(id) {
   }
   markDisplayArmed(row.id);
   state.previewDisplayId = row.id;
+  syncWlPageZoomButtons();
   renderDisplays();
   await setTab('displays');
   placeWlLivePreview('dock');
@@ -3028,6 +3365,10 @@ async function openDisplayPreview(id) {
       : `Live preview · ${row.name} (use Larger to expand)`
   );
   void refreshWebLinkedStatus();
+  // Page just loaded — apply this card's saved zoom after a short settle.
+  if (getDisplayZoomSteps(row.id) !== 0) {
+    window.setTimeout(() => void applyWlPageZoom(row.id, { quiet: true }), 400);
+  }
 }
 
 async function togglePushWebLinked(id) {
@@ -3053,8 +3394,9 @@ async function togglePushWebLinked(id) {
     }
     markDisplayDisarmed(id);
     renderDisplays();
-    setDisplayNote(`${row.name} cleared (other cards unchanged).`);
+    setDisplayNote(`${row.name} disabled — NDI/outputs removed (other cards unchanged).`);
     void refreshWebLinkedStatus();
+    void reconcileWebLinkedOrphans({ quiet: true });
     return;
   }
 
@@ -3063,7 +3405,7 @@ async function togglePushWebLinked(id) {
     return;
   }
   if (!state.weblinked?.running) {
-    setDisplayNote('Start WebLinked first, then Push.');
+    setDisplayNote('Start WebLinked first, then Enable.');
     return;
   }
   const url = (row.url || pageUrlForDisplay(row) || '').trim();
@@ -3071,7 +3413,7 @@ async function togglePushWebLinked(id) {
     setDisplayNote('Enter a valid http(s) URL before pushing to WebLinked.');
     return;
   }
-  setDisplayNote(`Pushing ${row.name} → WebLinked…`);
+  setDisplayNote(`Enabling ${row.name}…`);
   const applied = await applyDisplayWlSettings(row.id, { quiet: true, save: false });
   if (!applied?.ok) {
     setDisplayNote(applied?.error || `Could not apply ${row.name} output settings.`);
@@ -3095,9 +3437,13 @@ async function togglePushWebLinked(id) {
   }
   markDisplayArmed(row.id);
   state.previewDisplayId = row.id;
+  syncWlPageZoomButtons();
   renderDisplays();
-  setDisplayNote(`${row.name} → WebLinked (independent source).`);
+  setDisplayNote(`${row.name} enabled (page + outputs).`);
   void refreshWebLinkedStatus();
+  if (getDisplayZoomSteps(row.id) !== 0) {
+    window.setTimeout(() => void applyWlPageZoom(row.id, { quiet: true }), 400);
+  }
 }
 
 async function removeDisplayCard(id) {
@@ -3187,19 +3533,35 @@ function renderPerfHealth(snap) {
       : '—'
   );
 
+  const wlSources = Number(snap?.weblinked?.sources) || 0;
   const wlEl = $('#perfWl');
   if (wlEl) {
     if (!snap?.ok) wlEl.textContent = '—';
     else if (!snap.weblinked?.running) wlEl.textContent = 'Off';
     else {
-      const n = Number(snap.weblinked.sources) || 0;
-      wlEl.textContent = n === 1 ? '1 source' : `${n} sources`;
+      wlEl.textContent = wlSources === 1 ? '1 source' : `${wlSources} sources`;
+      if (wlSources > armedCount) {
+        wlEl.title = `Engine pipelines: ${(snap.weblinked.sourceIds || []).join(', ') || wlSources}. Only ${armedCount} card(s) Enabled — extras are leftovers.`;
+      } else {
+        wlEl.title = (snap.weblinked.sourceIds || []).join(', ') || '';
+      }
     }
   }
 
   const armedEl = $('#perfArmed');
   if (armedEl) {
-    armedEl.textContent = remoteOpen ? `${armedCount} · RemoteOp` : String(armedCount);
+    // RemoteOp is a separate Electron webview — not a WebLinked source count.
+    armedEl.textContent = String(armedCount);
+    armedEl.title = remoteOpen
+      ? `${armedCount} Enabled display card(s); RemoteOp tab is also open (separate from WebLinked).`
+      : `${armedCount} Enabled display card(s)`;
+  }
+
+  if (snap?.weblinked?.running && wlSources > Math.max(armedCount, 0)) {
+    tips.unshift(
+      `WebLinked has ${wlSources} pipelines but only ${armedCount} Enabled card(s) — leftover sources still use CPU/NDI.`
+    );
+    if (tipEl) tipEl.textContent = tips.filter(Boolean)[0] || tipEl.textContent;
   }
 
   const stackEl = $('#perfStack');
@@ -3218,12 +3580,56 @@ function renderPerfHealth(snap) {
   }
 }
 
+/** Drop WebLinked sources that are not Enabled (ghost NDI / CPU). */
+async function reconcileWebLinkedOrphans({ quiet = false } = {}) {
+  if (!window.kiosk?.weblinkedRemoveOrphans) return { ok: false, error: 'Unavailable' };
+  if (!state.weblinked?.running) return { ok: true, skipped: true, removed: [] };
+  // Keep only Enabled cards — Standby/Preview selection must not preserve leftovers.
+  const keepIds = [
+    ...new Set((state.armedDisplayIds || []).filter(Boolean).map((id) => wlSourceId(id))),
+  ];
+  try {
+    const result = await window.kiosk.weblinkedRemoveOrphans({ keepIds });
+    if (!quiet && result?.ok && (result.removed || []).length) {
+      setDisplayNote(
+        `Removed ${result.removed.length} unused WebLinked source(s): ${result.removed.join(', ')}`
+      );
+    }
+    return result;
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Cleanup failed', removed: [] };
+  }
+}
+
+let orphanCleanupBusy = false;
+let lastOrphanCleanupAt = 0;
+
 async function refreshPerfHealth() {
   if (perfHealthBusy || !window.kiosk?.getSystemHealth) return;
   if (state.tab !== 'status') return;
   perfHealthBusy = true;
   try {
-    const snap = await window.kiosk.getSystemHealth();
+    let snap = await window.kiosk.getSystemHealth();
+    const wlN = Number(snap?.weblinked?.sources) || 0;
+    const armedN = state.armedDisplayIds.length;
+    // Auto-prune leftovers when engine has more pipelines than Enabled cards.
+    if (
+      snap?.weblinked?.running &&
+      wlN > armedN &&
+      !orphanCleanupBusy &&
+      Date.now() - lastOrphanCleanupAt > 20_000
+    ) {
+      orphanCleanupBusy = true;
+      lastOrphanCleanupAt = Date.now();
+      try {
+        const cleaned = await reconcileWebLinkedOrphans({ quiet: false });
+        if (cleaned?.ok && (cleaned.removed || []).length) {
+          snap = await window.kiosk.getSystemHealth();
+        }
+      } finally {
+        orphanCleanupBusy = false;
+      }
+    }
     renderPerfHealth(snap && typeof snap === 'object' ? snap : { ok: false, level: 'warn' });
   } catch (e) {
     renderPerfHealth({
@@ -3656,6 +4062,7 @@ async function connectOfflineShow() {
       await applyMode('cloud-connected');
     }
     startPptBridgePoll();
+    startVmixBridgePoll();
     startDisplayClientsPoll();
   } finally {
     state.busy = false;
@@ -3684,12 +4091,15 @@ async function disconnectOfflineShow() {
     state.eventId = '';
     state.connectivity = null;
     state.pptBridge = null;
+    state.vmixBridge = null;
     state.displayClients = null;
     stopPptBridgePoll();
+    stopVmixBridgePoll();
     stopDisplayClientsPoll();
     renderEventBrowser();
     syncEventChrome();
     renderPptBridgeStatus();
+    renderVmixBridgeStatus();
     renderDisplayClients();
   } finally {
     state.busy = false;
@@ -3782,6 +4192,7 @@ async function bootstrap() {
     if (e.target?.id === 'wlLogOverlay') closeWebLinkedLogViewer();
   });
   $('#refreshPptBtn')?.addEventListener('click', () => void refreshPptBridgeStatus());
+  $('#refreshVmixBtn')?.addEventListener('click', () => void refreshVmixBridgeStatus());
   $('#refreshGrClientsBtn')?.addEventListener('click', () => void refreshDisplayClients());
   $('#grStartCancelBtn')?.addEventListener('click', () => closeGrStartModal());
   $('#grStartConfirmBtn')?.addEventListener('click', () => void confirmGrStartModal());
@@ -3873,6 +4284,20 @@ async function bootstrap() {
   $('#refreshEventsBtn')?.addEventListener('click', () => void refreshEventsFromShow());
   $('#refreshConnBtn')?.addEventListener('click', () => void refreshConnectivityOnly());
   $('#refreshPerfBtn')?.addEventListener('click', () => void refreshPerfHealth());
+  $('#cleanWlOrphansBtn')?.addEventListener('click', () => {
+    void (async () => {
+      const result = await reconcileWebLinkedOrphans({ quiet: false });
+      if (result?.ok && !(result.removed || []).length) {
+        setDisplayNote(
+          result.skipped
+            ? 'WebLinked is off — nothing to clean.'
+            : 'No unused WebLinked sources (engine matches Enabled cards).'
+        );
+      }
+      void refreshPerfHealth();
+      void refreshWebLinkedStatus();
+    })();
+  });
   $('#syncCloudBtn')?.addEventListener('click', () => void syncCloudNow());
   $('#modeLanBtn')?.addEventListener('click', () => void requestModeChange('lan-only'));
   $('#modeCloudBtn')?.addEventListener('click', () => void requestModeChange('cloud-connected'));
@@ -3908,6 +4333,7 @@ async function bootstrap() {
       setEventNote('Offline Show already running — checking cloud / loading events…');
       await refreshEventsFromShow();
       startPptBridgePoll();
+      startVmixBridgePoll();
       startDisplayClientsPoll();
     } else {
       renderConnectivity();

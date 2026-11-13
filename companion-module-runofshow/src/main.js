@@ -5,8 +5,11 @@ const UpdateFeedbacks = require('./feedbacks')
 const UpdateVariableDefinitions = require('./variables')
 const {
 	normalizeDsmLayoutMode,
+	normalizeDsmStillMode,
+	normalizeDsmFrameMode,
 	effectiveDsmLayoutMode,
 	dsmLayoutLabel,
+	dsmFrameLabel,
 } = require('./dsm-layout')
 
 class RunOfShowInstance extends InstanceBase {
@@ -152,22 +155,38 @@ class RunOfShowInstance extends InstanceBase {
 	}
 
 	/**
-	 * Publish DSM mode variables (still available for Triggers if wanted).
-	 * Sets dsm_mode + bumps dsm_fire so Triggers always see a change (even LED→LED).
+	 * Publish DSM variables. Still presses bump dsm_fire; layout-only overrides do not
+	 * (avoids Triggers re-mashing PPT/LED/VID when someone toggles 16:9 / Full).
 	 */
-	publishDsmMode(mode, source = 'manual') {
-		const normalized = normalizeDsmLayoutMode(mode)
-		this.lastDsmMode = normalized
+	publishDsmMode(mode, source = 'manual', { bumpFire = true } = {}) {
+		const still = normalizeDsmStillMode(mode)
+		const raw = String(mode || '')
+			.toLowerCase()
+			.replace(/[\s:_-]+/g, '')
+		let published = still
+		if (!published) {
+			if (raw === '16x9' || raw === '169') published = '16x9'
+			else if (raw === 'full' || raw === 'fulldsm') published = 'full'
+			else published = normalizeDsmLayoutMode(mode)
+		}
+		this.lastDsmMode = published
 		this.lastDsmSource = source
-		this.dsmFireCount = (Number(this.dsmFireCount) || 0) + 1
+		if (bumpFire) {
+			this.dsmFireCount = (Number(this.dsmFireCount) || 0) + 1
+		}
 		this.updateVariableValues()
-		this.log('info', `DSM mode published: ${dsmLayoutLabel(normalized)} (${source}) fire=${this.dsmFireCount}`)
-		return normalized
+		this.log(
+			'info',
+			`DSM published: ${dsmLayoutLabel(published)} (${source}) fire=${this.dsmFireCount}${bumpFire ? '' : ' (no fire bump)'}`
+		)
+		return published
 	}
 
-	/** Config keys for the Companion button that owns each DSM mode. */
+	/** Config keys for LED / VID / PPT still buttons only. */
 	dsmButtonConfigIds(mode) {
-		const key = { full: 'Full', led: 'Led', vid: 'Vid', ppt: 'Ppt' }[normalizeDsmLayoutMode(mode)]
+		const still = normalizeDsmStillMode(mode)
+		if (!still) return null
+		const key = { led: 'Led', vid: 'Vid', ppt: 'Ppt' }[still]
 		return {
 			page: `dsmBtn${key}Page`,
 			row: `dsmBtn${key}Row`,
@@ -176,14 +195,17 @@ class RunOfShowInstance extends InstanceBase {
 	}
 
 	/**
-	 * Press the Companion button configured for this DSM mode (page / row / column).
-	 * Uses Companion's local HTTP API so that button can hold Ultrix / ATEM / vMix / OBS / Ross Talk actions.
-	 * Page 0 or empty = not configured (skip).
-	 * Dedupes overlapping cue-load + watch presses so LED/PPT do not multi-fire or stomp each other.
+	 * Press the Companion still button for LED / VID / PPT (page / row / column).
+	 * Full / 16:9 are layout overrides and never press here.
 	 */
 	async pressDsmCompanionButton(mode, { allowRepeat = false } = {}) {
-		const normalized = normalizeDsmLayoutMode(mode)
+		const normalized = normalizeDsmStillMode(mode)
+		if (!normalized) {
+			this.log('debug', `DSM press skipped — ${mode} is not a still (LED/VID/PPT)`)
+			return false
+		}
 		const ids = this.dsmButtonConfigIds(normalized)
+		if (!ids) return false
 		const page = parseInt(this.config?.[ids.page], 10)
 		if (!Number.isFinite(page) || page < 1) {
 			this.log('debug', `DSM ${normalized}: no Companion button page set — skip press`)
@@ -244,26 +266,63 @@ class RunOfShowInstance extends InstanceBase {
 		}
 	}
 
-	/** Manual preset / action: DSM Clock layout + publish + press configured Companion button. */
-	async applyDsmMode(mode, { layout = true, source = 'manual' } = {}) {
-		const normalized = normalizeDsmLayoutMode(mode)
+	/** Manual override: DSM Clock frame only (16:9 ON or Full). Never presses still buttons. */
+	async applyDsmLayoutOverride(frame, source = 'layout_override') {
+		const normalized = normalizeDsmFrameMode(frame)
 		const eventId = this.config?.eventId
-		if (layout && eventId) {
+		// API accepts full | led|vid|ppt|16x9 — full = 16:9 off; anything else = 16:9 on
+		const apiMode = normalized === 'full' ? 'full' : '16x9'
+		if (eventId) {
 			try {
-				await this.apiPost('/api/dsm-clock/layout', { event_id: eventId, mode: normalized })
-				this.log('info', `DSM Clock layout set to ${normalized}`)
+				await this.apiPost('/api/dsm-clock/layout', { event_id: eventId, mode: apiMode })
+				this.log('info', `DSM Clock layout override → ${dsmFrameLabel(normalized)}`)
 			} catch (err) {
-				this.log('error', `DSM Clock layout failed: ${err.message}`)
+				this.log('error', `DSM Clock layout override failed: ${err.message}`)
 			}
+		} else {
+			this.log('warn', 'DSM layout override: Event ID is required')
 		}
-		this.publishDsmMode(normalized, source)
-		await this.pressDsmCompanionButton(normalized, { allowRepeat: source === 'manual' })
+		this.publishDsmMode(normalized === 'full' ? 'full' : '16x9', source, { bumpFire: false })
 		return normalized
 	}
 
 	/**
-	 * On cue load: if the row has DSM enabled, publish mode + press the configured Companion button.
-	 * force=true ignores the row checkbox (manual path via applyDsmMode).
+	 * Still path (LED / VID / PPT): set 16:9 clock frame + press configured Companion button.
+	 * Used for manual Companion presses and (via fireDsmForLoadedItem) cue-load when DSM is checked.
+	 */
+	async applyDsmStill(mode, { layout = true, source = 'manual' } = {}) {
+		const normalized = normalizeDsmStillMode(mode)
+		if (!normalized) {
+			this.log('warn', `DSM still skipped — invalid still mode: ${mode}`)
+			return null
+		}
+		const eventId = this.config?.eventId
+		if (layout && eventId) {
+			try {
+				// Stills always use the 16:9 DSM frame
+				await this.apiPost('/api/dsm-clock/layout', { event_id: eventId, mode: '16x9' })
+				this.log('info', `DSM Clock layout set to 16:9 for ${dsmLayoutLabel(normalized)}`)
+			} catch (err) {
+				this.log('error', `DSM Clock layout failed: ${err.message}`)
+			}
+		}
+		this.publishDsmMode(normalized, source, { bumpFire: true })
+		await this.pressDsmCompanionButton(normalized, { allowRepeat: source === 'manual' })
+		return normalized
+	}
+
+	/** @deprecated Prefer applyDsmStill / applyDsmLayoutOverride. Kept for any external callers. */
+	async applyDsmMode(mode, { layout = true, source = 'manual' } = {}) {
+		const still = normalizeDsmStillMode(mode)
+		if (still) return this.applyDsmStill(still, { layout, source })
+		const asFull =
+			normalizeDsmLayoutMode(mode) === 'full' || normalizeDsmFrameMode(mode) === 'full'
+		return this.applyDsmLayoutOverride(asFull ? 'full' : '16x9', source === 'manual' ? 'layout_override' : source)
+	}
+
+	/**
+	 * Cue load: only when the row has DSM enabled.
+	 * LED/VID/PPT → press that still button. Full → layout already set by server; no still press.
 	 */
 	async fireDsmForLoadedItem(itemId, { force = false, mode: modeOverride } = {}) {
 		const item = this.findScheduleItem(itemId)
@@ -277,13 +336,16 @@ class RunOfShowInstance extends InstanceBase {
 				: item
 					? effectiveDsmLayoutMode(item)
 					: 'led'
-		// Server already set DSM Clock layout on load; Companion publishes + presses button.
-		if (force) {
-			await this.applyDsmMode(mode, { layout: true, source: 'manual' })
-		} else {
-			this.publishDsmMode(mode, 'cue_load')
-			await this.pressDsmCompanionButton(mode, { allowRepeat: false })
+		const still = normalizeDsmStillMode(mode)
+		if (still) {
+			// Server already applied clock layout; press still only (no second layout race).
+			this.publishDsmMode(still, force ? 'manual' : 'cue_load', { bumpFire: true })
+			await this.pressDsmCompanionButton(still, { allowRepeat: force === true })
+			return true
 		}
+		// Row mode Full: clock layout only (server/API); do not mash a still button.
+		this.publishDsmMode('full', force ? 'layout_override' : 'cue_load', { bumpFire: false })
+		this.log('info', `DSM cue ${itemId}: Full layout — no still button press`)
 		return true
 	}
 
@@ -540,11 +602,19 @@ class RunOfShowInstance extends InstanceBase {
 			},
 			{
 				type: 'static-text',
-				id: 'dsmHeading',
-				label: 'DSM → Companion buttons',
+				id: 'dsmLayoutHeading',
+				label: 'DSM Clock · layout overrides (manual)',
 				width: 12,
 				value:
-					'Build one Companion page with Full / LED / VID / PPT buttons (put Ultrix, ATEM, vMix, OBS, Ross Talk, etc. on those buttons). Enter each button page / row / column below. On cue load (and when you press a DSM preset), this module presses that button. Page 0 = unused.',
+					'Presets DSM · 16:9 and DSM · Full are direct clock-frame overrides only. They never press PPT / LED / VIDEO still buttons. Use them from Companion anytime.',
+			},
+			{
+				type: 'static-text',
+				id: 'dsmHeading',
+				label: 'DSM stills → Companion buttons (PPT / LED / VIDEO)',
+				width: 12,
+				value:
+					'Put Ultrix / ATEM / vMix / OBS / Ross Talk on three Companion buttons (PPT, LED, VIDEO). Enter page / row / column below. Press those presets manually anytime, or auto-press when a row has the DSM checkbox and that cue is loaded. Do not put ROS DSM actions on those same buttons. Page 0 = unused.',
 			},
 			{
 				type: 'textinput',
@@ -566,11 +636,11 @@ class RunOfShowInstance extends InstanceBase {
 			{
 				type: 'checkbox',
 				id: 'dsmPublishOnCueLoad',
-				label: 'Press DSM button on cue load',
+				label: 'Press DSM still on cue load',
 				width: 8,
 				default: true,
 				tooltip:
-					'When ON, loading a DSM-enabled cue presses the Companion button for that row DSM mode once per cue change (and updates dsm_mode / dsm_fire). Do not also Trigger the same buttons from dsm_fire.',
+					'When ON, loading a cue with the DSM checkbox presses the Companion still button for that row mode (PPT / LED / VIDEO) once per cue change. Full rows only update clock layout (no still press). Do not also Trigger the same buttons from dsm_fire.',
 			},
 			{
 				type: 'number',
@@ -582,23 +652,23 @@ class RunOfShowInstance extends InstanceBase {
 				max: 10,
 				tooltip: 'How often to check for cue loads from ROS/OSC (when press on cue load is ON).',
 			},
-			...this.dsmButtonLocationFields('Full', 'full'),
 			...this.dsmButtonLocationFields('LED', 'led'),
 			...this.dsmButtonLocationFields('VID', 'vid'),
 			...this.dsmButtonLocationFields('PPT', 'ppt'),
 		]
 	}
 
-	/** Page / row / column fields for one DSM mode button. */
+	/** Page / row / column fields for one DSM still button (LED / VID / PPT). */
 	dsmButtonLocationFields(label, mode) {
 		const ids = this.dsmButtonConfigIds(mode)
+		if (!ids) return []
 		return [
 			{
 				type: 'static-text',
 				id: `dsmBtn${label}Heading`,
-				label: `DSM · ${label} button`,
+				label: `DSM · ${label} still`,
 				width: 12,
-				value: `Companion location to press for ${label} DSM.`,
+				value: `Companion location to press for ${label} still (manual or DSM-checkbox cue load).`,
 			},
 			{
 				type: 'number',
@@ -807,10 +877,24 @@ class RunOfShowInstance extends InstanceBase {
 			],
 		}
 
+		// Layout overrides — clock frame only (no still press)
+		presets.dsm_clock_16x9 = {
+			type: 'button',
+			category: 'DSM',
+			name: 'DSM · 16:9 (layout override)',
+			style: {
+				text: 'DSM\n16:9',
+				size: 'auto',
+				color: combineRgb(0, 0, 0),
+				bgcolor: combineRgb(245, 158, 11),
+			},
+			feedbacks: [],
+			steps: [{ down: [{ actionId: 'dsm_clock_16x9', options: {} }], up: [] }],
+		}
 		presets.dsm_full = {
 			type: 'button',
 			category: 'DSM',
-			name: 'DSM · Full',
+			name: 'DSM · Full (layout override)',
 			style: {
 				text: 'DSM\nFull',
 				size: 'auto',
@@ -820,10 +904,24 @@ class RunOfShowInstance extends InstanceBase {
 			feedbacks: [],
 			steps: [{ down: [{ actionId: 'dsm_mode_full', options: {} }], up: [] }],
 		}
+		presets.dsm_clock_full = {
+			type: 'button',
+			category: 'DSM',
+			name: 'DSM · Full (layout override)',
+			style: {
+				text: 'DSM\nFull',
+				size: 'auto',
+				color: combineRgb(255, 255, 255),
+				bgcolor: combineRgb(51, 65, 85),
+			},
+			feedbacks: [],
+			steps: [{ down: [{ actionId: 'dsm_clock_full', options: {} }], up: [] }],
+		}
+		// Still buttons — manual press or DSM-checkbox cue load
 		presets.dsm_led = {
 			type: 'button',
 			category: 'DSM',
-			name: 'DSM · LED',
+			name: 'DSM · LED still',
 			style: {
 				text: 'DSM\nLED',
 				size: 'auto',
@@ -836,7 +934,7 @@ class RunOfShowInstance extends InstanceBase {
 		presets.dsm_vid = {
 			type: 'button',
 			category: 'DSM',
-			name: 'DSM · VID',
+			name: 'DSM · VIDEO still',
 			style: {
 				text: 'DSM\nVID',
 				size: 'auto',
@@ -849,7 +947,7 @@ class RunOfShowInstance extends InstanceBase {
 		presets.dsm_ppt = {
 			type: 'button',
 			category: 'DSM',
-			name: 'DSM · PPT',
+			name: 'DSM · PPT still',
 			style: {
 				text: 'DSM\nPPT',
 				size: 'auto',
@@ -858,33 +956,6 @@ class RunOfShowInstance extends InstanceBase {
 			},
 			feedbacks: [],
 			steps: [{ down: [{ actionId: 'dsm_mode_ppt', options: {} }], up: [] }],
-		}
-		// Legacy aliases
-		presets.dsm_clock_16x9 = {
-			type: 'button',
-			category: 'DSM',
-			name: 'DSM · 16:9 ON (legacy → LED)',
-			style: {
-				text: 'DSM\n16:9',
-				size: 'auto',
-				color: combineRgb(0, 0, 0),
-				bgcolor: combineRgb(245, 158, 11),
-			},
-			feedbacks: [],
-			steps: [{ down: [{ actionId: 'dsm_clock_16x9', options: {} }], up: [] }],
-		}
-		presets.dsm_clock_full = {
-			type: 'button',
-			category: 'DSM',
-			name: 'DSM · Full (legacy)',
-			style: {
-				text: 'DSM\nFull',
-				size: 'auto',
-				color: combineRgb(255, 255, 255),
-				bgcolor: combineRgb(51, 65, 85),
-			},
-			feedbacks: [],
-			steps: [{ down: [{ actionId: 'dsm_clock_full', options: {} }], up: [] }],
 		}
 
 		// Timer display preset: adaptive – Duration (loaded) / Remaining (running) / Overtime (over). Two-line: label (small) \n value (large)

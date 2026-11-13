@@ -287,7 +287,7 @@ module.exports = function (self) {
 			},
 		},
 		dsm_clock_layout: {
-			name: 'DSM Mode (Clock + press button)',
+			name: 'DSM (layout override or still)',
 			options: [
 				{
 					id: 'mode',
@@ -295,26 +295,23 @@ module.exports = function (self) {
 					label: 'Mode',
 					default: 'led',
 					choices: [
-						{ id: 'full', label: 'Full DSM' },
-						{ id: 'led', label: 'LED DSM' },
-						{ id: 'vid', label: 'VID DSM' },
-						{ id: 'ppt', label: 'PPT DSM' },
-						{ id: '16x9', label: '16:9 (legacy → LED)' },
+						{ id: '16x9', label: 'Layout · 16:9 (override only)' },
+						{ id: 'full', label: 'Layout · Full (override only)' },
+						{ id: 'led', label: 'Still · LED' },
+						{ id: 'vid', label: 'Still · VIDEO' },
+						{ id: 'ppt', label: 'Still · PPT' },
 					],
 				},
 			],
 			callback: async (event) => {
 				const mode = event.options.mode || 'led'
 				try {
-					if (self.applyDsmMode) {
+					if (mode === '16x9' || mode === 'full') {
+						await self.applyDsmLayoutOverride(mode, 'layout_override')
+					} else if (self.applyDsmStill) {
+						await self.applyDsmStill(mode, { layout: true, source: 'manual' })
+					} else if (self.applyDsmMode) {
 						await self.applyDsmMode(mode, { layout: true, source: 'manual' })
-					} else {
-						const eventId = self.config?.eventId
-						if (!eventId) {
-							self.log('warn', 'DSM Mode: Event ID is required')
-							return
-						}
-						await self.apiPost('/api/dsm-clock/layout', { event_id: eventId, mode })
 					}
 				} catch (err) {
 					self.log('error', `DSM Mode failed: ${err.message}`)
@@ -322,66 +319,66 @@ module.exports = function (self) {
 			},
 		},
 		dsm_mode_full: {
-			name: 'DSM · Full (test / press)',
+			name: 'DSM · Full (layout override)',
 			options: [],
 			callback: async () => {
 				try {
-					await self.applyDsmMode('full', { layout: true, source: 'manual' })
+					await self.applyDsmLayoutOverride('full', 'layout_override')
 				} catch (err) {
 					self.log('error', `DSM Full failed: ${err.message}`)
 				}
 			},
 		},
 		dsm_mode_led: {
-			name: 'DSM · LED (test / press)',
+			name: 'DSM · LED still (press)',
 			options: [],
 			callback: async () => {
 				try {
-					await self.applyDsmMode('led', { layout: true, source: 'manual' })
+					await self.applyDsmStill('led', { layout: true, source: 'manual' })
 				} catch (err) {
 					self.log('error', `DSM LED failed: ${err.message}`)
 				}
 			},
 		},
 		dsm_mode_vid: {
-			name: 'DSM · VID (test / press)',
+			name: 'DSM · VIDEO still (press)',
 			options: [],
 			callback: async () => {
 				try {
-					await self.applyDsmMode('vid', { layout: true, source: 'manual' })
+					await self.applyDsmStill('vid', { layout: true, source: 'manual' })
 				} catch (err) {
-					self.log('error', `DSM VID failed: ${err.message}`)
+					self.log('error', `DSM VIDEO failed: ${err.message}`)
 				}
 			},
 		},
 		dsm_mode_ppt: {
-			name: 'DSM · PPT (test / press)',
+			name: 'DSM · PPT still (press)',
 			options: [],
 			callback: async () => {
 				try {
-					await self.applyDsmMode('ppt', { layout: true, source: 'manual' })
+					await self.applyDsmStill('ppt', { layout: true, source: 'manual' })
 				} catch (err) {
 					self.log('error', `DSM PPT failed: ${err.message}`)
 				}
 			},
 		},
 		dsm_clock_16x9: {
-			name: 'DSM Clock · 16:9 ON (legacy → LED)',
+			name: 'DSM · 16:9 (layout override)',
 			options: [],
 			callback: async () => {
 				try {
-					await self.applyDsmMode('led', { layout: true, source: 'manual' })
+					await self.applyDsmLayoutOverride('16x9', 'layout_override')
 				} catch (err) {
-					self.log('error', `DSM 16:9/LED failed: ${err.message}`)
+					self.log('error', `DSM 16:9 failed: ${err.message}`)
 				}
 			},
 		},
 		dsm_clock_full: {
-			name: 'DSM Clock · Full (legacy)',
+			name: 'DSM · Full (layout override)',
 			options: [],
 			callback: async () => {
 				try {
-					await self.applyDsmMode('full', { layout: true, source: 'manual' })
+					await self.applyDsmLayoutOverride('full', 'layout_override')
 				} catch (err) {
 					self.log('error', `DSM Full failed: ${err.message}`)
 				}

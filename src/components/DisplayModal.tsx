@@ -4,6 +4,12 @@ import {
   HIDE_FULLSCREEN_TIMER_CHANGE_EVENT,
 } from '../lib/branding';
 import { fetchPublicAppSettings } from '../lib/appSettings';
+import {
+  DSM_FULL_ZOOM_DEFAULT,
+  DSM_FULL_ZOOM_LEVELS,
+  normalizeDsmFullZoom,
+} from '../lib/dsmClockLayout';
+import { apiClient } from '../services/api-client';
 
 const STORAGE_KEY = 'ros_display_open_external';
 
@@ -16,6 +22,8 @@ interface DisplayModalProps {
   onSelectFullscreenTimer: (mode: DisplayOpenMode) => void;
   onSelectClock: (mode: DisplayOpenMode) => void;
   onSelectDsmClock?: (mode: DisplayOpenMode) => void;
+  /** When set, Full DSM zoom is loaded/saved as an event-level setting. */
+  eventId?: string | null;
 }
 
 function normalizeSavedMode(saved: string | null): DisplayOpenMode {
@@ -31,9 +39,12 @@ const DisplayModal: React.FC<DisplayModalProps> = ({
   onSelectFullscreenTimer,
   onSelectClock,
   onSelectDsmClock,
+  eventId,
 }) => {
   const [openMode, setOpenMode] = useState<DisplayOpenMode>('external');
   const [hideFullscreenTimer, setHideFullscreenTimer] = useState(() => getHideFullscreenTimerOption());
+  const [fullZoom, setFullZoom] = useState(DSM_FULL_ZOOM_DEFAULT);
+  const [fullZoomSaving, setFullZoomSaving] = useState(false);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -51,6 +62,26 @@ const DisplayModal: React.FC<DisplayModalProps> = ({
         // keep cached value
       });
   }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen || !eventId) {
+      setFullZoom(DSM_FULL_ZOOM_DEFAULT);
+      return;
+    }
+    let cancelled = false;
+    void apiClient
+      .getDsmClockLayout(eventId)
+      .then((res) => {
+        if (cancelled) return;
+        setFullZoom(normalizeDsmFullZoom(res?.fullZoom));
+      })
+      .catch(() => {
+        if (!cancelled) setFullZoom(DSM_FULL_ZOOM_DEFAULT);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, eventId]);
 
   useEffect(() => {
     const onChange = (event: Event) => {
@@ -74,11 +105,25 @@ const DisplayModal: React.FC<DisplayModalProps> = ({
     }
   };
 
+  const saveFullZoom = async (next: number) => {
+    const zoom = normalizeDsmFullZoom(next);
+    setFullZoom(zoom);
+    if (!eventId) return;
+    setFullZoomSaving(true);
+    try {
+      await apiClient.setDsmClockLayout(eventId, { fullZoom: zoom });
+    } catch (err) {
+      console.warn('DSM Full zoom save failed:', err);
+    } finally {
+      setFullZoomSaving(false);
+    }
+  };
+
   if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-slate-800 rounded-lg p-6 w-full max-w-2xl">
+      <div className="bg-slate-800 rounded-lg p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
         <div className="flex justify-between items-center mb-6">
           <h2 className="text-xl font-bold text-white">Select Display Mode</h2>
           <button
@@ -193,6 +238,7 @@ const DisplayModal: React.FC<DisplayModalProps> = ({
             <button
               type="button"
               onClick={() => {
+                if (eventId) void saveFullZoom(fullZoom);
                 onSelectDsmClock(openMode);
                 onClose();
               }}
@@ -204,9 +250,38 @@ const DisplayModal: React.FC<DisplayModalProps> = ({
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                   </svg>
                 </div>
-                <div>
-                  <h3 className="text-white font-semibold">DSM Clock</h3>
-                  <p className="text-slate-400 text-sm">DSM variant of the clock — safe to restyle without changing Clock</p>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+                    <div>
+                      <h3 className="text-white font-semibold">DSM Clock</h3>
+                      <p className="text-slate-400 text-sm">DSM variant of the clock — safe to restyle without changing Clock</p>
+                    </div>
+                    <div
+                      className="flex items-center gap-1.5"
+                      onClick={(e) => e.stopPropagation()}
+                      onMouseDown={(e) => e.stopPropagation()}
+                    >
+                      <span className="text-slate-400 text-xs whitespace-nowrap mr-0.5">Full zoom</span>
+                      {DSM_FULL_ZOOM_LEVELS.map((level) => (
+                        <button
+                          key={level}
+                          type="button"
+                          disabled={!eventId || fullZoomSaving}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void saveFullZoom(level);
+                          }}
+                          className={`min-w-[2.35rem] px-1.5 py-1 rounded text-xs font-semibold tabular-nums transition-colors disabled:opacity-50 ${
+                            fullZoom === level
+                              ? 'bg-amber-500 text-black'
+                              : 'bg-slate-800 text-slate-300 hover:bg-slate-600'
+                          }`}
+                        >
+                          {level}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               </div>
             </button>

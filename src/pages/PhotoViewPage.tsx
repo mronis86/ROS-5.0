@@ -2636,21 +2636,34 @@ const PhotoViewPage: React.FC = () => {
                     </div>
                   )}
                 </div>
-                <div
-                  className={`font-mono font-bold tabular-nums leading-none tracking-tight bg-slate-800 px-[0.45em] py-[0.22em] rounded-lg border border-slate-600 ${
-                    usePreshowRainbowColors ? 'ros-rainbow-text' : ''
-                  }`}
-                  style={{
-                    fontSize: 'clamp(1.75rem, 4.2vw, 3.5rem)',
-                    ...(usePreshowRainbowColors ? {} : { color: getCountdownColor() }),
-                  }}
-                >
-                  <OvertimeClockText
-                    seconds={getRemainingTime()}
-                    body={formatTime(getRemainingTime())}
-                    sign={overtimeSign}
-                    signClassName={pageClockSignClass(getRemainingTime(), overtimeSign)}
-                  />
+                <div className="flex flex-col items-end gap-0.5">
+                  {getRemainingTime() < 0 ? (
+                    <div className="text-[clamp(0.55rem,0.9vw,0.75rem)] font-bold leading-none text-red-500 tracking-wide">
+                      OVER TIME
+                    </div>
+                  ) : usePreshowRainbowColors ? (
+                    <div className="ros-preshow-super text-[clamp(0.5rem,0.85vw,0.7rem)] leading-none tracking-[0.2em]">
+                      PRE SHOW COUNTDOWN
+                    </div>
+                  ) : null}
+                  <div
+                    className={`font-mono font-bold tabular-nums leading-none tracking-tight bg-slate-800 px-[0.45em] py-[0.22em] rounded-lg border border-slate-600 ${
+                      usePreshowRainbowColors && getRemainingTime() >= 0 ? 'ros-rainbow-text' : ''
+                    }`}
+                    style={{
+                      fontSize: 'clamp(1.75rem, 4.2vw, 3.5rem)',
+                      ...(usePreshowRainbowColors && getRemainingTime() >= 0
+                        ? {}
+                        : { color: getCountdownColor() }),
+                    }}
+                  >
+                    <OvertimeClockText
+                      seconds={getRemainingTime()}
+                      body={formatTime(getRemainingTime())}
+                      sign={overtimeSign}
+                      signClassName={pageClockSignClass(getRemainingTime(), overtimeSign)}
+                    />
+                  </div>
                 </div>
               </div>
               </div>
@@ -3189,12 +3202,21 @@ const PhotoViewPage: React.FC = () => {
             </div>
           
           {/* Timer Display with Color - stays on right */}
-          <div className="relative">
+          <div className="relative flex flex-col items-end gap-1">
+            {getRemainingTime() < 0 ? (
+              <div className="text-sm font-bold text-red-500 tracking-wide">OVER TIME</div>
+            ) : usePreshowRainbowColors ? (
+              <div className="ros-preshow-super text-sm tracking-[0.25em]">PRE SHOW COUNTDOWN</div>
+            ) : null}
             <div
               className={`text-3xl font-mono bg-slate-800 px-6 py-3 rounded-lg border border-slate-600 ${
-                usePreshowRainbowColors ? 'ros-rainbow-text' : ''
+                usePreshowRainbowColors && getRemainingTime() >= 0 ? 'ros-rainbow-text' : ''
               }`}
-              style={usePreshowRainbowColors ? undefined : { color: getCountdownColor() }}
+              style={
+                usePreshowRainbowColors && getRemainingTime() >= 0
+                  ? undefined
+                  : { color: getCountdownColor() }
+              }
             >
               <OvertimeClockText
                 seconds={getRemainingTime()}

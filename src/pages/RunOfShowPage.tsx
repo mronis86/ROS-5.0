@@ -3915,7 +3915,8 @@ const RunOfShowPage: React.FC = () => {
         setActivePreshowWarn((prev) => (prev?.itemId === cue.id ? null : prev));
       }
 
-      // Auto load+start: Operator always, or any role once show day is armed for this key
+      // Auto load+start: Operator always, or any role once show day is armed.
+      // Server claim is single-flight — only one client may start (stops multi-tab restarts).
       const canAutoStart = currentUserRole === 'OPERATOR' || showDayArmed;
       if (!canAutoStart) return;
 
@@ -3942,6 +3943,20 @@ const RunOfShowPage: React.FC = () => {
       setActivePreshowWarn(null);
       void (async () => {
         try {
+          const claim = await DatabaseService.claimPreshowAutoStart(event.id, {
+            key,
+            cueId: cue.id,
+            startHHMM,
+            claimedBy: user?.id != null ? String(user.id) : null,
+            claimedByName: user?.full_name || user?.email || null,
+          });
+          if (!claim.won) {
+            console.log('🎬 Pre-show auto start skipped — another client claimed', {
+              reason: claim.reason,
+              key,
+            });
+            return;
+          }
           console.log('🎬 Pre-show auto load+start for cue', cue.id, 'at', startHHMM, {
             role: currentUserRole,
             showDayArmed,
@@ -23256,6 +23271,7 @@ const RunOfShowPage: React.FC = () => {
         onSelectFullscreenTimer={openFullScreenTimer}
         onSelectClock={openClock}
         onSelectDsmClock={openDsmClock}
+        eventId={event?.id}
       />
 
       {/* Pin-Notes popout: choose one or more columns, then open movable window */}

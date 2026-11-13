@@ -688,6 +688,30 @@ export class DatabaseService {
     }
   }
 
+  /** Server single-flight: only one ROS client may auto load+start Pre-Show for a key. */
+  static async claimPreshowAutoStart(
+    eventId: string,
+    payload: {
+      key: string;
+      cueId: number;
+      startHHMM?: string;
+      claimedBy?: string | null;
+      claimedByName?: string | null;
+    }
+  ): Promise<{ won: boolean; reason?: string }> {
+    try {
+      const result = await apiClient.claimPreshowAutoStart(eventId, payload);
+      return {
+        won: result?.won === true,
+        reason: typeof result?.reason === 'string' ? result.reason : undefined,
+      };
+    } catch (error) {
+      console.error('❌ Exception claiming PreShow auto-start:', error);
+      // Fail closed — avoid multi-tab restart storms if the claim API is down.
+      return { won: false, reason: 'claim_error' };
+    }
+  }
+
   static async saveTrackWasDurations(eventId: string, trackWasDurations: boolean): Promise<boolean> {
     try {
       await apiClient.saveTrackWasDurations(eventId, trackWasDurations);

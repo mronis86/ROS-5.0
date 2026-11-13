@@ -22,6 +22,8 @@ const { parseAgenda, findFirstTimeLineIndex } = require('./lib/agenda-parser');
 const {
   normalizeDsmLayoutMode,
   suggestedDsmLayoutMode,
+  normalizeDsmFullZoom,
+  DSM_FULL_ZOOM_DEFAULT,
 } = require('./lib/dsm-clock-layout');
 
 // Force Railway rebuild - 2025-02-05 - Backup error details + redeploy
@@ -84,6 +86,10 @@ const {
   ensurePowerpointPlaybackSchema,
   startPowerpointPlaybackCleanup,
 } = require('./lib/powerpoint-playback');
+const {
+  registerVmixDatasourceBridgeRoutes,
+  ensureVmixDatasourceSchema,
+} = require('./lib/vmix-datasource-bridge');
 const { registerAppDownloadRoutes } = require('./lib/app-downloads');
 const { registerSpeakerRoutes, ensureSpeakersSchema } = require('./lib/speakers');
 const { buildPlatformMaintenanceReport, startPlatformMaintenanceAlerts } = require('./lib/platform-maintenance');
@@ -276,13 +282,52 @@ const avplayoutTimeSourceByEvent = new Map();
 const avplayoutPendingByEvent = new Map();
 
 /** DSM Clock layout: eventId -> 'full' | 'led' | 'vid' | 'ppt' (Companion / UI / schedule column) */
+/** eventId → { mode, fullZoom } — in-memory event DSM Clock settings */
 const dsmClockLayoutByEvent = new Map();
 
+function getDsmClockLayoutState(eventId) {
+  const cur = dsmClockLayoutByEvent.get(String(eventId));
+  if (!cur || typeof cur !== 'object') {
+    // Legacy: Map may still hold a bare mode string from older process state
+    if (typeof cur === 'string') {
+      return { mode: cur, fullZoom: DSM_FULL_ZOOM_DEFAULT };
+    }
+    return { mode: '16x9', fullZoom: DSM_FULL_ZOOM_DEFAULT };
+  }
+  return {
+    mode: cur.mode || '16x9',
+    fullZoom: normalizeDsmFullZoom(cur.fullZoom),
+  };
+}
+
+function setDsmClockLayoutState(eventId, { mode: rawMode, fullZoom: rawZoom } = {}) {
+  const prev = getDsmClockLayoutState(eventId);
+  let nextMode = prev.mode;
+  if (rawMode !== undefined && rawMode !== null && rawMode !== '') {
+    const m = String(rawMode)
+      .toLowerCase()
+      .replace(/[\s:_-]+/g, '');
+    // Keep explicit 16x9 label for GET/default UX; still forces 16:9 on the clock
+    nextMode = m === '16x9' || m === '169' ? '16x9' : normalizeDsmLayoutMode(rawMode);
+  }
+  const next = {
+    mode: nextMode,
+    fullZoom:
+      rawZoom !== undefined && rawZoom !== null && rawZoom !== ''
+        ? normalizeDsmFullZoom(rawZoom)
+        : prev.fullZoom,
+  };
+  dsmClockLayoutByEvent.set(String(eventId), next);
+  broadcastUpdate(eventId, 'dsmClockLayout', {
+    event_id: eventId,
+    mode: next.mode,
+    fullZoom: next.fullZoom,
+  });
+  return next;
+}
+
 function setDsmClockLayoutMode(eventId, rawMode) {
-  const mode = normalizeDsmLayoutMode(rawMode);
-  dsmClockLayoutByEvent.set(String(eventId), mode);
-  broadcastUpdate(eventId, 'dsmClockLayout', { event_id: eventId, mode });
-  return mode;
+  return setDsmClockLayoutState(eventId, { mode: rawMode }).mode;
 }
 
 /** When a cue is loaded and that row has DSM enabled, push the selected layout to DSM Clock pages. */
@@ -1139,6 +1184,7 @@ registerPowerpointRoutes(app, {
   },
 });
 registerPowerpointPlaybackRoutes(app, { pool, broadcastUpdate });
+registerVmixDatasourceBridgeRoutes(app, { pool, broadcastUpdate });
 const { registerDisplayClientRoutes } = require('./lib/display-clients');
 registerDisplayClientRoutes(app, { pool });
 registerEventBoardRoutes(app, {
@@ -5166,6 +5212,90 @@ app.patch('/api/show-mode/:eventId', async (req, res) => {
   }
 });
 
+/**
+ * Single-flight Pre-Show auto-start claim.
+ * First client for a cue/start key wins; losers must not load+start (avoids multi-tab restarts).
+ */
+app.post('/api/show-mode/:eventId/preshow-auto-claim', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    if (!UUID_RE.test(String(eventId))) {
+      return res.status(400).json({ error: 'Invalid event id', won: false });
+    }
+    const key = String(req.body?.key || '').trim();
+    const cueId = Number(req.body?.cueId);
+    if (!key || !Number.isFinite(cueId)) {
+      return res.status(400).json({ error: 'key and cueId required', won: false });
+    }
+
+    // Already running this cue → treat as lost claim (do not restart).
+    const running = await pool.query(
+      `SELECT item_id, started_at, is_running FROM active_timers
+       WHERE event_id = $1
+         AND is_running = true
+         AND is_active IS NOT FALSE
+         AND COALESCE(timer_state, '') <> 'stopped'
+       LIMIT 1`,
+      [eventId]
+    );
+    if (running.rows[0] && Number(running.rows[0].item_id) === cueId) {
+      return res.json({
+        won: false,
+        reason: 'already_running',
+        claim: null,
+        startedAt: running.rows[0].started_at,
+      });
+    }
+
+    const claim = {
+      key,
+      cueId,
+      startHHMM: String(req.body?.startHHMM || ''),
+      claimedAt: new Date().toISOString(),
+      claimedBy: req.body?.claimedBy != null ? String(req.body.claimedBy) : null,
+      claimedByName: req.body?.claimedByName != null ? String(req.body.claimedByName) : null,
+    };
+
+    // Atomic: only write if no claim exists for this key yet.
+    const result = await pool.query(
+      `UPDATE run_of_show_data
+       SET settings = COALESCE(settings, '{}'::jsonb) || jsonb_build_object('preshow_auto_claim', $2::jsonb),
+           updated_at = NOW()
+       WHERE event_id = $1
+         AND (
+           settings->'preshow_auto_claim' IS NULL
+           OR jsonb_typeof(settings->'preshow_auto_claim') = 'null'
+           OR COALESCE(settings->'preshow_auto_claim'->>'key', '') <> $3
+         )
+       RETURNING settings->'preshow_auto_claim' AS claim`,
+      [eventId, JSON.stringify(claim), key]
+    );
+
+    if (result.rows.length > 0) {
+      console.log('🎬 PreShow auto-claim WON', { eventId, key, by: claim.claimedByName });
+      return res.json({ won: true, reason: 'claimed', claim: result.rows[0].claim || claim });
+    }
+
+    const existing = await pool.query(
+      `SELECT settings->'preshow_auto_claim' AS claim FROM run_of_show_data WHERE event_id = $1`,
+      [eventId]
+    );
+    console.log('🎬 PreShow auto-claim LOST', {
+      eventId,
+      key,
+      existing: existing.rows[0]?.claim,
+    });
+    return res.json({
+      won: false,
+      reason: 'already_claimed',
+      claim: existing.rows[0]?.claim || null,
+    });
+  } catch (error) {
+    console.error('Error claiming PreShow auto-start:', error);
+    res.status(500).json({ error: 'Failed to claim PreShow auto-start', won: false });
+  }
+});
+
 // Mic Manager assignments — stored in run_of_show_data.settings (mic_assignments / mic_assignment_changes)
 app.get('/api/mic-assignments/:eventId', async (req, res) => {
   try {
@@ -6843,15 +6973,30 @@ app.post('/api/led-output/clear', async (req, res) => {
   }
 });
 
-/** DSM Clock: set layout mode (full / led / vid / ppt; legacy 16x9 → led). Companion + DSM UI + schedule column. */
+/** DSM Clock: set layout mode and/or Full zoom (80–100). Companion + DSM UI + Display modal. */
 app.post('/api/dsm-clock/layout', async (req, res) => {
   try {
-    const { event_id: eventId, mode: rawMode } = req.body || {};
+    const body = req.body || {};
+    const eventId = body.event_id;
     if (!eventId) {
       return res.status(400).json({ error: 'event_id is required' });
     }
-    const mode = setDsmClockLayoutMode(eventId, rawMode);
-    res.json({ ok: true, event_id: eventId, mode });
+    const hasMode = body.mode !== undefined && body.mode !== null && body.mode !== '';
+    const rawZoom = body.full_zoom ?? body.fullZoom ?? body.full_zoom_percent;
+    const hasZoom = rawZoom !== undefined && rawZoom !== null && rawZoom !== '';
+    if (!hasMode && !hasZoom) {
+      return res.status(400).json({ error: 'mode and/or full_zoom is required' });
+    }
+    const state = setDsmClockLayoutState(eventId, {
+      mode: hasMode ? body.mode : undefined,
+      fullZoom: hasZoom ? rawZoom : undefined,
+    });
+    res.json({
+      ok: true,
+      event_id: eventId,
+      mode: state.mode,
+      fullZoom: state.fullZoom,
+    });
   } catch (error) {
     console.error('Error setting DSM clock layout:', error);
     res.status(500).json({ error: 'Failed to set DSM clock layout' });
@@ -6865,8 +7010,12 @@ app.get('/api/dsm-clock/layout/:eventId', async (req, res) => {
       return res.status(400).json({ error: 'eventId is required' });
     }
     // Default 16:9 — Full only after an explicit Companion / UI / cue set.
-    const mode = dsmClockLayoutByEvent.get(eventId) || '16x9';
-    res.json({ event_id: eventId, mode });
+    const state = getDsmClockLayoutState(eventId);
+    res.json({
+      event_id: eventId,
+      mode: state.mode,
+      fullZoom: state.fullZoom,
+    });
   } catch (error) {
     console.error('Error reading DSM clock layout:', error);
     res.status(500).json({ error: 'Failed to read DSM clock layout' });
@@ -8419,6 +8568,33 @@ app.post('/api/active-timers', async (req, res) => {
       });
     }
     await ensureCalendarEventExists(event_id, `Quick Mode ${event_id}`);
+
+    // Same cue already running → keep started_at (blocks multi-tab PreShow restarts).
+    if (timer_state === 'running' && item_id != null) {
+      const existingRunning = await pool.query(
+        `SELECT * FROM active_timers
+         WHERE event_id = $1
+           AND item_id = $2
+           AND is_running = true
+           AND is_active IS NOT FALSE
+           AND COALESCE(timer_state, '') <> 'stopped'
+         LIMIT 1`,
+        [event_id, item_id]
+      );
+      if (existingRunning.rows[0]) {
+        const row = applyAvPlayoutMeta(
+          event_id,
+          applyMittiMeta(event_id, applyResolumeMeta(event_id, existingRunning.rows[0]))
+        );
+        console.log('⏰ active-timers: same cue already running — not resetting started_at', {
+          event_id,
+          item_id,
+          started_at: row.started_at,
+        });
+        broadcastUpdate(event_id, 'timerUpdated', row);
+        return res.json(row);
+      }
+    }
     
     // Provide default values for required fields
     const user_name = 'Unknown User';
@@ -12603,6 +12779,12 @@ server.listen(PORT, '0.0.0.0', async () => {
       console.log('✅ powerpoint stills / bindings / playback tables synced');
     } catch (err) {
       console.warn('⚠️ powerpoint stills sync skipped:', err.message || err);
+    }
+    try {
+      await ensureVmixDatasourceSchema(pool);
+      console.log('✅ vmix_datasource_sessions table synced');
+    } catch (err) {
+      console.warn('⚠️ vmix_datasource_sessions sync skipped:', err.message || err);
     }
     try {
       await runCueActualStartsSyncTable(pool);

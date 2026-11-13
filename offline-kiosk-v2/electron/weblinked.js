@@ -840,6 +840,144 @@ async function clearUrl({ source = null } = {}) {
   return setUrl('about:blank', { source, ensure: false, force: true });
 }
 
+/**
+ * Remove WebLinked sources that are not in keepIds (armed/preview cards).
+ * Clears leftover "main" / Settings / old Preview ghosts that still burn CPU + NDI.
+ */
+async function removeOrphanSources({ keepIds = [] } = {}) {
+  if (!(await isRunning())) {
+    return { ok: true, skipped: true, reason: 'WebLinked not running', removed: [], kept: [] };
+  }
+  const keep = new Set(
+    (Array.isArray(keepIds) ? keepIds : [])
+      .map((id) => sanitizeSourceId(id))
+      .filter(Boolean)
+  );
+  const listed = await listSources();
+  const ids = listed.ids || [];
+  const removed = [];
+  const kept = [];
+  const notes = [];
+  const base = await resolveBase();
+  if (!base) {
+    return { ok: false, error: 'WebLinked control API not reachable', removed, kept: ids };
+  }
+
+  for (const id of ids) {
+    if (keep.has(id)) {
+      kept.push(id);
+      continue;
+    }
+    // Strip outputs first so NDI names die before the source is removed.
+    try {
+      await applySimpleSettings({
+        source: id,
+        outputs: { ndi: false, shared: false, screen: false, decklink: false, omt: false },
+        ndi: [],
+        save: false,
+      });
+    } catch {
+      /* still try remove */
+    }
+    try {
+      await requestJson(base, '/api/sources/remove', {
+        method: 'POST',
+        body: { id },
+        timeoutMs: 8000,
+      });
+      removed.push(id);
+      notes.push(`Removed orphan · ${id}`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (/404|not found|unknown/i.test(msg)) {
+        removed.push(id);
+        notes.push(`Already gone · ${id}`);
+      } else {
+        notes.push(`Keep failed · ${id}: ${msg}`);
+        kept.push(id);
+      }
+    }
+  }
+
+  return {
+    ok: true,
+    removed,
+    kept,
+    before: ids.length,
+    after: kept.length,
+    notes,
+  };
+}
+
+/**
+ * Fully disable a display card pipeline: strip NDI/shared/screen/etc., blank URL,
+ * then remove the WebLinked source so ghost NDI senders do not linger.
+ */
+async function disableDisplaySource(sourceId) {
+  const id = sanitizeSourceId(sourceId);
+  if (!id) return { ok: false, error: 'Missing WebLinked source id' };
+
+  if (!(await isRunning())) {
+    return { ok: true, skipped: true, reason: 'WebLinked not running', source: id };
+  }
+
+  const notes = [];
+  const listed = await listSources();
+  const exists = (listed.ids || []).includes(id);
+
+  // Only strip outputs if the source already exists — do not create a ghost to disable it.
+  if (exists) {
+    const stripped = await applySimpleSettings({
+      source: id,
+      outputs: {
+        ndi: false,
+        shared: false,
+        screen: false,
+        decklink: false,
+        omt: false,
+      },
+      ndi: [],
+      save: false,
+    });
+    if (stripped?.ok) {
+      notes.push(...(stripped.notes || []), 'Outputs cleared');
+    } else if (stripped?.error) {
+      notes.push(`Output clear: ${stripped.error}`);
+    }
+
+    const cleared = await clearUrl({ source: id });
+    if (cleared?.ok) notes.push('URL blanked');
+
+    const base = await resolveBase();
+    if (base) {
+      try {
+        await requestJson(base, '/api/sources/remove', {
+          method: 'POST',
+          body: { id },
+          timeoutMs: 8000,
+        });
+        notes.push(`Source removed · ${id}`);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        // Source may already be gone — treat as success for disable.
+        if (!/404|not found|unknown/i.test(msg)) {
+          return {
+            ok: false,
+            error: msg || 'Failed to remove WebLinked source',
+            source: id,
+            notes,
+          };
+        }
+        notes.push(`Source already gone · ${id}`);
+      }
+    }
+  } else {
+    notes.push(`Source not present · ${id}`);
+  }
+
+  return { ok: true, source: id, notes };
+}
+
 async function postApi(urlPath, body, { timeoutMs = 10000, source = null } = {}) {
   const base = await resolveBase();
   if (!base) {
@@ -1333,6 +1471,18 @@ async function sendInput(event) {
 }
 
 /**
+ * Run JavaScript in one WebLinked source only (POST /api/script?source=…).
+ * Used for per-card page zoom so Clock/DSM/Photo stay independent.
+ */
+async function executeScript(script, { source = null } = {}) {
+  const code = typeof script === 'string' ? script : String(script || '');
+  if (!code.trim()) {
+    return { ok: false, error: 'Missing script' };
+  }
+  return postApi('/api/script', { script: code }, { timeoutMs: 8000, source });
+}
+
+/**
  * Live preview frame from GET /api/preview (raw BGRA).
  * Same feed WebLinked's control page blits to its 16:9 canvas.
  * Pass source to read a specific display card's pipeline.
@@ -1406,12 +1556,15 @@ module.exports = {
   ensureRunning,
   setUrl,
   clearUrl,
+  disableDisplaySource,
+  removeOrphanSources,
   resolveBase,
   isRunning,
   getEngineState,
   applySimpleSettings,
   getPreviewFrame,
   sendInput,
+  executeScript,
   ensureDisplaySource,
   listSources,
   sanitizeSourceId,
