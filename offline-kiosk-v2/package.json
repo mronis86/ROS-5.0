@@ -19,7 +19,7 @@
   },
   "build": {
     "appId": "com.sinor.ros.offlinekiosk",
-    "productName": "ROS Offline Kiosk",
+    "productName": "ROS Offline Kiosk V3",
     "directories": {
       "output": "dist"
     },
