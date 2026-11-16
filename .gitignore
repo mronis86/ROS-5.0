@@ -29,6 +29,10 @@ sentry/
 dist/
 build/
 deploy-ready/
+# PowerPoint bridge: keep only canonical `dist` from `npm run pack`; ignore experiment packs / trash
+powerpoint-bridge/dist-*/
+powerpoint-bridge/_TO_DELETE*/
+powerpoint-bridge/electron-builder.openfix*.json
 public/build-info.txt
 Netlify-Build-*/
 netlify-build-*/

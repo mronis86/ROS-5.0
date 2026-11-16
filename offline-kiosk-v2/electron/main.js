@@ -327,7 +327,7 @@ function createWindow() {
     minWidth: 1024,
     minHeight: 700,
     backgroundColor: '#0b1220',
-    title: 'SINOR Track · Offline Kiosk',
+    title: 'SINOR Track · Offline Kiosk V3',
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -501,7 +501,7 @@ ipcMain.handle('kiosk:getBootstrap', async () => {
     offlineShowUrl: offlineShow.OFFLINE_SHOW_URL,
     offlineShowRunning: status.running,
     outputsEngine: 'weblinked',
-    version: '0.1.0-offline-events',
+    version: 'V3',
     token: status.token || offlineShow.getStoredTokenStatus(),
   };
 });

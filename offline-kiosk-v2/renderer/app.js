@@ -4322,7 +4322,7 @@ async function bootstrap() {
   try {
     const data = window.kiosk ? await window.kiosk.getBootstrap() : null;
     if ($('#footerMeta')) {
-      $('#footerMeta').textContent = data?.version || 'V2';
+      $('#footerMeta').textContent = data?.version || 'V3';
     }
     if (data?.token) {
       applyConnectivity({ token: data.token });

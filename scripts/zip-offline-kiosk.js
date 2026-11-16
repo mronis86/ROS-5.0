@@ -1,5 +1,5 @@
 /**
- * Zip offline-kiosk-v2/ → public/offline-kiosk-v2.zip (fetched by install-offline-kiosk.bat).
+ * Zip offline-kiosk-v2/ → public/offline-kiosk-v3.zip (fetched by install-offline-kiosk.bat).
  * Operators download the .bat from the site, not this zip.
  * Omits node_modules and WebLinked binary payload (~390MB).
  */
@@ -10,9 +10,9 @@ const archiver = require('archiver');
 
 const projectRoot = path.resolve(__dirname, '..');
 const sourcePath = path.join(projectRoot, 'offline-kiosk-v2');
-const zipPath = path.join(projectRoot, 'public', 'offline-kiosk-v2.zip');
+const zipPath = path.join(projectRoot, 'public', 'offline-kiosk-v3.zip');
 const buildUiScript = path.join(sourcePath, 'engines', 'offline-show', 'scripts', 'build-ui.js');
-const prefix = 'offline-kiosk-v2';
+const prefix = 'offline-kiosk-v3';
 
 function shouldSkip(relPosix) {
   const rel = relPosix.replace(/\\/g, '/');
@@ -57,10 +57,12 @@ call "launcher\\start-offline-kiosk.bat"
 endlocal
 `;
 
-const readme = `ROS Offline Kiosk V2 (package used by install-offline-kiosk.bat)
+const readme = `ROS Offline Kiosk V3 (package used by install-offline-kiosk.bat)
 
 Preferred: download install-offline-kiosk.bat from ROS and run it.
-It installs this package under %LOCALAPPDATA%\\ROS-Offline-Kiosk if needed.
+It installs this package under %LOCALAPPDATA%\\ROS-Offline-Kiosk\\offline-kiosk-v3.
+
+Includes PPT Bridge + vMix Bridge status tabs.
 
 Manual:
 1. Unzip this folder.

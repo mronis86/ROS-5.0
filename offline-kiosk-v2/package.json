@@ -1,7 +1,7 @@
 {
-  "name": "ros-offline-kiosk-v2",
-  "version": "0.1.0",
-  "description": "Offline Kiosk V2 — operator shell for LAN Offline Show, displays, and camera push",
+  "name": "ros-offline-kiosk-v3",
+  "version": "3.0.0",
+  "description": "Offline Kiosk V3 — operator shell for LAN Offline Show, displays, PPT/vMix bridge status, and camera push",
   "private": true,
   "main": "electron/main.js",
   "scripts": {
