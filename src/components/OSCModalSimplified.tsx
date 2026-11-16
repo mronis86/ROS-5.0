@@ -157,14 +157,14 @@ const OSCModalSimplified: React.FC<OSCModalSimplifiedProps> = ({
 
               <div className="text-center mb-4">
                 <a
-                  href={getAppDownloadUrl('ros-offline-kiosk-portable.zip')}
-                  download="ros-offline-kiosk-portable.zip"
+                  href="/install-offline-kiosk.bat"
+                  download="install-offline-kiosk.bat"
                   className="block bg-cyan-800 hover:bg-cyan-700 text-white text-sm py-3 px-6 rounded text-center transition-colors font-semibold"
                 >
-                  Offline Kiosk Portable (Windows)
+                  Offline Kiosk V3 (Windows)
                 </a>
                 <div className="text-xs text-cyan-200 mt-2">
-                  Unzip · START.bat • Offline Show + WebLinked included • no Node install
+                  Run the .bat • installs V3 with PPT + vMix Bridge status • Node 20+ required
                 </div>
               </div>
 
