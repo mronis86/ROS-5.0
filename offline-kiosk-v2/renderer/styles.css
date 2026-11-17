@@ -781,10 +781,25 @@ body {
 
 .perf-head {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: flex-start;
   justify-content: space-between;
   gap: 0.75rem;
+}
+
+.perf-head-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.perf-head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  flex: 0 0 auto;
+  margin-left: auto;
 }
 
 .perf-kicker {

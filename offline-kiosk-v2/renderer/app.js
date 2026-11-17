@@ -2213,14 +2213,15 @@ function renderDisplays() {
 
     const badge = document.createElement('span');
     badge.className = 'badge';
+    // Enable is multi-select; Preview/Selected is only which card the live dock follows.
     badge.textContent = !ready
       ? 'Soon'
-      : isPreview
-        ? isDisplayArmed(row.id)
-          ? 'Preview'
-          : 'Selected'
-        : isDisplayArmed(row.id)
-          ? 'Enabled'
+      : isDisplayArmed(row.id)
+        ? isPreview
+          ? 'Enabled · Live'
+          : 'Enabled'
+        : isPreview
+          ? 'Selected'
           : 'Disabled';
 
     const urlInput = document.createElement('input');
@@ -2866,6 +2867,10 @@ async function wlSendInput(event) {
   const source = wlSourceId(activePreviewDisplayId());
   try {
     await window.kiosk.weblinkedSendInput({ ...(event || {}), source: source || undefined });
+    // Pull a fresh frame soon after click/key so the dock doesn't feel a beat behind.
+    if (event?.type === 'up' || event?.type === 'down' || event?.type === 'key') {
+      scheduleWlPreviewSoon();
+    }
   } catch {
     /* ignore */
   }
@@ -2983,15 +2988,66 @@ function syncWlPageZoomButtons() {
     if (el) {
       el.textContent = label;
       el.title = id
-        ? `Zoom for ${findDisplay(id)?.name || id} only (reset to 100%)`
-        : 'Reset zoom to 100%';
+        ? `Browser zoom for ${findDisplay(id)?.name || id} only (Ctrl± / Ctrl+0)`
+        : 'Reset browser zoom to 100%';
     }
   }
 }
 
+const WL_MOD_CTRL = 1 << 2;
+/** Windows VK codes for Chromium Ctrl+/- / Ctrl+0 page zoom. */
+const WL_VK_OEM_PLUS = 0xbb;
+const WL_VK_OEM_MINUS = 0xbd;
+const WL_VK_0 = 0x30;
+
 /**
- * Apply absolute CSS zoom on one WebLinked source via /api/script?source=…
- * (not Ctrl± — that could leak across sources).
+ * Chromium page zoom on one WebLinked source (CEF Ctrl±), not CSS display scale.
+ * Scoped with ?source= so other cards stay untouched.
+ */
+async function wlSendCtrlKey(source, keyCode) {
+  if (!window.kiosk?.weblinkedSendInput) {
+    return { ok: false, error: 'Page zoom only available in the Electron kiosk.' };
+  }
+  try {
+    if (!wlInteractive) setWlInteractive(true);
+    await window.kiosk.weblinkedSendInput({ type: 'focus', focused: true, source });
+    const mods = WL_MOD_CTRL;
+    await window.kiosk.weblinkedSendInput({
+      type: 'key',
+      action: 'down',
+      key_code: keyCode,
+      character: 0,
+      modifiers: mods,
+      source,
+    });
+    await window.kiosk.weblinkedSendInput({
+      type: 'key',
+      action: 'up',
+      key_code: keyCode,
+      character: 0,
+      modifiers: mods,
+      source,
+    });
+    return { ok: true, source };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Zoom failed' };
+  }
+}
+
+/** Clear leftover CSS zoom so it cannot stack on top of browser zoom. */
+async function clearWlCssZoom(source) {
+  if (!window.kiosk?.weblinkedExecuteScript || !source) return;
+  const script =
+    "(function(){try{document.documentElement.style.zoom='';if(document.body)document.body.style.zoom='';}catch(e){}})();";
+  try {
+    await window.kiosk.weblinkedExecuteScript({ source, script });
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Apply absolute Chromium zoom for one card: Ctrl+0, then ± steps.
  */
 async function applyWlPageZoom(id, { quiet = false } = {}) {
   const row = findDisplay(id);
@@ -3005,26 +3061,29 @@ async function applyWlPageZoom(id, { quiet = false } = {}) {
     if (!quiet) setDisplayNote(`Enable ${row.name} before zooming.`);
     return { ok: false, error: 'Display disabled' };
   }
-  if (!window.kiosk?.weblinkedExecuteScript) {
+  if (!window.kiosk?.weblinkedSendInput) {
     if (!quiet) setDisplayNote('Page zoom only available in the Electron kiosk.');
     return { ok: false, error: 'Bridge unavailable' };
   }
+
+  await clearWlCssZoom(source);
+
   const steps = getDisplayZoomSteps(id);
-  const factor = Math.pow(1.2, steps);
-  const zoomCss = Number(factor.toFixed(6));
-  const script = `(function(){var z=${JSON.stringify(String(zoomCss))};try{document.documentElement.style.zoom=z;if(document.body)document.body.style.zoom=z;}catch(e){}})();`;
-  try {
-    const result = await window.kiosk.weblinkedExecuteScript({ source, script });
-    if (!result?.ok) {
-      if (!quiet) setDisplayNote(result?.error || `Zoom failed · ${row.name}`);
-      return result || { ok: false };
-    }
-    return { ok: true, steps, factor: zoomCss, source };
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : 'Zoom failed';
-    if (!quiet) setDisplayNote(msg);
-    return { ok: false, error: msg };
+  const reset = await wlSendCtrlKey(source, WL_VK_0);
+  if (!reset?.ok) {
+    if (!quiet) setDisplayNote(reset?.error || `Zoom failed · ${row.name}`);
+    return reset || { ok: false };
   }
+  const keyCode = steps > 0 ? WL_VK_OEM_PLUS : WL_VK_OEM_MINUS;
+  const n = Math.abs(steps);
+  for (let i = 0; i < n; i += 1) {
+    const step = await wlSendCtrlKey(source, keyCode);
+    if (!step?.ok) {
+      if (!quiet) setDisplayNote(step?.error || `Zoom failed · ${row.name}`);
+      return step || { ok: false };
+    }
+  }
+  return { ok: true, steps, source };
 }
 
 /** Zoom the selected WebLinked display page in / out / reset — this card only. */
@@ -3044,8 +3103,8 @@ async function wlPageZoom(delta) {
   const row = findDisplay(id);
   setDisplayNote(
     delta === 0
-      ? `Zoom reset · ${row?.name || id} only`
-      : `Zoom ${wlPageZoomLabel(next)} · ${row?.name || id} only`
+      ? `Browser zoom reset · ${row?.name || id}`
+      : `Browser zoom ${wlPageZoomLabel(next)} · ${row?.name || id}`
   );
   return { ok: true, steps: next };
 }
@@ -3202,6 +3261,22 @@ function wireWlPreviewInput() {
   });
 }
 
+let wlPreviewSoonTimer = null;
+let wlImageData = null;
+
+function wlPreviewIntervalMs() {
+  if (wlInteractive || wlPreviewPlace === 'overlay') return 50;
+  return 90;
+}
+
+function scheduleWlPreviewSoon() {
+  if (wlPreviewSoonTimer) return;
+  wlPreviewSoonTimer = window.setTimeout(() => {
+    wlPreviewSoonTimer = null;
+    void pullWlLivePreviewFrame();
+  }, 40);
+}
+
 async function pullWlLivePreviewFrame() {
   if (wlPreviewBusy || !window.kiosk?.weblinkedGetPreviewFrame) return;
   if (document.hidden && wlPreviewPlace === 'dock') return;
@@ -3231,22 +3306,38 @@ async function pullWlLivePreviewFrame() {
     const canvas = wlPreviewCanvas();
     const ctx = wlPreviewContext();
     if (!canvas || !ctx) return;
-    const { width, height, bgra } = frame;
-    if (!width || !height || !bgra) return;
+    const { width, height } = frame;
+    const pixels = frame.rgba || frame.bgra;
+    if (!width || !height || !pixels) return;
     if (canvas.width !== width || canvas.height !== height) {
       canvas.width = width;
       canvas.height = height;
+      wlImageData = null;
     }
 
-    const bytes = bgra instanceof Uint8Array ? bgra : new Uint8Array(bgra);
-    const image = ctx.createImageData(width, height);
-    for (let i = 0; i < width * height * 4; i += 4) {
-      image.data[i] = bytes[i + 2];
-      image.data[i + 1] = bytes[i + 1];
-      image.data[i + 2] = bytes[i];
-      image.data[i + 3] = 255;
+    const bytes =
+      pixels instanceof Uint8Array
+        ? pixels
+        : pixels?.type === 'Buffer' && Array.isArray(pixels.data)
+          ? new Uint8Array(pixels.data)
+          : new Uint8Array(pixels);
+    if (!wlImageData || wlImageData.width !== width || wlImageData.height !== height) {
+      wlImageData = ctx.createImageData(width, height);
     }
-    ctx.putImageData(image, 0, 0);
+    // Main process already converts BGRA→RGBA; fall back to swap if older bridge sends bgra.
+    if (frame.rgba || frame.pixelFormat === 'rgba') {
+      wlImageData.data.set(bytes);
+    } else {
+      const dst = wlImageData.data;
+      const n = width * height * 4;
+      for (let i = 0; i < n; i += 4) {
+        dst[i] = bytes[i + 2];
+        dst[i + 1] = bytes[i + 1];
+        dst[i + 2] = bytes[i];
+        dst[i + 3] = 255;
+      }
+    }
+    ctx.putImageData(wlImageData, 0, 0);
     const label = previewRow?.name || source || 'source';
     setWlLivePreviewMeta(`${label} · ${width}×${height}`);
   } catch {
@@ -3258,17 +3349,26 @@ async function pullWlLivePreviewFrame() {
 
 function startWlLivePreviewLoop() {
   if (wlPreviewTimer) return;
-  wlPreviewTimer = setInterval(() => {
-    void pullWlLivePreviewFrame();
-  }, 125);
+  // Chained timeout (not setInterval) so a slow frame cannot stack overlapping fetches.
+  const tick = () => {
+    wlPreviewTimer = window.setTimeout(async () => {
+      await pullWlLivePreviewFrame();
+      if (wlPreviewTimer != null) tick();
+    }, wlPreviewIntervalMs());
+  };
+  tick();
   void pullWlLivePreviewFrame();
 }
 
 function stopWlLivePreviewLoop() {
   if (wlPreviewPlace === 'overlay') return;
   if (wlPreviewTimer) {
-    clearInterval(wlPreviewTimer);
+    clearTimeout(wlPreviewTimer);
     wlPreviewTimer = null;
+  }
+  if (wlPreviewSoonTimer) {
+    clearTimeout(wlPreviewSoonTimer);
+    wlPreviewSoonTimer = null;
   }
 }
 
@@ -3332,8 +3432,13 @@ async function openDisplayPreview(id) {
   }
 
   setDisplayNote(`Loading ${row.name} into live preview…`);
+  // Arm first so Status orphan cleanup cannot delete this source mid-load.
+  const wasArmed = isDisplayArmed(row.id);
+  markDisplayArmed(row.id);
+  state.previewDisplayId = row.id;
   const applied = await applyDisplayWlSettings(row.id, { quiet: true, save: false });
   if (!applied?.ok) {
+    if (!wasArmed) markDisplayDisarmed(row.id);
     setDisplayNote(applied?.error || `Could not apply ${row.name} output settings.`);
     void refreshWebLinkedStatus();
     return;
@@ -3348,12 +3453,11 @@ async function openDisplayPreview(id) {
       })
     : { ok: false, error: 'WebLinked bridge not available.' };
   if (!pushed?.ok) {
+    if (!wasArmed) markDisplayDisarmed(row.id);
     setDisplayNote(pushed?.error || 'Could not load URL into WebLinked.');
     void refreshWebLinkedStatus();
     return;
   }
-  markDisplayArmed(row.id);
-  state.previewDisplayId = row.id;
   syncWlPageZoomButtons();
   renderDisplays();
   await setTab('displays');
@@ -3414,8 +3518,15 @@ async function togglePushWebLinked(id) {
     return;
   }
   setDisplayNote(`Enabling ${row.name}…`);
+  // Arm first so Status orphan cleanup cannot delete this source mid-enable
+  // (race when WebLinked already has more pipelines than armed cards).
+  markDisplayArmed(row.id);
+  state.previewDisplayId = row.id;
+  renderDisplays();
   const applied = await applyDisplayWlSettings(row.id, { quiet: true, save: false });
   if (!applied?.ok) {
+    markDisplayDisarmed(row.id);
+    renderDisplays();
     setDisplayNote(applied?.error || `Could not apply ${row.name} output settings.`);
     void refreshWebLinkedStatus();
     return;
@@ -3431,15 +3542,18 @@ async function togglePushWebLinked(id) {
       })
     : { ok: false, error: 'WebLinked bridge not available.' };
   if (!result?.ok) {
+    markDisplayDisarmed(row.id);
+    renderDisplays();
     setDisplayNote(result?.error || 'WebLinked did not accept the URL.');
     void refreshWebLinkedStatus();
     return;
   }
-  markDisplayArmed(row.id);
-  state.previewDisplayId = row.id;
   syncWlPageZoomButtons();
   renderDisplays();
-  setDisplayNote(`${row.name} enabled (page + outputs).`);
+  const armedN = state.armedDisplayIds.length;
+  setDisplayNote(
+    `${row.name} enabled (${armedN} display${armedN === 1 ? '' : 's'} on). Enable others independently.`
+  );
   void refreshWebLinkedStatus();
   if (getDisplayZoomSteps(row.id) !== 0) {
     window.setTimeout(() => void applyWlPageZoom(row.id, { quiet: true }), 400);
@@ -3681,25 +3795,27 @@ function syncStatus() {
   const outHint = $('#statusOutputsHint');
   const outCard = $('#sessionDisplaysCard');
   const armedCount = state.armedDisplayIds.length;
+  const wlOn = Boolean(state.weblinked?.running);
+  // Status = what’s actually Enabled — not how many cards have a URL typed in.
   if (outEl) {
     outEl.textContent = armedCount
       ? armedCount === 1
         ? armed?.name || '1 source'
         : `${armedCount} sources`
-      : filled
-        ? `${filled} URL${filled === 1 ? '' : 's'}`
-        : 'None';
+      : 'None';
   }
   if (outHint) {
     outHint.textContent = armedCount
       ? armedCount === 1
-        ? 'Pushed to WebLinked'
-        : `${armedCount} independent WebLinked sources`
+        ? wlOn
+          ? 'Enabled on WebLinked'
+          : 'Enabled (start WebLinked)'
+        : `${armedCount} Enabled · WebLinked ${wlOn ? 'on' : 'off'}`
       : filled
-        ? 'Preview or push from Settings'
-        : 'Add up to 8 URLs';
+        ? 'No displays Enabled'
+        : 'Enable from Displays';
   }
-  if (outCard) outCard.dataset.state = armedCount ? 'ready' : filled ? 'warn' : 'empty';
+  if (outCard) outCard.dataset.state = armedCount && wlOn ? 'ready' : armedCount ? 'warn' : 'empty';
 
   const camEl = $('#statusCamera');
   const camHint = $('#statusCameraHint');

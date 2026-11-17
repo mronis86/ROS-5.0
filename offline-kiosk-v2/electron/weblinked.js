@@ -14,6 +14,9 @@ const { wlLog, wlWarn, wlError, logPath, readTail } = require('./kiosk-log');
 const CANDIDATE_PORTS = [7655, 7654];
 
 let resolvedBase = null;
+/** Last successful resolve — skip health probes for a short window (preview/input hot path). */
+let resolvedBaseAt = 0;
+const BASE_TRUST_MS = 2500;
 let enginePid = null;
 let startedByKiosk = false;
 /** Prevents a second Start from killing a cold CEF boot still coming up. */
@@ -166,16 +169,24 @@ async function probePort(port) {
 }
 
 async function resolveBase({ force = false } = {}) {
+  // Preview + click input call this many times/sec — trust a recent base without
+  // re-probing /api/sources on every frame (that alone felt like multi-hundred-ms lag).
+  if (!force && resolvedBase && Date.now() - resolvedBaseAt < BASE_TRUST_MS) {
+    return resolvedBase;
+  }
   if (!force && resolvedBase) {
     try {
       await requestJson(resolvedBase, '/api/sources', { timeoutMs: 800 });
+      resolvedBaseAt = Date.now();
       return resolvedBase;
     } catch {
       try {
         await requestJson(resolvedBase, '/api/state', { timeoutMs: 800 });
+        resolvedBaseAt = Date.now();
         return resolvedBase;
       } catch {
         resolvedBase = null;
+        resolvedBaseAt = 0;
       }
     }
   }
@@ -184,11 +195,18 @@ async function resolveBase({ force = false } = {}) {
     const base = await probePort(port);
     if (base) {
       resolvedBase = base;
+      resolvedBaseAt = Date.now();
       return base;
     }
   }
   resolvedBase = null;
+  resolvedBaseAt = 0;
   return null;
+}
+
+/** Cached control URL with no health probe — for preview / input hot paths. */
+function cachedBase() {
+  return resolvedBase || null;
 }
 
 async function isRunning() {
@@ -313,6 +331,7 @@ function killOrphanEngines() {
   enginePid = null;
   startedByKiosk = false;
   resolvedBase = null;
+  resolvedBaseAt = 0;
 }
 
 function engineLaunchArgs(port) {
@@ -978,8 +997,10 @@ async function disableDisplaySource(sourceId) {
   return { ok: true, source: id, notes };
 }
 
-async function postApi(urlPath, body, { timeoutMs = 10000, source = null } = {}) {
-  const base = await resolveBase();
+async function postApi(urlPath, body, { timeoutMs = 10000, source = null, preferCache = false } = {}) {
+  const base = preferCache
+    ? cachedBase() || (await resolveBase({ force: false }))
+    : await resolveBase({ force: false });
   if (!base) {
     return {
       ok: false,
@@ -992,8 +1013,15 @@ async function postApi(urlPath, body, { timeoutMs = 10000, source = null } = {})
       body,
       timeoutMs,
     });
+    resolvedBase = base;
+    resolvedBaseAt = Date.now();
     return { ok: true, baseUrl: base, data };
   } catch (e) {
+    // Drop stale cache so the next call re-probes.
+    if (preferCache) {
+      resolvedBase = null;
+      resolvedBaseAt = 0;
+    }
     return {
       ok: false,
       error: e instanceof Error ? e.message : 'WebLinked API failed',
@@ -1467,7 +1495,8 @@ async function sendInput(event) {
   const source = sanitizeSourceId(event?.source);
   const body = { ...(event || {}) };
   delete body.source;
-  return postApi('/api/input', body, { timeoutMs: 4000, source });
+  // Prefer cached base + short timeout — clicks should not wait on health probes.
+  return postApi('/api/input', body, { timeoutMs: 1200, source, preferCache: true });
 }
 
 /**
@@ -1482,17 +1511,32 @@ async function executeScript(script, { source = null } = {}) {
   return postApi('/api/script', { script: code }, { timeoutMs: 8000, source });
 }
 
+/** Swap BGRA → RGBA in-place-ish (new buffer) using Uint32 ops. */
+function bgraToRgbaBuffer(bgra) {
+  const out = Buffer.allocUnsafe(bgra.length);
+  const n = bgra.length >>> 2;
+  const src = new Uint32Array(bgra.buffer, bgra.byteOffset, n);
+  const dst = new Uint32Array(out.buffer, out.byteOffset, n);
+  for (let i = 0; i < n; i += 1) {
+    const v = src[i];
+    // LE packed BGRA → RGBA
+    dst[i] = (v & 0xff00ff00) | ((v & 0x000000ff) << 16) | ((v & 0x00ff0000) >>> 16);
+  }
+  return out;
+}
+
 /**
- * Live preview frame from GET /api/preview (raw BGRA).
+ * Live preview frame from GET /api/preview (raw pixels as RGBA for the canvas).
  * Same feed WebLinked's control page blits to its 16:9 canvas.
  * Pass source to read a specific display card's pipeline.
  */
-async function getPreviewFrame({ timeoutMs = 2500, source = null } = {}) {
-  const ready = await ensureRunning();
-  if (!ready.ok && !ready.running) {
-    return { ok: false, error: ready.error || 'WebLinked is not running' };
+async function getPreviewFrame({ timeoutMs = 1500, source = null } = {}) {
+  // Hot path: do not ensureRunning()/probe ports every frame — renderer already
+  // gates on state.weblinked.running.
+  let base = cachedBase();
+  if (!base) {
+    base = await resolveBase({ force: false });
   }
-  const base = await resolveBase();
   if (!base) {
     return { ok: false, error: 'WebLinked control API not reachable' };
   }
@@ -1526,6 +1570,9 @@ async function getPreviewFrame({ timeoutMs = 2500, source = null } = {}) {
           resolve({ ok: false, error: 'Incomplete preview frame' });
           return;
         }
+        resolvedBase = base;
+        resolvedBaseAt = Date.now();
+        const rgba = bgraToRgbaBuffer(bgra);
         resolve({
           ok: true,
           baseUrl: base,
@@ -1533,7 +1580,9 @@ async function getPreviewFrame({ timeoutMs = 2500, source = null } = {}) {
           width,
           height,
           sequence,
-          bgra,
+          // RGBA for putImageData — avoids a second slow swap in the renderer.
+          rgba,
+          pixelFormat: 'rgba',
         });
       });
     });
@@ -1542,6 +1591,8 @@ async function getPreviewFrame({ timeoutMs = 2500, source = null } = {}) {
       resolve({ ok: false, error: 'Preview frame timeout' });
     });
     req.on('error', (e) => {
+      resolvedBase = null;
+      resolvedBaseAt = 0;
       resolve({ ok: false, error: e instanceof Error ? e.message : 'Preview fetch failed' });
     });
   });

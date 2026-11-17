@@ -70,7 +70,24 @@ export function subscribeRefreshNotice(
         cache: 'no-store',
       });
       if (!res.ok) return;
-      const data = (await res.json()) as { refreshNotice?: RefreshNotice | null };
+      const data = (await res.json()) as {
+        refreshNotice?: RefreshNotice | null;
+        overtimeSignId?: string;
+        logoVariantId?: string;
+        countdownColorModeId?: string;
+        greenRoomLayoutId?: string;
+        hideFullscreenTimerOption?: boolean;
+        autoShotTypeFromSpeakers?: boolean;
+        showLiveSyncStatusBadge?: boolean;
+        preflightChecklistEnabled?: boolean;
+      };
+      // Keep open clocks / branding in sync with Admin (e.g. overtime +/−).
+      try {
+        const { applySettingsFromPublicPayload } = await import('./appSettings');
+        applySettingsFromPublicPayload(data);
+      } catch {
+        /* ignore apply failures */
+      }
       const notice = data.refreshNotice;
       onNotice(
         notice && notice.version

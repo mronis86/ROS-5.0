@@ -30,7 +30,6 @@ import { overtimeSignPrefix, useOvertimeSign } from '../lib/overtimeSign';
 import { OvertimeClockText, pageClockSignClass } from '../lib/OvertimeClockText';
 import { usePreshowRainbow } from '../lib/usePreshowRainbow';
 import { findTopPreshowCue } from '../lib/preshowCountdown';
-import { formatShowDelayBanner } from '../lib/showDelay';
 import { programTypeSurfaceStyle, programTypeTextColor } from '../lib/rosProgramTypeSplit';
 import { ROS_PROGRAM_TYPE_COLORS } from '../lib/guestRosHelpers';
 import { formatCueNumber, formatTimerCueStatus, resolveScheduleCueLabel, shouldKeepExistingRunningTimer } from '../lib/cueDisplay';
@@ -2967,17 +2966,6 @@ const PhotoViewPage: React.FC = () => {
       <div className="flex justify-between items-start mb-6">
         <div>
           <h1 className="text-2xl font-bold">{event?.name || 'Current Event'}</h1>
-          {showMode === 'in-show' && formatShowDelayBanner(showStartOvertime) ? (
-            <div
-              className={`mt-2 inline-flex rounded-md px-3 py-1 text-sm font-bold ${
-                showStartOvertime > 0
-                  ? 'bg-red-900/50 border border-red-500 text-red-200'
-                  : 'bg-emerald-900/50 border border-emerald-500 text-emerald-200'
-              }`}
-            >
-              {formatShowDelayBanner(showStartOvertime)}
-            </div>
-          ) : null}
           <div className="flex flex-wrap items-center gap-3 mt-2">
             <span className="text-sm text-gray-300">{currentTime.toLocaleTimeString()}</span>
             <span className="text-xs text-slate-400" title="Overtime, start time, and duration update every 20 seconds">Sync in: {syncCountdown}s</span>

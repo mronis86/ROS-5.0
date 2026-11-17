@@ -47,12 +47,14 @@ export function getOvertimeSignId(): OvertimeSignId {
 }
 
 export function applyOvertimeSignId(id: OvertimeSignId): void {
+  const prev = cachedOvertimeSignId ?? readOvertimeSignFromStorage();
   cachedOvertimeSignId = id;
   try {
     localStorage.setItem(OVERTIME_SIGN_STORAGE_KEY, id);
   } catch {
     // ignore
   }
+  if (prev === id) return;
   window.dispatchEvent(new CustomEvent(OVERTIME_SIGN_CHANGE_EVENT, { detail: { overtimeSignId: id } }));
 }
 

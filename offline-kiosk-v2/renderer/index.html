@@ -175,9 +175,9 @@
             >
               Exit fullscreen
             </button>
-            <span class="wl-zoom-group" title="Zoom this display card only (independent per page)">
+            <span class="wl-zoom-group" title="Browser zoom this display page only (Ctrl − / Ctrl + / Ctrl+0)">
               <button type="button" class="ghost-btn wl-zoom-btn" id="wlPageZoomOutBtn" aria-label="Zoom out">−</button>
-              <button type="button" class="ghost-btn wl-zoom-btn wl-zoom-reset" id="wlPageZoomResetBtn" title="Reset this card’s zoom to 100%">100%</button>
+              <button type="button" class="ghost-btn wl-zoom-btn wl-zoom-reset" id="wlPageZoomResetBtn" title="Reset browser zoom to 100% (Ctrl+0)">100%</button>
               <button type="button" class="ghost-btn wl-zoom-btn" id="wlPageZoomInBtn" aria-label="Zoom in">+</button>
             </span>
             <button type="button" class="ghost-btn" id="wlLivePreviewLargerBtn">Larger</button>
@@ -197,7 +197,7 @@
           </p>
           <p class="wl-settings-hint" id="wlLivePreviewHint">
             Same picture as NDI / SDI / Spout. Card <strong>Preview</strong> loads that URL here;
-            <strong>− / +</strong> zoom this card only; <strong>Larger</strong> expands this preview.
+            <strong>− / +</strong> browser-zoom this page (like Ctrl±); <strong>Larger</strong> expands this preview.
           </p>
         </div>
 
@@ -225,9 +225,9 @@
         >
           Exit fullscreen
         </button>
-        <span class="wl-zoom-group" title="Zoom this display card only (independent per page)">
+        <span class="wl-zoom-group" title="Browser zoom this display page only (Ctrl − / Ctrl + / Ctrl+0)">
           <button type="button" class="ghost-btn wl-zoom-btn" id="wlPageZoomOutBtnPop" aria-label="Zoom out">−</button>
-          <button type="button" class="ghost-btn wl-zoom-btn wl-zoom-reset" id="wlPageZoomResetBtnPop" title="Reset this card’s zoom to 100%">100%</button>
+          <button type="button" class="ghost-btn wl-zoom-btn wl-zoom-reset" id="wlPageZoomResetBtnPop" title="Reset browser zoom to 100% (Ctrl+0)">100%</button>
           <button type="button" class="ghost-btn wl-zoom-btn" id="wlPageZoomInBtnPop" aria-label="Zoom in">+</button>
         </span>
         <button type="button" class="primary-btn" id="wlPreviewOverlayCloseBtn">Close</button>
@@ -507,15 +507,17 @@
                 <p class="perf-label" id="perfLabel">Checking…</p>
                 <p class="perf-tip" id="perfTip">Sampling CPU and memory for this kiosk.</p>
               </div>
-              <button type="button" class="ghost-btn" id="refreshPerfBtn">Recheck load</button>
-              <button
-                type="button"
-                class="ghost-btn"
-                id="cleanWlOrphansBtn"
-                title="Remove WebLinked sources that are not Enabled (ghost NDI / CPU)"
-              >
-                Clean unused WL
-              </button>
+              <div class="perf-head-actions">
+                <button
+                  type="button"
+                  class="ghost-btn"
+                  id="cleanWlOrphansBtn"
+                  title="Remove WebLinked sources that are not Enabled (ghost NDI / CPU)"
+                >
+                  Clean unused WL
+                </button>
+                <button type="button" class="ghost-btn" id="refreshPerfBtn">Recheck load</button>
+              </div>
             </div>
             <div class="perf-meters">
               <div class="perf-meter">

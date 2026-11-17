@@ -95,6 +95,13 @@ function applySettings(settings: AppSettingsResponse): AppSettingsResponse {
   return settings;
 }
 
+/** Apply a public /api/app-settings payload (e.g. version-poll refresh for open clocks). */
+export function applySettingsFromPublicPayload(
+  data: Partial<AppSettingsResponse> & { error?: string }
+): AppSettingsResponse {
+  return applySettings(parseSettings(data));
+}
+
 export async function fetchPublicAppSettings(): Promise<AppSettingsResponse> {
   const base = getApiBaseUrl();
   const res = await fetch(`${base}/api/app-settings`);
