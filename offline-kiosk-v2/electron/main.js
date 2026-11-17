@@ -670,6 +670,17 @@ ipcMain.handle('kiosk:commandDisplayClient', async (_evt, payload) => {
   }
 });
 
+ipcMain.handle('kiosk:deleteDisplayClient', async (_evt, payload) => {
+  try {
+    return await offlineShow.deleteDisplayClient(payload?.clientId);
+  } catch (e) {
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : 'Display client remove failed',
+    };
+  }
+});
+
 ipcMain.handle('kiosk:getSession', () => getSessionState());
 ipcMain.handle('kiosk:startSession', (_evt, partial) => {
   const plan = planSession({

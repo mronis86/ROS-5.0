@@ -628,6 +628,26 @@ async function commandDisplayClient(clientId, command) {
   }
 }
 
+async function deleteDisplayClient(clientId) {
+  const id = String(clientId || '').trim();
+  if (!id) return { ok: false, error: 'clientId is required' };
+  if (!(await isRunning())) {
+    return { ok: false, error: 'Start Offline Show first.' };
+  }
+  try {
+    const data = await requestJson(`/api/kiosk/display-clients/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      timeoutMs: 20000,
+    });
+    return data && typeof data === 'object' ? { ok: true, ...data } : { ok: false, error: 'Bad response' };
+  } catch (e) {
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : 'Display client remove failed',
+    };
+  }
+}
+
 module.exports = {
   OFFLINE_SHOW_URL,
   getStatus,
@@ -649,4 +669,5 @@ module.exports = {
   getVmixBridgeStatus,
   listDisplayClients,
   commandDisplayClient,
+  deleteDisplayClient,
 };

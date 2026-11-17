@@ -1497,7 +1497,20 @@ function renderDisplayClients() {
       void commandDisplayClient(c.clientId, 'stop');
     });
 
-    actions.append(startBtn, stopBtn);
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'ghost-btn gr-client-remove';
+    removeBtn.textContent = 'Remove';
+    removeBtn.disabled = busy || !c.clientId;
+    removeBtn.title =
+      'Remove this client from the list. If the PC is still running the Green Room client, it may reappear on the next heartbeat.';
+    removeBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      void removeDisplayClient(c);
+    });
+
+    actions.append(startBtn, stopBtn, removeBtn);
     li.append(meta, badge, actions);
     list.appendChild(li);
   }
@@ -1726,6 +1739,44 @@ async function commandDisplayClient(clientId, action, extras = {}) {
     if (note) {
       note.hidden = false;
       note.textContent = e instanceof Error ? e.message : 'Command failed';
+    }
+  } finally {
+    state.displayClientBusyId = '';
+  }
+  await refreshDisplayClients();
+}
+
+async function removeDisplayClient(client) {
+  const id = String(client?.clientId || '').trim();
+  if (!id || !window.kiosk?.deleteDisplayClient) return;
+  const label =
+    String(client?.name || '').trim() ||
+    id ||
+    String(client?.hostname || '').trim() ||
+    'this client';
+  if (
+    !window.confirm(
+      `Remove “${label}” from Green Room clients?\n\nIf that PC is still running the client app, it can show up again after the next heartbeat.`
+    )
+  ) {
+    return;
+  }
+  state.displayClientBusyId = id;
+  renderDisplayClients();
+  const note = $('#grClientsNote');
+  try {
+    const result = await window.kiosk.deleteDisplayClient({ clientId: id });
+    if (note) {
+      note.hidden = false;
+      note.textContent =
+        result?.ok === false && result?.error
+          ? result.error
+          : `Removed “${label}” from the Green Room list.`;
+    }
+  } catch (e) {
+    if (note) {
+      note.hidden = false;
+      note.textContent = e instanceof Error ? e.message : 'Remove failed';
     }
   } finally {
     state.displayClientBusyId = '';

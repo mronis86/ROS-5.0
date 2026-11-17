@@ -280,6 +280,30 @@ function registerRoutes(app, db, helpers) {
     }
   });
 
+  app.delete('/api/kiosk/display-clients/:clientId', async (req, res) => {
+    const clientId = String(req.params.clientId || '').trim();
+    if (!clientId) {
+      return res.status(400).json({ ok: false, error: 'clientId is required' });
+    }
+    const tokenStatus = getRailwayApiTokenStatus(db);
+    if (!tokenStatus.configured) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Add an Integration token before removing Green Room clients.',
+      });
+    }
+    try {
+      const { data } = await railwayFetch(
+        'DELETE',
+        `/api/display-clients/${encodeURIComponent(clientId)}`
+      );
+      res.json(data && typeof data === 'object' ? data : { ok: true, deleted: clientId });
+    } catch (e) {
+      const status = e?.status && Number(e.status) >= 400 ? Number(e.status) : 502;
+      res.status(status).json({ ok: false, error: friendlyError(e) });
+    }
+  });
+
   app.post('/api/kiosk/display-clients/:clientId/command', async (req, res) => {
     const clientId = String(req.params.clientId || '').trim();
     if (!clientId) {

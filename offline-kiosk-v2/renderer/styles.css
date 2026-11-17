@@ -419,6 +419,17 @@ body {
   font-size: 0.78rem;
 }
 
+.gr-client-actions .gr-client-remove {
+  color: #f0b4b4;
+  border-color: rgba(220, 120, 120, 0.45);
+}
+
+.gr-client-actions .gr-client-remove:hover:not(:disabled) {
+  color: #fff;
+  border-color: #e07070;
+  background: rgba(180, 60, 60, 0.35);
+}
+
 .ppt-page {
   display: flex;
   flex-direction: column;

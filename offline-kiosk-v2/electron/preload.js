@@ -40,6 +40,8 @@ contextBridge.exposeInMainWorld('kiosk', {
   listDisplayClients: (payload) => ipcRenderer.invoke('kiosk:listDisplayClients', payload || {}),
   commandDisplayClient: (payload) =>
     ipcRenderer.invoke('kiosk:commandDisplayClient', payload || {}),
+  deleteDisplayClient: (payload) =>
+    ipcRenderer.invoke('kiosk:deleteDisplayClient', payload || {}),
   getSystemHealth: () => ipcRenderer.invoke('kiosk:getSystemHealth'),
   startWebLinked: (payload) => ipcRenderer.invoke('kiosk:startWebLinked', payload),
   stopWebLinked: () => ipcRenderer.invoke('kiosk:stopWebLinked'),
