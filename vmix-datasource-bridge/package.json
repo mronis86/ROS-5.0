@@ -1,6 +1,6 @@
 {
   "name": "ros-vmix-datasource-bridge",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Portable ROS → vMix Data Source row selector (follows loaded cues on Railway)",
   "private": true,
   "main": "electron/main.js",
