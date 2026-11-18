@@ -151,7 +151,11 @@ import OperatorCountdownModal from '../components/OperatorCountdownModal';
 import TimedMarkerModal, { TimedMarkerModalResult } from '../components/TimedMarkerModal';
 import QaPlanModal from '../components/QaPlanModal';
 import type { QaPlanModalResult } from '../lib/qaPlan';
-import { parentDurationSeconds as qaParentDurationSeconds } from '../lib/qaPlan';
+import {
+  formatClockFromSeconds as formatQaClock,
+  isQaPlanRow,
+  parentDurationSeconds as qaParentDurationSeconds,
+} from '../lib/qaPlan';
 import { mapOperatorCountdownRow, operatorCountdownRemaining, formatOperatorCountdownTime } from '../lib/operatorCountdown';
 import ShowVsRehearsalPanel from '../components/ShowVsRehearsalPanel';
 import TimeToastIcon from '../components/TimeToastIcon';
@@ -364,13 +368,13 @@ interface ScheduleItem {
   speakersText: string;
   hasPPT: boolean;
   hasQA: boolean;
-  /** Linked indented Q&A ALT row created from the Q&A plan modal. */
+  /** Linked indented Q&A timer row created from the Q&A plan modal. */
   qaLinkedSubId?: number | null;
-  /** On Q&A sub-row: auto-start when parent remaining reaches this many seconds. */
+  /** On Q&A timer row: auto-start when parent remaining reaches this many seconds. */
   qaAutoStartAtRemainingSeconds?: number | null;
-  /** On Q&A sub-row: managed by Q&A plan (safe to remove when unchecking Q&A). */
+  /** On Q&A timer row: managed by Q&A plan (safe to remove when unchecking Q&A). */
   qaIsAutoQa?: boolean;
-  /** On Q&A sub-row: auto-start enabled. */
+  /** On Q&A timer row: auto-start enabled. */
   qaAutoStart?: boolean;
   needsRecording?: boolean;
   /** Exclusive: the next Mitti play syncs this row. Only one cue is true. */
@@ -2850,12 +2854,13 @@ const RunOfShowPage: React.FC = () => {
     ...extra,
   });
 
-  const getRowContainerClass = (itemId: number, index: number) =>
-    isShowBreakRow(itemId) && !isItemDimmed(itemId)
-      ? SHOW_BREAK_ROW_CLASS
-      : isDelayBlock(itemId) && !isItemDimmed(itemId)
-      ? DELAY_BLOCK_ROW_CLASS
-      : rowClassNames.get(itemId) || (index % 2 === 0 ? 'bg-slate-800' : 'bg-slate-900');
+  const getRowContainerClass = (itemId: number, index: number) => {
+    if (isShowBreakRow(itemId) && !isItemDimmed(itemId)) return SHOW_BREAK_ROW_CLASS;
+    if (isDelayBlock(itemId) && !isItemDimmed(itemId)) return DELAY_BLOCK_ROW_CLASS;
+    const row = schedule.find((s) => s.id === itemId);
+    if (isQaPlanRow(row) && !isItemDimmed(itemId)) return 'bg-amber-950/35';
+    return rowClassNames.get(itemId) || (index % 2 === 0 ? 'bg-slate-800' : 'bg-slate-900');
+  };
 
   /** CUE + Timer columns: neutral unless completed/stopped, or timed marker linked to loaded parent. */
   const getSideColumnRowClass = (itemId: number, index: number) => {
@@ -2866,6 +2871,12 @@ const RunOfShowPage: React.FC = () => {
     if (row?.isTimedMarker) {
       if (loadedCueDependents.has(itemId)) return 'bg-amber-950 border-amber-600';
       return 'bg-sky-950/50';
+    }
+    if (isQaPlanRow(row)) {
+      if (subCueTimers[itemId] || (hybridSecondaryTimer && itemMatchesTimerRow(itemId, hybridSecondaryTimer))) {
+        return 'bg-amber-950/70 border-amber-500';
+      }
+      return 'bg-amber-950/40';
     }
     return index % 2 === 0 ? 'bg-slate-800' : 'bg-slate-900';
   };
@@ -5243,7 +5254,8 @@ const RunOfShowPage: React.FC = () => {
     const qaRow: ScheduleItem = {
       id: newId,
       day: parent.day || selectedDay || 1,
-      programType: 'Sub Cue',
+      // Not a Sub Cue / ALT — marker-style Q&A timer under the parent.
+      programType: '',
       shotType: '',
       segmentName: result.label || 'Q&A',
       durationHours: hours,
@@ -5255,7 +5267,7 @@ const RunOfShowPage: React.FC = () => {
       speakersText: '',
       hasPPT: false,
       hasQA: false,
-      timerId: generateRandomTimerId(),
+      timerId: 'QA',
       customFields: { cue: '' },
       isPublic: false,
       isIndented: true,
@@ -5324,7 +5336,7 @@ const RunOfShowPage: React.FC = () => {
     }
 
     void Promise.resolve(persistScheduleCheckboxes?.(parentId, { hasQA: true })).catch(() => {});
-    logChange('ADD_ITEM', `Added Q&A ALT under "${parent.segmentName}"`, {
+    logChange('ADD_ITEM', `Added Q&A timer under "${parent.segmentName}"`, {
       changeType: 'ADD',
       itemId: newId,
       itemName: qaRow.segmentName,
@@ -20535,8 +20547,12 @@ const RunOfShowPage: React.FC = () => {
                      title={isRowLockedByOther(item.id) ? rowEditorLabel(item.id) : undefined}
                    >
                     <div className="flex flex-col items-center justify-center h-full gap-1">
-                      <div className="text-sm font-mono text-slate-300">
-                        {isScheduleOnlyProgramType(item.programType) ? 'SCHEDULE ONLY' : (item.timerId || 'TIMER')}
+                      <div className={`text-sm font-mono ${isQaPlanRow(item) ? 'text-amber-300 font-bold' : 'text-slate-300'}`}>
+                        {isQaPlanRow(item)
+                          ? 'Q&A'
+                          : isScheduleOnlyProgramType(item.programType)
+                            ? 'SCHEDULE ONLY'
+                            : (item.timerId || 'TIMER')}
                       </div>
                       <div className="flex flex-col gap-1">
                         {isTimedMarkerItem(item) ? (
@@ -20557,6 +20573,61 @@ const RunOfShowPage: React.FC = () => {
                               title="Timed markers cannot play or stop"
                             >
                               —
+                            </button>
+                          </>
+                        ) : isQaPlanRow(item) ? (
+                          <>
+                            <button
+                              onClick={() => {
+                                if (currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR') {
+                                  alert('Only OPERATORs can start Q&A timers. Please change your role to OPERATOR.');
+                                  return;
+                                }
+                                startSecondaryTimer(item.id);
+                              }}
+                              disabled={subPlaying || currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR' || !isParentCueRunning(item.id)}
+                              className={`px-3 py-1 rounded text-sm font-bold transition-colors ${
+                                currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR'
+                                  ? 'bg-gray-500 text-gray-300 cursor-not-allowed'
+                                  : !isParentCueRunning(item.id)
+                                    ? 'bg-gray-500 text-gray-300 cursor-not-allowed'
+                                    : subPlaying
+                                      ? 'bg-amber-500 text-slate-950 cursor-default'
+                                      : 'bg-amber-600 hover:bg-amber-500 text-white'
+                              }`}
+                              title={
+                                currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR'
+                                  ? 'Only OPERATORs can start Q&A timers'
+                                  : !isParentCueRunning(item.id)
+                                    ? 'Start the parent cue first'
+                                    : item.qaAutoStart
+                                      ? `Q&A timer — auto at ${formatQaClock(Number(item.qaAutoStartAtRemainingSeconds) || 0)} remaining, or PLAY now`
+                                      : 'Start Q&A timer'
+                              }
+                            >
+                              {subPlaying ? 'Q&A ON' : item.qaAutoStart ? 'AUTO' : 'PLAY'}
+                            </button>
+                            <button
+                              onClick={() => {
+                                if (currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR') {
+                                  alert('Only OPERATORs can stop Q&A timers. Please change your role to OPERATOR.');
+                                  return;
+                                }
+                                stopSecondaryTimer();
+                              }}
+                              disabled={!subPlaying || currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR' || !isParentCueRunning(item.id)}
+                              className={`px-3 py-1 rounded text-sm font-bold transition-colors ${
+                                currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR'
+                                  ? 'bg-gray-500 text-gray-300 cursor-not-allowed'
+                                  : !isParentCueRunning(item.id)
+                                    ? 'bg-gray-500 text-gray-300 cursor-not-allowed'
+                                    : subPlaying
+                                      ? 'bg-red-600 hover:bg-red-500 text-white'
+                                      : 'bg-slate-600 text-slate-400 cursor-not-allowed'
+                              }}
+                              title="Stop Q&A timer"
+                            >
+                              STOP
                             </button>
                           </>
                         ) : isShowBreakProgramType(item.programType) ? (

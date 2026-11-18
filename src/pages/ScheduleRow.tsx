@@ -29,6 +29,7 @@ import {
   suggestedDsmLayoutMode,
   type DsmLayoutMode,
 } from '../lib/dsmClockLayout';
+import { formatClockFromSeconds, isQaPlanRow } from '../lib/qaPlan';
 
 export interface ScheduleRowProps {
   item: any;
@@ -82,9 +83,9 @@ export interface ScheduleRowProps {
   calculateStartTimeWithOvertime?: (index: number) => string | number;
   calculateStartTime?: (index: number) => string | number;
   onEditTimedMarker?: (itemId: number) => void;
-  /** When checking Q&A — open plan modal (creates indented ALT row). */
+  /** When checking Q&A — open plan modal (creates indented Q&A timer row). */
   onRequestQaPlan?: (itemId: number) => void;
-  /** When unchecking Q&A — clear flag and optional linked Q&A sub-row. */
+  /** When unchecking Q&A — clear flag and optional linked Q&A timer row. */
   onClearQaPlan?: (itemId: number) => void;
   setEditingNotesItem?: Function;
   setShowNotesModal?: Function;
@@ -467,6 +468,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
   };
 
   const canEditRecording = currentUserRole !== 'VIEWER';
+  const isQaRow = isQaPlanRow(item);
   const flexOrder = (key: string): number => columnFlexOrder?.[key] ?? 999;
   const colBox = (width: number, key: string) => scrollColumnBoxStyle(width, flexOrder(key));
   /** Delay banner must sit after Start, Type, and Duration — not at flex order 0. */
@@ -503,6 +505,16 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
     }
     return w;
   })();
+  /** Q&A keeps Segment Name, then collapses the rest into one banner (like Delay/Show Break). */
+  const qaBannerWidth = Math.max(
+    0,
+    bannerReplacementWidth - (visibleColumns.segmentName ? Number(columnWidths.segmentName) || 0 : 0)
+  );
+  const qaBannerOrder = splitBannerOrder + (visibleColumns.segmentName ? 1 : 0);
+  const qaAutoAt =
+    item.qaAutoStart && item.qaAutoStartAtRemainingSeconds != null
+      ? formatClockFromSeconds(Number(item.qaAutoStartAtRemainingSeconds) || 0)
+      : null;
 
   const setNeedsRecording = (next: boolean) => {
     if (!beginCellEdit()) return;
@@ -641,7 +653,18 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
         />
       ) : null}
       {/* Program type column (moved directly after Start) */}
-      {visibleColumns.programType && (
+      {visibleColumns.programType && isQaRow ? (
+        <div
+          className="px-4 py-2 border-r border-amber-700/50 flex items-center justify-center flex-shrink-0 bg-amber-950/30"
+          style={colBox(columnWidths.programType, 'programType')}
+          title="Q&A timer row — not a program-type / Sub Cue"
+        >
+          <span className="inline-flex items-center rounded-md border border-amber-400/70 bg-amber-600 px-3 py-1.5 text-sm font-black uppercase tracking-wide text-slate-950 shadow-sm">
+            Q&A
+          </span>
+        </div>
+      ) : null}
+      {visibleColumns.programType && !isQaRow && (
         <div
           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
           style={colBox(columnWidths.programType, 'programType')}
@@ -747,6 +770,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
         />
       )}
       {visibleColumns.duration && !item.isTimedMarker && !isShowBreakProgramType(item.programType) && (() => {
+        // Q&A rows use the same duration editors, with a marker-style caption below.
         const durationChanged = showWasUnderDuration && originalDuration &&
           (item.durationHours !== originalDuration.durationHours ||
            item.durationMinutes !== originalDuration.durationMinutes ||
@@ -907,6 +931,9 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
               title={isLockedByOther ? lockLabel : currentUserRole === 'VIEWER' ? 'Only EDITORs and OPERATORs can edit duration' : 'Edit seconds'}
             />
           </div>
+          {isQaRow ? (
+            <span className="text-[10px] font-bold uppercase tracking-wide text-amber-400">Q&A length</span>
+          ) : null}
           {durationChanged && (() => {
             const h = originalDuration!.durationHours ?? 0;
             const m = originalDuration!.durationMinutes ?? 0;
@@ -950,6 +977,86 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
             </span>
           ))}
         </div>
+      ) : isQaRow ? (
+        <>
+          {visibleColumns.segmentName && (
+            <div
+              className="px-3 py-2 border-r border-amber-700/40 flex flex-col items-stretch justify-center flex-shrink-0 relative min-w-0 bg-amber-950/25"
+              style={colBox(columnWidths.segmentName, 'segmentName')}
+            >
+              <span
+                className="self-start inline-flex items-center rounded px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-amber-600 text-slate-950"
+                title="Q&A timer under the parent cue — not a Sub Cue / ALT row"
+              >
+                ↳ Q&A timer
+              </span>
+              <input
+                value={item.segmentName || ''}
+                onFocus={() => beginCellEdit()}
+                onMouseDown={(e) => {
+                  if (alertIfLocked(e)) return;
+                }}
+                onChange={(e) => {
+                  if (!beginCellEdit()) return;
+                  if (currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') {
+                    alert('Only EDITORs can edit Q&A labels. Please change your role to EDITOR.');
+                    return;
+                  }
+                  const oldValue = item.segmentName;
+                  setSchedule((prev: any[]) =>
+                    prev.map((scheduleItem) =>
+                      scheduleItem.id === item.id
+                        ? { ...scheduleItem, segmentName: e.target.value }
+                        : scheduleItem
+                    )
+                  );
+                  logChangeDebounced(
+                    `segmentName_${item.id}`,
+                    'FIELD_UPDATE',
+                    `Updated Q&A label from "${oldValue}" to "${e.target.value}"`,
+                    {
+                      changeType: 'FIELD_CHANGE',
+                      itemId: item.id,
+                      itemName: e.target.value,
+                      fieldName: 'segmentName',
+                      oldValue,
+                      newValue: e.target.value,
+                      details: { fieldType: 'text', qaTimer: true },
+                    }
+                  );
+                }}
+                disabled={isLockedByOther || currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'}
+                className={`mt-1 w-full px-3 py-2 rounded text-base text-left transition-colors ${cellFill}`}
+                placeholder="Q&A"
+                title={isLockedByOther ? lockLabel : 'Q&A timer label'}
+              />
+              {qaAutoAt ? (
+                <span className="mt-1 text-[11px] font-semibold text-amber-200/90">
+                  Auto at {qaAutoAt} remaining on parent
+                </span>
+              ) : (
+                <span className="mt-1 text-[11px] text-amber-200/70">Manual start from Timer column</span>
+              )}
+            </div>
+          )}
+          {qaBannerWidth > 0 ? (
+            <div
+              className="flex items-center gap-3 overflow-hidden border-r border-amber-500/50 px-3 py-2 bg-amber-950/20"
+              style={scrollColumnBoxStyle(qaBannerWidth, qaBannerOrder)}
+              title="Shot / PPT / notes / speakers and other cue columns are hidden on Q&A timer rows"
+            >
+              {[0, 1, 2].map((marker) => (
+                <span
+                  key={marker}
+                  className="min-w-0 flex-1 truncate whitespace-nowrap rounded-lg border border-amber-400/60 bg-amber-900/50 px-3 py-2 text-center text-sm font-bold tracking-wide text-amber-50 shadow-sm"
+                >
+                  Q&A TIMER · under parent cue
+                  {qaAutoAt ? ` · auto @ ${qaAutoAt} left` : ' · manual PLAY'}
+                </span>
+              ))}
+            </div>
+          ) : null}
+        </>
       ) : (
       <>
       {/* Segment name column (after Duration) */}
@@ -2114,6 +2221,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
     'hasPPT', 'hasQA', 'needsRecording', 'recordingSource', 'otherRoom', 'isPublic',
     'checkboxStamps', 'mittiWatch', 'avWatch', 'dsmEnabled', 'dsmMode', 'dsmModeManual',
     'isTimedMarker', 'isIndented', 'markerTimeMode', 'markerOffsetSeconds', 'markerAbsoluteSeconds',
+    'qaIsAutoQa', 'qaAutoStart', 'qaAutoStartAtRemainingSeconds', 'qaLinkedSubId',
     'breakStartTime',
     'sessionStartTime',
     'sectionStarted',

@@ -81,7 +81,7 @@ const QaPlanModal: React.FC<Props> = ({
       summary:
         startMode === 'end'
           ? `Q&A runs the last ${formatClockFromSeconds(duration)} of this ${parentLabel} cue.`
-          : `When ${formatClockFromSeconds(at)} remain on the cue, start a ${formatClockFromSeconds(duration)} Q&A ALT timer.`,
+          : `When ${formatClockFromSeconds(at)} remain on the cue, start a ${formatClockFromSeconds(duration)} Q&A timer.`,
     };
   }, [
     label,
@@ -134,14 +134,14 @@ const QaPlanModal: React.FC<Props> = ({
       aria-labelledby="qa-plan-title"
     >
       <button type="button" className="absolute inset-0 bg-black/70" aria-label="Close" onClick={onClose} />
-      <div className="relative w-full max-w-lg overflow-hidden rounded-2xl border border-slate-600 bg-slate-900 shadow-2xl">
+      <div className="relative w-full max-w-lg overflow-hidden rounded-2xl border border-amber-700/40 bg-slate-900 shadow-2xl">
         <div className="border-b border-slate-700 px-5 py-4 sm:px-6">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-sky-300">Q&A plan</p>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-amber-300">Q&A timer</p>
           <h2 id="qa-plan-title" className="mt-1 text-xl font-semibold text-white">
             Plan Q&A for “{parentSegmentName || 'this cue'}”
           </h2>
           <p className="mt-1 text-sm text-slate-400">
-            Parent length: {preview.parentLabel}. Creates an indented ALT row and can auto-start it.
+            Parent length: {preview.parentLabel}. Adds a marker-style Q&A timer under this cue (not a Sub Cue).
           </p>
         </div>
 
@@ -151,20 +151,20 @@ const QaPlanModal: React.FC<Props> = ({
             <input
               value={label}
               onChange={(e) => setLabel(e.target.value)}
-              className="mt-1.5 w-full rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-white focus:border-sky-500 focus:outline-none"
+              className="mt-1.5 w-full rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-white focus:border-amber-500 focus:outline-none"
               placeholder="Q&A"
             />
           </label>
 
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Q&A duration</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Q&A length</p>
             <div className="mt-1.5 flex items-center gap-2">
               <input
                 type="number"
                 min={0}
                 value={durationMin}
                 onChange={(e) => setDurationMin(Math.max(0, Number(e.target.value) || 0))}
-                className="w-20 rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-white focus:border-sky-500 focus:outline-none"
+                className="w-20 rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-white focus:border-amber-500 focus:outline-none"
               />
               <span className="text-sm text-slate-400">min</span>
               <input
@@ -173,7 +173,7 @@ const QaPlanModal: React.FC<Props> = ({
                 max={59}
                 value={durationSec}
                 onChange={(e) => setDurationSec(Math.max(0, Math.min(59, Number(e.target.value) || 0)))}
-                className="w-20 rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-white focus:border-sky-500 focus:outline-none"
+                className="w-20 rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-white focus:border-amber-500 focus:outline-none"
               />
               <span className="text-sm text-slate-400">sec</span>
             </div>
@@ -193,10 +193,9 @@ const QaPlanModal: React.FC<Props> = ({
                   className="mt-1"
                 />
                 <span>
-                  <span className="block text-sm font-semibold text-white">At the end of the cue</span>
+                  <span className="block text-sm font-semibold text-white">Last part of the cue</span>
                   <span className="mt-0.5 block text-xs text-slate-400">
-                    Start when the last {formatClockFromSeconds(Math.max(1, durationSeconds))} begin
-                    (e.g. 40:00 cue + 10:00 Q&A → starts at 10:00 remaining).
+                    Example: 40:00 cue + 10:00 Q&A → starts when 10:00 remain.
                   </span>
                 </span>
               </label>
@@ -211,7 +210,7 @@ const QaPlanModal: React.FC<Props> = ({
                 <span className="min-w-0 flex-1">
                   <span className="block text-sm font-semibold text-white">When remaining reaches</span>
                   <span className="mt-0.5 block text-xs text-slate-400">
-                    e.g. start a 10:00 Q&A when 20:00 remain on the parent.
+                    Example: start a 10:00 Q&A when 20:00 remain on the parent.
                   </span>
                   {startMode === 'remaining' ? (
                     <div className="mt-2 flex items-center gap-2">
@@ -220,7 +219,7 @@ const QaPlanModal: React.FC<Props> = ({
                         min={0}
                         value={remainMin}
                         onChange={(e) => setRemainMin(Math.max(0, Number(e.target.value) || 0))}
-                        className="w-20 rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-white focus:border-sky-500 focus:outline-none"
+                        className="w-20 rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-white focus:border-amber-500 focus:outline-none"
                       />
                       <span className="text-sm text-slate-400">min</span>
                       <input
@@ -231,7 +230,7 @@ const QaPlanModal: React.FC<Props> = ({
                         onChange={(e) =>
                           setRemainSec(Math.max(0, Math.min(59, Number(e.target.value) || 0)))
                         }
-                        className="w-20 rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-white focus:border-sky-500 focus:outline-none"
+                        className="w-20 rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-white focus:border-amber-500 focus:outline-none"
                       />
                       <span className="text-sm text-slate-400">sec remaining</span>
                     </div>
@@ -248,14 +247,14 @@ const QaPlanModal: React.FC<Props> = ({
               onChange={(e) => setAutoStart(e.target.checked)}
             />
             <span className="text-sm text-slate-200">
-              Auto-start the Q&A ALT timer when the parent cue hits that remaining time
+              Auto-start this Q&A timer when the parent cue hits that remaining time
             </span>
           </label>
 
-          <div className="rounded-xl border border-sky-700/40 bg-sky-950/25 px-3.5 py-3 text-sm text-sky-100/90 leading-relaxed">
+          <div className="rounded-xl border border-amber-700/40 bg-amber-950/25 px-3.5 py-3 text-sm text-amber-50/90 leading-relaxed">
             {preview.summary}
             {preview.intoCue != null ? (
-              <span className="mt-1 block text-xs text-sky-200/70">
+              <span className="mt-1 block text-xs text-amber-200/70">
                 Starts about {formatClockFromSeconds(preview.intoCue)} into the parent cue.
               </span>
             ) : null}
@@ -275,9 +274,9 @@ const QaPlanModal: React.FC<Props> = ({
           <button
             type="button"
             onClick={submit}
-            className="rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-500"
+            className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-amber-500"
           >
-            Create Q&A row
+            Create Q&A timer
           </button>
         </div>
       </div>

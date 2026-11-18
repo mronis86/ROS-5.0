@@ -1,6 +1,10 @@
-/** Planned Q&A indented sub-cue under a parent ROS row. */
+/** Planned Q&A timer row under a parent ROS cue (marker-style, not a Sub Cue / ALT). */
 
 export type QaStartMode = 'end' | 'remaining';
+
+export function isQaPlanRow(item: { qaIsAutoQa?: boolean } | null | undefined): boolean {
+  return item?.qaIsAutoQa === true;
+}
 
 export type QaPlanDraft = {
   label: string;
