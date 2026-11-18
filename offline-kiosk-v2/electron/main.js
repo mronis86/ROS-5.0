@@ -709,6 +709,27 @@ ipcMain.handle('kiosk:startOfflineShow', async () => {
 
 ipcMain.handle('kiosk:stopOfflineShow', async () => offlineShow.stopOfflineShow({ force: true }));
 
+/** Open Offline Show UI in the system browser (LAN master on :3004). */
+ipcMain.handle('kiosk:openOfflineShowUi', async (_evt, payload) => {
+  try {
+    const running = await offlineShow.isRunning();
+    if (!running) {
+      return { ok: false, error: 'Start Offline Show first.' };
+    }
+    const base = String(offlineShow.OFFLINE_SHOW_URL || 'http://127.0.0.1:3004').replace(/\/$/, '');
+    const pathHint = String(payload?.path || '/').trim() || '/';
+    const url = `${base}${pathHint.startsWith('/') ? pathHint : `/${pathHint}`}`;
+    const { shell } = require('electron');
+    await shell.openExternal(url);
+    return { ok: true, url };
+  } catch (e) {
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : 'Could not open Offline Show in the browser',
+    };
+  }
+});
+
 ipcMain.handle('kiosk:shutdown', async (_evt, payload) => {
   const reason = typeof payload?.reason === 'string' ? payload.reason : 'operator-shutdown';
   shuttingDown = true;

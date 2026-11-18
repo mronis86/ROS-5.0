@@ -330,6 +330,72 @@ function setDsmClockLayoutMode(eventId, rawMode) {
   return setDsmClockLayoutState(eventId, { mode: rawMode }).mode;
 }
 
+function isEndShowProgramType(programType) {
+  return String(programType || '').trim() === 'EndShow';
+}
+
+async function getScheduleItemProgramType(eventId, itemId) {
+  try {
+    const result = await pool.query(
+      'SELECT schedule_items FROM run_of_show_data WHERE event_id = $1',
+      [eventId]
+    );
+    if (!result.rows.length) return '';
+    let items = result.rows[0].schedule_items;
+    if (typeof items === 'string') {
+      try {
+        items = JSON.parse(items);
+      } catch {
+        items = [];
+      }
+    }
+    if (!Array.isArray(items)) return '';
+    const item = items.find((row) => Number(row.id) === Number(itemId));
+    return item?.programType || '';
+  } catch (err) {
+    console.warn('getScheduleItemProgramType failed:', err.message || err);
+    return '';
+  }
+}
+
+/**
+ * EndShow cues must not run into overtime. If a running timer is past its duration
+ * and the cue is EndShow, stop it and broadcast (no overtime minutes saved).
+ */
+async function autoStopEndShowTimerIfExpired(eventId, timerRow) {
+  if (!timerRow || !eventId) return timerRow;
+  if (timerRow.is_running !== true && timerRow.timer_state !== 'running') return timerRow;
+  const duration = Number(timerRow.duration_seconds) || 0;
+  if (duration <= 0 || !timerRow.started_at) return timerRow;
+  const startedMs = new Date(timerRow.started_at).getTime();
+  if (!Number.isFinite(startedMs)) return timerRow;
+  const elapsed = Math.floor((Date.now() - startedMs) / 1000);
+  if (elapsed < duration) return timerRow;
+
+  const programType = await getScheduleItemProgramType(eventId, timerRow.item_id);
+  if (!isEndShowProgramType(programType)) return timerRow;
+
+  try {
+    const result = await pool.query(
+      `UPDATE active_timers
+       SET is_running = false, is_active = false, timer_state = 'stopped', updated_at = NOW()
+       WHERE event_id = $1 AND item_id = $2 AND is_running = true
+       RETURNING *`,
+      [eventId, timerRow.item_id]
+    );
+    if (!result.rows[0]) return timerRow;
+    console.log(
+      `🛑 EndShow auto-stop: event ${eventId} item ${timerRow.item_id} hit ${duration}s — stopped (no overtime)`
+    );
+    broadcastUpdate(eventId, 'timerStopped', result.rows[0]);
+    broadcastTimerUpdated(eventId, result.rows[0]);
+    return result.rows[0];
+  } catch (err) {
+    console.warn('EndShow auto-stop failed:', err.message || err);
+    return timerRow;
+  }
+}
+
 /** When a cue is loaded and that row has DSM enabled, push the selected layout to DSM Clock pages. */
 async function applyDsmLayoutFromLoadedCue(eventId, itemId) {
   if (!eventId || itemId == null) return;
@@ -8547,9 +8613,21 @@ app.get('/api/active-timers/:eventId', async (req, res) => {
        ORDER BY updated_at DESC LIMIT 1`,
       [eventId]
     );
-    const rows = result.rows.map((row) =>
-      applyAvPlayoutMeta(eventId, applyMittiMeta(eventId, applyResolumeMeta(eventId, row)))
-    );
+    const rows = [];
+    for (const row of result.rows) {
+      const maybeStopped = await autoStopEndShowTimerIfExpired(eventId, row);
+      if (
+        maybeStopped &&
+        maybeStopped.is_running !== true &&
+        maybeStopped.timer_state === 'stopped'
+      ) {
+        // Expired EndShow — omit from active list (clients get timerStopped broadcast).
+        continue;
+      }
+      rows.push(
+        applyAvPlayoutMeta(eventId, applyMittiMeta(eventId, applyResolumeMeta(eventId, maybeStopped)))
+      );
+    }
     // Do not broadcast on GET — every fetch was pushing activeTimersUpdated to all clients and clearing loaded timers
     res.json(rows);
   } catch (error) {
@@ -8752,37 +8830,42 @@ app.put('/api/active-timers/stop', async (req, res) => {
       [event_id, item_id, user_id, user_name, user_role]
     );
     
-    // Calculate and save overtime if timer was running
+    // Calculate and save overtime if timer was running (skip EndShow — those stop at 00:00).
     if (timerBeforeStop.rows.length > 0 && timerBeforeStop.rows[0].is_running) {
       const timer = timerBeforeStop.rows[0];
-      const startedAt = new Date(timer.started_at);
-      const stoppedAt = new Date();
-      const actualSeconds = Math.floor((stoppedAt - startedAt) / 1000);
-      const scheduledSeconds = timer.duration_seconds || 0;
-      const overtimeMinutes = Math.round((actualSeconds - scheduledSeconds) / 60);
-      
-      if (Math.abs(overtimeMinutes) >= 1) {
-        console.log(`⏰ Server: Overtime detected: ${overtimeMinutes} minutes for item ${item_id}`);
-        
-        // Save overtime to database
-        await pool.query(
-          `INSERT INTO overtime_minutes (event_id, item_id, overtime_minutes, created_at, updated_at)
-           VALUES ($1, $2, $3, NOW(), NOW())
-           ON CONFLICT (event_id, item_id)
-           DO UPDATE SET 
-             overtime_minutes = EXCLUDED.overtime_minutes,
-             updated_at = NOW()`,
-          [event_id, item_id, overtimeMinutes]
-        );
-        
-        // Broadcast overtime update
-        broadcastUpdate(event_id, 'overtimeUpdate', {
-          event_id,
-          item_id,
-          overtimeMinutes
-        });
-        
-        console.log(`✅ Server: Overtime saved and broadcasted: ${overtimeMinutes} minutes`);
+      const endShowType = await getScheduleItemProgramType(event_id, item_id);
+      if (!isEndShowProgramType(endShowType)) {
+        const startedAt = new Date(timer.started_at);
+        const stoppedAt = new Date();
+        const actualSeconds = Math.floor((stoppedAt - startedAt) / 1000);
+        const scheduledSeconds = timer.duration_seconds || 0;
+        const overtimeMinutes = Math.round((actualSeconds - scheduledSeconds) / 60);
+
+        if (Math.abs(overtimeMinutes) >= 1) {
+          console.log(`⏰ Server: Overtime detected: ${overtimeMinutes} minutes for item ${item_id}`);
+
+          // Save overtime to database
+          await pool.query(
+            `INSERT INTO overtime_minutes (event_id, item_id, overtime_minutes, created_at, updated_at)
+             VALUES ($1, $2, $3, NOW(), NOW())
+             ON CONFLICT (event_id, item_id)
+             DO UPDATE SET
+               overtime_minutes = EXCLUDED.overtime_minutes,
+               updated_at = NOW()`,
+            [event_id, item_id, overtimeMinutes]
+          );
+
+          // Broadcast overtime update
+          broadcastUpdate(event_id, 'overtimeUpdate', {
+            event_id,
+            item_id,
+            overtimeMinutes
+          });
+
+          console.log(`✅ Server: Overtime saved and broadcasted: ${overtimeMinutes} minutes`);
+        }
+      } else {
+        console.log(`🛑 Server: EndShow stop for item ${item_id} — skipping overtime save`);
       }
     }
     

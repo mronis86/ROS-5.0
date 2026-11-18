@@ -3886,6 +3886,11 @@ function syncStatus() {
   if (startBtn && !state.busy) {
     startBtn.textContent = state.offlineShowRunning ? 'Stop Offline Show' : 'Start Offline Show';
   }
+  const openRosBtn = $('#openOfflineRosBtn');
+  if (openRosBtn) {
+    openRosBtn.hidden = !state.offlineShowRunning;
+    openRosBtn.disabled = state.busy || !state.offlineShowRunning;
+  }
   renderConnectivity();
 }
 
@@ -4281,6 +4286,25 @@ async function toggleOfflineShow() {
   else await connectOfflineShow();
 }
 
+async function openOfflineRosInBrowser() {
+  if (!state.offlineShowRunning) {
+    setEventNote('Start Offline Show first, then Open Offline ROS.');
+    return;
+  }
+  if (!window.kiosk?.openOfflineShowUi) {
+    setEventNote('Open Offline ROS is only available in the Electron kiosk.');
+    return;
+  }
+  const result = await window.kiosk.openOfflineShowUi({ path: '/' });
+  if (!result?.ok) {
+    setEventNote(result?.error || 'Could not open Offline Show in the browser.');
+    return;
+  }
+  setEventNote(
+    `Opened Offline ROS in your browser (${result.url || 'http://127.0.0.1:3004'}). Pick an event → Run of Show.`
+  );
+}
+
 async function bootstrap() {
   document.querySelectorAll('.tab').forEach((tab) => {
     tab.addEventListener('click', () => void setTab(tab.dataset.tab));
@@ -4311,6 +4335,7 @@ async function bootstrap() {
   });
 
   $('#startShowBtn')?.addEventListener('click', () => void toggleOfflineShow());
+  $('#openOfflineRosBtn')?.addEventListener('click', () => void openOfflineRosInBrowser());
   $('#sessionBtn')?.addEventListener('click', () => openSessionModal({ force: true }));
   $('#sessionStartBtn')?.addEventListener('click', () => void confirmKioskSession());
   $('#sessionCancelBtn')?.addEventListener('click', () => closeSessionModal());

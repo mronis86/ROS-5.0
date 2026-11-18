@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('kiosk', {
   offlineShowStatus: () => ipcRenderer.invoke('kiosk:offlineShowStatus'),
   startOfflineShow: () => ipcRenderer.invoke('kiosk:startOfflineShow'),
   stopOfflineShow: () => ipcRenderer.invoke('kiosk:stopOfflineShow'),
+  openOfflineShowUi: (payload) => ipcRenderer.invoke('kiosk:openOfflineShowUi', payload || {}),
   getSession: () => ipcRenderer.invoke('kiosk:getSession'),
   startSession: (partial) => ipcRenderer.invoke('kiosk:startSession', partial),
   endSession: () => ipcRenderer.invoke('kiosk:endSession'),

@@ -38,8 +38,10 @@ import {
 } from '../lib/autoRoll';
 import { shouldUsePreshowRainbow, isActiveTimerRunning } from '../lib/usePreshowRainbow';
 import {
+  isEndShowProgramType,
   normalizeSchedulePreshowEndTypes,
   programTypeSurfaceStyle,
+  resolvePreshowProgramTypeSelection,
 } from '../lib/rosProgramTypeSplit';
 import { shotTypePatchFromSpeakers, shotTypeManualEditPatch, defaultSpeakerLocationForProgram, parseSpeakersForShotType } from '../lib/shotTypeFromSpeakers';
 import { getAutoShotTypeFromSpeakers } from '../lib/branding';
@@ -1633,6 +1635,9 @@ const RunOfShowPage: React.FC = () => {
   const toggleTimerRef = useRef<
     (itemId: number, options?: { ignoreOtherRunning?: boolean }) => Promise<void>
   >(async () => {});
+  /** Prevents double EndShow auto-stop for the same running timer instance. */
+  const endShowAutoStopKeyRef = useRef<string | null>(null);
+  const endShowAutoStopInFlightRef = useRef(false);
   const preshowShowDayArmedRef = useRef<PreshowShowDayArmed | null>(null);
   const [autoRollArmed, setAutoRollArmed] = useState<AutoRollArmed | null>(null);
   const [autoRollHud, setAutoRollHud] = useState('');
@@ -11593,6 +11598,8 @@ const RunOfShowPage: React.FC = () => {
       const activeTimer = hybridTimerData.activeTimer;
       const startedAt = new Date(activeTimer.started_at);
       const total = activeTimer.duration_seconds || 0;
+      const itemId = Number(activeTimer.item_id);
+      const stopKey = `${event?.id || ''}:${itemId}:${activeTimer.started_at || ''}`;
       
       console.log('⏰ Hybrid timer - Setup with clock offset:', {
         started_at: activeTimer.started_at,
@@ -11610,6 +11617,79 @@ const RunOfShowPage: React.FC = () => {
           elapsed: elapsed,
           total: total
         });
+
+        // EndShow: stop at 00:00 — do not let the cue run into overtime.
+        if (
+          total > 0 &&
+          elapsed >= total &&
+          Number.isFinite(itemId) &&
+          user &&
+          event?.id &&
+          !endShowAutoStopInFlightRef.current &&
+          endShowAutoStopKeyRef.current !== stopKey
+        ) {
+          const row = (scheduleRef.current || []).find((s) => Number(s.id) === itemId);
+          if (isEndShowProgramType(row?.programType)) {
+            endShowAutoStopKeyRef.current = stopKey;
+            endShowAutoStopInFlightRef.current = true;
+            void (async () => {
+              try {
+                console.log('🛑 EndShow timer reached 0 — auto-stopping (no overtime)');
+                await DatabaseService.stopTimer(
+                  event.id,
+                  itemId,
+                  user.id,
+                  user.full_name || user.email || 'Unknown User',
+                  currentUserRole || 'VIEWER'
+                );
+                try {
+                  await DatabaseService.markCueCompleted(
+                    event.id,
+                    itemId,
+                    row?.customFields?.cue || 'CUE',
+                    user.id,
+                    user.full_name || user.email || 'Unknown User',
+                    currentUserRole || 'VIEWER'
+                  );
+                } catch (markErr) {
+                  console.warn('EndShow auto-stop: mark completed failed', markErr);
+                }
+                setHybridTimerData((prev: any) =>
+                  prev?.activeTimer && Number(prev.activeTimer.item_id) === itemId
+                    ? { ...prev, activeTimer: null }
+                    : prev
+                );
+                setActiveTimers((prev) => {
+                  if (!(itemId in prev)) return prev;
+                  const next = { ...prev };
+                  delete next[itemId];
+                  return next;
+                });
+                setLoadedItems((prev) => {
+                  if (!(itemId in prev)) return prev;
+                  const next = { ...prev };
+                  delete next[itemId];
+                  return next;
+                });
+                setCompletedCues((prev) => ({ ...prev, [itemId]: true }));
+                setActiveItemId((prev) => (prev === itemId ? null : prev));
+                setHybridTimerProgress({ elapsed: total, total });
+                logChange(
+                  'ENDSHOW_AUTO_STOP',
+                  `EndShow timer stopped at 00:00 for "${row?.segmentName || itemId}" (no overtime)`,
+                  { itemId, fieldName: 'timer_state', newValue: 'stopped' }
+                );
+              } catch (err) {
+                console.error('❌ EndShow auto-stop failed:', err);
+                if (endShowAutoStopKeyRef.current === stopKey) {
+                  endShowAutoStopKeyRef.current = null;
+                }
+              } finally {
+                endShowAutoStopInFlightRef.current = false;
+              }
+            })();
+          }
+        }
       };
       
       // Update immediately
@@ -11633,7 +11713,9 @@ const RunOfShowPage: React.FC = () => {
         total: 0
       });
     }
-  }, [hybridTimerData?.activeTimer?.is_running, hybridTimerData?.activeTimer?.is_active, hybridTimerData?.activeTimer?.started_at, hybridTimerData?.activeTimer?.duration_seconds, hybridTimerData?.activeTimer, clockOffset]);
+    // Intentionally omit logChange — restarting this interval every render would fight the countdown.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hybridTimerData?.activeTimer?.is_running, hybridTimerData?.activeTimer?.is_active, hybridTimerData?.activeTimer?.started_at, hybridTimerData?.activeTimer?.duration_seconds, hybridTimerData?.activeTimer, clockOffset, event?.id, user, currentUserRole]);
 
   // Debug: Monitor schedule changes
   useEffect(() => {
@@ -20044,6 +20126,7 @@ const RunOfShowPage: React.FC = () => {
                         resumeStartMirror={showBreakResumeMirror(item, originalIndex)}
                         programTypes={programTypes}
                         programTypeColors={programTypeColors}
+                        schedule={schedule}
                         shotTypes={shotTypes}
                         currentUserRole={currentUserRole}
                         segmentSpellingMode="ros"
@@ -20489,8 +20572,13 @@ const RunOfShowPage: React.FC = () => {
                       handleModalEditing();
                     }}
                     onChange={(e) => {
+                      const rawType = e.target.value;
+                      const programType = resolvePreshowProgramTypeSelection(rawType, schedule, {
+                        atIndex: schedule.length,
+                        day: modalForm.day || selectedDay,
+                        indentedLookup: indentedCues,
+                      });
                       setModalForm((prev) => {
-                        const programType = e.target.value;
                         const autoShot =
                           getAutoShotTypeFromSpeakers() && !prev.shotTypeManualOverride
                             ? shotTypePatchFromSpeakers(parseSpeakersForShotType(prev.speakersText), {

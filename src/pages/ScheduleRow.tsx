@@ -9,7 +9,10 @@ import {
 } from '../lib/audioCallouts';
 import { shotTypeManualEditPatch, shotTypePatchFromSpeakers, parseSpeakersForShotType } from '../lib/shotTypeFromSpeakers';
 import { getAutoShotTypeFromSpeakers } from '../lib/branding';
-import { programTypeSurfaceStyle } from '../lib/rosProgramTypeSplit';
+import {
+  programTypeSurfaceStyle,
+  resolvePreshowProgramTypeSelection,
+} from '../lib/rosProgramTypeSplit';
 import { boostNotesContrastHtml } from '../lib/notesContrast';
 import StageDirectionModal from '../components/StageDirectionModal';
 import StartTimeColumnCell from '../components/StartTimeColumnCell';
@@ -39,6 +42,8 @@ export interface ScheduleRowProps {
   cumulativeOvertime: number; // Precomputed cumulative overtime for this row
   programTypes: string[];
   programTypeColors: any;
+  /** Full day schedule — used to warn PreShow that looks like EndShow. */
+  schedule?: any[];
   shotTypes: string[];
   currentUserRole: string;
   setSchedule: Function;
@@ -162,6 +167,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
   cumulativeOvertime,
   programTypes,
   programTypeColors,
+  schedule,
   shotTypes,
   currentUserRole,
   setSchedule,
@@ -603,7 +609,11 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
                 return;
               }
               const oldValue = item.programType;
-              const programType = e.target.value;
+              const programType = resolvePreshowProgramTypeSelection(e.target.value, schedule, {
+                itemId: item.id,
+                day: item.day,
+                indentedLookup: indentedCues,
+              });
               const autoShot =
                 getAutoShotTypeFromSpeakers()
                   ? shotTypePatchFromSpeakers(parseSpeakersForShotType(item.speakersText), {
@@ -639,14 +649,14 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
               logChangeDebounced(
                 `programType_${item.id}`,
                 'FIELD_UPDATE',
-                `Updated program type for "${item.segmentName}" from "${oldValue}" to "${e.target.value}"`,
+                `Updated program type for "${item.segmentName}" from "${oldValue}" to "${programType}"`,
                 {
                   changeType: 'FIELD_CHANGE',
                   itemId: item.id,
                   itemName: item.segmentName,
                   fieldName: 'programType',
                   oldValue: oldValue,
-                  newValue: e.target.value,
+                  newValue: programType,
                   details: { fieldType: 'select', optionChange: true }
                 }
               );
