@@ -53,21 +53,28 @@ type BoardData = {
   assets: BoardAsset[];
 };
 
-const ZONE_META: Record<BoardZone, { title: string; hint: string; accept: string }> = {
+const ZONE_META: Record<
+  BoardZone,
+  { title: string; hint: string; emptyHint: string; accept: string; optional?: boolean }
+> = {
   agenda: {
-    title: 'Agenda / Schedule',
-    hint: 'PDF, Word, Excel, or TXT — upload to view and extract text',
+    title: 'Agenda',
+    hint: 'Upload the meeting schedule (PDF, Word, Excel, or text).',
+    emptyHint: 'No agenda file yet.',
     accept: '.pdf,.doc,.docx,.txt,.xlsx,.xls',
   },
   powerpoint: {
-    title: 'PowerPoint',
-    hint: 'PPT, PPTX, or PDF decks — PDF can Make PowerPoint; same-name uploads version like ROS',
+    title: 'Presentations',
+    hint: 'Upload PowerPoint or PDF decks for the room to open.',
+    emptyHint: 'No presentations yet.',
     accept: '.ppt,.pptx,.pdf',
   },
   display: {
-    title: 'Display screen content',
-    hint: 'Images, video, or PDF for room displays',
+    title: 'Room screens',
+    hint: 'Optional images, video, or PDF for lobby / confidence monitors.',
+    emptyHint: 'No room-screen files yet.',
     accept: 'image/*,video/*,.pdf',
+    optional: true,
   },
 };
 
@@ -123,6 +130,7 @@ const EventBoardPage: React.FC = () => {
   const [convertingId, setConvertingId] = useState<string | null>(null);
   const [usingId, setUsingId] = useState<string | null>(null);
   const [publicBusy, setPublicBusy] = useState(false);
+  const [hubTab, setHubTab] = useState<'setup' | 'files' | 'details'>('files');
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileInputRefs = useRef<Partial<Record<BoardZone, HTMLInputElement | null>>>({});
 
@@ -443,14 +451,61 @@ const EventBoardPage: React.FC = () => {
     navigate('/');
   };
 
+  const hasAgendaContent =
+    assetsByZone.agenda.length > 0 ||
+    rowsLookTimed(agendaItems) ||
+    !!agendaText.trim();
+  const hasPresentations = assetsByZone.powerpoint.length > 0;
+  const hasDisplays = assetsByZone.display.length > 0;
+  const isShared = !!publicControlUrl;
+  const setupSteps = [
+    {
+      id: 'agenda' as const,
+      label: 'Agenda',
+      done: hasAgendaContent,
+      detail: hasAgendaContent ? 'Ready' : 'Upload or paste the schedule',
+    },
+    {
+      id: 'powerpoint' as const,
+      label: 'Presentations',
+      done: hasPresentations,
+      detail: hasPresentations
+        ? `${assetsByZone.powerpoint.length} file${assetsByZone.powerpoint.length === 1 ? '' : 's'}`
+        : 'Add slide decks',
+    },
+    {
+      id: 'display' as const,
+      label: 'Room screens',
+      done: hasDisplays,
+      optional: true,
+      detail: hasDisplays
+        ? `${assetsByZone.display.length} file${assetsByZone.display.length === 1 ? '' : 's'}`
+        : 'Optional',
+    },
+    {
+      id: 'share' as const,
+      label: 'Share with room',
+      done: isShared,
+      detail: isShared ? 'Link is live' : 'Create a simple room link',
+    },
+  ];
+  const nextSetupStep = setupSteps.find((s) => !s.done && !s.optional) || setupSteps.find((s) => !s.done);
+
   const renderZone = (zone: BoardZone) => {
     const meta = ZONE_META[zone];
     const list = assetsByZone[zone];
     return (
-      <section className="rounded-xl border border-slate-600/80 bg-slate-900/50 p-4 flex flex-col min-h-[220px]">
-        <header className="mb-3">
-          <h2 className="text-sm font-semibold text-white tracking-wide">{meta.title}</h2>
-          <p className="text-xs text-slate-400 mt-1">{meta.hint}</p>
+      <section className="rounded-2xl border border-slate-600/70 bg-slate-900/55 p-5 flex flex-col min-h-[280px] h-full">
+        <header className="mb-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="text-base font-semibold text-white tracking-tight">{meta.title}</h2>
+            {meta.optional ? (
+              <span className="rounded-full bg-slate-800 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                Optional
+              </span>
+            ) : null}
+          </div>
+          <p className="text-sm text-slate-400 mt-1 leading-snug">{meta.hint}</p>
         </header>
 
         {canEdit ? (
@@ -496,17 +551,18 @@ const EventBoardPage: React.FC = () => {
               if (!file) return;
               void onUpload(zone, file);
             }}
-            className={`mb-3 flex flex-col items-center justify-center gap-1 rounded-lg border border-dashed px-3 py-6 text-center transition-colors ${
+            className={`mb-4 flex flex-col items-center justify-center gap-1.5 rounded-xl border-2 border-dashed px-4 py-8 text-center transition-colors ${
               uploadBusyZone === zone
                 ? 'opacity-60 pointer-events-none border-slate-500 bg-slate-950/40'
                 : dragOverZone === zone
-                  ? 'cursor-copy border-blue-400 bg-blue-950/40'
-                  : 'cursor-pointer border-slate-500 bg-slate-950/40 hover:border-blue-400 hover:bg-slate-900/60'
+                  ? 'cursor-copy border-emerald-400 bg-emerald-950/30'
+                  : 'cursor-pointer border-slate-500 bg-slate-950/40 hover:border-emerald-500/70 hover:bg-slate-900/60'
             }`}
           >
-            <span className="text-sm text-slate-200">
-              {uploadBusyZone === zone ? 'Uploading…' : 'Drop file or click to upload'}
+            <span className="text-sm font-semibold text-slate-100">
+              {uploadBusyZone === zone ? 'Uploading…' : 'Drop a file here, or click to choose'}
             </span>
+            <span className="text-xs text-slate-500">One file at a time is fine — you can add more later.</span>
             <input
               ref={(el) => {
                 fileInputRefs.current[zone] = el;
@@ -522,12 +578,14 @@ const EventBoardPage: React.FC = () => {
             />
           </div>
         ) : (
-          <p className="mb-3 text-xs text-slate-500">View only — EDITOR role required to upload.</p>
+          <p className="mb-3 text-sm text-slate-500">View only — switch to Editor to upload files.</p>
         )}
 
         <ul className="space-y-2 flex-1 overflow-auto">
           {list.length === 0 ? (
-            <li className="text-xs text-slate-500">No files yet.</li>
+            <li className="rounded-lg border border-dashed border-slate-700/80 bg-slate-950/30 px-3 py-3 text-sm text-slate-500">
+              {meta.emptyHint}
+            </li>
           ) : (
             list.map((asset) => {
               const versioned = (asset.versionCount || 1) > 1;
@@ -582,7 +640,7 @@ const EventBoardPage: React.FC = () => {
                       onClick={() => void convertPdfToPpt(asset)}
                       className="rounded px-2 py-1 text-[11px] font-medium text-amber-200 hover:bg-slate-800 disabled:opacity-50"
                     >
-                      {convertingId === asset.id ? 'Creating PPT…' : 'Make PowerPoint'}
+                      {convertingId === asset.id ? 'Creating slides…' : 'Turn into PowerPoint'}
                     </button>
                   ) : null}
                   {canEdit && versioned && asset.isCurrent === false ? (
@@ -600,9 +658,9 @@ const EventBoardPage: React.FC = () => {
                       type="button"
                       onClick={() => void applyExtracted(asset)}
                       className="rounded px-2 py-1 text-[11px] font-medium text-emerald-200 hover:bg-slate-800"
-                      title="Copy extracted text into agenda notes"
+                      title="Add this text into the agenda notes"
                     >
-                      Use text
+                      Add to agenda
                     </button>
                   ) : null}
                   {canEdit ? (
@@ -650,38 +708,82 @@ const EventBoardPage: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 pt-[var(--app-header-height)]">
-      <header className="sticky top-[var(--app-header-height)] z-40 border-b border-slate-700 bg-slate-900">
-        <div className="flex items-center gap-2 px-3 py-1.5">
-          <button
-            type="button"
-            onClick={() => void handleBackToEvents()}
-            className="shrink-0 rounded-md bg-slate-700 px-2.5 py-1 text-xs font-semibold text-white hover:bg-slate-600"
-            title="Back to Events"
-          >
-            ← Events
-          </button>
-          <div className="ml-6 min-w-0 flex items-center gap-2">
-            <h1 className="truncate text-sm font-semibold text-white">{event?.name || MEETING_HUB_LABEL}</h1>
-            <span className="shrink-0 rounded bg-emerald-800/80 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-100">
-              Hub
-            </span>
-            <span className="hidden md:inline truncate text-xs text-slate-500">
-              {[event?.date, event?.location].filter(Boolean).join(' · ')}
-            </span>
-          </div>
-          <div className="ml-auto flex shrink-0 items-center gap-1.5">
-            {saving ? <span className="text-[11px] text-slate-500">Saving…</span> : null}
-            <span className="text-xs text-slate-400">
-              <span className="hidden sm:inline">Role: </span>
-              <span className="font-semibold text-white">{sessionRoleLabel(userRole)}</span>
-            </span>
+      <header className="sticky top-[var(--app-header-height)] z-40">
+        <div className="border-b border-slate-600 bg-slate-800 shadow-md">
+          <div className="flex items-center gap-2 px-3 py-2.5 sm:px-4">
             <button
               type="button"
-              onClick={() => setShowRoleChangeModal(true)}
-              className="rounded-md bg-slate-700 px-2 py-1 text-xs font-medium text-white hover:bg-slate-600"
+              onClick={() => void handleBackToEvents()}
+              className="shrink-0 rounded-md bg-slate-700 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-slate-600"
+              title="Back to Events"
             >
-              Change Role
+              ← Events
             </button>
+            <div className="ml-4 min-w-0 flex items-center gap-2">
+              <h1 className="truncate text-sm sm:text-base font-semibold text-white">
+                {event?.name || MEETING_HUB_LABEL}
+              </h1>
+              <span className="shrink-0 rounded-md bg-emerald-700 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">
+                Meeting Hub
+              </span>
+              <span className="hidden md:inline truncate text-xs text-slate-400">
+                {[event?.date, event?.location].filter(Boolean).join(' · ')}
+              </span>
+            </div>
+            <div className="ml-auto flex shrink-0 items-center gap-1.5">
+              {saving ? <span className="text-[11px] text-slate-400">Saving…</span> : null}
+              <span className="text-xs text-slate-300">
+                <span className="hidden sm:inline">Role: </span>
+                <span className="font-semibold text-white">{sessionRoleLabel(userRole)}</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowRoleChangeModal(true)}
+                className="rounded-md bg-slate-700 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-slate-600"
+              >
+                Change Role
+              </button>
+            </div>
+          </div>
+        </div>
+        <div className="border-b border-slate-700 bg-slate-950/90">
+          <div
+            role="tablist"
+            aria-label="Meeting Hub sections"
+            className="flex gap-2 px-3 py-3 sm:px-4 overflow-x-auto"
+          >
+            {(
+              [
+                { id: 'setup' as const, label: 'Setup / Help', tip: 'Share + how-to' },
+                { id: 'files' as const, label: 'Files', tip: 'Agenda & decks' },
+                { id: 'details' as const, label: 'Details', tip: 'Day-of notes' },
+              ] as const
+            ).map((tab) => {
+              const active = hubTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  onClick={() => setHubTab(tab.id)}
+                  className={`shrink-0 rounded-xl border px-4 py-2.5 text-left transition ${
+                    active
+                      ? 'border-emerald-500 bg-emerald-700 text-white shadow-sm'
+                      : 'border-slate-600 bg-slate-900 text-slate-300 hover:border-slate-500 hover:bg-slate-800 hover:text-white'
+                  }`}
+                >
+                  <span className="block text-sm font-semibold leading-none">{tab.label}</span>
+                  <span
+                    className={`mt-1.5 block text-[11px] leading-none ${
+                      active ? 'text-emerald-100/90' : 'text-slate-500'
+                    }`}
+                  >
+                    {tab.tip}
+                  </span>
+                </button>
+              );
+            })}
           </div>
         </div>
       </header>
@@ -692,239 +794,378 @@ const EventBoardPage: React.FC = () => {
         eventId={event?.id || ''}
       />
 
-      <main className="mx-auto max-w-6xl px-4 sm:px-8 py-6 space-y-5">
+      <main className="w-full px-4 sm:px-6 lg:px-8 xl:px-10 py-6 space-y-6">
         {error ? (
-          <div className="rounded-lg border border-red-800/70 bg-red-950/40 px-3 py-2 text-sm text-red-200">
+          <div className="rounded-xl border border-red-800/70 bg-red-950/40 px-4 py-3 text-sm text-red-200">
             {error}
           </div>
         ) : null}
 
         {loading ? (
           <p className="text-slate-400 text-sm">Loading {MEETING_HUB_LABEL}…</p>
-        ) : (
-          <>
-            <section className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border border-emerald-600/45 bg-emerald-950/55 px-3 py-1.5">
-              <span className="text-[11px] font-semibold uppercase tracking-wide text-emerald-200">
-                Share
-              </span>
-              <span className="hidden sm:inline text-[11px] text-emerald-200/70">
-                Public agenda + decks · Bridge → Meeting Hub on room PC
-              </span>
-              <div className="ml-auto flex flex-wrap items-center gap-1.5">
-                {publicControlUrl ? (
-                  <>
-                    <a
-                      href={publicControlUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="rounded bg-emerald-800/70 px-2 py-0.5 text-[11px] font-semibold text-emerald-50 hover:bg-emerald-700/80"
-                    >
-                      Open
-                    </a>
+        ) : hubTab === 'setup' ? (
+          <div className="space-y-6" role="tabpanel">
+            <section className="rounded-xl border border-emerald-600/35 bg-emerald-950/25 px-3.5 py-2.5 sm:px-4">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                    <h2 className="text-sm font-semibold text-white">Room page</h2>
+                    <p className="text-xs text-emerald-100/70">
+                      Room PC link — no login
+                    </p>
+                  </div>
+                  {publicControlUrl ? (
+                    <p className="mt-1 truncate text-[11px] font-mono text-emerald-100/55" title={publicControlUrl}>
+                      {publicControlUrl}
+                    </p>
+                  ) : null}
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                  {publicControlUrl ? (
+                    <>
+                      <a
+                        href={publicControlUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="rounded-md bg-emerald-600 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500"
+                      >
+                        Open
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() => void navigator.clipboard.writeText(publicControlUrl)}
+                        className="rounded-md border border-emerald-500/50 bg-emerald-950/50 px-2.5 py-1.5 text-xs font-semibold text-emerald-100 hover:bg-emerald-900/60"
+                      >
+                        Copy
+                      </button>
+                      {canEdit ? (
+                        <>
+                          <button
+                            type="button"
+                            disabled={publicBusy}
+                            onClick={() => void setPublicControl(true, true)}
+                            className="rounded-md px-2 py-1.5 text-xs font-medium text-emerald-200/80 hover:bg-emerald-900/50 disabled:opacity-50"
+                          >
+                            New link
+                          </button>
+                          <button
+                            type="button"
+                            disabled={publicBusy}
+                            onClick={() => void setPublicControl(false)}
+                            className="rounded-md px-2 py-1.5 text-xs font-medium text-red-300/90 hover:bg-emerald-900/50 disabled:opacity-50"
+                          >
+                            Turn off
+                          </button>
+                        </>
+                      ) : null}
+                    </>
+                  ) : canEdit ? (
                     <button
                       type="button"
-                      onClick={() => void navigator.clipboard.writeText(publicControlUrl)}
-                      className="rounded px-2 py-0.5 text-[11px] font-medium text-emerald-100/90 hover:bg-emerald-900/60"
+                      disabled={publicBusy}
+                      onClick={() => void setPublicControl(true)}
+                      className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
                     >
-                      Copy
+                      Create link
                     </button>
-                    {canEdit ? (
-                      <>
-                        <button
-                          type="button"
-                          disabled={publicBusy}
-                          onClick={() => void setPublicControl(true, true)}
-                          className="rounded px-2 py-0.5 text-[11px] font-medium text-emerald-200/80 hover:bg-emerald-900/60 disabled:opacity-50"
-                        >
-                          New link
-                        </button>
-                        <button
-                          type="button"
-                          disabled={publicBusy}
-                          onClick={() => void setPublicControl(false)}
-                          className="rounded px-2 py-0.5 text-[11px] font-medium text-red-300/90 hover:bg-emerald-900/60 disabled:opacity-50"
-                        >
-                          Disable
-                        </button>
-                      </>
-                    ) : null}
-                  </>
-                ) : canEdit ? (
-                  <button
-                    type="button"
-                    disabled={publicBusy}
-                    onClick={() => void setPublicControl(true)}
-                    className="rounded bg-emerald-800/70 px-2 py-0.5 text-[11px] font-semibold text-emerald-50 hover:bg-emerald-700/80 disabled:opacity-50"
-                  >
-                    Share &amp; open
-                  </button>
-                ) : (
-                  <span className="text-[11px] text-emerald-200/60">Off</span>
-                )}
+                  ) : (
+                    <span className="text-xs text-emerald-200/70">Off</span>
+                  )}
+                </div>
               </div>
             </section>
 
-            <div className="grid gap-4 md:grid-cols-3">
-              {renderZone('agenda')}
-              {renderZone('powerpoint')}
-              {renderZone('display')}
-            </div>
-
-            <section className="rounded-xl border border-slate-600/80 bg-slate-900/50 p-4">
-              <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
-                <div className="flex flex-wrap gap-1">
-                  {(
-                    [
-                      ['agenda', 'Agenda'],
-                      ['setup', 'Conference setup'],
-                      ['food', 'Food & Beverage'],
-                      ['av', 'AV notes'],
-                    ] as const
-                  ).map(([id, label]) => {
-                    const active = notesTab === id;
-                    const hit = !!notesQueryNorm && noteTabHasMatch[id];
+            <div className="grid gap-6 xl:grid-cols-[minmax(0,1.4fr)_minmax(18rem,0.8fr)]">
+              <section className="rounded-2xl border border-slate-600/70 bg-slate-900/50 p-5 sm:p-6">
+                <div className="mb-5">
+                  <h2 className="text-lg font-semibold text-white">Getting started</h2>
+                  <p className="mt-1.5 text-sm text-slate-400 leading-relaxed">
+                    Work through these in order — skip optional items if you do not need them.
+                  </p>
+                </div>
+                <ol className="grid gap-3 sm:grid-cols-2">
+                  {setupSteps.map((step, index) => {
+                    const goFiles = step.id === 'agenda' || step.id === 'powerpoint' || step.id === 'display';
                     return (
-                      <button
-                        key={id}
-                        type="button"
-                        onClick={() => setNotesTab(id)}
-                        className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-colors ${
-                          active
-                            ? 'bg-slate-700 text-white'
-                            : 'text-slate-400 hover:bg-slate-800 hover:text-white'
+                      <li
+                        key={step.id}
+                        className={`rounded-xl border px-4 py-4 ${
+                          step.done
+                            ? 'border-emerald-700/50 bg-emerald-950/25'
+                            : nextSetupStep?.id === step.id
+                              ? 'border-emerald-500/60 bg-slate-950/70'
+                              : 'border-slate-700 bg-slate-950/45'
                         }`}
                       >
-                        {label}
-                        {hit ? <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-cyan-400 align-middle" /> : null}
-                      </button>
+                        <div className="flex items-start gap-3">
+                          <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-800 text-xs font-bold text-slate-100">
+                            {index + 1}
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-semibold text-white">
+                              {step.label}
+                              {step.optional ? (
+                                <span className="ml-1.5 text-[10px] font-medium uppercase tracking-wide text-slate-500">
+                                  Optional
+                                </span>
+                              ) : null}
+                            </p>
+                            <p className="mt-1 text-sm text-slate-400 leading-snug">{step.detail}</p>
+                            <div className="mt-3 flex flex-wrap items-center gap-2">
+                              {step.done ? (
+                                <span className="text-[11px] font-semibold uppercase tracking-wide text-emerald-400">
+                                  Done
+                                </span>
+                              ) : null}
+                              {goFiles ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setHubTab('files')}
+                                  className="rounded-md bg-slate-800 px-2.5 py-1 text-xs font-semibold text-slate-200 hover:bg-slate-700"
+                                >
+                                  Open Files
+                                </button>
+                              ) : null}
+                            </div>
+                          </div>
+                        </div>
+                      </li>
                     );
                   })}
-                </div>
-                <input
-                  type="search"
-                  value={notesQuery}
-                  onChange={(e) => setNotesQuery(e.target.value)}
-                  placeholder="Search notes…"
-                  className="w-full sm:w-56 rounded-md border border-slate-600 bg-slate-950 px-2.5 py-1.5 text-xs text-white placeholder:text-slate-500 focus:border-blue-500 focus:outline-none"
-                />
-              </div>
+                </ol>
+              </section>
 
-              {notesTab === 'agenda' ? (
-                <>
-                  <p className="text-xs text-slate-400 mb-3">
-                    Simplified from the uploaded agenda: times, subject, and extra info.
+              <aside className="space-y-4">
+                <section className="rounded-2xl border border-emerald-600/40 bg-emerald-950/30 p-5">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-300">
+                    Suggested next
                   </p>
-                  {rowsLookTimed(agendaItems) ? (
-                    <div className="overflow-x-auto rounded-lg border border-slate-700">
-                      <table className="min-w-full text-left text-sm">
-                        <thead className="bg-slate-800 text-[11px] uppercase tracking-wide text-slate-400">
-                          <tr>
-                            <th className="px-3 py-2 font-semibold w-[9.5rem]">Times</th>
-                            <th className="px-3 py-2 font-semibold">Subject</th>
-                            <th className="px-3 py-2 font-semibold">Info</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {filteredAgendaItems.length === 0 ? (
-                            <tr>
-                              <td colSpan={3} className="px-3 py-4 text-slate-500">No matching agenda rows.</td>
-                            </tr>
-                          ) : (
-                            filteredAgendaItems.map((row, index) => (
-                              <tr key={`${row.time}-${row.subject}-${index}`} className="border-t border-slate-700/80 align-top">
-                                <td className="px-3 py-2 text-cyan-200 whitespace-nowrap tabular-nums">{row.time || '—'}</td>
-                                <td className="px-3 py-2 text-white">{row.subject || '—'}</td>
-                                <td className="px-3 py-2 text-slate-300">{row.info || '—'}</td>
-                              </tr>
-                            ))
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
+                  {nextSetupStep ? (
+                    <>
+                      <h3 className="mt-2 text-base font-semibold text-white">{nextSetupStep.label}</h3>
+                      <p className="mt-1 text-sm text-emerald-100/85 leading-relaxed">{nextSetupStep.detail}</p>
+                      {nextSetupStep.id !== 'share' ? (
+                        <button
+                          type="button"
+                          onClick={() => setHubTab('files')}
+                          className="mt-4 w-full rounded-lg bg-emerald-600 px-3.5 py-2.5 text-sm font-semibold text-white hover:bg-emerald-500"
+                        >
+                          Go to Files
+                        </button>
+                      ) : null}
+                    </>
                   ) : (
-                    <textarea
-                      value={agendaText}
-                      disabled={!canEdit}
-                      onChange={(e) => {
-                        const next = e.target.value;
-                        setAgendaText(next);
-                        const parsed = parseBoardAgenda(next);
-                        const nextItems = rowsLookTimed(parsed) ? parsed : [];
-                        setAgendaItems(nextItems);
-                        scheduleSave(avNotes, next, nextItems, conferenceSetup, foodBeverage);
-                      }}
-                      rows={12}
-                      className="w-full rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-blue-500 focus:outline-none disabled:opacity-60"
-                      placeholder="Paste agenda text or extract it from an uploaded document…"
-                    />
+                    <p className="mt-2 text-sm text-emerald-100 leading-relaxed">
+                      Looks ready — open the room page when the meeting starts.
+                    </p>
                   )}
-                </>
-              ) : null}
+                </section>
 
-              {notesTab === 'setup' ? (
-                <>
-                  <p className="text-xs text-slate-400 mb-2">Room layout, registration, signage, staffing, load-in…</p>
-                  <textarea
-                    value={conferenceSetup}
-                    disabled={!canEdit}
-                    onChange={(e) => {
-                      const next = e.target.value;
-                      setConferenceSetup(next);
-                      scheduleSave(avNotes, agendaText, agendaItems, next, foodBeverage);
-                    }}
-                    rows={14}
-                    className="w-full rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-blue-500 focus:outline-none disabled:opacity-60"
-                    placeholder="Conference setup notes…"
-                  />
-                </>
-              ) : null}
+                <section className="rounded-2xl border border-slate-600/70 bg-slate-900/50 p-5">
+                  <h3 className="text-sm font-semibold text-white">Quick tips</h3>
+                  <ul className="mt-3 space-y-3 text-sm text-slate-400 leading-snug">
+                    <li className="flex gap-2">
+                      <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-slate-500" aria-hidden />
+                      <span>
+                        <button
+                          type="button"
+                          className="font-semibold text-emerald-300 hover:underline"
+                          onClick={() => setHubTab('files')}
+                        >
+                          Files
+                        </button>{' '}
+                        is where you upload agenda, presentations, and room-screen media.
+                      </span>
+                    </li>
+                    <li className="flex gap-2">
+                      <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-slate-500" aria-hidden />
+                      <span>
+                        <button
+                          type="button"
+                          className="font-semibold text-emerald-300 hover:underline"
+                          onClick={() => setHubTab('details')}
+                        >
+                          Details
+                        </button>{' '}
+                        holds day-of notes like setup, food, and tech.
+                      </span>
+                    </li>
+                    <li className="flex gap-2">
+                      <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-slate-500" aria-hidden />
+                      <span>Create the room link here, then open it on the room PC.</span>
+                    </li>
+                  </ul>
+                </section>
+              </aside>
+            </div>
+          </div>
+        ) : hubTab === 'files' ? (
+          <div className="grid gap-5 lg:grid-cols-3" role="tabpanel">
+            {renderZone('agenda')}
+            {renderZone('powerpoint')}
+            {renderZone('display')}
+          </div>
+        ) : (
+          <section className="rounded-2xl border border-slate-600/70 bg-slate-900/50 p-5 sm:p-6" role="tabpanel">
+            <div className="mb-4">
+              <h2 className="text-base font-semibold text-white">Meeting details</h2>
+              <p className="mt-1 text-sm text-slate-400">
+                Day-of notes — agenda text, room setup, catering, and tech.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+              <div className="flex flex-wrap gap-1.5">
+                {(
+                  [
+                    ['agenda', 'Agenda'],
+                    ['setup', 'Room setup'],
+                    ['food', 'Food & beverage'],
+                    ['av', 'Tech notes'],
+                  ] as const
+                ).map(([id, label]) => {
+                  const active = notesTab === id;
+                  const hit = !!notesQueryNorm && noteTabHasMatch[id];
+                  return (
+                    <button
+                      key={id}
+                      type="button"
+                      onClick={() => setNotesTab(id)}
+                      className={`rounded-lg px-3.5 py-2 text-sm font-semibold transition-colors ${
+                        active
+                          ? 'bg-slate-700 text-white'
+                          : 'text-slate-400 hover:bg-slate-800 hover:text-white'
+                      }`}
+                    >
+                      {label}
+                      {hit ? <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-cyan-400 align-middle" /> : null}
+                    </button>
+                  );
+                })}
+              </div>
+              <input
+                type="search"
+                value={notesQuery}
+                onChange={(e) => setNotesQuery(e.target.value)}
+                placeholder="Search notes…"
+                className="w-full sm:w-64 rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:border-emerald-500 focus:outline-none"
+              />
+            </div>
 
-              {notesTab === 'food' ? (
-                <>
-                  <p className="text-xs text-slate-400 mb-2">Meals, breaks, dietary notes, service times, headcount…</p>
-                  <textarea
-                    value={foodBeverage}
-                    disabled={!canEdit}
-                    onChange={(e) => {
-                      const next = e.target.value;
-                      setFoodBeverage(next);
-                      scheduleSave(avNotes, agendaText, agendaItems, conferenceSetup, next);
-                    }}
-                    rows={14}
-                    className="w-full rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-blue-500 focus:outline-none disabled:opacity-60"
-                    placeholder="Food and beverage notes…"
-                  />
-                </>
-              ) : null}
-
-              {notesTab === 'av' ? (
-                <>
-                  <p className="text-xs text-slate-400 mb-2">Mic counts, record/stream plan, room quirks, contacts…</p>
-                  <textarea
-                    value={avNotes}
-                    disabled={!canEdit}
-                    onChange={(e) => {
-                      const next = e.target.value;
-                      setAvNotes(next);
-                      scheduleSave(next, agendaText, agendaItems, conferenceSetup, foodBeverage);
-                    }}
-                    rows={14}
-                    className="w-full rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-blue-500 focus:outline-none disabled:opacity-60"
-                    placeholder="AV notes for this meeting…"
-                  />
-                </>
-              ) : null}
-
-              {notesQueryNorm && !noteTabHasMatch[notesTab] ? (
-                <p className="mt-2 text-xs text-slate-500">
-                  No matches in this tab.
-                  {(['agenda', 'setup', 'food', 'av'] as const).some((id) => id !== notesTab && noteTabHasMatch[id])
-                    ? ' A cyan dot marks tabs that contain this search.'
-                    : ' Nothing in the notes matches.'}
+            {notesTab === 'agenda' ? (
+              <>
+                <p className="text-sm text-slate-400 mb-3">
+                  Times, topics, and notes pulled from your uploaded agenda.
                 </p>
-              ) : null}
-            </section>
-          </>
+                {rowsLookTimed(agendaItems) ? (
+                  <div className="overflow-x-auto rounded-lg border border-slate-700">
+                    <table className="min-w-full text-left text-sm">
+                      <thead className="bg-slate-800 text-[11px] uppercase tracking-wide text-slate-400">
+                        <tr>
+                          <th className="px-3 py-2 font-semibold w-[9.5rem]">Times</th>
+                          <th className="px-3 py-2 font-semibold">Subject</th>
+                          <th className="px-3 py-2 font-semibold">Info</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredAgendaItems.length === 0 ? (
+                          <tr>
+                            <td colSpan={3} className="px-3 py-4 text-slate-500">No matching agenda rows.</td>
+                          </tr>
+                        ) : (
+                          filteredAgendaItems.map((row, index) => (
+                            <tr key={`${row.time}-${row.subject}-${index}`} className="border-t border-slate-700/80 align-top">
+                              <td className="px-3 py-2 text-cyan-200 whitespace-nowrap tabular-nums">{row.time || '—'}</td>
+                              <td className="px-3 py-2 text-white">{row.subject || '—'}</td>
+                              <td className="px-3 py-2 text-slate-300">{row.info || '—'}</td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <textarea
+                    value={agendaText}
+                    disabled={!canEdit}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      setAgendaText(next);
+                      const parsed = parseBoardAgenda(next);
+                      const nextItems = rowsLookTimed(parsed) ? parsed : [];
+                      setAgendaItems(nextItems);
+                      scheduleSave(avNotes, next, nextItems, conferenceSetup, foodBeverage);
+                    }}
+                    rows={12}
+                    className="w-full rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-blue-500 focus:outline-none disabled:opacity-60"
+                    placeholder="Paste agenda text or extract it from an uploaded document…"
+                  />
+                )}
+              </>
+            ) : null}
+
+            {notesTab === 'setup' ? (
+              <>
+                <p className="text-sm text-slate-400 mb-2">Room layout, registration, signage, staffing, load-in…</p>
+                <textarea
+                  value={conferenceSetup}
+                  disabled={!canEdit}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setConferenceSetup(next);
+                    scheduleSave(avNotes, agendaText, agendaItems, next, foodBeverage);
+                  }}
+                  rows={14}
+                  className="w-full rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-blue-500 focus:outline-none disabled:opacity-60"
+                  placeholder="Conference setup notes…"
+                />
+              </>
+            ) : null}
+
+            {notesTab === 'food' ? (
+              <>
+                <p className="text-sm text-slate-400 mb-2">Meals, breaks, dietary notes, service times, headcount…</p>
+                <textarea
+                  value={foodBeverage}
+                  disabled={!canEdit}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setFoodBeverage(next);
+                    scheduleSave(avNotes, agendaText, agendaItems, conferenceSetup, next);
+                  }}
+                  rows={14}
+                  className="w-full rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-blue-500 focus:outline-none disabled:opacity-60"
+                  placeholder="Food and beverage notes…"
+                />
+              </>
+            ) : null}
+
+            {notesTab === 'av' ? (
+              <>
+                <p className="text-sm text-slate-400 mb-2">Mics, record/stream plan, room quirks, and who to call…</p>
+                <textarea
+                  value={avNotes}
+                  disabled={!canEdit}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setAvNotes(next);
+                    scheduleSave(next, agendaText, agendaItems, conferenceSetup, foodBeverage);
+                  }}
+                  rows={14}
+                  className="w-full rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-blue-500 focus:outline-none disabled:opacity-60"
+                  placeholder="Tech notes for this meeting…"
+                />
+              </>
+            ) : null}
+
+            {notesQueryNorm && !noteTabHasMatch[notesTab] ? (
+              <p className="mt-2 text-xs text-slate-500">
+                No matches in this tab.
+                {(['agenda', 'setup', 'food', 'av'] as const).some((id) => id !== notesTab && noteTabHasMatch[id])
+                  ? ' A cyan dot marks tabs that contain this search.'
+                  : ' Nothing in the notes matches.'}
+              </p>
+            ) : null}
+          </section>
         )}
       </main>
     </div>
