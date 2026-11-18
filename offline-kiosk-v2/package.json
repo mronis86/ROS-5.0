@@ -1,7 +1,7 @@
 {
-  "name": "ros-offline-kiosk-v3",
-  "version": "3.0.0",
-  "description": "Offline Kiosk V3 — operator shell for LAN Offline Show, displays, PPT/vMix bridge status, and camera push",
+  "name": "ros-offline-kiosk-v4",
+  "version": "4.0.0",
+  "description": "Offline Kiosk V4 — operator shell for LAN Offline Show, displays, PPT/vMix bridge status, and camera push",
   "private": true,
   "main": "electron/main.js",
   "scripts": {
@@ -19,7 +19,7 @@
   },
   "build": {
     "appId": "com.sinor.ros.offlinekiosk",
-    "productName": "ROS Offline Kiosk V3",
+    "productName": "ROS Offline Kiosk V4",
     "directories": {
       "output": "dist"
     },

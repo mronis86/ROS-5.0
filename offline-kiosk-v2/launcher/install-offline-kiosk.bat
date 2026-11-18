@@ -1,18 +1,19 @@
 @echo off
 setlocal EnableExtensions
-title ROS Offline Kiosk V3 — install / update
+title ROS Offline Kiosk V4 — install / update
 
 REM One-click installer: download this .bat from ROS, run it.
 REM Always stops running engines, downloads a fresh zip, unpacks, then starts.
+REM V4 includes Integration token soft-save + prefer Cloud on start.
 
 set "INSTALL_ROOT=%LOCALAPPDATA%\ROS-Offline-Kiosk"
-set "APP_DIR=%INSTALL_ROOT%\offline-kiosk-v3"
-set "ZIP_URL=https://ros1615.pages.dev/offline-kiosk-v3.zip"
-set "ZIP_URL_FALLBACK=https://ros1615.netlify.app/offline-kiosk-v3.zip"
-set "ZIP_FILE=%TEMP%\ros-offline-kiosk-v3.zip"
+set "APP_DIR=%INSTALL_ROOT%\offline-kiosk-v4"
+set "ZIP_URL=https://ros1615.pages.dev/offline-kiosk-v4.zip"
+set "ZIP_URL_FALLBACK=https://ros1615.netlify.app/offline-kiosk-v4.zip"
+set "ZIP_FILE=%TEMP%\ros-offline-kiosk-v4.zip"
 
 echo.
-echo ========== ROS Offline Kiosk V3 ==========
+echo ========== ROS Offline Kiosk V4 ==========
 echo Install folder: %APP_DIR%
 echo Download: %ZIP_URL%
 echo.
@@ -35,6 +36,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "Get-CimInstance Win32_Process | Where-Object {" ^
   "  ($_.Name -match '^(electron|ROS Offline Kiosk|ROS Offline Kiosk.exe)$') -or" ^
   "  ($_.CommandLine -and (" ^
+  "    $_.CommandLine -match 'offline-kiosk-v4' -or" ^
   "    $_.CommandLine -match 'offline-kiosk-v3' -or" ^
   "    $_.CommandLine -match 'offline-kiosk-v2' -or" ^
   "    $_.CommandLine -match 'ROS-Offline-Kiosk' -or" ^
@@ -55,7 +57,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
 timeout /t 2 /nobreak >nul
 
 echo.
-echo Downloading Offline Kiosk V3 package...
+echo Downloading Offline Kiosk V4 package...
 if not exist "%INSTALL_ROOT%" mkdir "%INSTALL_ROOT%"
 if exist "%ZIP_FILE%" del /f /q "%ZIP_FILE%" >nul 2>&1
 
@@ -63,7 +65,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$ErrorActionPreference='Stop';" ^
   "$urls=@($env:ZIP_URL,$env:ZIP_URL_FALLBACK); $out=$env:ZIP_FILE; $ok=$false;" ^
   "foreach($u in $urls){ if([string]::IsNullOrWhiteSpace($u)){continue}; try { Write-Host ('GET '+$u); Invoke-WebRequest -Uri $u -OutFile $out -UseBasicParsing; if((Get-Item $out).Length -gt 10000){ $ok=$true; break } } catch { Write-Host ('  failed: '+$_.Exception.Message) } };" ^
-  "if(-not $ok){ throw 'Could not download offline-kiosk-v3.zip from Pages/Netlify.' }"
+  "if(-not $ok){ throw 'Could not download offline-kiosk-v4.zip from Pages/Netlify.' }"
 if errorlevel 1 (
   echo.
   echo Download failed. Check internet / VPN, or open:
@@ -93,7 +95,7 @@ if errorlevel 1 (
   exit /b 1
 )
 del /f /q "%ZIP_FILE%" >nul 2>&1
-echo Package ready ^(Offline Kiosk V3^).
+echo Package ready ^(Offline Kiosk V4^).
 
 cd /d "%APP_DIR%"
 if errorlevel 1 (
@@ -147,7 +149,7 @@ if exist "engines\offline-show\package.json" (
 )
 
 echo.
-echo Starting ROS Offline Kiosk V3...
+echo Starting ROS Offline Kiosk V4...
 call npm start
 set "EXITCODE=%ERRORLEVEL%"
 if not "%EXITCODE%"=="0" (

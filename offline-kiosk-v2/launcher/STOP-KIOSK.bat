@@ -16,6 +16,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "Get-CimInstance Win32_Process | Where-Object {" ^
   "  ($_.Name -match '^(electron|ROS Offline Kiosk|ROS Offline Kiosk.exe)$') -or" ^
   "  ($_.CommandLine -and (" ^
+  "    $_.CommandLine -match 'offline-kiosk-v4' -or" ^
   "    $_.CommandLine -match 'offline-kiosk-v3' -or" ^
   "    $_.CommandLine -match 'offline-kiosk-v2' -or" ^
   "    $_.CommandLine -match 'ROS-Offline-Kiosk' -or" ^

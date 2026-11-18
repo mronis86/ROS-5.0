@@ -116,13 +116,13 @@ const DOWNLOAD_TOOLS = [
   },
   {
     id: 'offline-kiosk',
-    title: 'Offline Kiosk V3 Portable',
+    title: 'Offline Kiosk V4 Portable',
     blurb: 'Unzip and run START.bat — Offline Show + WebLinked, PPT + vMix Bridge status',
-    meta: 'V3 · ~300 MB · Windows · no Node install',
+    meta: 'V4 · ~300 MB · Windows · no Node install',
     href: getAppDownloadUrl('ros-offline-kiosk-portable.zip'),
     filename: 'ros-offline-kiosk-portable.zip',
     details: [
-      'Header shows Offline Kiosk V3',
+      'Header shows Offline Kiosk V4',
       'PPT Bridge + vMix Bridge tabs',
       'Bundled Offline Show + WebLinked — double-click START.bat',
     ],
