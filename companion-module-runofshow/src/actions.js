@@ -318,17 +318,6 @@ module.exports = function (self) {
 				}
 			},
 		},
-		dsm_mode_full: {
-			name: 'DSM · Full (layout override)',
-			options: [],
-			callback: async () => {
-				try {
-					await self.applyDsmLayoutOverride('full', 'layout_override')
-				} catch (err) {
-					self.log('error', `DSM Full failed: ${err.message}`)
-				}
-			},
-		},
 		dsm_mode_led: {
 			name: 'DSM · LED still (press)',
 			options: [],

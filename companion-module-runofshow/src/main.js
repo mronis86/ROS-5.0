@@ -891,19 +891,6 @@ class RunOfShowInstance extends InstanceBase {
 			feedbacks: [],
 			steps: [{ down: [{ actionId: 'dsm_clock_16x9', options: {} }], up: [] }],
 		}
-		presets.dsm_full = {
-			type: 'button',
-			category: 'DSM',
-			name: 'DSM · Full (layout override)',
-			style: {
-				text: 'DSM\nFull',
-				size: 'auto',
-				color: combineRgb(255, 255, 255),
-				bgcolor: combineRgb(51, 65, 85),
-			},
-			feedbacks: [],
-			steps: [{ down: [{ actionId: 'dsm_mode_full', options: {} }], up: [] }],
-		}
 		presets.dsm_clock_full = {
 			type: 'button',
 			category: 'DSM',
@@ -939,7 +926,7 @@ class RunOfShowInstance extends InstanceBase {
 				text: 'DSM\nVID',
 				size: 'auto',
 				color: combineRgb(0, 0, 0),
-				bgcolor: combineRgb(251, 191, 36),
+				bgcolor: combineRgb(56, 189, 248),
 			},
 			feedbacks: [],
 			steps: [{ down: [{ actionId: 'dsm_mode_vid', options: {} }], up: [] }],
