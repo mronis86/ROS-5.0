@@ -134,10 +134,10 @@ const QaPlanModal: React.FC<Props> = ({
       aria-labelledby="qa-plan-title"
     >
       <button type="button" className="absolute inset-0 bg-black/70" aria-label="Close" onClick={onClose} />
-      <div className="relative w-full max-w-lg overflow-hidden rounded-2xl border border-amber-700/40 bg-slate-900 shadow-2xl">
-        <div className="border-b border-slate-700 px-5 py-4 sm:px-6">
+      <div className="relative flex w-full max-w-lg max-h-[min(85vh,640px)] flex-col overflow-hidden rounded-2xl border border-amber-700/40 bg-slate-900 shadow-2xl">
+        <div className="shrink-0 border-b border-slate-700 px-5 py-3 sm:px-6">
           <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-amber-300">Q&A timer</p>
-          <h2 id="qa-plan-title" className="mt-1 text-xl font-semibold text-white">
+          <h2 id="qa-plan-title" className="mt-1 text-lg font-semibold text-white sm:text-xl">
             Plan Q&A for “{parentSegmentName || 'this cue'}”
           </h2>
           <p className="mt-1 text-sm text-slate-400">
@@ -145,7 +145,7 @@ const QaPlanModal: React.FC<Props> = ({
           </p>
         </div>
 
-        <div className="space-y-4 px-5 py-5 sm:px-6">
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4 sm:px-6">
           <label className="block">
             <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Label</span>
             <input
@@ -263,7 +263,7 @@ const QaPlanModal: React.FC<Props> = ({
           {error ? <p className="text-sm text-red-300">{error}</p> : null}
         </div>
 
-        <div className="flex justify-end gap-2 border-t border-slate-700 px-5 py-4 sm:px-6">
+        <div className="flex shrink-0 justify-end gap-2 border-t border-slate-700 px-5 py-3 sm:px-6">
           <button
             type="button"
             onClick={onClose}

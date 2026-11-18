@@ -155,6 +155,7 @@ import {
   formatClockFromSeconds as formatQaClock,
   isQaPlanRow,
   parentDurationSeconds as qaParentDurationSeconds,
+  qaCueFromParent,
 } from '../lib/qaPlan';
 import { mapOperatorCountdownRow, operatorCountdownRemaining, formatOperatorCountdownTime } from '../lib/operatorCountdown';
 import ShowVsRehearsalPanel from '../components/ShowVsRehearsalPanel';
@@ -5268,7 +5269,7 @@ const RunOfShowPage: React.FC = () => {
       hasPPT: false,
       hasQA: false,
       timerId: 'QA',
-      customFields: { cue: '' },
+      customFields: { cue: qaCueFromParent(parent.customFields?.cue) },
       isPublic: false,
       isIndented: true,
       qaIsAutoQa: true,
