@@ -10,11 +10,14 @@ import {
 import { shotTypeManualEditPatch, shotTypePatchFromSpeakers, parseSpeakersForShotType } from '../lib/shotTypeFromSpeakers';
 import { getAutoShotTypeFromSpeakers } from '../lib/branding';
 import {
+  ENDSHOW_PROGRAM_TYPE,
+  PRESHOW_PROGRAM_TYPE,
   programTypeSurfaceStyle,
-  resolvePreshowProgramTypeSelection,
+  shouldSuggestEndShowInsteadOfPreshow,
 } from '../lib/rosProgramTypeSplit';
 import { boostNotesContrastHtml } from '../lib/notesContrast';
 import StageDirectionModal from '../components/StageDirectionModal';
+import PreshowEndShowWarnModal from '../components/PreshowEndShowWarnModal';
 import StartTimeColumnCell from '../components/StartTimeColumnCell';
 import { SegmentSpellingChip, useSegmentNameSpelling } from '../components/SegmentSpellingFlag';
 import { addSpellingOk, misspelledSegmentWords, replaceSegmentWord } from '../lib/segmentNameSpellcheck';
@@ -252,6 +255,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
   const lockLabel = rowLock?.userName ? `${rowLock.userName} is editing` : 'Someone is editing';
   const [lockBadgePos, setLockBadgePos] = React.useState({ scrollLeft: 0, viewWidth: 0 });
   const [showStageDirectionModal, setShowStageDirectionModal] = useState(false);
+  const [preshowEndShowWarn, setPreshowEndShowWarn] = useState<{ oldValue: string } | null>(null);
   const misspelledSegment = useSegmentNameSpelling(item.segmentName || '', item.segmentSpellingOk);
   const showSegmentSpelling =
     misspelledSegment.length > 0 &&
@@ -260,6 +264,58 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
   const canFixSegmentSpelling =
     segmentSpellingMode === 'ros' && currentUserRole === 'EDITOR' && !isLockedByOther;
   const canAskRosSpelling = segmentSpellingMode === 'creative' && !isLockedByOther;
+
+  const applyProgramTypeChange = (programType: string, oldValue: string) => {
+    const autoShot =
+      getAutoShotTypeFromSpeakers()
+        ? shotTypePatchFromSpeakers(parseSpeakersForShotType(item.speakersText), {
+            manualOverride: !!item.shotTypeManualOverride,
+            programType,
+          })
+        : {};
+    const autoDsm =
+      !item.dsmModeManual
+        ? {
+            dsmMode: suggestedDsmLayoutMode({
+              programType,
+              hasPPT: !!item.hasPPT,
+            }),
+          }
+        : {};
+    setSchedule((prev: any[]) =>
+      prev.map((scheduleItem) =>
+        scheduleItem.id === item.id
+          ? {
+              ...scheduleItem,
+              programType,
+              ...autoShot,
+              ...autoDsm,
+              ...(isShowBreakProgramType(programType)
+                ? { durationHours: 0, durationMinutes: 0, durationSeconds: 0 }
+                : {}),
+            }
+          : scheduleItem
+      )
+    );
+    if (autoDsm.dsmMode && item.dsmEnabled && persistDsmCue) {
+      void persistDsmCue(item.id, { mode: autoDsm.dsmMode, modeManual: false });
+    }
+    logChangeDebounced(
+      `programType_${item.id}`,
+      'FIELD_UPDATE',
+      `Updated program type for "${item.segmentName}" from "${oldValue}" to "${programType}"`,
+      {
+        changeType: 'FIELD_CHANGE',
+        itemId: item.id,
+        itemName: item.segmentName,
+        fieldName: 'programType',
+        oldValue,
+        newValue: programType,
+        details: { fieldType: 'select', optionChange: true },
+      }
+    );
+    handleModalClosed();
+  };
 
   const applySpellingItemPatch = (patch: Record<string, unknown>, message: string) => {
     if (onSegmentSpellingPatch) {
@@ -609,59 +665,19 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
                 return;
               }
               const oldValue = item.programType;
-              const programType = resolvePreshowProgramTypeSelection(e.target.value, schedule, {
-                itemId: item.id,
-                day: item.day,
-                indentedLookup: indentedCues,
-              });
-              const autoShot =
-                getAutoShotTypeFromSpeakers()
-                  ? shotTypePatchFromSpeakers(parseSpeakersForShotType(item.speakersText), {
-                      manualOverride: !!item.shotTypeManualOverride,
-                      programType,
-                    })
-                  : {};
-              const autoDsm =
-                !item.dsmModeManual
-                  ? {
-                      dsmMode: suggestedDsmLayoutMode({
-                        programType,
-                        hasPPT: !!item.hasPPT,
-                      }),
-                    }
-                  : {};
-              setSchedule((prev: any[]) => prev.map(scheduleItem =>
-                scheduleItem.id === item.id
-                  ? {
-                      ...scheduleItem,
-                      programType,
-                      ...autoShot,
-                      ...autoDsm,
-                      ...(isShowBreakProgramType(programType)
-                        ? { durationHours: 0, durationMinutes: 0, durationSeconds: 0 }
-                        : {}),
-                    }
-                  : scheduleItem
-              ));
-              if (autoDsm.dsmMode && item.dsmEnabled && persistDsmCue) {
-                void persistDsmCue(item.id, { mode: autoDsm.dsmMode, modeManual: false });
-              }
-              logChangeDebounced(
-                `programType_${item.id}`,
-                'FIELD_UPDATE',
-                `Updated program type for "${item.segmentName}" from "${oldValue}" to "${programType}"`,
-                {
-                  changeType: 'FIELD_CHANGE',
+              const selected = e.target.value;
+              if (
+                selected === PRESHOW_PROGRAM_TYPE &&
+                shouldSuggestEndShowInsteadOfPreshow(schedule, {
                   itemId: item.id,
-                  itemName: item.segmentName,
-                  fieldName: 'programType',
-                  oldValue: oldValue,
-                  newValue: programType,
-                  details: { fieldType: 'select', optionChange: true }
-                }
-              );
-              // Same as typing: 5s idle via handleModalClosed → finishEditingSession (unlock + blur)
-              handleModalClosed();
+                  day: item.day,
+                  indentedLookup: indentedCues,
+                })
+              ) {
+                setPreshowEndShowWarn({ oldValue: String(oldValue || '') });
+                return;
+              }
+              applyProgramTypeChange(selected, String(oldValue || ''));
             }}
             disabled={isLockedByOther || currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'}
             className={`w-full px-3 py-2 border-2 rounded text-base transition-colors ${cellFocus}`}
@@ -2024,8 +2040,29 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
     </>
   );
 
+  const preshowWarnModal = (
+    <PreshowEndShowWarnModal
+      isOpen={!!preshowEndShowWarn}
+      onKeepPreshow={() => {
+        const oldValue = preshowEndShowWarn?.oldValue || '';
+        setPreshowEndShowWarn(null);
+        applyProgramTypeChange(PRESHOW_PROGRAM_TYPE, oldValue);
+      }}
+      onUseEndShow={() => {
+        const oldValue = preshowEndShowWarn?.oldValue || '';
+        setPreshowEndShowWarn(null);
+        applyProgramTypeChange(ENDSHOW_PROGRAM_TYPE, oldValue);
+      }}
+    />
+  );
+
   if (asFragment) {
-    return <>{Content}</> as any;
+    return (
+      <>
+        {Content}
+        {preshowWarnModal}
+      </>
+    ) as any;
   }
 
   const mergedStyle = rowHeight !== undefined ? { ...(style || {}), height: rowHeight } : style;
@@ -2033,6 +2070,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
   return (
     <div key={item.id} data-item-id={item.id} className={`${className || ''} relative`} style={mergedStyle}>
       {Content}
+      {preshowWarnModal}
     </div>
   );
 }, (prevProps, nextProps) => {

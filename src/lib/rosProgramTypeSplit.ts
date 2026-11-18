@@ -156,33 +156,22 @@ export function shouldSuggestEndShowInsteadOfPreshow(
   return regularBetween > minBetween;
 }
 
-/** Confirm dialog: OK → EndShow, Cancel → keep PreShow. */
-export function confirmPreshowOrEndShowChoice(): typeof PRESHOW_PROGRAM_TYPE | typeof ENDSHOW_PROGRAM_TYPE {
-  const useEndShow = window.confirm(
-    'This looks like mid/late show (there is already a PreShow earlier, with several cues after it).\n\nUse EndShow instead of PreShow?\n\nOK = EndShow\nCancel = keep PreShow'
-  );
-  return useEndShow ? ENDSHOW_PROGRAM_TYPE : PRESHOW_PROGRAM_TYPE;
-}
-
 /**
- * If nextType is PreShow and the schedule pattern looks like EndShow, ask the user.
- * Returns the program type to apply.
+ * Pass-through helper. PreShow → EndShow mid-show confirmation is handled by
+ * `PreshowEndShowWarnModal` at the call site (not a browser confirm).
  */
 export function resolvePreshowProgramTypeSelection(
   nextType: string,
-  schedule: PreshowWarnCue[] | null | undefined,
-  opts: {
+  _schedule?: PreshowWarnCue[] | null,
+  _opts?: {
     itemId?: number | null;
     atIndex?: number | null;
     day?: number | null;
     indentedLookup?: IndentedCueLookup | null;
     minRegularBetween?: number;
-  } = {}
+  }
 ): string {
-  const type = String(nextType || '').trim();
-  if (type !== PRESHOW_PROGRAM_TYPE) return nextType;
-  if (!shouldSuggestEndShowInsteadOfPreshow(schedule, opts)) return nextType;
-  return confirmPreshowOrEndShowChoice();
+  return nextType;
 }
 
 /**

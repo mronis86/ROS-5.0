@@ -38,11 +38,14 @@ import {
 } from '../lib/autoRoll';
 import { shouldUsePreshowRainbow, isActiveTimerRunning } from '../lib/usePreshowRainbow';
 import {
+  ENDSHOW_PROGRAM_TYPE,
+  PRESHOW_PROGRAM_TYPE,
   isEndShowProgramType,
   normalizeSchedulePreshowEndTypes,
   programTypeSurfaceStyle,
-  resolvePreshowProgramTypeSelection,
+  shouldSuggestEndShowInsteadOfPreshow,
 } from '../lib/rosProgramTypeSplit';
+import PreshowEndShowWarnModal from '../components/PreshowEndShowWarnModal';
 import { shotTypePatchFromSpeakers, shotTypeManualEditPatch, defaultSpeakerLocationForProgram, parseSpeakersForShotType } from '../lib/shotTypeFromSpeakers';
 import { getAutoShotTypeFromSpeakers } from '../lib/branding';
 import {
@@ -1772,6 +1775,7 @@ const RunOfShowPage: React.FC = () => {
   const [showInShowConfirmModal, setShowInShowConfirmModal] = useState(false);
   const [showRehearsalConfirmModal, setShowRehearsalConfirmModal] = useState(false);
   const [showClearOffsetsConfirmModal, setShowClearOffsetsConfirmModal] = useState(false);
+  const [preshowEndShowWarnOpen, setPreshowEndShowWarnOpen] = useState(false);
   const [offsetAdjustTarget, setOffsetAdjustTarget] = useState<'root' | 'prev'>('root');
   const [trackWasDurations, setTrackWasDurations] = useState(false);
   const [liveStartProjectionArmed, setLiveStartProjectionArmed] = useState(false);
@@ -15598,6 +15602,36 @@ const RunOfShowPage: React.FC = () => {
         eventId={event?.id || ''}
       />
 
+      <PreshowEndShowWarnModal
+        isOpen={preshowEndShowWarnOpen}
+        onKeepPreshow={() => {
+          setPreshowEndShowWarnOpen(false);
+          setModalForm((prev) => {
+            const programType = PRESHOW_PROGRAM_TYPE;
+            const autoShot =
+              getAutoShotTypeFromSpeakers() && !prev.shotTypeManualOverride
+                ? shotTypePatchFromSpeakers(parseSpeakersForShotType(prev.speakersText), {
+                    programType,
+                  })
+                : {};
+            return { ...prev, programType, ...autoShot };
+          });
+        }}
+        onUseEndShow={() => {
+          setPreshowEndShowWarnOpen(false);
+          setModalForm((prev) => {
+            const programType = ENDSHOW_PROGRAM_TYPE;
+            const autoShot =
+              getAutoShotTypeFromSpeakers() && !prev.shotTypeManualOverride
+                ? shotTypePatchFromSpeakers(parseSpeakersForShotType(prev.speakersText), {
+                    programType,
+                  })
+                : {};
+            return { ...prev, programType, ...autoShot };
+          });
+        }}
+      />
+
       {/* In-Show mode confirmation modal */}
       <ConfirmModal
         isOpen={showInShowConfirmModal}
@@ -20573,19 +20607,26 @@ const RunOfShowPage: React.FC = () => {
                     }}
                     onChange={(e) => {
                       const rawType = e.target.value;
-                      const programType = resolvePreshowProgramTypeSelection(rawType, schedule, {
-                        atIndex: schedule.length,
-                        day: modalForm.day || selectedDay,
-                        indentedLookup: indentedCues,
-                      });
+                      if (
+                        rawType === PRESHOW_PROGRAM_TYPE &&
+                        shouldSuggestEndShowInsteadOfPreshow(schedule, {
+                          atIndex: schedule.length,
+                          day: modalForm.day || selectedDay,
+                          indentedLookup: indentedCues,
+                        })
+                      ) {
+                        setPreshowEndShowWarnOpen(true);
+                        handleModalClosed();
+                        return;
+                      }
                       setModalForm((prev) => {
                         const autoShot =
                           getAutoShotTypeFromSpeakers() && !prev.shotTypeManualOverride
                             ? shotTypePatchFromSpeakers(parseSpeakersForShotType(prev.speakersText), {
-                                programType,
+                                programType: rawType,
                               })
                             : {};
-                        return { ...prev, programType, ...autoShot };
+                        return { ...prev, programType: rawType, ...autoShot };
                       });
                       // Resume syncing when dropdown selection is made
                       handleModalClosed();
