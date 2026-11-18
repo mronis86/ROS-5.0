@@ -20624,7 +20624,7 @@ const RunOfShowPage: React.FC = () => {
                                     : subPlaying
                                       ? 'bg-red-600 hover:bg-red-500 text-white'
                                       : 'bg-slate-600 text-slate-400 cursor-not-allowed'
-                              }}
+                              }`}
                               title="Stop Q&A timer"
                             >
                               STOP
