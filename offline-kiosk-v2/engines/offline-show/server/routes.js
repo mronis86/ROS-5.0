@@ -12,7 +12,14 @@ const {
   normalizeActiveTimer,
   normalizeTimerMessage,
 } = require('./db');
-const { probeConnectivity, clearConnectivityCache, probeRailwayReachable } = require('./connectivity');
+const {
+  probeConnectivity,
+  clearConnectivityCache,
+  probeRailwayReachable,
+  warmCloudConnectivity,
+} = require('./connectivity');
+const { runConnectivityDiagnostics } = require('./connectivity-diag');
+const { readCloudLogTail, logsDir: cloudLogsDir } = require('./connectivity-log');
 const { getCloudMode, setCloudMode, MODES } = require('./cloud-mode');
 const {
   getRailwayApiToken,
@@ -243,6 +250,22 @@ function registerRoutes(app, db, helpers) {
 
   app.get('/api/railway-api-token', (_req, res) => {
     res.json(getRailwayApiTokenStatus(db));
+  });
+
+  /**
+   * Kiosk Event tab: always read local SQLite mirror (fast).
+   * Cloud-on /api/calendar-events proxies to Railway and is too slow for first paint.
+   */
+  app.get('/api/kiosk/calendar-events', async (_req, res) => {
+    try {
+      const rows = db.prepare('SELECT * FROM calendar_events ORDER BY date DESC').all();
+      res.json(rows.map(normalizeCalendarEvent));
+    } catch (e) {
+      console.error('GET kiosk/calendar-events:', e);
+      res.status(500).json({
+        error: e instanceof Error ? e.message : 'Failed to fetch calendar events',
+      });
+    }
   });
 
   /**
@@ -615,7 +638,7 @@ function registerRoutes(app, db, helpers) {
   });
 
   app.put('/api/railway-api-token', async (req, res) => {
-    const { token } = req.body || {};
+    const { token, softPersist } = req.body || {};
     const status = getRailwayApiTokenStatus(db);
     if (status.locked) {
       return res.status(400).json({
@@ -627,13 +650,36 @@ function registerRoutes(app, db, helpers) {
       if (!trimmed) {
         return res.status(400).json({ error: 'token is required' });
       }
+
+      // Kiosk softPersist: write SQLite immediately so Save feels instant.
+      // Railway write-probe runs in the background (was blocking ~1–3s before).
+      if (softPersist) {
+        const saved = setRailwayApiToken(db, trimmed);
+        clearConnectivityCache();
+        res.json({
+          ...saved,
+          canWrite: null,
+          writeError: null,
+          pendingValidation: true,
+        });
+        void validateRailwayApiToken(trimmed)
+          .then(() => {
+            clearConnectivityCache();
+          })
+          .catch(() => {
+            clearConnectivityCache();
+          });
+        return;
+      }
+
       const check = await validateRailwayApiToken(trimmed);
       if (!check.ok) {
         const errText = String(check.error || 'Token validation failed');
         const softNetwork =
-          /reach|abort|network|fetch|timeout|ECONN|ENOTFOUND|temporarily/i.test(errText);
-        // Persist anyway when Railway is unreachable so kiosk start can keep the token.
-        // Still reject clearly-invalid / unauthorized tokens.
+          /reach|abort|network|fetch|timeout|ECONN|ENOTFOUND|temporarily|TLS|cert|ssl|UNABLE_TO/i.test(
+            errText
+          );
+        // softNetwork: persist when Railway is unreachable so Start can still prefer Cloud.
         if (!softNetwork) {
           return res.status(400).json({ error: errText });
         }
@@ -665,7 +711,7 @@ function registerRoutes(app, db, helpers) {
   });
 
   app.patch('/api/cloud-mode', async (req, res) => {
-    const { mode, updatedBy } = req.body || {};
+    const { mode, updatedBy, soft } = req.body || {};
     if (mode !== MODES.LAN_ONLY && mode !== MODES.CLOUD_CONNECTED) {
       return res.status(400).json({
         error: 'mode must be "lan-only" or "cloud-connected"',
@@ -674,8 +720,25 @@ function registerRoutes(app, db, helpers) {
     try {
       let sync = null;
       if (mode === MODES.CLOUD_CONNECTED) {
-        await probeRailwayReachable();
-        sync = { direction: 'enable-only' };
+        // Retry TLS/Railway/Neon probes — first fetch after process start often fails.
+        const warm = await warmCloudConnectivity({ attempts: soft ? 4 : 2, delayMs: 350 });
+        if (warm.ok && warm.railwayOk) {
+          sync = {
+            direction: 'enable-only',
+            warmed: true,
+            attempts: warm.attempts,
+            neonOk: warm.neonOk,
+          };
+        } else if (soft) {
+          sync = {
+            direction: 'enable-only',
+            warmed: false,
+            attempts: warm.attempts,
+            warning: warm.error || 'Railway/Neon not ready yet — retrying in Status',
+          };
+        } else {
+          throw new Error(warm.error || 'Railway unreachable');
+        }
       }
       const payload = setCloudMode(db, mode, { updatedBy });
       clearConnectivityCache();
@@ -689,6 +752,44 @@ function registerRoutes(app, db, helpers) {
         hint: 'Could not reach Railway. Stay on LAN only or check Internet.',
       });
     }
+  });
+
+  /** Force-refresh Internet / Railway / Neon pills (clears cache + optional TLS warm). */
+  app.post('/api/connectivity-refresh', async (req, res) => {
+    try {
+      const warm = Boolean(req.body?.warm);
+      let warmup = null;
+      if (warm && getCloudMode(db).cloudConnected) {
+        warmup = await warmCloudConnectivity({ attempts: 3, delayMs: 300 });
+      } else {
+        clearConnectivityCache();
+      }
+      const connectivity = await probeConnectivity(db);
+      res.json({ ok: true, connectivity, warmup });
+    } catch (e) {
+      res.status(500).json({
+        ok: false,
+        error: e instanceof Error ? e.message : 'Connectivity refresh failed',
+      });
+    }
+  });
+
+  /** Deep cloud diagnostics for remote support (DNS + fetch + https.get + log tail). */
+  app.post('/api/connectivity-diagnostics', async (_req, res) => {
+    try {
+      const report = await runConnectivityDiagnostics(db);
+      res.json(report);
+    } catch (e) {
+      res.status(500).json({
+        ok: false,
+        error: e instanceof Error ? e.message : 'Diagnostics failed',
+        logsDir: cloudLogsDir(),
+      });
+    }
+  });
+
+  app.get('/api/connectivity-log', (_req, res) => {
+    res.json({ ok: true, ...readCloudLogTail(), logsDir: cloudLogsDir() });
   });
 
   /** Upload offline snapshot to Railway, then enable cloud — single atomic reconnect. */
@@ -726,7 +827,8 @@ function registerRoutes(app, db, helpers) {
       return res.status(400).json({ error: 'Enable Cloud on first' });
     }
     try {
-      const sync = await cloud.syncFromCloud(db);
+      const calendarOnly = Boolean(req.body?.calendarOnly);
+      const sync = await cloud.syncFromCloud(db, { calendarOnly });
       res.json(sync);
     } catch (e) {
       res.status(502).json({ error: e instanceof Error ? e.message : 'Sync failed' });

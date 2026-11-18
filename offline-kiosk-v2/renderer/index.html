@@ -480,7 +480,44 @@
               </button>
               <button type="button" class="ghost-btn" id="refreshConnBtn" hidden>Recheck</button>
               <button type="button" class="ghost-btn" id="syncCloudBtn" hidden>Sync</button>
+              <button
+                type="button"
+                class="ghost-btn"
+                id="cloudDiagBtn"
+                title="DNS + fetch + https probes with log file — for remote support"
+              >
+                Cloud diag
+              </button>
+              <button
+                type="button"
+                class="ghost-btn"
+                id="openDevToolsBtn"
+                title="Open Chromium DevTools (Network / Console) on this kiosk"
+              >
+                DevTools
+              </button>
+              <button
+                type="button"
+                class="ghost-btn"
+                id="openLogsBtn"
+                title="Open kiosk-data/logs folder"
+              >
+                Logs folder
+              </button>
             </div>
+          </div>
+
+          <div class="cloud-diag-panel" id="cloudDiagPanel" hidden>
+            <div class="cloud-diag-head">
+              <p class="gr-kicker">Cloud diagnostics</p>
+              <div class="cloud-diag-actions">
+                <button type="button" class="ghost-btn" id="copyCloudDiagBtn">Copy report</button>
+              </div>
+            </div>
+            <p class="note" id="cloudDiagHint">
+              Run after Start + Cloud on. Compares Node fetch vs https.get (browser can succeed while Node fails on TLS/proxy).
+            </p>
+            <pre class="cloud-diag-pre" id="cloudDiagOut" aria-live="polite">(no report yet)</pre>
           </div>
 
           <div class="status-services" id="statusServices" aria-live="polite">
@@ -501,7 +538,7 @@
             <div class="gr-panel-head">
               <div class="gr-panel-main">
                 <p class="gr-kicker">Green Room clients</p>
-                <p class="gr-lead" id="grClientsLead">Standby PCs checking in via cloud (any Integration token from the same Admin).</p>
+                <p class="gr-lead" id="grClientsLead">Standby requires the Green Room Client app on the AV PC (cloud heartbeat; same Admin Integration token).</p>
               </div>
               <button type="button" class="ghost-btn" id="refreshGrClientsBtn">Refresh</button>
             </div>
@@ -580,6 +617,7 @@
                 autocomplete="off"
               />
               <button type="button" class="ghost-btn" id="saveTokenBtn">Save</button>
+              <button type="button" class="ghost-btn" id="clearTokenBtn">Clear</button>
             </div>
             <div class="token-status-line" id="tokenStatusLine" data-state="skip" aria-live="polite">
               <span class="token-status-label">API token</span>

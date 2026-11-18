@@ -41,7 +41,7 @@ const LOCAL_EXACT = new Set([
   '/api/railway-api-token',
 ]);
 
-const LOCAL_PREFIXES = ['/api/dev/'];
+const LOCAL_PREFIXES = ['/api/dev/', '/api/kiosk/'];
 
 function pathnameOf(req) {
   const raw = req.originalUrl || req.url || '';

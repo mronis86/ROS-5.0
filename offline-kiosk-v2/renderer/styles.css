@@ -201,14 +201,15 @@ body {
 
 .status-services {
   display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
+  /* Show · Mode · Internet · Railway · Neon · LAN · PPT · vMix · Green Room */
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0.65rem;
   flex: 0 0 auto;
 }
 
-@media (max-width: 1100px) {
+@media (min-width: 1100px) {
   .status-services {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(9, minmax(0, 1fr));
   }
 }
 
@@ -696,6 +697,44 @@ body {
   background: var(--panel);
 }
 
+.cloud-diag-panel {
+  margin-top: 0.75rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 0.65rem;
+  background: #0b1220;
+}
+
+.cloud-diag-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.35rem;
+}
+
+.cloud-diag-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.cloud-diag-pre {
+  margin: 0.5rem 0 0;
+  max-height: 22rem;
+  overflow: auto;
+  padding: 0.75rem 0.85rem;
+  border-radius: 0.45rem;
+  background: #020617;
+  border: 1px solid #1e293b;
+  color: #cbd5e1;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .status-toolbar .status-token-note {
   grid-column: 1 / -1;
 }
@@ -953,8 +992,15 @@ body {
 
 .session-jump-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  /* Event / Displays / RemoteOp / PPT / vMix — keep PPT + vMix on one row when possible */
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 0.65rem;
+}
+
+@media (max-width: 1100px) {
+  .session-jump-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 
 .session-card {

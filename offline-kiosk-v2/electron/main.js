@@ -19,9 +19,11 @@ const { injectRemoteWebrtcCodecShim } = require('./remote-webrtc-codec-shim');
 let powerSaveId = null;
 let mouseJiggleTimer = null;
 
+// Chromium/Electron caches only (not the Integration token). Token lives in
+// kiosk-data/ next to the portable exe when packaged — see electron/token-store.js.
 const userDataRoot = path.join(
   process.env.LOCALAPPDATA || os.tmpdir(),
-  'ros-offline-kiosk-v2'
+  'ros-offline-kiosk-v4'
 );
 fs.mkdirSync(userDataRoot, { recursive: true });
 app.setPath('userData', userDataRoot);
@@ -417,6 +419,16 @@ function stopKeepAwake() {
 }
 
 app.whenReady().then(() => {
+  // Packaged: keep cloud / offline-show logs next to the exe (kiosk-data/logs).
+  try {
+    if (app.isPackaged) {
+      const { setPackagedLogsRoot } = require('./kiosk-log');
+      setPackagedLogsRoot(path.join(path.dirname(app.getPath('exe')), 'kiosk-data', 'logs'));
+    }
+  } catch {
+    /* ignore */
+  }
+
   // VDO / Meshcast need camera + mic inside the embed (default + remoteop partition).
   session.defaultSession.setPermissionRequestHandler(allowMediaPermission);
   session.defaultSession.setPermissionCheckHandler((_wc, permission) =>
@@ -744,9 +756,14 @@ ipcMain.handle('kiosk:shutdown', async (_evt, payload) => {
   return result;
 });
 
-ipcMain.handle('kiosk:listEvents', async () => {
+ipcMain.handle('kiosk:listEvents', async (_evt, payload) => {
   try {
-    return await offlineShow.prepareEvents({ preferCloud: true, sync: true });
+    return await offlineShow.prepareEvents({
+      preferCloud: payload?.preferCloud !== false,
+      sync: payload?.sync !== false,
+      warm: payload?.warm === true,
+      calendarOnly: payload?.calendarOnly !== false,
+    });
   } catch (e) {
     return {
       ok: false,
@@ -765,9 +782,66 @@ ipcMain.handle('kiosk:getConnectivity', async () => {
   }
 });
 
+ipcMain.handle('kiosk:refreshConnectivity', async (_evt, payload) => {
+  try {
+    const warm = payload?.warm !== false;
+    const result = await offlineShow.refreshConnectivity({ warm });
+    return { ok: true, connectivity: result.connectivity, warmup: result.warmup };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Connectivity refresh failed' };
+  }
+});
+
+ipcMain.handle('kiosk:runCloudDiagnostics', async () => {
+  try {
+    return await offlineShow.runCloudDiagnostics();
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Cloud diagnostics failed' };
+  }
+});
+
+ipcMain.handle('kiosk:openDevTools', async () => {
+  try {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return { ok: false, error: 'Kiosk window is not open' };
+    }
+    const { logsDir } = require('./kiosk-log');
+    const dir = logsDir();
+    mainWindow.webContents.openDevTools({ mode: 'detach' });
+    return { ok: true, logsDir: dir };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Could not open DevTools' };
+  }
+});
+
+ipcMain.handle('kiosk:writeClipboardText', async (_evt, text) => {
+  try {
+    const { clipboard } = require('electron');
+    clipboard.writeText(text == null ? '' : String(text));
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Clipboard write failed' };
+  }
+});
+
+ipcMain.handle('kiosk:openLogsFolder', async () => {
+  try {
+    const { logsDir } = require('./kiosk-log');
+    const dir = logsDir();
+    const { shell } = require('electron');
+    const err = await shell.openPath(dir);
+    if (err) return { ok: false, error: err, path: dir };
+    return { ok: true, path: dir };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Could not open logs folder' };
+  }
+});
+
 ipcMain.handle('kiosk:setCloudMode', async (_evt, payload) => {
   try {
-    const cloudMode = await offlineShow.setCloudMode(payload?.mode);
+    // Default soft=true so Status "Cloud on" is not blocked by a one-shot health probe miss.
+    const soft = payload?.soft !== false;
+    const cloudMode = await offlineShow.setCloudMode(payload?.mode, { soft });
     return { ok: true, cloudMode };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'Cloud mode failed' };
@@ -792,9 +866,10 @@ ipcMain.handle('kiosk:clearRailwayToken', async () => {
   }
 });
 
-ipcMain.handle('kiosk:syncFromCloud', async () => {
+ipcMain.handle('kiosk:syncFromCloud', async (_evt, payload) => {
   try {
-    const syncResult = await offlineShow.syncFromCloud();
+    const calendarOnly = payload?.calendarOnly === true;
+    const syncResult = await offlineShow.syncFromCloud({ calendarOnly });
     const events = await offlineShow.listEvents();
     return { ok: true, syncResult, events };
   } catch (e) {

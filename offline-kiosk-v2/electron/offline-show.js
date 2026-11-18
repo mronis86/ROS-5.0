@@ -7,10 +7,44 @@ const { loadStoredToken, saveStoredToken, clearStoredToken } = require('./token-
 
 const OFFLINE_SHOW_URL = 'http://127.0.0.1:3004';
 const HEALTH_PATH = '/health';
-const EVENTS_PATH = '/api/calendar-events';
+/** Local SQLite mirror — never go through Cloud proxy to Railway for the event list. */
+const EVENTS_PATH = '/api/kiosk/calendar-events';
 
 let showChild = null;
 let startedByKiosk = false;
+/** Log once per process that Offline Show Node trusts the OS CA store. */
+let loggedSystemCaMode = false;
+
+/** Node 22+ flag so corp SSL inspection (Windows root store) works like Chromium. */
+const USE_SYSTEM_CA_FLAG = '--use-system-ca';
+
+function withSystemCaNodeOptions(env) {
+  const base = env && typeof env === 'object' ? { ...env } : { ...process.env };
+  const existing = typeof base.NODE_OPTIONS === 'string' ? base.NODE_OPTIONS : '';
+  if (!existing.includes(USE_SYSTEM_CA_FLAG)) {
+    base.NODE_OPTIONS = `${existing} ${USE_SYSTEM_CA_FLAG}`.trim();
+  }
+  return base;
+}
+
+function logSystemCaModeOnce(showLogPath) {
+  if (loggedSystemCaMode) return;
+  loggedSystemCaMode = true;
+  const msg = `Offline Show Node system CA mode enabled (${USE_SYSTEM_CA_FLAG})`;
+  try {
+    const { cloudLog } = require('./kiosk-log');
+    cloudLog(msg);
+  } catch {
+    /* ignore */
+  }
+  if (showLogPath) {
+    try {
+      fs.appendFileSync(showLogPath, `[kiosk] ${msg}\n`, 'utf8');
+    } catch {
+      /* ignore */
+    }
+  }
+}
 
 function requestJson(urlPath, { method = 'GET', body = null, timeoutMs = 15000 } = {}) {
   return new Promise((resolve, reject) => {
@@ -179,14 +213,79 @@ async function getConnectivity() {
   };
 }
 
+/** Clear probe cache and optionally retry TLS/Railway/Neon after Cloud on. */
+async function refreshConnectivity({ warm = false } = {}) {
+  const result = await requestJson('/api/connectivity-refresh', {
+    method: 'POST',
+    body: { warm: Boolean(warm) },
+    timeoutMs: 45000,
+  });
+  const connectivity = result?.connectivity || result;
+  if (!connectivity || typeof connectivity !== 'object') {
+    return { connectivity: null, warmup: result?.warmup || null };
+  }
+  return {
+    connectivity: {
+      ...connectivity,
+      railwayApiToken: mergeTokenStatus(connectivity.railwayApiToken),
+    },
+    warmup: result?.warmup || null,
+  };
+}
+
+async function runCloudDiagnostics() {
+  const { cloudLog, cloudWarn, logsDir, readTail } = require('./kiosk-log');
+  cloudLog('Cloud diagnostics requested');
+  if (!(await isRunning())) {
+    cloudWarn('Offline Show not running — cannot run server-side probes');
+    return {
+      ok: false,
+      error: 'Start Offline Show first, then run Cloud diagnostics.',
+      logsDir: logsDir(),
+      kioskLog: readTail('cloud', 32 * 1024),
+    };
+  }
+  try {
+    const report = await requestJson('/api/connectivity-diagnostics', {
+      method: 'POST',
+      body: {},
+      timeoutMs: 90000,
+    });
+    cloudLog('Cloud diagnostics complete', {
+      hint: report?.hint,
+      railwayFetch: report?.probes?.railwayHealth?.fetch?.ok,
+      railwayHttps: report?.probes?.railwayHealth?.https?.ok,
+      neonFetch: report?.probes?.railwayDeep?.fetch?.ok,
+      lanOnly: report?.meta?.lanOnly,
+    });
+    return {
+      ok: true,
+      report,
+      logsDir: logsDir(),
+      kioskLog: readTail('cloud', 32 * 1024),
+      showLog: readTail('offline-show', 32 * 1024),
+    };
+  } catch (e) {
+    const error = e instanceof Error ? e.message : 'Diagnostics failed';
+    cloudWarn('Cloud diagnostics failed', { error });
+    return {
+      ok: false,
+      error,
+      logsDir: logsDir(),
+      kioskLog: readTail('cloud', 32 * 1024),
+      showLog: readTail('offline-show', 32 * 1024),
+    };
+  }
+}
+
 async function getCloudMode() {
   return requestJson('/api/cloud-mode', { timeoutMs: 8000 });
 }
 
-async function setCloudMode(mode) {
+async function setCloudMode(mode, { soft = false } = {}) {
   return requestJson('/api/cloud-mode', {
     method: 'PATCH',
-    body: { mode, updatedBy: 'offline-kiosk' },
+    body: { mode, updatedBy: 'offline-kiosk', soft: Boolean(soft) },
     timeoutMs: 20000,
   });
 }
@@ -215,7 +314,7 @@ async function saveRailwayToken(token) {
   try {
     const saved = await requestJson('/api/railway-api-token', {
       method: 'PUT',
-      body: { token: trimmed },
+      body: { token: trimmed, softPersist: true },
       timeoutMs: 30000,
     });
     return mergeTokenStatus(saved);
@@ -235,13 +334,26 @@ async function saveRailwayToken(token) {
 
 async function clearRailwayToken() {
   clearStoredToken();
+  const empty = {
+    configured: false,
+    prefix: null,
+    source: null,
+    locked: false,
+    pending: false,
+    kioskSaved: false,
+  };
   if (!(await isRunning())) {
-    return { configured: false, prefix: null, source: null, locked: false, pending: false };
+    return empty;
   }
-  return requestJson('/api/railway-api-token', {
-    method: 'DELETE',
-    timeoutMs: 8000,
-  });
+  try {
+    const cleared = await requestJson('/api/railway-api-token', {
+      method: 'DELETE',
+      timeoutMs: 8000,
+    });
+    return { ...empty, ...(cleared && typeof cleared === 'object' ? cleared : {}), kioskSaved: false };
+  } catch {
+    return empty;
+  }
 }
 
 /** After Offline Show is up, push any locally saved token into its SQLite. */
@@ -267,9 +379,11 @@ async function applyPendingRailwayToken() {
     /* continue and write */
   }
   try {
+    // softPersist: always write into Offline Show SQLite from the kiosk file even when
+    // Railway validation is unreachable / delayed — otherwise Start stays LAN-only.
     const token = await requestJson('/api/railway-api-token', {
       method: 'PUT',
-      body: { token: stored.token },
+      body: { token: stored.token, softPersist: true },
       timeoutMs: 30000,
     });
     return { ok: true, applied: true, token: mergeTokenStatus(token) };
@@ -295,19 +409,30 @@ function getStoredTokenStatus() {
   };
 }
 
-async function syncFromCloud() {
+async function syncFromCloud({ calendarOnly = false } = {}) {
   return requestJson('/api/sync-from-cloud', {
     method: 'POST',
-    body: {},
-    timeoutMs: 120000,
+    body: { calendarOnly: Boolean(calendarOnly) },
+    timeoutMs: calendarOnly ? 60000 : 120000,
   });
 }
 
 /**
  * After Offline Show is healthy: read connectivity, optionally enable cloud
  * (connect-only, no upload), sync Neon → SQLite, then return events.
+ *
+ * Options:
+ * - preferCloud: soft-enable Cloud when a token exists (default true)
+ * - sync: pull from Railway into SQLite before listing (default true)
+ * - warm: extra TLS warm after Cloud already on (default false — Start already warmed)
+ * - calendarOnly: sync calendar rows only, not every event's ROS/live state (default true)
  */
-async function prepareEvents({ preferCloud = true, sync = true } = {}) {
+async function prepareEvents({
+  preferCloud = true,
+  sync = true,
+  warm = false,
+  calendarOnly = true,
+} = {}) {
   let connectivity = null;
   let cloudMode = null;
   let token = null;
@@ -317,6 +442,7 @@ async function prepareEvents({ preferCloud = true, sync = true } = {}) {
   // Push any kiosk-saved token into Offline Show SQLite before cloud decisions.
   try {
     const pending = await applyPendingRailwayToken();
+    if (pending?.token) token = mergeTokenStatus(pending.token);
     if (pending?.applied) notes.push('Applied saved Integration token.');
     else if (pending?.error) notes.push(`Token apply: ${pending.error}`);
   } catch (e) {
@@ -331,14 +457,22 @@ async function prepareEvents({ preferCloud = true, sync = true } = {}) {
       cloudConnected: connectivity.cloudConnected,
     };
     token = mergeTokenStatus(
-      connectivity.railwayApiToken || (await getTokenStatus().catch(() => null))
+      connectivity.railwayApiToken ||
+        (await getTokenStatus().catch(() => null)) ||
+        token
     );
   } catch (e) {
-    token = mergeTokenStatus(null);
+    // Keep any token we already merged from softPersist — do not wipe on probe miss.
+    try {
+      token = mergeTokenStatus(token || (await getTokenStatus().catch(() => null)));
+    } catch {
+      /* keep prior */
+    }
     notes.push(e instanceof Error ? e.message : 'Connectivity status failed');
   }
 
-  // Kiosk default: Cloud on whenever we can (saved Integration token).
+  // Kiosk default: Cloud on whenever a token is saved (soft — do not stay LAN-only
+  // just because the Railway health probe failed once at start).
   if (preferCloud) {
     const tokenReady = Boolean(token?.configured);
     if (!tokenReady) {
@@ -347,13 +481,32 @@ async function prepareEvents({ preferCloud = true, sync = true } = {}) {
       );
     } else if (!cloudMode?.cloudConnected) {
       try {
-        cloudMode = await setCloudMode('cloud-connected');
-        notes.push('Cloud on (connect-only).');
+        cloudMode = await setCloudMode('cloud-connected', { soft: true });
+        if (cloudMode?.sync?.warning) {
+          notes.push(`Cloud on (connect-only; ${cloudMode.sync.warning}).`);
+        } else if (cloudMode?.sync?.warmed) {
+          notes.push(
+            `Cloud on (connect-only; Railway/Neon warmed in ${cloudMode.sync.attempts || 1} try).`
+          );
+        } else {
+          notes.push('Cloud on (connect-only).');
+        }
         try {
-          connectivity = await getConnectivity();
-          token = mergeTokenStatus(connectivity.railwayApiToken || token);
+          // After soft Cloud-on, pills need a refresh. Only re-warm when asked —
+          // setCloudMode(soft) already ran warmCloudConnectivity.
+          const refreshed = await refreshConnectivity({ warm: Boolean(warm) });
+          connectivity = refreshed.connectivity || (await getConnectivity());
+          token = mergeTokenStatus(connectivity?.railwayApiToken || token);
+          if (refreshed.warmup && !refreshed.warmup.neonOk) {
+            notes.push('Neon still waking — use Recheck if calendar sync fails.');
+          }
         } catch {
-          /* keep prior */
+          try {
+            connectivity = await getConnectivity();
+            token = mergeTokenStatus(connectivity.railwayApiToken || token);
+          } catch {
+            /* keep prior */
+          }
         }
       } catch (e) {
         notes.push(
@@ -362,19 +515,32 @@ async function prepareEvents({ preferCloud = true, sync = true } = {}) {
       }
     } else {
       notes.push('Cloud already on.');
+      if (warm) {
+        try {
+          const refreshed = await refreshConnectivity({ warm: true });
+          connectivity = refreshed.connectivity || connectivity;
+          token = mergeTokenStatus(connectivity?.railwayApiToken || token);
+        } catch {
+          /* keep prior */
+        }
+      }
     }
   }
 
   if (sync && cloudMode?.cloudConnected) {
     try {
-      syncResult = await syncFromCloud();
+      syncResult = await syncFromCloud({ calendarOnly: Boolean(calendarOnly) });
       const n =
         syncResult?.calendarEvents ??
         syncResult?.events ??
         syncResult?.synced?.calendarEvents ??
         null;
       notes.push(
-        typeof n === 'number' ? `Synced ${n} calendar events from cloud.` : 'Synced from cloud.'
+        typeof n === 'number'
+          ? calendarOnly
+            ? `Synced ${n} calendar events from cloud.`
+            : `Deep-synced ${n} calendar events (+ run-of-show) from cloud.`
+          : 'Synced from cloud.'
       );
     } catch (e) {
       notes.push(
@@ -415,21 +581,57 @@ function ensureOfflineShowInstall() {
   return { ok: true, root, serverJs };
 }
 
+function offlineShowLogPaths(root) {
+  const { logsDir, logPath: kioskLogPath, setPackagedLogsRoot } = require('./kiosk-log');
+  try {
+    const { app } = require('electron');
+    if (app?.isPackaged) {
+      setPackagedLogsRoot(path.join(path.dirname(app.getPath('exe')), 'kiosk-data', 'logs'));
+    }
+  } catch {
+    /* ignore */
+  }
+  const dir = logsDir();
+  const showLog = path.join(dir, `offline-show-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}.log`);
+  // Also tell Offline Show where to write cloud-* logs (same folder).
+  return { dir, showLog, cloudLogHint: kioskLogPath('cloud') };
+}
+
 function spawnWithNode(root) {
   if (showChild && !showChild.killed) return showChild;
   const nodeBin = nodeCommand();
-  const child = spawn(nodeBin, ['server/server.js'], {
+  const { dir: logDir, showLog } = offlineShowLogPaths(root);
+  let outFd = 'ignore';
+  let errFd = 'ignore';
+  try {
+    fs.mkdirSync(logDir, { recursive: true });
+    outFd = fs.openSync(showLog, 'a');
+    errFd = outFd;
+    fs.appendFileSync(
+      showLog,
+      `\n===== Offline Show start ${new Date().toISOString()} node=${nodeBin} =====\n`,
+      'utf8'
+    );
+  } catch {
+    outFd = 'ignore';
+    errFd = 'ignore';
+  }
+  // Trust Windows/macOS system CAs (corp SSL inspection). Do not disable TLS verify.
+  logSystemCaModeOnce(typeof showLog === 'string' ? showLog : null);
+  const childEnv = withSystemCaNodeOptions({
+    ...process.env,
+    OFFLINE_PORT: '3004',
+    PORT: '3004',
+    OFFLINE_SHOW_LOG_DIR: logDir,
+    // Prefer bundled Node's directory on PATH for any child tools
+    PATH: bundledNodeExe()
+      ? `${path.dirname(bundledNodeExe())}${path.delimiter}${process.env.PATH || ''}`
+      : process.env.PATH,
+  });
+  const child = spawn(nodeBin, [USE_SYSTEM_CA_FLAG, 'server/server.js'], {
     cwd: root,
-    env: {
-      ...process.env,
-      OFFLINE_PORT: '3004',
-      PORT: '3004',
-      // Prefer bundled Node's directory on PATH for any child tools
-      PATH: bundledNodeExe()
-        ? `${path.dirname(bundledNodeExe())}${path.delimiter}${process.env.PATH || ''}`
-        : process.env.PATH,
-    },
-    stdio: 'ignore',
+    env: childEnv,
+    stdio: ['ignore', outFd, errFd],
     windowsHide: true,
     shell: false,
   });
@@ -440,6 +642,11 @@ function spawnWithNode(root) {
       showChild = null;
       startedByKiosk = false;
     }
+    try {
+      if (typeof outFd === 'number') fs.closeSync(outFd);
+    } catch {
+      /* ignore */
+    }
   });
   return child;
 }
@@ -448,15 +655,34 @@ async function startOfflineShow() {
   const finishStart = async ({ alreadyRunning }) => {
     const pending = await applyPendingRailwayToken();
     let cloudMode = null;
+    let connectivity = null;
     const token = mergeTokenStatus(pending?.token || null);
-    // Always prefer Cloud when a token is available.
+    // Always prefer Cloud when a token is available (soft enable so Start is not blocked
+    // by a transient Railway health probe failure).
     if (token.configured) {
       try {
-        cloudMode = await setCloudMode('cloud-connected');
+        cloudMode = await setCloudMode('cloud-connected', { soft: true });
       } catch (e) {
         cloudMode = {
           error: e instanceof Error ? e.message : 'Could not enable Cloud',
         };
+      }
+    }
+    // Return probe pills with Start so the renderer can paint Status immediately
+    // (before the slower event sync). setCloudMode already warmed TLS when Cloud on;
+    // a non-warm refresh clears cache and reads pills without a second full warm loop.
+    try {
+      if (cloudMode?.cloudConnected) {
+        const refreshed = await refreshConnectivity({ warm: false });
+        connectivity = refreshed.connectivity || (await getConnectivity());
+      } else {
+        connectivity = await getConnectivity();
+      }
+    } catch {
+      try {
+        connectivity = await getConnectivity();
+      } catch {
+        connectivity = null;
       }
     }
     return {
@@ -465,8 +691,18 @@ async function startOfflineShow() {
       startedByKiosk: alreadyRunning ? false : startedByKiosk,
       url: OFFLINE_SHOW_URL,
       tokenApplied: Boolean(pending?.applied),
-      token,
-      cloudMode,
+      token: mergeTokenStatus(connectivity?.railwayApiToken || token),
+      cloudMode:
+        cloudMode && typeof cloudMode.cloudConnected === 'boolean'
+          ? cloudMode
+          : connectivity
+            ? {
+                mode: connectivity.cloudMode,
+                lanOnly: connectivity.lanOnly,
+                cloudConnected: connectivity.cloudConnected,
+              }
+            : cloudMode,
+      connectivity,
       preferCloud: Boolean(token.configured),
     };
   };
@@ -732,6 +968,8 @@ module.exports = {
   listEvents,
   isRunning,
   getConnectivity,
+  refreshConnectivity,
+  runCloudDiagnostics,
   getCloudMode,
   setCloudMode,
   getTokenStatus,

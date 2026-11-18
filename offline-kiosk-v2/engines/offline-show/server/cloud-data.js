@@ -9,13 +9,26 @@ function isCloudConnected(db) {
   return getCloudMode(db).cloudConnected;
 }
 
-async function syncFromCloud(db) {
+async function syncFromCloud(db, { calendarOnly = false } = {}) {
   const events = await railwayRequest('GET', '/api/calendar-events');
   const list = Array.isArray(events) ? events : [];
   const sync = db.transaction((rows) => {
     for (const row of rows) upsertCalendarEvent(db, row);
   });
   sync(list);
+
+  // Event list / Soft Cloud-on only needs calendar rows. Full ROS + live-state
+  // pulls are slow (N × 8 Railway GETs) and belong on the Sync Cloud button.
+  if (calendarOnly) {
+    console.log(`☁️ Synced ${list.length} calendar events from Railway (calendar-only)`);
+    return {
+      calendarEvents: list.length,
+      runOfShow: 0,
+      liveState: 0,
+      source: RAILWAY_BASE_URL,
+      calendarOnly: true,
+    };
+  }
 
   let runOfShow = 0;
   let liveState = 0;

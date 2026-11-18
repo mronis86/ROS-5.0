@@ -478,6 +478,237 @@ function formatWebLinkedDiagnosticsText(result) {
   ].join('\n');
 }
 
+function probeLine(label, probe) {
+  if (!probe) return `${label}: (missing)`;
+  const dnsOk = probe.dns?.ok;
+  const dnsDetail = dnsOk
+    ? (probe.dns.records || []).map((r) => r.address).join(', ') || 'ok'
+    : probe.dns?.error || 'fail';
+  const fetchOk = probe.fetch?.ok;
+  const httpsOk = probe.https?.ok;
+  const fetchBit = fetchOk
+    ? `fetch OK ${probe.fetch.status ?? ''} ${probe.fetch.latencyMs != null ? `${probe.fetch.latencyMs}ms` : ''}`.trim()
+    : `fetch FAIL ${probe.fetch?.error || ''}`.trim();
+  const httpsBit = httpsOk
+    ? `https.get OK ${probe.https.status ?? ''} ${probe.https.latencyMs != null ? `${probe.https.latencyMs}ms` : ''}`.trim()
+    : `https.get FAIL ${probe.https?.error || ''}`.trim();
+  const neonBit =
+    probe.fetch?.dbConnected != null || probe.https?.dbConnected != null
+      ? ` | neon/dbConnected fetch=${probe.fetch?.dbConnected ?? '—'} https=${probe.https?.dbConnected ?? '—'}`
+      : '';
+  return [
+    `${label}: ${probe.url || ''}`,
+    `  DNS (${probe.hostname || '?'}): ${dnsOk ? 'OK' : 'FAIL'} ${dnsDetail}`,
+    `  ${fetchBit}`,
+    `  ${httpsBit}${neonBit}`,
+  ].join('\n');
+}
+
+function formatCloudDiagnosticsText(result) {
+  const report = result?.report || null;
+  const meta = report?.meta || {};
+  const probes = report?.probes || {};
+  const conn = report?.connectivity || {};
+  const lines = [
+    '=== ROS Offline Kiosk · Cloud diagnostics ===',
+    `When: ${meta.at || new Date().toISOString()}`,
+    `ok: ${result?.ok ? 'yes' : 'no'}${result?.error ? ` | error: ${result.error}` : ''}`,
+    '',
+    '--- hint ---',
+    report?.hint || result?.error || '(no hint)',
+    '',
+    '--- mode / token ---',
+    `cloudMode: ${meta.cloudMode ?? '—'}  lanOnly: ${meta.lanOnly ?? '—'}  cloudConnected: ${meta.cloudConnected ?? '—'}`,
+    `tokenConfigured: ${meta.tokenConfigured ?? '—'}  prefix: ${meta.tokenPrefix || '—'}`,
+    `node: ${meta.node || '—'}  platform: ${meta.platform || '—'}`,
+    '',
+    '--- pills (probeConnectivity) ---',
+    `internet: ${conn.internet?.ok ?? '—'}  railway: ${conn.railway?.ok ?? '—'}  neon: ${conn.neon?.ok ?? '—'}  lan: ${conn.localLan?.ok ?? '—'}  lanOnly: ${conn.lanOnly ?? '—'}`,
+    '',
+    '--- railway /health (fetch vs https.get) ---',
+    probeLine('Railway health', probes.railwayHealth),
+    '',
+    '--- railway /health/deep (neon) ---',
+    probeLine('Railway deep', probes.railwayDeep),
+    '',
+    '--- internet ---',
+    probeLine('Internet', probes.internet),
+    '',
+    '--- log paths ---',
+    `kiosk logsDir: ${result?.logsDir || meta.logsDir || '—'}`,
+    `server cloud log: ${report?.log?.path || meta.logPath || '—'}`,
+    `kiosk cloud log: ${result?.kioskLog?.path || '—'}`,
+    `offline-show log: ${result?.showLog?.path || '—'}`,
+    '',
+    '--- server cloud log tail ---',
+    report?.log?.text || '(none)',
+    '',
+    '--- kiosk cloud log tail ---',
+    result?.kioskLog?.text || '(none)',
+    '',
+    '--- offline-show log tail ---',
+    result?.showLog?.text || '(none)',
+    '',
+    '--- raw report (JSON) ---',
+    JSON.stringify(report || result, null, 2),
+    '',
+  ];
+  return lines.join('\n');
+}
+
+let cloudDiagCacheText = '';
+
+function showCloudDiagPanel(text) {
+  const panel = $('#cloudDiagPanel');
+  const out = $('#cloudDiagOut');
+  if (panel) panel.hidden = false;
+  if (out) {
+    out.textContent = text || '(no report yet)';
+    out.scrollTop = 0;
+  }
+}
+
+async function runCloudDiagnosticsUi() {
+  if (!window.kiosk?.runCloudDiagnostics) {
+    setEventNote('Cloud diagnostics only available in the Electron kiosk.');
+    showCloudDiagPanel('Cloud diagnostics require the Offline Kiosk Electron shell.');
+    return;
+  }
+  setEventNote('Running Cloud diagnostics (DNS + fetch + https.get)…');
+  showCloudDiagPanel('Running…');
+  let result = null;
+  try {
+    result = await window.kiosk.runCloudDiagnostics();
+  } catch (e) {
+    result = { ok: false, error: e instanceof Error ? e.message : 'Diagnostics failed' };
+  }
+  cloudDiagCacheText = formatCloudDiagnosticsText(result);
+  showCloudDiagPanel(cloudDiagCacheText);
+  // Mirror key outcome to renderer console (DevTools) — full probes still in Cloud diag / log files.
+  try {
+    const hint = result?.report?.hint || result?.error || '';
+    const rf = result?.report?.probes?.railwayHealth?.fetch;
+    const rh = result?.report?.probes?.railwayHealth?.https;
+    console.log('[ROS Kiosk Cloud diag]', {
+      ok: Boolean(result?.ok),
+      hint,
+      railwayFetch: rf?.ok,
+      railwayFetchError: rf?.error || rf?.code,
+      railwayHttps: rh?.ok,
+      railwayHttpsError: rh?.error || rh?.code,
+      logsDir: result?.logsDir || result?.report?.meta?.logsDir,
+    });
+  } catch {
+    /* ignore */
+  }
+  if (result?.ok) {
+    if (result?.report?.connectivity) {
+      applyConnectivity({
+        connectivity: result.report.connectivity,
+        token: result.report.connectivity.railwayApiToken,
+      });
+    }
+    const rf = result?.report?.probes?.railwayHealth?.fetch?.ok;
+    const rh = result?.report?.probes?.railwayHealth?.https?.ok;
+    const lanOnly = result?.report?.meta?.lanOnly;
+    if (lanOnly) setEventNote('Cloud diag: LAN only — turn Cloud on, then re-run.');
+    else if (rf || rh) setEventNote('Cloud diag done — Node reached Railway (see panel).');
+    else setEventNote('Cloud diag done — Node could not reach Railway (browser may still work).');
+  } else {
+    setEventNote(result?.error || 'Cloud diagnostics failed.');
+  }
+}
+
+async function copyTextToClipboard(text) {
+  const value = text == null ? '' : String(text);
+  if (window.kiosk?.writeClipboardText) {
+    try {
+      const result = await window.kiosk.writeClipboardText(value);
+      if (result?.ok) return true;
+    } catch {
+      /* fall through */
+    }
+  }
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
+      return true;
+    }
+  } catch {
+    /* fall through */
+  }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = value;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    ta.style.top = '0';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    ta.setSelectionRange(0, value.length);
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return Boolean(ok);
+  } catch {
+    return false;
+  }
+}
+
+async function copyCloudDiagnosticsReport() {
+  const text =
+    cloudDiagCacheText ||
+    ($('#cloudDiagOut')?.textContent || '').trim() ||
+    '(no report yet — click Cloud diag first)';
+  const ok = await copyTextToClipboard(text);
+  if (ok) {
+    setEventNote('Cloud diagnostics report copied to clipboard.');
+  } else {
+    setEventNote('Could not copy — select the report text and copy manually.');
+    showCloudDiagPanel(text);
+  }
+}
+
+async function openKioskDevTools() {
+  if (!window.kiosk?.openDevTools) {
+    setEventNote('DevTools only available in the Electron kiosk.');
+    return;
+  }
+  const result = await window.kiosk.openDevTools();
+  const logsDir = result?.logsDir || 'kiosk-data/logs';
+  // Cloud probes run in the Offline Show Node child — not this renderer Console/Network tab.
+  console.log(
+    `[ROS Kiosk] DevTools Console/Network are renderer-only. Cloud TLS probes live in Status → Cloud diag and ${logsDir} (cloud-*.log / offline-show-*.log).`
+  );
+  if (result?.ok) {
+    setEventNote(
+      `DevTools opened (renderer-only). Cloud probes: Status → Cloud diag or ${logsDir}.`
+    );
+    const hint = $('#cloudDiagHint');
+    if (hint) {
+      hint.textContent =
+        'DevTools Console/Network are the kiosk UI only. Cloud/Railway/Neon probes run in Offline Show Node — use Cloud diag here, or open Logs folder (cloud-*.log / offline-show-*.log).';
+    }
+    showCloudDiagPanel(
+      ($('#cloudDiagOut')?.textContent || '').trim() ||
+        `DevTools tip: renderer Console will not show Node cloud probes.\nUse Cloud diag, or check:\n${logsDir}\\cloud-*.log\n${logsDir}\\offline-show-*.log`
+    );
+  } else {
+    setEventNote(result?.error || 'Could not open DevTools.');
+  }
+}
+
+async function openKioskLogsFolder() {
+  if (!window.kiosk?.openLogsFolder) {
+    setEventNote('Logs folder only available in the Electron kiosk.');
+    return;
+  }
+  const result = await window.kiosk.openLogsFolder();
+  if (result?.ok) setEventNote(`Opened logs: ${result.path || ''}`);
+  else setEventNote(result?.error || 'Could not open logs folder.');
+}
+
 let wlLogCacheText = '';
 
 async function fetchWebLinkedDiagnostics() {
@@ -742,12 +973,12 @@ function applyConnectivity(payload) {
 
   const token = payload?.token || conn?.railwayApiToken || null;
   if (token) {
-    // Never wipe a known-good kiosk-saved token just because Offline Show SQLite
-    // has not received it yet (pending apply).
+    // Trust merged token status from the kiosk bridge (includes kioskSaved).
+    // configured/kioskSaved true → show saved; explicit false → clear UI (after Clear).
     if (token.configured || token.kioskSaved) {
       state.tokenConfigured = true;
       state.tokenPrefix = token.prefix || state.tokenPrefix || '';
-    } else if (!state.tokenConfigured) {
+    } else {
       state.tokenConfigured = false;
       state.tokenPrefix = '';
     }
@@ -767,6 +998,7 @@ function setSvc(id, stateName, text) {
     lan: 'svcLan',
     token: 'svcToken',
     ppt: 'svcPpt',
+    vmix: 'svcVmix',
     gr: 'svcGr',
   };
   if (id === 'token') {
@@ -1394,7 +1626,7 @@ function renderDisplayClients() {
     } else if (pack?.error) lead.textContent = 'Could not reach Green Room clients.';
     else if (!clients.length) {
       const pref = state.tokenPrefix ? ` (kiosk token ${state.tokenPrefix})` : '';
-      lead.textContent = `No Green Room clients checking in yet${pref}.`;
+      lead.textContent = `No Green Room Client app checking in yet${pref} — standby requires the client on the AV PC.`;
     } else {
       lead.textContent = `${online.length} online · ${standby} standby · ${active} active`;
     }
@@ -1421,9 +1653,12 @@ function renderDisplayClients() {
     else if (pack?.error) msg = pack.error;
     else if (!clients.length) {
       msg =
-        'Client must be running (tray icon) and using an Integration token from this ROS account. Right-click the tray icon → Settings / Test connection.';
+        'No Green Room Client heartbeats on Railway yet. On the AV PC: run the Green Room Client app (tray icon / Start Green Room Client.bat) with an Integration token from this same Admin account, then Settings → Test connection. Standby is cloud check-in (not LAN discovery) — the kiosk will not see a PC that only has a browser open.';
     } else if (!state.eventId) msg = 'Select an event on the Event tab, then Start a standby client.';
-    else if (clients.length && !online.length) msg = 'Clients listed but none have heartbeated in the last ~45s.';
+    else if (clients.length && !online.length) {
+      msg =
+        'Clients listed but none have heartbeated in the last ~45s — restart the Green Room Client on that PC if it should still be in standby.';
+    }
     note.textContent = msg;
     note.hidden = !msg;
   }
@@ -1821,6 +2056,7 @@ function renderConnectivity() {
   const modeCloud = $('#modeCloudBtn');
   const tokenInput = $('#railwayTokenInput');
   const saveTokenBtn = $('#saveTokenBtn');
+  const clearTokenBtn = $('#clearTokenBtn');
 
   if (syncBtn) syncBtn.hidden = !(running && state.cloudConnected);
   if (refreshBtn) refreshBtn.hidden = !running;
@@ -1830,6 +2066,7 @@ function renderConnectivity() {
   });
   if (tokenInput) tokenInput.disabled = false;
   if (saveTokenBtn) saveTokenBtn.disabled = false;
+  if (clearTokenBtn) clearTokenBtn.disabled = !state.tokenConfigured;
 
   modeLan?.classList.toggle('is-active', running && (state.lanOnly || !state.cloudConnected));
   modeCloud?.classList.toggle('is-active', running && state.cloudConnected);
@@ -2033,12 +2270,27 @@ async function loadRemoteProvider(provider, { force = false } = {}) {
   syncStatus();
 }
 
-async function refreshConnectivityOnly() {
-  if (!state.offlineShowRunning || !window.kiosk?.getConnectivity) return;
-  const result = await window.kiosk.getConnectivity();
-  if (result?.ok && result.connectivity) {
-    applyConnectivity({ connectivity: result.connectivity, token: result.connectivity.railwayApiToken });
+async function refreshConnectivityOnly({ warm = true } = {}) {
+  if (!state.offlineShowRunning) return;
+  setEventNote(warm ? 'Rechecking Railway / Neon (TLS warm)…' : 'Refreshing connectivity…');
+  let result = null;
+  if (window.kiosk?.refreshConnectivity) {
+    result = await window.kiosk.refreshConnectivity({ warm });
+  } else if (window.kiosk?.getConnectivity) {
+    result = await window.kiosk.getConnectivity();
   }
+  if (result?.ok && result.connectivity) {
+    applyConnectivity({
+      connectivity: result.connectivity,
+      token: result.connectivity.railwayApiToken,
+    });
+  }
+  const railwayOk = result?.connectivity?.railway?.ok;
+  const neonOk = result?.connectivity?.neon?.ok;
+  if (railwayOk && neonOk) setEventNote('Railway and Neon look good.');
+  else if (railwayOk && !neonOk) setEventNote('Railway up — Neon still waking. Hit Recheck again if needed.');
+  else if (result?.ok) setEventNote('Connectivity refreshed — check the pills above.');
+  else setEventNote(result?.error || 'Connectivity refresh failed.');
   renderConnectivity();
   void refreshPptBridgeStatus();
   void refreshDisplayClients();
@@ -3925,27 +4177,76 @@ async function refreshEventsFromShow() {
     setEventNote('Offline Show bridge not available.');
     return;
   }
-  setEventNote('Loading events (cloud sync if enabled)…');
-  const result = await window.kiosk.listEvents();
+
+  // Phase 1: paint local SQLite ASAP (no soft Cloud-on, no Railway sync/warm).
+  setEventNote('Loading events…');
+  let local = null;
+  try {
+    local = await window.kiosk.listEvents({
+      preferCloud: false,
+      sync: false,
+      warm: false,
+      calendarOnly: true,
+    });
+  } catch (e) {
+    local = { ok: false, error: e instanceof Error ? e.message : 'Local list failed' };
+  }
+  if (local?.ok) {
+    applyEventsResult({
+      ...local,
+      notes: [
+        ...(Array.isArray(local.notes) ? local.notes.filter(Boolean) : []),
+        local.events?.length
+          ? 'Showing local events…'
+          : 'No local events yet — syncing from cloud…',
+      ],
+    });
+  }
+
+  // Phase 2: soft Cloud-on (if needed) + calendar-only sync into SQLite, then re-list.
+  setEventNote(
+    state.tokenConfigured || state.cloudConnected || local?.token?.configured
+      ? 'Syncing from cloud…'
+      : 'Checking cloud / loading events…'
+  );
+  const result = await window.kiosk.listEvents({
+    preferCloud: true,
+    sync: true,
+    warm: false,
+    calendarOnly: true,
+  });
   if (!result?.ok) {
-    setEventNote(result?.error || 'Could not load events.');
-    state.events = [];
-    renderEventBrowser();
-    syncEventChrome();
+    if (!local?.ok) {
+      setEventNote(result?.error || 'Could not load events.');
+      state.events = [];
+      renderEventBrowser();
+      syncEventChrome();
+    } else {
+      setEventNote(
+        `${result?.error || 'Cloud sync failed'} — showing local events.`
+      );
+    }
     return;
   }
   applyEventsResult(result);
 }
 
-async function syncCloudNow() {
+async function syncCloudNow({ calendarOnly = false } = {}) {
   if (!window.kiosk?.syncFromCloud) return;
-  setEventNote('Syncing from cloud…');
-  const result = await window.kiosk.syncFromCloud();
+  setEventNote(calendarOnly ? 'Syncing from cloud…' : 'Deep sync from cloud…');
+  const result = await window.kiosk.syncFromCloud({ calendarOnly: Boolean(calendarOnly) });
   if (!result?.ok) {
     setEventNote(result?.error || 'Cloud sync failed.');
     return;
   }
-  applyEventsResult({ ...result, notes: ['Manual cloud sync finished.'] });
+  applyEventsResult({
+    ...result,
+    notes: [
+      calendarOnly
+        ? 'Cloud calendar sync finished.'
+        : 'Manual deep cloud sync finished (calendar + run-of-show).',
+    ],
+  });
 }
 
 let confirmResolver = null;
@@ -4046,7 +4347,7 @@ function updateConnBar() {
 async function applyMode(mode) {
   if (!window.kiosk?.setCloudMode) return;
   setEventNote(mode === 'cloud-connected' ? 'Enabling Cloud on…' : 'Switching to LAN only…');
-  const result = await window.kiosk.setCloudMode({ mode });
+  const result = await window.kiosk.setCloudMode({ mode, soft: true });
   if (!result?.ok) {
     setEventNote(result?.error || 'Could not change mode.');
     renderConnectivity();
@@ -4054,8 +4355,22 @@ async function applyMode(mode) {
   }
   applyConnectivity({ cloudMode: result.cloudMode });
   updateConnBar();
-  if (mode === 'cloud-connected') await syncCloudNow();
-  else await refreshEventsFromShow();
+  if (mode === 'cloud-connected') {
+    if (result.cloudMode?.sync?.warning) {
+      setEventNote(`Cloud on — warming Railway/Neon (${result.cloudMode.sync.warning})…`);
+    } else {
+      setEventNote('Cloud on — refreshing Railway / Neon status…');
+    }
+    // Same warm + apply path as Recheck — do this before sync so pills update immediately.
+    await refreshConnectivityOnly({ warm: true });
+    // Calendar-only so the Event list updates quickly; use Sync Cloud for deep ROS pull.
+    await syncCloudNow({ calendarOnly: true });
+    // Sync can take a while; one more non-warm probe so pills match post-sync reality.
+    await refreshConnectivityOnly({ warm: false });
+  } else {
+    await refreshConnectivityOnly({ warm: false });
+    await refreshEventsFromShow();
+  }
 }
 
 async function requestModeChange(mode) {
@@ -4096,9 +4411,9 @@ async function saveToken() {
     return;
   }
   if (!window.kiosk?.saveRailwayToken) return;
-  setEventNote(
-    state.offlineShowRunning ? 'Saving and validating token…' : 'Saving token on this kiosk…'
-  );
+  // Optimistic: show Saved immediately; Railway check runs after (was blocking ~2s).
+  const prefixHint = token.length > 12 ? `${token.slice(0, 12)}…` : token;
+  setEventNote(`Saving token (${prefixHint})…`);
   const result = await window.kiosk.saveRailwayToken({ token });
   if (!result?.ok) {
     setEventNote(result?.error || 'Token save failed.');
@@ -4106,23 +4421,55 @@ async function saveToken() {
   }
   if ($('#railwayTokenInput')) $('#railwayTokenInput').value = '';
   applyConnectivity({ token: result.token });
+  renderConnectivity();
   if (!state.offlineShowRunning) {
     setEventNote(
-      `Token saved on this kiosk${result.token?.prefix ? ` (${result.token.prefix})` : ''} — it will apply when Offline Show starts.`
+      `Token saved${result.token?.prefix ? ` (${result.token.prefix})` : ''} — applies when Offline Show starts.`
     );
-    renderConnectivity();
     return;
   }
-  if (result.token?.warning) {
-    setEventNote(`Token kept on this kiosk (${result.token.warning}). Trying Cloud…`);
-  } else {
-    setEventNote('Token saved.');
+  setEventNote(
+    `Token saved${result.token?.prefix ? ` (${result.token.prefix})` : ''}. Turning Cloud on…`
+  );
+  // Cloud / sync after UI already shows saved — do not block the Save click on probes.
+  void (async () => {
+    try {
+      if (!state.cloudConnected) await applyMode('cloud-connected');
+      else {
+        await refreshConnectivityOnly({ warm: true });
+        await syncCloudNow();
+      }
+    } catch (e) {
+      setEventNote(e instanceof Error ? e.message : 'Cloud follow-up failed after token save.');
+    }
+  })();
+}
+
+async function clearToken() {
+  if (!window.kiosk?.clearRailwayToken) return;
+  const ok = await askConfirm({
+    title: 'Clear API token',
+    message:
+      'Remove the Integration token saved on this kiosk? Cloud sync will need a new token. Offline Show stays running.',
+    okLabel: 'Clear token',
+  });
+  if (!ok) return;
+  setEventNote('Clearing token…');
+  const result = await window.kiosk.clearRailwayToken();
+  if (!result?.ok) {
+    setEventNote(result?.error || 'Could not clear token.');
+    return;
   }
-  if (!state.cloudConnected) {
-    await applyMode('cloud-connected');
-  } else {
-    await syncCloudNow();
-  }
+  applyConnectivity({
+    token: result.token || {
+      configured: false,
+      prefix: null,
+      kioskSaved: false,
+      pending: false,
+    },
+  });
+  setEventNote('API token cleared on this kiosk.');
+  renderConnectivity();
 }
 
 let sessionActive = false;
@@ -4230,26 +4577,32 @@ async function connectOfflineShow() {
       return;
     }
     state.offlineShowRunning = true;
-    if (result.token) applyConnectivity({ token: result.token });
-    if (result.cloudMode && typeof result.cloudMode.cloudConnected === 'boolean') {
-      applyConnectivity({ cloudMode: result.cloudMode, token: result.token });
-    }
+    // Paint Cloud mode + probe pills immediately from Start (before slower event sync).
+    applyConnectivity({
+      connectivity: result.connectivity || undefined,
+      cloudMode: result.cloudMode,
+      token: result.token,
+    });
+    // Start bridge / Green Room polls before event sync so Status is live while list loads.
+    startPptBridgePoll();
+    startVmixBridgePoll();
+    startDisplayClientsPoll();
     setEventNote(
       result.alreadyRunning
-        ? 'Offline Show already running — preferring Cloud on / loading events…'
+        ? 'Offline Show already running — loading local events…'
         : result.tokenApplied
           ? 'Offline Show started — applied saved API token / loading events…'
-          : 'Offline Show started — preferring Cloud on / loading events…'
+          : 'Offline Show started — loading local events…'
     );
     await refreshEventsFromShow();
     // Belt-and-suspenders: if prepareEvents left us LAN-only but a token exists, force Cloud.
     if (!state.cloudConnected && state.tokenConfigured && window.kiosk?.setCloudMode) {
       setEventNote('Token present — turning Cloud on…');
       await applyMode('cloud-connected');
+    } else {
+      // Same path as Recheck — warm result must land in UI state without a manual click.
+      await refreshConnectivityOnly({ warm: Boolean(state.cloudConnected) });
     }
-    startPptBridgePoll();
-    startVmixBridgePoll();
-    startDisplayClientsPoll();
   } finally {
     state.busy = false;
     if (btn) btn.disabled = false;
@@ -4489,6 +4842,10 @@ async function bootstrap() {
   $('#addDisplayBtn')?.addEventListener('click', () => addDisplayRow());
   $('#refreshEventsBtn')?.addEventListener('click', () => void refreshEventsFromShow());
   $('#refreshConnBtn')?.addEventListener('click', () => void refreshConnectivityOnly());
+  $('#cloudDiagBtn')?.addEventListener('click', () => void runCloudDiagnosticsUi());
+  $('#copyCloudDiagBtn')?.addEventListener('click', () => void copyCloudDiagnosticsReport());
+  $('#openDevToolsBtn')?.addEventListener('click', () => void openKioskDevTools());
+  $('#openLogsBtn')?.addEventListener('click', () => void openKioskLogsFolder());
   $('#refreshPerfBtn')?.addEventListener('click', () => void refreshPerfHealth());
   $('#cleanWlOrphansBtn')?.addEventListener('click', () => {
     void (async () => {
@@ -4504,7 +4861,7 @@ async function bootstrap() {
       void refreshWebLinkedStatus();
     })();
   });
-  $('#syncCloudBtn')?.addEventListener('click', () => void syncCloudNow());
+  $('#syncCloudBtn')?.addEventListener('click', () => void syncCloudNow({ calendarOnly: false }));
   $('#modeLanBtn')?.addEventListener('click', () => void requestModeChange('lan-only'));
   $('#modeCloudBtn')?.addEventListener('click', () => void requestModeChange('cloud-connected'));
   $('#connBarModeBtn')?.addEventListener('click', () => {
@@ -4512,6 +4869,7 @@ async function bootstrap() {
     void requestModeChange(state.cloudConnected ? 'lan-only' : 'cloud-connected');
   });
   $('#saveTokenBtn')?.addEventListener('click', () => void saveToken());
+  $('#clearTokenBtn')?.addEventListener('click', () => void clearToken());
   $('#confirmCancelBtn')?.addEventListener('click', () => closeConfirm(false));
   $('#confirmOkBtn')?.addEventListener('click', () => closeConfirm(true));
   $('#confirmOverlay')?.addEventListener('click', (e) => {
@@ -4536,11 +4894,12 @@ async function bootstrap() {
     void refreshWebLinkedStatus();
     if (data?.offlineShowRunning) {
       state.offlineShowRunning = true;
-      setEventNote('Offline Show already running — checking cloud / loading events…');
-      await refreshEventsFromShow();
       startPptBridgePoll();
       startVmixBridgePoll();
       startDisplayClientsPoll();
+      setEventNote('Offline Show already running — loading local events…');
+      await refreshEventsFromShow();
+      await refreshConnectivityOnly({ warm: Boolean(state.cloudConnected) });
     } else {
       renderConnectivity();
     }

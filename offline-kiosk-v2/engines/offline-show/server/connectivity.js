@@ -3,6 +3,7 @@
 const { getCloudMode } = require('./cloud-mode');
 const { getRailwayApiToken, getRailwayApiTokenStatus } = require('./railway-api-token');
 const { probeRailwayTokenWriteAccess } = require('./railway-client');
+const { cloudLog } = require('./connectivity-log');
 
 const RAILWAY_HEALTH_URL =
   process.env.OFFLINE_RAILWAY_HEALTH_URL || 'https://ros-50-production.up.railway.app/health';
@@ -18,7 +19,8 @@ const INTERNET_PROBE_URLS = (
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean);
-const PROBE_TIMEOUT_MS = Number(process.env.OFFLINE_PROBE_TIMEOUT_MS || 4000);
+/** Default 8s — 4s was too aggressive on cold TLS / distant show PCs. */
+const PROBE_TIMEOUT_MS = Number(process.env.OFFLINE_PROBE_TIMEOUT_MS || 8000);
 const CACHE_MS = Number(process.env.OFFLINE_CONNECTIVITY_CACHE_MS || 8000);
 /** Deep Neon probe wakes the DB — cache longer than the live Railway check. */
 const NEON_CACHE_MS = Number(process.env.OFFLINE_NEON_PROBE_CACHE_MS || 60000);
@@ -52,6 +54,11 @@ async function fetchWithTimeout(url, options = {}) {
   try {
     const res = await fetch(url, { ...options, signal: controller.signal });
     return res;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    const code = e && typeof e === 'object' && 'code' in e ? e.code : null;
+    cloudLog('WARN', `fetch fail ${url}`, { error: msg, code, timeoutMs: PROBE_TIMEOUT_MS });
+    throw e;
   } finally {
     clearTimeout(timer);
   }
@@ -192,6 +199,70 @@ async function probeRailwayReachable() {
   return { latencyMs: Date.now() - started, body };
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Warm TLS + Railway/Neon probes with retries.
+ * First HTTPS call after Offline Show start often fails or stalls on Windows
+ * (TLS session / cold Railway). Call after flipping Cloud on, then refresh pills.
+ */
+async function warmCloudConnectivity({ attempts = 4, delayMs = 400 } = {}) {
+  clearConnectivityCache();
+  const errors = [];
+  let railwayOk = false;
+  let neonOk = false;
+
+  for (let i = 0; i < Math.max(1, attempts); i++) {
+    try {
+      await probeRailwayReachable();
+      railwayOk = true;
+    } catch (e) {
+      errors.push(`railway[${i + 1}]: ${e instanceof Error ? e.message : 'fail'}`);
+    }
+
+    try {
+      const deepRes = await fetchWithTimeout(RAILWAY_DEEP_HEALTH_URL, {
+        method: 'GET',
+        headers: { Accept: 'application/json' },
+      });
+      const deepBody = await deepRes.json().catch(() => ({}));
+      neonOk =
+        deepBody.dbConnected === true || deepBody.services?.neon?.connected === true;
+      if (!neonOk) {
+        errors.push(
+          `neon[${i + 1}]: ${deepBody.error || `HTTP ${deepRes.status}` || 'not connected'}`
+        );
+      }
+    } catch (e) {
+      errors.push(`neon[${i + 1}]: ${e instanceof Error ? e.message : 'fail'}`);
+    }
+
+    if (railwayOk && neonOk) {
+      clearConnectivityCache();
+      return {
+        ok: true,
+        railwayOk: true,
+        neonOk: true,
+        attempts: i + 1,
+        error: null,
+      };
+    }
+
+    if (i < attempts - 1) await sleep(delayMs * (i + 1));
+    clearConnectivityCache();
+  }
+
+  return {
+    ok: railwayOk,
+    railwayOk,
+    neonOk,
+    attempts,
+    error: errors[errors.length - 1] || (railwayOk ? 'Neon not ready' : 'Railway unreachable'),
+  };
+}
+
 async function probeConnectivity(db) {
   const cloud = getCloudMode(db);
   const now = Date.now();
@@ -206,14 +277,29 @@ async function probeConnectivity(db) {
 
   if (cloud.lanOnly) {
     const reason = 'LAN only — cloud connectivity disabled on show server';
+    cloudLog('WARN', 'probeConnectivity skipped cloud pills', { mode: cloud.mode, reason });
     internet = skippedPill('Internet', reason);
     railway = skippedPill('Railway', reason);
     neon = skippedPill('Neon', reason);
   } else {
+    cloudLog('INFO', 'probeConnectivity cloud probes', {
+      railwayHealth: RAILWAY_HEALTH_URL,
+      railwayDeep: RAILWAY_DEEP_HEALTH_URL,
+    });
     const [inet, cloudProbes] = await Promise.all([probeInternet(), probeRailwayAndNeon()]);
     internet = inet;
     railway = cloudProbes.railway;
     neon = cloudProbes.neon;
+    cloudLog('INFO', 'probeConnectivity results', {
+      internet: { ok: internet.ok, error: internet.error, latencyMs: internet.latencyMs },
+      railway: {
+        ok: railway.ok,
+        error: railway.error,
+        status: railway.status,
+        latencyMs: railway.latencyMs,
+      },
+      neon: { ok: neon.ok, error: neon.error, latencyMs: neon.latencyMs },
+    });
   }
 
   const tokenStatus = getRailwayApiTokenStatus(db);
@@ -260,6 +346,7 @@ async function probeConnectivity(db) {
 module.exports = {
   probeConnectivity,
   probeRailwayReachable,
+  warmCloudConnectivity,
   clearConnectivityCache,
   RAILWAY_HEALTH_URL,
   INTERNET_PROBE_URLS,

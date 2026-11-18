@@ -71,19 +71,23 @@ export function defaultQaPlanDraft(parentTotalSeconds: number): QaPlanDraft {
 }
 
 /**
- * Q&A sub-cue number = parent cue + "Q" (e.g. CUE 13 → CUE 13Q).
- * Matches breakout-room suffix convention (`CUE ${n}${suffix}`), not a new major number.
+ * Q&A sub-cue = parent cue + "Q" (CUE13 → CUE13Q, CUE 13 → CUE 13Q).
+ * Prefer appending Q to the full parent string when it already looks like CUE## / CUE ##.
  */
 export function qaCueFromParent(parentCueField?: string | null): string {
   const raw = String(parentCueField || '').trim();
   if (!raw) return '';
+  if (/Q$/i.test(raw)) return raw;
+  // Parent already looks like a cue label — keep spacing style and append Q.
+  if (/^CUE\s*\d+/i.test(raw)) {
+    return `${raw}Q`;
+  }
   const numberMatch = raw.match(/(\d+)/);
   if (numberMatch) {
-    const base = numberMatch[1];
-    return `CUE ${base}Q`;
+    return `CUE${numberMatch[1]}Q`;
   }
   const cleaned = raw.replace(/^CUE\s*/i, '').trim();
   if (!cleaned) return '';
-  if (/Q$/i.test(cleaned)) return `CUE ${cleaned}`;
-  return `CUE ${cleaned}Q`;
+  if (/Q$/i.test(cleaned)) return cleaned;
+  return `${cleaned}Q`;
 }

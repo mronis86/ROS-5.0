@@ -1,17 +1,39 @@
 /**
- * Simple file logger for Offline Kiosk (WebLinked start diagnostics, etc.).
- * Writes under %LOCALAPPDATA%\ros-offline-kiosk-v2\logs\
+ * File logger for Offline Kiosk (WebLinked + cloud diagnostics).
+ * Packaged: <exe-dir>/kiosk-data/logs/
+ * Dev: %LOCALAPPDATA%\ros-offline-kiosk-v4\logs\
  */
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
+let packagedLogsRoot = null;
+
+function setPackagedLogsRoot(dir) {
+  if (dir && typeof dir === 'string') packagedLogsRoot = dir;
+}
+
 function logsDir() {
-  const root = path.join(
-    process.env.LOCALAPPDATA || os.tmpdir(),
-    'ros-offline-kiosk-v2',
-    'logs'
-  );
+  let root;
+  if (packagedLogsRoot) {
+    root = packagedLogsRoot;
+  } else {
+    try {
+      const { app } = require('electron');
+      if (app && app.isPackaged) {
+        root = path.join(path.dirname(app.getPath('exe')), 'kiosk-data', 'logs');
+      }
+    } catch {
+      /* fall through */
+    }
+  }
+  if (!root) {
+    root = path.join(
+      process.env.LOCALAPPDATA || os.tmpdir(),
+      'ros-offline-kiosk-v4',
+      'logs'
+    );
+  }
   try {
     fs.mkdirSync(root, { recursive: true });
   } catch {
@@ -69,6 +91,18 @@ function wlError(message, detail) {
   return appendLog('weblinked', 'ERROR', message, detail);
 }
 
+function cloudLog(message, detail) {
+  return appendLog('cloud', 'INFO', message, detail);
+}
+
+function cloudWarn(message, detail) {
+  return appendLog('cloud', 'WARN', message, detail);
+}
+
+function cloudError(message, detail) {
+  return appendLog('cloud', 'ERROR', message, detail);
+}
+
 function readTail(channel = 'weblinked', maxBytes = 24 * 1024) {
   const file = logPath(channel);
   try {
@@ -86,10 +120,15 @@ function readTail(channel = 'weblinked', maxBytes = 24 * 1024) {
 }
 
 module.exports = {
+  setPackagedLogsRoot,
   logsDir,
   logPath,
   wlLog,
   wlWarn,
   wlError,
+  cloudLog,
+  cloudWarn,
+  cloudError,
   readTail,
+  appendLog,
 };
