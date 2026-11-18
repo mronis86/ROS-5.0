@@ -82,6 +82,10 @@ export interface ScheduleRowProps {
   calculateStartTimeWithOvertime?: (index: number) => string | number;
   calculateStartTime?: (index: number) => string | number;
   onEditTimedMarker?: (itemId: number) => void;
+  /** When checking Q&A — open plan modal (creates indented ALT row). */
+  onRequestQaPlan?: (itemId: number) => void;
+  /** When unchecking Q&A — clear flag and optional linked Q&A sub-row. */
+  onClearQaPlan?: (itemId: number) => void;
   setEditingNotesItem?: Function;
   setShowNotesModal?: Function;
   setEditingVoItemId?: Function;
@@ -189,6 +193,8 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
   calculateStartTimeWithOvertime,
   calculateStartTime,
   onEditTimedMarker,
+  onRequestQaPlan,
+  onClearQaPlan,
   setEditingNotesItem,
   setShowNotesModal,
   setEditingVoItemId,
@@ -1278,8 +1284,16 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
                     return;
                   }
                   if (!beginCellEdit()) return;
-                  const oldValue = !!item.hasQA;
                   const checked = e.target.checked;
+                  if (checked && onRequestQaPlan) {
+                    onRequestQaPlan(item.id);
+                    return;
+                  }
+                  if (!checked && onClearQaPlan) {
+                    onClearQaPlan(item.id);
+                    return;
+                  }
+                  const oldValue = !!item.hasQA;
                   setSchedule((prev: any[]) => prev.map(scheduleItem => 
                     Number(scheduleItem.id) === Number(item.id)
                       ? stampScheduleCheckboxes({ ...scheduleItem, hasQA: checked }, ['hasQA'])
@@ -1305,7 +1319,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
                 }}
                 disabled={isLockedByOther || currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'}
                 className={`w-6 h-6 rounded border-2 ${isRowDimmed ? 'border-purple-600/50 bg-purple-950/70' : 'border-slate-400 bg-slate-700'}`}
-                title={isLockedByOther ? lockLabel : currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR' ? 'Only EDITORs can edit Q&A settings' : 'Toggle Q&A'}
+                title={isLockedByOther ? lockLabel : currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR' ? 'Only EDITORs can edit Q&A settings' : 'Plan Q&A ALT timer'}
               />
               <span className="text-base font-medium text-white">Q&A</span>
             </label>

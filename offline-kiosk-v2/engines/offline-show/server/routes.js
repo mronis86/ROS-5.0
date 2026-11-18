@@ -623,11 +623,30 @@ function registerRoutes(app, db, helpers) {
       });
     }
     try {
-      const check = await validateRailwayApiToken(token);
-      if (!check.ok) {
-        return res.status(400).json({ error: check.error || 'Token validation failed' });
+      const trimmed = typeof token === 'string' ? token.trim() : '';
+      if (!trimmed) {
+        return res.status(400).json({ error: 'token is required' });
       }
-      const saved = setRailwayApiToken(db, token);
+      const check = await validateRailwayApiToken(trimmed);
+      if (!check.ok) {
+        const errText = String(check.error || 'Token validation failed');
+        const softNetwork =
+          /reach|abort|network|fetch|timeout|ECONN|ENOTFOUND|temporarily/i.test(errText);
+        // Persist anyway when Railway is unreachable so kiosk start can keep the token.
+        // Still reject clearly-invalid / unauthorized tokens.
+        if (!softNetwork) {
+          return res.status(400).json({ error: errText });
+        }
+        const saved = setRailwayApiToken(db, trimmed);
+        clearConnectivityCache();
+        return res.json({
+          ...saved,
+          canWrite: null,
+          writeError: errText,
+          warning: 'Token saved locally; Railway could not be reached to validate yet.',
+        });
+      }
+      const saved = setRailwayApiToken(db, trimmed);
       clearConnectivityCache();
       res.json({ ...saved, canWrite: true, writeError: null });
     } catch (e) {

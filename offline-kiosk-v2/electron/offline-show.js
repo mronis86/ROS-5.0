@@ -137,8 +137,46 @@ async function listEvents() {
   return rows.map(mapCalendarEvent).filter((e) => e.id);
 }
 
+function mergeTokenStatus(serverToken) {
+  const stored = getStoredTokenStatus();
+  if (serverToken?.configured) {
+    return {
+      ...serverToken,
+      pending: false,
+      kioskSaved: stored.configured,
+    };
+  }
+  if (stored.configured) {
+    return {
+      configured: true,
+      prefix: stored.prefix,
+      source: stored.source || 'kiosk',
+      locked: false,
+      pending: true,
+      kioskSaved: true,
+      canWrite: serverToken?.canWrite ?? null,
+      writeError: serverToken?.writeError ?? null,
+    };
+  }
+  return (
+    serverToken || {
+      configured: false,
+      prefix: null,
+      source: null,
+      locked: false,
+      pending: false,
+      kioskSaved: false,
+    }
+  );
+}
+
 async function getConnectivity() {
-  return requestJson('/api/connectivity-status', { timeoutMs: 20000 });
+  const connectivity = await requestJson('/api/connectivity-status', { timeoutMs: 20000 });
+  if (!connectivity || typeof connectivity !== 'object') return connectivity;
+  return {
+    ...connectivity,
+    railwayApiToken: mergeTokenStatus(connectivity.railwayApiToken),
+  };
 }
 
 async function getCloudMode() {
@@ -163,22 +201,36 @@ async function saveRailwayToken(token) {
     throw new Error('token is required');
   }
   // Always keep a local copy so operators can set the token before Offline Show starts.
-  saveStoredToken(trimmed);
+  const stored = saveStoredToken(trimmed);
   if (!(await isRunning())) {
-    const stored = loadStoredToken();
     return {
       configured: true,
       prefix: stored.prefix,
       source: 'kiosk',
       locked: false,
       pending: true,
+      kioskSaved: true,
     };
   }
-  return requestJson('/api/railway-api-token', {
-    method: 'PUT',
-    body: { token: trimmed },
-    timeoutMs: 30000,
-  });
+  try {
+    const saved = await requestJson('/api/railway-api-token', {
+      method: 'PUT',
+      body: { token: trimmed },
+      timeoutMs: 30000,
+    });
+    return mergeTokenStatus(saved);
+  } catch (e) {
+    // Keep the kiosk file even if Railway validation / apply fails (offline, 403, etc.).
+    return {
+      configured: true,
+      prefix: stored.prefix,
+      source: 'kiosk',
+      locked: false,
+      pending: true,
+      kioskSaved: true,
+      warning: e instanceof Error ? e.message : 'Token saved on kiosk; Offline Show apply pending',
+    };
+  }
 }
 
 async function clearRailwayToken() {
@@ -196,15 +248,20 @@ async function clearRailwayToken() {
 async function applyPendingRailwayToken() {
   const stored = loadStoredToken();
   if (!stored.configured || !stored.token) {
-    return { ok: true, applied: false, token: null };
+    return { ok: true, applied: false, token: mergeTokenStatus(null) };
   }
   if (!(await isRunning())) {
-    return { ok: false, applied: false, error: 'Offline Show is not running', token: null };
+    return {
+      ok: false,
+      applied: false,
+      error: 'Offline Show is not running',
+      token: mergeTokenStatus(null),
+    };
   }
   try {
     const status = await getTokenStatus();
     if (status?.configured && status?.prefix === stored.prefix && status?.source === 'db') {
-      return { ok: true, applied: false, token: status };
+      return { ok: true, applied: false, token: mergeTokenStatus(status) };
     }
   } catch {
     /* continue and write */
@@ -215,13 +272,14 @@ async function applyPendingRailwayToken() {
       body: { token: stored.token },
       timeoutMs: 30000,
     });
-    return { ok: true, applied: true, token };
+    return { ok: true, applied: true, token: mergeTokenStatus(token) };
   } catch (e) {
     return {
       ok: false,
       applied: false,
       error: e instanceof Error ? e.message : 'Token apply failed',
-      token: null,
+      // Keep reporting the kiosk-saved token so UI / Cloud prefer logic still sees it.
+      token: mergeTokenStatus(null),
     };
   }
 }
@@ -256,6 +314,15 @@ async function prepareEvents({ preferCloud = true, sync = true } = {}) {
   let syncResult = null;
   const notes = [];
 
+  // Push any kiosk-saved token into Offline Show SQLite before cloud decisions.
+  try {
+    const pending = await applyPendingRailwayToken();
+    if (pending?.applied) notes.push('Applied saved Integration token.');
+    else if (pending?.error) notes.push(`Token apply: ${pending.error}`);
+  } catch (e) {
+    notes.push(e instanceof Error ? e.message : 'Token apply failed');
+  }
+
   try {
     connectivity = await getConnectivity();
     cloudMode = {
@@ -263,8 +330,11 @@ async function prepareEvents({ preferCloud = true, sync = true } = {}) {
       lanOnly: connectivity.lanOnly,
       cloudConnected: connectivity.cloudConnected,
     };
-    token = connectivity.railwayApiToken || (await getTokenStatus());
+    token = mergeTokenStatus(
+      connectivity.railwayApiToken || (await getTokenStatus().catch(() => null))
+    );
   } catch (e) {
+    token = mergeTokenStatus(null);
     notes.push(e instanceof Error ? e.message : 'Connectivity status failed');
   }
 
@@ -281,6 +351,7 @@ async function prepareEvents({ preferCloud = true, sync = true } = {}) {
         notes.push('Cloud on (connect-only).');
         try {
           connectivity = await getConnectivity();
+          token = mergeTokenStatus(connectivity.railwayApiToken || token);
         } catch {
           /* keep prior */
         }
@@ -374,16 +445,34 @@ function spawnWithNode(root) {
 }
 
 async function startOfflineShow() {
-  if (await isRunning()) {
+  const finishStart = async ({ alreadyRunning }) => {
     const pending = await applyPendingRailwayToken();
+    let cloudMode = null;
+    const token = mergeTokenStatus(pending?.token || null);
+    // Always prefer Cloud when a token is available.
+    if (token.configured) {
+      try {
+        cloudMode = await setCloudMode('cloud-connected');
+      } catch (e) {
+        cloudMode = {
+          error: e instanceof Error ? e.message : 'Could not enable Cloud',
+        };
+      }
+    }
     return {
       ok: true,
-      alreadyRunning: true,
-      startedByKiosk: false,
+      alreadyRunning,
+      startedByKiosk: alreadyRunning ? false : startedByKiosk,
       url: OFFLINE_SHOW_URL,
       tokenApplied: Boolean(pending?.applied),
-      token: pending?.token || null,
+      token,
+      cloudMode,
+      preferCloud: Boolean(token.configured),
     };
+  };
+
+  if (await isRunning()) {
+    return finishStart({ alreadyRunning: true });
   }
 
   const install = ensureOfflineShowInstall();
@@ -407,17 +496,7 @@ async function startOfflineShow() {
     };
   }
 
-  // Apply any token saved while Offline Show was stopped (before Cloud sync).
-  const pending = await applyPendingRailwayToken();
-
-  return {
-    ok: true,
-    alreadyRunning: false,
-    startedByKiosk,
-    url: OFFLINE_SHOW_URL,
-    tokenApplied: Boolean(pending?.applied),
-    token: pending?.token || (pending?.ok ? getStoredTokenStatus() : null),
-  };
+  return finishStart({ alreadyRunning: false });
 }
 
 /** Kill any Node still serving Offline Show (holds locks on engines/offline-show). */
@@ -511,10 +590,7 @@ async function getStatus() {
       /* ignore */
     }
   }
-  if (!token?.configured) {
-    const stored = getStoredTokenStatus();
-    if (stored.configured) token = stored;
-  }
+  token = mergeTokenStatus(token);
   return {
     running,
     url: OFFLINE_SHOW_URL,

@@ -742,8 +742,15 @@ function applyConnectivity(payload) {
 
   const token = payload?.token || conn?.railwayApiToken || null;
   if (token) {
-    state.tokenConfigured = Boolean(token.configured);
-    state.tokenPrefix = token.prefix || '';
+    // Never wipe a known-good kiosk-saved token just because Offline Show SQLite
+    // has not received it yet (pending apply).
+    if (token.configured || token.kioskSaved) {
+      state.tokenConfigured = true;
+      state.tokenPrefix = token.prefix || state.tokenPrefix || '';
+    } else if (!state.tokenConfigured) {
+      state.tokenConfigured = false;
+      state.tokenPrefix = '';
+    }
   }
 
   renderConnectivity();
@@ -4101,14 +4108,18 @@ async function saveToken() {
   applyConnectivity({ token: result.token });
   if (!state.offlineShowRunning) {
     setEventNote(
-      `Token saved locally${result.token?.prefix ? ` (${result.token.prefix})` : ''} — it will apply when Offline Show starts.`
+      `Token saved on this kiosk${result.token?.prefix ? ` (${result.token.prefix})` : ''} — it will apply when Offline Show starts.`
     );
     renderConnectivity();
     return;
   }
-  setEventNote('Token saved.');
+  if (result.token?.warning) {
+    setEventNote(`Token kept on this kiosk (${result.token.warning}). Trying Cloud…`);
+  } else {
+    setEventNote('Token saved.');
+  }
   if (!state.cloudConnected) {
-    await requestModeChange('cloud-connected');
+    await applyMode('cloud-connected');
   } else {
     await syncCloudNow();
   }
@@ -4220,6 +4231,9 @@ async function connectOfflineShow() {
     }
     state.offlineShowRunning = true;
     if (result.token) applyConnectivity({ token: result.token });
+    if (result.cloudMode && typeof result.cloudMode.cloudConnected === 'boolean') {
+      applyConnectivity({ cloudMode: result.cloudMode, token: result.token });
+    }
     setEventNote(
       result.alreadyRunning
         ? 'Offline Show already running — preferring Cloud on / loading events…'

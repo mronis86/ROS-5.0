@@ -149,6 +149,9 @@ import ImportEventModal from '../components/ImportEventModal';
 import ConfirmModal from '../components/ConfirmModal';
 import OperatorCountdownModal from '../components/OperatorCountdownModal';
 import TimedMarkerModal, { TimedMarkerModalResult } from '../components/TimedMarkerModal';
+import QaPlanModal from '../components/QaPlanModal';
+import type { QaPlanModalResult } from '../lib/qaPlan';
+import { parentDurationSeconds as qaParentDurationSeconds } from '../lib/qaPlan';
 import { mapOperatorCountdownRow, operatorCountdownRemaining, formatOperatorCountdownTime } from '../lib/operatorCountdown';
 import ShowVsRehearsalPanel from '../components/ShowVsRehearsalPanel';
 import TimeToastIcon from '../components/TimeToastIcon';
@@ -361,6 +364,14 @@ interface ScheduleItem {
   speakersText: string;
   hasPPT: boolean;
   hasQA: boolean;
+  /** Linked indented Q&A ALT row created from the Q&A plan modal. */
+  qaLinkedSubId?: number | null;
+  /** On Q&A sub-row: auto-start when parent remaining reaches this many seconds. */
+  qaAutoStartAtRemainingSeconds?: number | null;
+  /** On Q&A sub-row: managed by Q&A plan (safe to remove when unchecking Q&A). */
+  qaIsAutoQa?: boolean;
+  /** On Q&A sub-row: auto-start enabled. */
+  qaAutoStart?: boolean;
   needsRecording?: boolean;
   /** Exclusive: the next Mitti play syncs this row. Only one cue is true. */
   mittiWatch?: boolean;
@@ -1591,6 +1602,9 @@ const RunOfShowPage: React.FC = () => {
     insertAfterId?: number;
   } | null>(null);
   const timedMarkerIdSeqRef = useRef(0);
+  const [qaPlanModalParentId, setQaPlanModalParentId] = useState<number | null>(null);
+  /** Sub-cue ids that already auto-started for the current parent timer run. */
+  const qaAutoStartedRef = useRef<Set<number>>(new Set());
   const [delayBlockDay, setDelayBlockDay] = useState(1);
   const [delayDuration, setDelayDuration] = useState({ hours: 0, minutes: 5, seconds: 0 });
   const [showCustomColumnModal, setShowCustomColumnModal] = useState(false);
@@ -4351,6 +4365,7 @@ const RunOfShowPage: React.FC = () => {
       showDelayBlockModal ||
       showShowBreakModal ||
       !!timedMarkerModal ||
+      qaPlanModalParentId != null ||
       showCustomColumnModal ||
       showPublicBulkModal;
     const shouldPause = isUserEditing || anyModalOpen || scheduleSyncState !== 'ready';
@@ -4369,7 +4384,7 @@ const RunOfShowPage: React.FC = () => {
         startCountdownTimer();
       }
     }
-  }, [isUserEditing, showSpeakersModal, showNotesModal, showVoModal, showVogModal, showAssetsModal, showParticipantsModal, showBackupModal, showExcelImportModal, showAgendaImportModal, showCSVImportModal, showGoogleSheetExportModal, showImportEventModal, showSpeakerManagerModal, showAddModal, showBreakoutRoomModal, showOtherRoomModal, showDelayBlockModal, showShowBreakModal, timedMarkerModal, showCustomColumnModal, showPublicBulkModal, event?.id, startCountdownTimer, scheduleSyncState]);
+  }, [isUserEditing, showSpeakersModal, showNotesModal, showVoModal, showVogModal, showAssetsModal, showParticipantsModal, showBackupModal, showExcelImportModal, showAgendaImportModal, showCSVImportModal, showGoogleSheetExportModal, showImportEventModal, showSpeakerManagerModal, showAddModal, showBreakoutRoomModal, showOtherRoomModal, showDelayBlockModal, showShowBreakModal, timedMarkerModal, qaPlanModalParentId, showCustomColumnModal, showPublicBulkModal, event?.id, startCountdownTimer, scheduleSyncState]);
   
   
   // Load user role from navigation state or localStorage
@@ -5133,6 +5148,192 @@ const RunOfShowPage: React.FC = () => {
         ...markerFields,
         parentId,
         parentName: parent.segmentName,
+      },
+    });
+  };
+
+  const openQaPlanModal = (parentId: number) => {
+    if (currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') {
+      alert('Only EDITORs can plan Q&A.');
+      return;
+    }
+    const parent = schedule.find((s) => Number(s.id) === Number(parentId));
+    if (!parent || isIndentedScheduleItem(parent, indentedCues) || parent.isTimedMarker) {
+      return;
+    }
+    handleModalEditing();
+    setQaPlanModalParentId(parentId);
+  };
+
+  const clearQaPlan = async (parentId: number) => {
+    const parent = schedule.find((s) => Number(s.id) === Number(parentId));
+    if (!parent) return;
+    const linkedId = parent.qaLinkedSubId != null ? Number(parent.qaLinkedSubId) : null;
+    handleUserEditing();
+    setSchedule((prev) => {
+      let next = prev.map((row) =>
+        Number(row.id) === Number(parentId)
+          ? stampScheduleCheckboxes(
+              { ...row, hasQA: false, qaLinkedSubId: null },
+              ['hasQA']
+            )
+          : row
+      );
+      if (linkedId != null) {
+        const linked = next.find((row) => Number(row.id) === linkedId);
+        if (linked?.qaIsAutoQa) {
+          next = next.filter((row) => Number(row.id) !== linkedId);
+        }
+      }
+      return next;
+    });
+    if (linkedId != null) {
+      setIndentedCues((prev) => {
+        const copy = { ...prev };
+        delete copy[linkedId];
+        return copy;
+      });
+      if (event?.id) {
+        try {
+          await DatabaseService.unmarkCueIndented(event.id, linkedId);
+        } catch (e) {
+          console.warn('Q&A indent clear failed:', e);
+        }
+      }
+    }
+    void Promise.resolve(persistScheduleCheckboxes?.(parentId, { hasQA: false })).catch(() => {});
+    logChangeDebounced(
+      `hasQA_${parentId}`,
+      'FIELD_UPDATE',
+      `Cleared Q&A plan for "${parent.segmentName}"`,
+      {
+        changeType: 'FIELD_CHANGE',
+        itemId: parentId,
+        itemName: parent.segmentName,
+        fieldName: 'hasQA',
+        oldValue: 'TRUE',
+        newValue: 'FALSE',
+        details: { fieldType: 'checkbox', booleanChange: true, clearedQaPlan: true },
+      }
+    );
+  };
+
+  const applyQaPlanModal = async (result: QaPlanModalResult) => {
+    if (qaPlanModalParentId == null) return;
+    const parentId = qaPlanModalParentId;
+    const parent = schedule.find((s) => Number(s.id) === Number(parentId));
+    if (!parent) {
+      setQaPlanModalParentId(null);
+      handleModalClosed();
+      return;
+    }
+
+    // Replace prior auto Q&A row if present
+    const priorLinked =
+      parent.qaLinkedSubId != null ? Number(parent.qaLinkedSubId) : null;
+
+    timedMarkerIdSeqRef.current += 1;
+    const newId = Date.now() * 1000 + (timedMarkerIdSeqRef.current % 1000);
+    const hours = Math.floor(result.durationSeconds / 3600);
+    const minutes = Math.floor((result.durationSeconds % 3600) / 60);
+    const seconds = result.durationSeconds % 60;
+    const userId = user?.id || 'local';
+    const userName = user?.full_name || user?.email || 'Local User';
+
+    const qaRow: ScheduleItem = {
+      id: newId,
+      day: parent.day || selectedDay || 1,
+      programType: 'Sub Cue',
+      shotType: '',
+      segmentName: result.label || 'Q&A',
+      durationHours: hours,
+      durationMinutes: minutes,
+      durationSeconds: seconds,
+      notes: '',
+      assets: '',
+      speakers: '',
+      speakersText: '',
+      hasPPT: false,
+      hasQA: false,
+      timerId: generateRandomTimerId(),
+      customFields: { cue: '' },
+      isPublic: false,
+      isIndented: true,
+      qaIsAutoQa: true,
+      qaAutoStart: result.autoStart,
+      qaAutoStartAtRemainingSeconds: result.autoStart ? result.startAtRemainingSeconds : null,
+    };
+
+    setIndentedCues((prev) => {
+      const next = { ...prev, [newId]: { parentId, userId, userName } };
+      if (priorLinked != null) delete next[priorLinked];
+      return next;
+    });
+
+    setSchedule((prev) => {
+      let working = prev;
+      if (priorLinked != null) {
+        const prior = working.find((row) => Number(row.id) === priorLinked);
+        if (prior?.qaIsAutoQa) {
+          working = working.filter((row) => Number(row.id) !== priorLinked);
+        }
+      }
+      const pIdx = working.findIndex((item) => Number(item.id) === Number(parentId));
+      if (pIdx < 0) return working;
+      let insertAt = pIdx;
+      for (let i = pIdx + 1; i < working.length; i++) {
+        if (
+          isTimedMarkerItem(working[i]) ||
+          isIndentedScheduleItem(working[i], indentedCuesRef.current)
+        ) {
+          insertAt = i;
+        } else {
+          break;
+        }
+      }
+      const next = [...working];
+      next[pIdx] = stampScheduleCheckboxes(
+        { ...next[pIdx], hasQA: true, qaLinkedSubId: newId },
+        ['hasQA']
+      );
+      next.splice(insertAt + 1, 0, qaRow);
+      return next;
+    });
+
+    handleUserEditing();
+    setQaPlanModalParentId(null);
+    handleModalClosed();
+    qaAutoStartedRef.current.delete(newId);
+
+    if (event?.id && user?.id) {
+      try {
+        if (priorLinked != null) {
+          await DatabaseService.unmarkCueIndented(event.id, priorLinked);
+        }
+        await DatabaseService.markCueIndented(
+          event.id,
+          newId,
+          parentId,
+          user.id,
+          userName,
+          currentUserRole || 'EDITOR'
+        );
+      } catch (e) {
+        console.warn('Q&A indent mark failed (row still grouped locally):', e);
+      }
+    }
+
+    void Promise.resolve(persistScheduleCheckboxes?.(parentId, { hasQA: true })).catch(() => {});
+    logChange('ADD_ITEM', `Added Q&A ALT under "${parent.segmentName}"`, {
+      changeType: 'ADD',
+      itemId: newId,
+      itemName: qaRow.segmentName,
+      details: {
+        parentId,
+        parentName: parent.segmentName,
+        qaDurationSeconds: result.durationSeconds,
+        qaStartAtRemainingSeconds: result.startAtRemainingSeconds,
+        qaAutoStart: result.autoStart,
       },
     });
   };
@@ -6117,6 +6318,7 @@ const RunOfShowPage: React.FC = () => {
       showDelayBlockModal ||
       showShowBreakModal ||
       timedMarkerModal ||
+      qaPlanModalParentId != null ||
       showCustomColumnModal ||
       showPublicBulkModal
     ) {
@@ -8339,7 +8541,7 @@ const RunOfShowPage: React.FC = () => {
     if (!user || !event?.id) return;
 
     const item = schedule.find(s => s.id === itemId);
-    if (!item || !item.isIndented) return;
+    if (!item || !isIndentedScheduleItem(item, indentedCuesRef.current)) return;
 
     if (subCueTimers[itemId]) {
       // Stop sub-cue timer
@@ -8425,6 +8627,64 @@ const RunOfShowPage: React.FC = () => {
       }
     }
   };
+
+  const toggleSubCueTimerRef = useRef(toggleSubCueTimer);
+  toggleSubCueTimerRef.current = toggleSubCueTimer;
+
+  // Auto-start planned Q&A ALT when parent remaining hits the threshold.
+  useEffect(() => {
+    const qaRows = schedule.filter(
+      (row) =>
+        row.qaIsAutoQa &&
+        row.qaAutoStart &&
+        row.qaAutoStartAtRemainingSeconds != null &&
+        Number(row.qaAutoStartAtRemainingSeconds) >= 0
+    );
+    if (qaRows.length === 0) return;
+
+    for (const qa of qaRows) {
+      const qaId = Number(qa.id);
+      const parentId = indentedCues[qaId]?.parentId;
+      if (parentId == null) continue;
+
+      const parentRunning =
+        !!activeTimers[parentId] ||
+        (hybridTimerData?.activeTimer &&
+          Number(hybridTimerData.activeTimer.item_id) === Number(parentId));
+
+      if (!parentRunning) {
+        qaAutoStartedRef.current.delete(qaId);
+        continue;
+      }
+
+      if (qaAutoStartedRef.current.has(qaId) || subCueTimers[qaId]) continue;
+
+      let remaining: number | null = null;
+      if (
+        hybridTimerData?.activeTimer &&
+        Number(hybridTimerData.activeTimer.item_id) === Number(parentId)
+      ) {
+        remaining = hybridTimerProgress.total - hybridTimerProgress.elapsed;
+      } else if (timerProgress[parentId]) {
+        remaining = timerProgress[parentId].total - timerProgress[parentId].elapsed;
+      }
+      if (remaining == null) continue;
+
+      const threshold = Number(qa.qaAutoStartAtRemainingSeconds);
+      if (remaining <= threshold) {
+        qaAutoStartedRef.current.add(qaId);
+        void toggleSubCueTimerRef.current(qaId);
+      }
+    }
+  }, [
+    schedule,
+    indentedCues,
+    activeTimers,
+    subCueTimers,
+    timerProgress,
+    hybridTimerProgress,
+    hybridTimerData?.activeTimer,
+  ]);
 
   const resetAllStates = async () => {
     // Stop any active timers
@@ -20178,6 +20438,10 @@ const RunOfShowPage: React.FC = () => {
                         persistAvWatch={persistAvWatch}
                         persistDsmCue={persistDsmCue}
                         onEditTimedMarker={editTimedMarkerTime}
+                        onRequestQaPlan={openQaPlanModal}
+                        onClearQaPlan={(id) => {
+                          void clearQaPlan(id);
+                        }}
                         setEditingNotesItem={setEditingNotesItem}
                         setShowNotesModal={setShowNotesModal}
                         setEditingVoItemId={setEditingVoItemId}
@@ -22872,6 +23136,25 @@ const RunOfShowPage: React.FC = () => {
             }}
             onConfirm={(result) => {
               void applyTimedMarkerModal(result);
+            }}
+          />
+        );
+      })()}
+
+      {qaPlanModalParentId != null && (() => {
+        const parent = schedule.find((s) => Number(s.id) === Number(qaPlanModalParentId));
+        if (!parent) return null;
+        return (
+          <QaPlanModal
+            isOpen
+            parentSegmentName={parent.segmentName || 'cue'}
+            parentDurationSeconds={qaParentDurationSeconds(parent)}
+            onClose={() => {
+              setQaPlanModalParentId(null);
+              handleModalClosed();
+            }}
+            onConfirm={(result) => {
+              void applyQaPlanModal(result);
             }}
           />
         );
