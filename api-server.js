@@ -1431,7 +1431,7 @@ function buildRailwayHealthMeta() {
     env: process.env.NODE_ENV || 'development',
     powerpointRoutes: true,
     // Bump when master should trigger a Railway autodeploy smoke check.
-    apiRevision: 'completed-load-guard-20261119a',
+    apiRevision: 'osc-stop-completed-20261119b',
   };
 }
 
@@ -10351,7 +10351,8 @@ app.post('/api/timers/start', async (req, res) => {
 
 app.post('/api/timers/stop', async (req, res) => {
   try {
-    const { event_id, item_id } = req.body;
+    const { event_id, item_id, user_id, user_name, user_role } = req.body;
+    const numericItemId = parseInt(item_id, 10);
     
     console.log(`⏹️ OSC: Stopping timer - Event: ${event_id}, Item: ${item_id}`);
     clearAllResolumeState(event_id);
@@ -10359,7 +10360,7 @@ app.post('/api/timers/stop', async (req, res) => {
     // Get timer data BEFORE stopping to calculate overtime
     const timerBeforeStop = await pool.query(
       'SELECT * FROM active_timers WHERE event_id = $1 AND item_id = $2',
-      [event_id, parseInt(item_id)]
+      [event_id, numericItemId]
     );
     
     // Update active_timers table
@@ -10371,12 +10372,15 @@ app.post('/api/timers/stop', async (req, res) => {
         timer_state = 'stopped',
         updated_at = NOW()
       WHERE event_id = $1 AND item_id = $2
-    `, [event_id, parseInt(item_id)]);
+    `, [event_id, numericItemId]);
     
     console.log(`✅ OSC: Timer stopped for item ${item_id} in active_timers table`);
     
+    const wasRunning =
+      timerBeforeStop.rows.length > 0 && timerBeforeStop.rows[0].is_running === true;
+
     // Calculate and save overtime if timer was running
-    if (timerBeforeStop.rows.length > 0 && timerBeforeStop.rows[0].is_running) {
+    if (wasRunning) {
       const timer = timerBeforeStop.rows[0];
       const startedAt = new Date(timer.started_at);
       const stoppedAt = new Date();
@@ -10395,17 +10399,41 @@ app.post('/api/timers/stop', async (req, res) => {
            DO UPDATE SET 
              overtime_minutes = EXCLUDED.overtime_minutes,
              updated_at = NOW()`,
-          [event_id, parseInt(item_id), overtimeMinutes]
+          [event_id, numericItemId, overtimeMinutes]
         );
         
         // Broadcast overtime update
         broadcastUpdate(event_id, 'overtimeUpdate', {
           event_id,
-          item_id: parseInt(item_id),
+          item_id: numericItemId,
           overtimeMinutes
         });
         
         console.log(`✅ OSC: Overtime saved and broadcasted: ${overtimeMinutes} minutes`);
+      }
+    }
+
+    // Match ROS page Stop: only a RUNNING cue becomes completed (+ indented kids below).
+    if (wasRunning && Number.isFinite(numericItemId)) {
+      try {
+        const groupIds = await idsForStoppedCueGroupServer(event_id, numericItemId);
+        for (const cueItemId of groupIds) {
+          const completedRow = await upsertCompletedCueRow(
+            event_id,
+            cueItemId,
+            user_id || timerBeforeStop.rows[0]?.user_id || 'osc',
+            {
+              cue_id: '',
+              user_name: user_name || timerBeforeStop.rows[0]?.user_name || 'OSC User',
+              user_role: user_role || timerBeforeStop.rows[0]?.user_role || 'OPERATOR',
+            }
+          );
+          if (completedRow) {
+            broadcastUpdate(event_id, 'completedCuesUpdated', completedRow);
+          }
+        }
+      } catch (markErr) {
+        console.warn('⚠️ OSC stop: completed_cues mark failed:', markErr.message || markErr);
       }
     }
     
@@ -10424,9 +10452,10 @@ app.post('/api/timers/stop', async (req, res) => {
     });
     
     // Broadcast via Socket.IO to event room with FULL timer data (match /api/active-timers)
-    io.to(`event:${event_id}`).emit('update', {
-      type: 'timerStopped',  // Match Browser A's event type for stop
-      data: timerData
+    broadcastUpdate(event_id, 'timerStopped', {
+      ...(timerData || { event_id, item_id: numericItemId, timer_state: 'stopped' }),
+      skipComplete: false,
+      reason: 'explicit_stop',
     });
     console.log(`📡 Socket.IO: timerStopped broadcast to event:${event_id}`);
     

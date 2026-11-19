@@ -15601,6 +15601,8 @@ const RunOfShowPage: React.FC = () => {
       );
       const isHybridLoaded = Boolean(isMatch && hybridTimerData?.activeTimer?.is_active && !hybridTimerData?.activeTimer?.is_running && hybridTimerData?.activeTimer?.timer_state !== 'running');
       const isCompleted = isItemCompleted(item.id);
+      // stoppedItems = post-Stop race guard only (not a dim source). Blocks a green flash
+      // while hybrid still looks "running" for a beat after Stop.
       const isStopped = stoppedItems.has(item.id);
 
       // Running wins over stale completed flags (refresh / tab return)

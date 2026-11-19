@@ -19,6 +19,9 @@ function shouldSkip(relPosix) {
   if (rel.includes('/node_modules/') || rel.startsWith('node_modules/')) return true;
   // Only skip Electron pack output at repo root — keep engines/.../ui/dist
   if (rel === 'dist' || rel.startsWith('dist/')) return true;
+  // Never ship local Electron pack trees (hundreds of MB)
+  if (/(^|\/)dist-ready(\/|$)/.test(rel) || /(^|\/)dist-ship[^/]*(\/|$)/.test(rel)) return true;
+  if (/(^|\/)win-unpacked(\/|$)/.test(rel)) return true;
   // install-offline-kiosk.bat requires system Node — do not ship portable node.exe (~85MB)
   if (rel === 'portable-runtime' || rel.startsWith('portable-runtime/')) return true;
   if (rel.includes('/data/') || /(^|\/)data\//.test(rel)) return true;
