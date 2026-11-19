@@ -8,8 +8,8 @@ type Props = {
 };
 
 /**
- * Legacy amber badge (stage clocks now replace the countdown with "Q&A - MM:SS").
- * Kept for any remaining callers / offline stubs.
+ * Legacy badge (stage clocks now use QaFlashTimerDigits in the countdown).
+ * Kept for any remaining callers / offline stubs — purple to match Q&A stage color.
  */
 export function QaFlashReminder({ label = 'Q&A', size = 'lg', className = '' }: Props) {
   const text = String(label || 'Q&A').trim() || 'Q&A';
@@ -19,7 +19,7 @@ export function QaFlashReminder({ label = 'Q&A', size = 'lg', className = '' }: 
       : 'px-5 py-2.5 text-2xl md:text-3xl lg:text-4xl';
   return (
     <div
-      className={`pointer-events-none select-none rounded-lg border-2 border-amber-300 bg-amber-500 font-black tracking-wide text-black shadow-lg ros-qa-flash-reminder ${sizeClass} ${className}`}
+      className={`pointer-events-none select-none rounded-lg border-2 border-fuchsia-300 bg-fuchsia-600 font-black tracking-wide text-white shadow-lg shadow-fuchsia-500/40 ros-qa-flash-reminder ${sizeClass} ${className}`}
       role="status"
       aria-live="polite"
     >

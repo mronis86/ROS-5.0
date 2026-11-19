@@ -6,41 +6,67 @@ import {
 } from '../lib/qaPlan';
 
 /**
- * Q&A flash on stage clocks: replace the countdown with "Q&A - MM:SS",
- * pulse the full line for 30s, then keep the prefix until Q&A ends.
+ * Q&A flash on stage clocks:
+ * - Arms while `active` (threshold crossed)
+ * - Ends after `durationSeconds` (Q&A window), then returns to normal countdown
+ * - Pulses for the first 30s
  */
 export function useQaFlashTimerLine(opts: {
   active: boolean;
   label?: string | null;
+  /** How long the flash stays on after arming; 0/omit = until `active` clears. */
+  durationSeconds?: number | null;
 }) {
-  const [startedAtMs, setStartedAtMs] = useState<number | null>(null);
-  const [, setPulseEnded] = useState(0);
+  const [armedAtMs, setArmedAtMs] = useState<number | null>(null);
+  const [, setTick] = useState(0);
 
   useEffect(() => {
     if (opts.active) {
-      setStartedAtMs((prev) => prev ?? Date.now());
+      setArmedAtMs((prev) => prev ?? Date.now());
     } else {
-      setStartedAtMs(null);
+      setArmedAtMs(null);
     }
   }, [opts.active]);
 
-  useEffect(() => {
-    if (!opts.active || startedAtMs == null) return;
-    const left = QA_FLASH_PULSE_MS - (Date.now() - startedAtMs);
-    if (left <= 0) return;
-    const t = window.setTimeout(() => setPulseEnded((n) => n + 1), left + 16);
-    return () => window.clearTimeout(t);
-  }, [opts.active, startedAtMs]);
+  const durationMs = Math.max(0, Math.floor(Number(opts.durationSeconds) || 0) * 1000);
+  const withinDuration =
+    armedAtMs == null
+      ? false
+      : durationMs <= 0
+        ? true
+        : Date.now() - armedAtMs < durationMs;
 
-  const show = !!opts.active;
-  const pulsing = show && isQaFlashPulsing(startedAtMs);
+  const show = !!opts.active && armedAtMs != null && withinDuration;
+
+  // Drop show when the Q&A window ends even if parent is still under threshold.
+  useEffect(() => {
+    if (!opts.active || armedAtMs == null || durationMs <= 0) return;
+    const left = durationMs - (Date.now() - armedAtMs);
+    if (left <= 0) {
+      setTick((n) => n + 1);
+      return;
+    }
+    const t = window.setTimeout(() => setTick((n) => n + 1), left + 16);
+    return () => window.clearTimeout(t);
+  }, [opts.active, armedAtMs, durationMs]);
+
+  useEffect(() => {
+    if (!show || armedAtMs == null) return;
+    const left = QA_FLASH_PULSE_MS - (Date.now() - armedAtMs);
+    if (left <= 0) return;
+    const t = window.setTimeout(() => setTick((n) => n + 1), left + 16);
+    return () => window.clearTimeout(t);
+  }, [show, armedAtMs]);
+
+  const pulsing = show && isQaFlashPulsing(armedAtMs);
   const label = String(opts.label || 'Q&A').trim() || 'Q&A';
 
   return {
     show,
     pulsing,
     label,
-    timerClass: pulsing ? 'ros-qa-flash-timer' : '',
+    /** Purple pulse / steady classes for the flash cluster. */
+    timerClass: pulsing ? 'ros-qa-flash-timer' : show ? 'ros-qa-flash-steady' : '',
     formatLine: (timeBody: string) => formatQaFlashCountdownLine(label, timeBody),
   };
 }

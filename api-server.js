@@ -9254,7 +9254,14 @@ app.post('/api/sub-cue-timers', async (req, res) => {
            timer_id = EXCLUDED.timer_id,
            is_active = EXCLUDED.is_active,
            is_running = EXCLUDED.is_running,
-           started_at = EXCLUDED.started_at,
+           -- Same item already running: keep started_at so a second auto POST cannot restart the clock.
+           started_at = CASE
+             WHEN sub_cue_timers.is_running IS TRUE
+               AND sub_cue_timers.is_active IS TRUE
+               AND sub_cue_timers.item_id IS NOT DISTINCT FROM EXCLUDED.item_id
+             THEN sub_cue_timers.started_at
+             ELSE EXCLUDED.started_at
+           END,
            updated_at = NOW()
          RETURNING *`,
         valuesWithSegment
@@ -9279,7 +9286,13 @@ app.post('/api/sub-cue-timers', async (req, res) => {
            timer_id = EXCLUDED.timer_id,
            is_active = EXCLUDED.is_active,
            is_running = EXCLUDED.is_running,
-           started_at = EXCLUDED.started_at,
+           started_at = CASE
+             WHEN sub_cue_timers.is_running IS TRUE
+               AND sub_cue_timers.is_active IS TRUE
+               AND sub_cue_timers.item_id IS NOT DISTINCT FROM EXCLUDED.item_id
+             THEN sub_cue_timers.started_at
+             ELSE EXCLUDED.started_at
+           END,
            updated_at = NOW()
          RETURNING *`,
         [

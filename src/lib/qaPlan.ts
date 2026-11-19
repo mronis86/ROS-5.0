@@ -63,6 +63,50 @@ export function resolveQaStartAtRemaining(draft: QaPlanDraft, parentTotal: numbe
 }
 
 /**
+ * Wall-clock ms when parent remaining first reaches `thresholdSeconds`
+ * (i.e. elapsed >= total - threshold). Null if inputs are unusable.
+ */
+export function qaAutoStartDueAtMs(
+  parentStartedAtMs: number | null | undefined,
+  parentTotalSeconds: number | null | undefined,
+  thresholdSeconds: number | null | undefined
+): number | null {
+  const started = Number(parentStartedAtMs);
+  const total = Number(parentTotalSeconds);
+  const threshold = Number(thresholdSeconds);
+  if (!Number.isFinite(started) || started <= 0) return null;
+  if (!Number.isFinite(total) || total <= 0) return null;
+  if (!Number.isFinite(threshold) || threshold < 0) return null;
+  if (threshold > total) return null;
+  // At least 1s into the parent so LOAD/START never qualifies.
+  const elapsedNeeded = Math.max(1, total - threshold);
+  return started + elapsedNeeded * 1000;
+}
+
+/**
+ * Prefer this over remaining polls: uses parent started_at + schedule duration,
+ * so stale hybrid progress from the previous cue cannot fire Q&A at parent START.
+ */
+export function shouldAutoStartQaAtWallClock(opts: {
+  parentRunning: boolean;
+  parentStartedAtMs: number | null | undefined;
+  parentTotalSeconds: number | null | undefined;
+  thresholdSeconds: number | null | undefined;
+  nowMs: number;
+}): boolean {
+  if (!opts.parentRunning) return false;
+  const due = qaAutoStartDueAtMs(
+    opts.parentStartedAtMs,
+    opts.parentTotalSeconds,
+    opts.thresholdSeconds
+  );
+  if (due == null) return false;
+  const now = Number(opts.nowMs);
+  if (!Number.isFinite(now)) return false;
+  return now >= due;
+}
+
+/**
  * Gate Q&A auto-start on a real running parent countdown that has known duration.
  *
  * Rejects:
@@ -71,6 +115,7 @@ export function resolveQaStartAtRemaining(draft: QaPlanDraft, parentTotal: numbe
  * - remaining === total (LOAD or just-STARTED — never auto-start at full duration)
  * - remaining above the configured threshold
  * - elapsed < 1s (blocks the START tick before the clock has moved)
+ * - progress total that does not match the parent schedule duration (stale prior-cue hybrid)
  */
 export function shouldAutoStartQa(opts: {
   /** Must mean the parent timer is actively counting down (is_running), not merely loaded/active. */
@@ -80,6 +125,11 @@ export function shouldAutoStartQa(opts: {
   thresholdSeconds: number | null | undefined;
   /** Optional explicit elapsed; otherwise derived as total - remaining. */
   parentElapsedSeconds?: number | null | undefined;
+  /**
+   * Schedule duration for the parent cue. When set, progress total must match
+   * (within 1s) — blocks using the previous cue's hybrid countdown at START.
+   */
+  expectedParentTotalSeconds?: number | null | undefined;
 }): boolean {
   if (!opts.parentRunning) return false;
   const total = Number(opts.parentTotalSeconds);
@@ -88,6 +138,10 @@ export function shouldAutoStartQa(opts: {
   if (!Number.isFinite(total) || total <= 0) return false;
   if (!Number.isFinite(remaining)) return false;
   if (!Number.isFinite(threshold) || threshold < 0) return false;
+  const expected = Number(opts.expectedParentTotalSeconds);
+  if (Number.isFinite(expected) && expected > 0 && Math.abs(total - expected) > 1) {
+    return false;
+  }
   // Strictly past start: LOAD/START both have remaining === total.
   if (!(remaining < total)) return false;
   if (!(remaining <= threshold)) return false;
@@ -100,8 +154,11 @@ export function shouldAutoStartQa(opts: {
 }
 
 /**
- * Flash reminder: parent RUNNING and remaining <= threshold (until parent stops / remaining ≤ 0).
+ * Flash reminder: parent RUNNING and remaining <= threshold.
  * Same gate as auto-start so LOAD/START at full duration never flashes early.
+ * Callers should also pass expectedParentTotalSeconds and/or use wall-clock
+ * so stale hybrid progress from the previous cue cannot flash at START.
+ * The on-stage hook ends the flash after qaFlashDurationSeconds.
  */
 export function shouldShowQaFlashReminder(opts: {
   parentRunning: boolean;
@@ -109,10 +166,46 @@ export function shouldShowQaFlashReminder(opts: {
   parentTotalSeconds: number | null | undefined;
   thresholdSeconds: number | null | undefined;
   parentElapsedSeconds?: number | null | undefined;
+  expectedParentTotalSeconds?: number | null | undefined;
 }): boolean {
   const remaining = Number(opts.parentRemainingSeconds);
   if (Number.isFinite(remaining) && remaining <= 0) return false;
   return shouldAutoStartQa(opts);
+}
+
+/**
+ * True when the flash window should arm (threshold crossed). Prefers wall-clock
+ * from parent started_at; falls back to remaining poll with stale-total guard.
+ */
+export function shouldArmQaFlash(opts: {
+  parentRunning: boolean;
+  parentStartedAtMs: number | null | undefined;
+  parentRemainingSeconds: number | null | undefined;
+  parentTotalSeconds: number | null | undefined;
+  thresholdSeconds: number | null | undefined;
+  parentElapsedSeconds?: number | null | undefined;
+  expectedParentTotalSeconds?: number | null | undefined;
+  nowMs: number;
+}): boolean {
+  const expected = Number(opts.expectedParentTotalSeconds);
+  const wallTotal =
+    Number.isFinite(expected) && expected > 0
+      ? expected
+      : Number(opts.parentTotalSeconds) || 0;
+  if (
+    opts.parentStartedAtMs != null &&
+    wallTotal > 0 &&
+    shouldAutoStartQaAtWallClock({
+      parentRunning: opts.parentRunning,
+      parentStartedAtMs: opts.parentStartedAtMs,
+      parentTotalSeconds: wallTotal,
+      thresholdSeconds: opts.thresholdSeconds,
+      nowMs: opts.nowMs,
+    })
+  ) {
+    return true;
+  }
+  return shouldShowQaFlashReminder(opts);
 }
 
 /** How long the full "Q&A - MM:SS" line pulses before settling steady. */

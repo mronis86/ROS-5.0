@@ -37,7 +37,7 @@ export function AltTimerBadge({
   const badgeClass = isOperator
     ? 'rounded bg-violet-500 px-2 py-0.5 text-xs font-black leading-none tracking-widest text-white translate-y-px'
     : isQa
-      ? 'rounded bg-amber-500 px-2 py-0.5 text-xs font-black leading-none tracking-wide text-black translate-y-px'
+      ? 'rounded bg-fuchsia-600 px-2 py-0.5 text-xs font-black leading-none tracking-wide text-white translate-y-px shadow-[0_0_12px_rgba(192,38,211,0.55)]'
       : 'rounded bg-orange-500 px-2 py-0.5 text-xs font-black leading-none tracking-widest text-black translate-y-px';
 
   return (

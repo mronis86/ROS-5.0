@@ -158,6 +158,7 @@ import {
   parentDurationSeconds as qaParentDurationSeconds,
   qaCueFromParent,
   shouldAutoStartQa,
+  shouldAutoStartQaAtWallClock,
 } from '../lib/qaPlan';
 import { mapOperatorCountdownRow, operatorCountdownRemaining, formatOperatorCountdownTime } from '../lib/operatorCountdown';
 import ShowVsRehearsalPanel from '../components/ShowVsRehearsalPanel';
@@ -1620,8 +1621,12 @@ const RunOfShowPage: React.FC = () => {
   } | null>(null);
   const timedMarkerIdSeqRef = useRef(0);
   const [qaPlanModalParentId, setQaPlanModalParentId] = useState<number | null>(null);
-  /** Sub-cue ids that already auto-started for the current parent timer run. */
-  const qaAutoStartedRef = useRef<Set<number>>(new Set());
+  /**
+   * Q&A id → parent started_at ms that already triggered auto-start.
+   * Keyed by parent start so a brief hybrid blip cannot clear and re-fire
+   * (which used to UPSERT and restart the Q&A clock mid-run).
+   */
+  const qaAutoStartedRef = useRef<Map<number, number>>(new Map());
   /**
    * After parent LOAD, suppress auto-QA (and WS re-apply) until parent actually STARTs
    * (is_running). Keys may be child Q&A ids and/or parent ids.
@@ -5511,7 +5516,7 @@ const RunOfShowPage: React.FC = () => {
     setSchedule(nextSchedule);
     handleUserEditing();
     setQaPlanModalParentId(null);
-    qaAutoStartedRef.current.delete(newId);
+      qaAutoStartedRef.current.delete(newId);
 
     let saveOk = true;
     try {
@@ -8884,8 +8889,8 @@ const RunOfShowPage: React.FC = () => {
   toggleSubCueTimerRef.current = toggleSubCueTimer;
 
   // Auto-start planned Q&A only when parent remaining hits the configured threshold.
-  // Do NOT fire on parent LOAD/START — require an actively ticking parent countdown
-  // (is_running / startedAt) and remaining < total (see shouldAutoStartQa).
+  // Prefer wall-clock from parent started_at + schedule duration so stale hybrid
+  // progress from the previous cue cannot fire at parent LOAD/START.
   useEffect(() => {
     const qaRows = schedule.filter(
       (row) =>
@@ -8915,6 +8920,8 @@ const RunOfShowPage: React.FC = () => {
     const localParentRunning = (parentId: number) =>
       !!activeTimers[parentId] && timerProgress[parentId]?.startedAt != null;
 
+    const nowMs = Date.now() + (Number(clockOffset) || 0);
+
     for (const qa of qaRows) {
       const qaId = Number(qa.id);
       const parentId = indentedCues[qaId]?.parentId;
@@ -8928,11 +8935,9 @@ const RunOfShowPage: React.FC = () => {
       }
 
       const parentRunning = hybridParentRunning(parentId) || localParentRunning(parentId);
-
-      if (!parentRunning) {
-        qaAutoStartedRef.current.delete(qaId);
-        continue;
-      }
+      // Do NOT clear qaAutoStartedRef when parent briefly looks idle — that re-armed
+      // auto-start mid-run and UPSERTed a fresh started_at (clock jump/restart).
+      if (!parentRunning) continue;
 
       const alreadyRunningLocally = !!subCueTimers[qaId];
       const alreadyRunningHybrid =
@@ -8940,37 +8945,71 @@ const RunOfShowPage: React.FC = () => {
         itemMatchesTimerRow(qaId, hybridSecondaryTimer) &&
         hybridSecondaryTimer.is_running === true &&
         hybridSecondaryTimer.is_active !== false;
-      if (qaAutoStartedRef.current.has(qaId) || alreadyRunningLocally || alreadyRunningHybrid) {
+      if (alreadyRunningLocally || alreadyRunningHybrid) {
         continue;
       }
 
-      let remaining: number | null = null;
-      let total = 0;
-      let elapsed = 0;
-      if (hybridParentRunning(parentId)) {
-        total = Number(hybridTimerProgress.total) || 0;
-        elapsed = Number(hybridTimerProgress.elapsed) || 0;
-        remaining = total - elapsed;
-      } else if (timerProgress[parentId]) {
-        total = Number(timerProgress[parentId].total) || 0;
-        elapsed = Number(timerProgress[parentId].elapsed) || 0;
-        remaining = total - elapsed;
-      }
-
+      const parentRow =
+        schedule.find((s) => Number(s.id) === Number(parentId)) ||
+        scheduleRef.current?.find((s) => Number(s.id) === Number(parentId));
+      const expectedTotal = parentRow ? qaParentDurationSeconds(parentRow) : 0;
       const threshold = Number(qa.qaAutoStartAtRemainingSeconds);
-      if (
-        !shouldAutoStartQa({
-          parentRunning: true,
-          parentRemainingSeconds: remaining,
-          parentTotalSeconds: total,
-          thresholdSeconds: threshold,
-          parentElapsedSeconds: elapsed,
-        })
-      ) {
-        continue;
+
+      let parentStartedAtMs: number | null = null;
+      if (hybridParentRunning(parentId) && hybridActive?.started_at) {
+        parentStartedAtMs = new Date(hybridActive.started_at).getTime();
+      } else if (timerProgress[parentId]?.startedAt) {
+        parentStartedAtMs = new Date(timerProgress[parentId].startedAt).getTime();
+      }
+      if (parentStartedAtMs == null || !Number.isFinite(parentStartedAtMs)) continue;
+
+      // Already fired for this exact parent run — never re-POST (restart).
+      if (qaAutoStartedRef.current.get(qaId) === parentStartedAtMs) continue;
+
+      const wallTotal =
+        expectedTotal > 0 ? expectedTotal : Number(hybridTimerProgress.total) || 0;
+      if (wallTotal > 0) {
+        // Authoritative path: parent started_at + schedule duration (no stale hybrid).
+        if (
+          !shouldAutoStartQaAtWallClock({
+            parentRunning: true,
+            parentStartedAtMs,
+            parentTotalSeconds: wallTotal,
+            thresholdSeconds: threshold,
+            nowMs,
+          })
+        ) {
+          continue;
+        }
+      } else {
+        // Last resort when schedule duration is missing: remaining poll + stale guard.
+        let remaining: number | null = null;
+        let total = 0;
+        let elapsed = 0;
+        if (hybridParentRunning(parentId)) {
+          total = Number(hybridTimerProgress.total) || 0;
+          elapsed = Number(hybridTimerProgress.elapsed) || 0;
+          remaining = total - elapsed;
+        } else if (timerProgress[parentId]) {
+          total = Number(timerProgress[parentId].total) || 0;
+          elapsed = Number(timerProgress[parentId].elapsed) || 0;
+          remaining = total - elapsed;
+        }
+        if (
+          !shouldAutoStartQa({
+            parentRunning: true,
+            parentRemainingSeconds: remaining,
+            parentTotalSeconds: total,
+            thresholdSeconds: threshold,
+            parentElapsedSeconds: elapsed,
+            expectedParentTotalSeconds: expectedTotal > 0 ? expectedTotal : null,
+          })
+        ) {
+          continue;
+        }
       }
 
-      qaAutoStartedRef.current.add(qaId);
+      qaAutoStartedRef.current.set(qaId, parentStartedAtMs);
       void startSecondaryTimerRef.current(qaId, { fromAuto: true });
     }
   }, [
@@ -8982,6 +9021,7 @@ const RunOfShowPage: React.FC = () => {
     hybridTimerProgress,
     hybridTimerData?.activeTimer,
     hybridSecondaryTimer,
+    clockOffset,
   ]);
 
   const resetAllStates = async () => {
@@ -14305,33 +14345,70 @@ const RunOfShowPage: React.FC = () => {
             (hybridActive.timer_state == null ||
               hybridActive.timer_state === 'running' ||
               hybridActive.timer_state === 'unknown');
-          let remaining: number | null = null;
-          let total = 0;
-          let elapsed = 0;
-          if (hybridParentRunning) {
-            total = Number(hybridTimerProgress.total) || 0;
-            elapsed = Number(hybridTimerProgress.elapsed) || 0;
-            remaining = total - elapsed;
-          } else if (timerProgress[parentId]) {
-            total = Number(timerProgress[parentId].total) || 0;
-            elapsed = Number(timerProgress[parentId].elapsed) || 0;
-            remaining = total - elapsed;
+          const parentRow =
+            schedule.find((s) => Number(s.id) === Number(parentId)) ||
+            scheduleRef.current?.find((s) => Number(s.id) === Number(parentId));
+          const expectedTotal = parentRow ? qaParentDurationSeconds(parentRow) : 0;
+          let parentStartedAtMs: number | null = null;
+          if (hybridParentRunning && hybridActive?.started_at) {
+            parentStartedAtMs = new Date(hybridActive.started_at).getTime();
+          } else if (timerProgress[parentId]?.startedAt) {
+            parentStartedAtMs = new Date(timerProgress[parentId].startedAt).getTime();
           }
-          if (
-            !shouldAutoStartQa({
-              parentRunning: true,
-              parentRemainingSeconds: remaining,
-              parentTotalSeconds: total,
-              thresholdSeconds: item.qaAutoStartAtRemainingSeconds,
-              parentElapsedSeconds: elapsed,
-            })
-          ) {
-            console.warn('🛑 Refusing auto Q&A — shouldAutoStartQa gate failed:', itemId, {
-              remaining,
-              total,
-              threshold: item.qaAutoStartAtRemainingSeconds,
-            });
-            return;
+          const nowMs = Date.now() + (Number(clockOffset) || 0);
+          const wallTotal =
+            expectedTotal > 0 ? expectedTotal : Number(hybridTimerProgress.total) || 0;
+          if (parentStartedAtMs != null && wallTotal > 0) {
+            if (
+              !shouldAutoStartQaAtWallClock({
+                parentRunning: true,
+                parentStartedAtMs,
+                parentTotalSeconds: wallTotal,
+                thresholdSeconds: item.qaAutoStartAtRemainingSeconds,
+                nowMs,
+              })
+            ) {
+              console.warn('🛑 Refusing auto Q&A — wall-clock gate failed:', itemId, {
+                expectedTotal,
+                wallTotal,
+                threshold: item.qaAutoStartAtRemainingSeconds,
+                parentStartedAtMs,
+                nowMs,
+              });
+              return;
+            }
+          } else {
+            let remaining: number | null = null;
+            let total = 0;
+            let elapsed = 0;
+            if (hybridParentRunning) {
+              total = Number(hybridTimerProgress.total) || 0;
+              elapsed = Number(hybridTimerProgress.elapsed) || 0;
+              remaining = total - elapsed;
+            } else if (timerProgress[parentId]) {
+              total = Number(timerProgress[parentId].total) || 0;
+              elapsed = Number(timerProgress[parentId].elapsed) || 0;
+              remaining = total - elapsed;
+            }
+            if (
+              !shouldAutoStartQa({
+                parentRunning: true,
+                parentRemainingSeconds: remaining,
+                parentTotalSeconds: total,
+                thresholdSeconds: item.qaAutoStartAtRemainingSeconds,
+                parentElapsedSeconds: elapsed,
+                expectedParentTotalSeconds: expectedTotal > 0 ? expectedTotal : null,
+              })
+            ) {
+              console.warn('🛑 Refusing auto Q&A — shouldAutoStartQa gate failed:', itemId, {
+                remaining,
+                total,
+                expectedTotal,
+                threshold: item.qaAutoStartAtRemainingSeconds,
+                parentStartedAtMs,
+              });
+              return;
+            }
           }
         }
       }

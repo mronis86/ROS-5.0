@@ -265,21 +265,49 @@ html.led-output-broadcast #root,
   animation: ros-timer-message-flash 1s ease-in-out infinite;
 }
 
-/* Q&A flash reminder on Clock / DSM / Full Screen */
+/* Q&A flash reminder on Clock / DSM / Full Screen — purple stage treatment */
 @keyframes ros-qa-flash-reminder {
   0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.35; transform: scale(1.04); }
+  50% { opacity: 0.45; transform: scale(1.03); }
 }
 .ros-qa-flash-reminder {
   animation: ros-qa-flash-reminder 0.85s ease-in-out infinite;
 }
-/* Pulse the countdown itself so Q&A flash stays in-view with the timer */
 @keyframes ros-qa-flash-timer {
-  0%, 100% { opacity: 1; filter: drop-shadow(0 0 0 rgba(251, 191, 36, 0)); }
-  50% { opacity: 0.55; filter: drop-shadow(0 0 18px rgba(251, 191, 36, 0.95)); }
+  0%, 100% {
+    opacity: 1;
+    filter: drop-shadow(0 0 0 rgba(192, 132, 252, 0));
+  }
+  50% {
+    opacity: 0.72;
+    filter: drop-shadow(0 0 22px rgba(192, 132, 252, 0.95));
+  }
 }
 .ros-qa-flash-timer {
-  animation: ros-qa-flash-timer 0.85s ease-in-out infinite;
+  animation: ros-qa-flash-timer 0.9s ease-in-out infinite;
+  color: #e9d5ff !important; /* violet-200 */
+}
+.ros-qa-flash-steady {
+  color: #d8b4fe !important; /* violet-300 — readable after pulse settles */
+}
+.ros-qa-flash-line {
+  color: inherit;
+}
+.ros-qa-flash-label {
+  font-family: ui-sans-serif, system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: #c084fc; /* violet-400 */
+  text-shadow: 0 0 18px rgba(168, 85, 247, 0.55);
+}
+.ros-qa-flash-sep {
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-weight: 700;
+  color: #a78bfa; /* violet-400 */
+  opacity: 0.85;
+}
+.ros-qa-flash-time {
+  color: inherit;
 }
 
 /* Pre Show — calm static brand gradient (stage-friendly, no shifting animation) */

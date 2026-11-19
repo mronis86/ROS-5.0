@@ -28,9 +28,12 @@ import { resolveLiveCueLabel } from '../lib/cueDisplay';
 import {
   flashPlanFromParent,
   isQaFlashPlan,
-  shouldShowQaFlashReminder,
+  parentDurationSeconds,
+  shouldArmQaFlash,
 } from '../lib/qaPlan';
 import { useQaFlashTimerLine } from '../hooks/useQaFlashTimerLine';
+import { QaFlashTimerDigits } from './QaFlashTimerDigits';
+import { isQaSecondaryTimer } from '../lib/altTimerLabel';
 
 interface FullScreenTimerProps {
   isRunning?: boolean;
@@ -206,7 +209,12 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
       : null);
   const dualAltLayout = hasDualAltLayout(hybridTimerData);
   const isOpAlt = isOperatorAltTimer(displaySecondaryTimer);
-  const secondaryDisplayColor = isOpAlt ? 'text-violet-400' : 'text-orange-400';
+  const isQaAlt = isQaSecondaryTimer(displaySecondaryTimer, scheduleItems);
+  const secondaryDisplayColor = isOpAlt
+    ? 'text-violet-400'
+    : isQaAlt
+      ? 'text-fuchsia-400'
+      : 'text-orange-400';
 
   const secondaryRemainingSeconds = (timer: any): number => {
     if (!timer) return 0;
@@ -738,24 +746,37 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
   );
   const qaFlashRemaining = getRemainingTime();
   const qaFlashTotal = Number(timerProgress.total) || 0;
+  const qaFlashExpectedTotal = activeFsCue ? parentDurationSeconds(activeFsCue) : 0;
+  const qaFlashStartedAtMs = hybridTimerData?.activeTimer?.started_at
+    ? new Date(hybridTimerData.activeTimer.started_at).getTime()
+    : null;
   const showQaFlashReminder =
     !!qaFlashPlan &&
     qaFlashPlan.auto !== false &&
-    shouldShowQaFlashReminder({
+    shouldArmQaFlash({
       parentRunning: parentRunningForQaFlash,
+      parentStartedAtMs: qaFlashStartedAtMs,
       parentRemainingSeconds: qaFlashRemaining,
       parentTotalSeconds: qaFlashTotal,
       thresholdSeconds: qaFlashPlan.thresholdSeconds,
       parentElapsedSeconds: qaFlashTotal - qaFlashRemaining,
+      expectedParentTotalSeconds: qaFlashExpectedTotal > 0 ? qaFlashExpectedTotal : null,
+      nowMs: Date.now() + (Number(clockOffset) || 0),
     });
   const qaFlashLine = useQaFlashTimerLine({
     active: showQaFlashReminder,
     label: qaFlashPlan?.label || 'Q&A',
+    durationSeconds: qaFlashPlan?.durationSeconds ?? null,
   });
   const qaFlashTimerClass = qaFlashLine.timerClass;
   const renderMainTimerDigits = (seconds: number) => {
     if (qaFlashLine.show) {
-      return <>{qaFlashLine.formatLine(formatTimeBody(Math.max(0, seconds)))}</>;
+      return (
+        <QaFlashTimerDigits
+          label={qaFlashLine.label}
+          timeBody={formatTimeBody(Math.max(0, seconds))}
+        />
+      );
     }
     return formatTime(seconds);
   };
@@ -1129,7 +1150,7 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
               <div className="w-40 mx-auto mt-2 bg-slate-700 rounded-full overflow-hidden border border-slate-600 relative h-2">
                 <div
                   className={`h-full transition-all duration-1000 absolute top-0 right-0 ${
-                    isOpAlt ? 'bg-violet-400' : 'bg-orange-400'
+                    isOpAlt ? 'bg-violet-400' : isQaAlt ? 'bg-fuchsia-500' : 'bg-orange-400'
                   }`}
                   style={{ width: `${pct}%` }}
                 />
@@ -1153,7 +1174,11 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
               {formatTime(getRemainingTime())}
             </div>
           </div>
-          <div className={`text-center absolute ${crowdedTimerBottom} right-[18%] translate-x-1/2 min-w-[11rem] text-orange-400`}>
+          <div
+            className={`text-center absolute ${crowdedTimerBottom} right-[18%] translate-x-1/2 min-w-[11rem] ${
+              isQaSecondaryTimer(indentedSubTimer, scheduleItems) ? 'text-fuchsia-400' : 'text-orange-400'
+            }`}
+          >
             <div className="mb-1 text-lg font-bold leading-none">
               <AltTimerBadge timer={indentedSubTimer} cueOnly />
             </div>

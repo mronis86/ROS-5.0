@@ -30,9 +30,12 @@ import { resolveLiveCueLabel, shouldKeepExistingRunningTimer } from '../lib/cueD
 import {
   flashPlanFromParent,
   isQaFlashPlan,
-  shouldShowQaFlashReminder,
+  parentDurationSeconds,
+  shouldArmQaFlash,
 } from '../lib/qaPlan';
 import { useQaFlashTimerLine } from '../hooks/useQaFlashTimerLine';
+import { QaFlashTimerDigits } from './QaFlashTimerDigits';
+import { isQaSecondaryTimer } from '../lib/altTimerLabel';
 
 interface DsmClockProps {
   isRunning?: boolean;
@@ -1153,13 +1156,20 @@ const DsmClock: React.FC<DsmClockProps> = ({
   // Op + indented both live → main+indented go small (like messages); Op stays large center
   const dualAltLayout = hasDualAltLayout(hybridForAlt);
   const isOpAlt = isOperatorAltTimer(secondarySubTimer);
+  const isQaAlt = isQaSecondaryTimer(secondarySubTimer, scheduleItems);
+  const isQaIndented = isQaSecondaryTimer(indentedSubTimer, scheduleItems);
   const secondaryDisplayColor = isOpAlt
     ? 'text-violet-400'
-    : secondarySubTimer && isResolumeSynced(secondarySubTimer)
+    : isQaAlt
+      ? 'text-fuchsia-400'
+      : secondarySubTimer && isResolumeSynced(secondarySubTimer)
+        ? 'text-yellow-300'
+        : 'text-orange-400';
+  const indentedDisplayColor = isQaIndented
+    ? 'text-fuchsia-400'
+    : indentedSubTimer && isResolumeSynced(indentedSubTimer)
       ? 'text-yellow-300'
       : 'text-orange-400';
-  const indentedDisplayColor =
-    indentedSubTimer && isResolumeSynced(indentedSubTimer) ? 'text-yellow-300' : 'text-orange-400';
   const secondarySyncLabel = getExternalSyncLabel(secondarySubTimer).toUpperCase();
   const secondaryResolumeLabel =
     !isOpAlt && secondarySubTimer
@@ -1276,28 +1286,38 @@ const DsmClock: React.FC<DsmClockProps> = ({
   );
   const qaFlashRemaining = getRemainingTime();
   const qaFlashTotal = Number(timerProgress.total) || 0;
+  const qaFlashExpectedTotal = qaFlashCue ? parentDurationSeconds(qaFlashCue) : 0;
+  const qaFlashStartedAtMs = hybridTimerData?.activeTimer?.started_at
+    ? new Date(hybridTimerData.activeTimer.started_at).getTime()
+    : null;
   const showQaFlashReminder =
     !!qaFlashPlan &&
     qaFlashPlan.auto !== false &&
-    shouldShowQaFlashReminder({
+    shouldArmQaFlash({
       parentRunning: parentRunningForQaFlash,
+      parentStartedAtMs: qaFlashStartedAtMs,
       parentRemainingSeconds: qaFlashRemaining,
       parentTotalSeconds: qaFlashTotal,
       thresholdSeconds: qaFlashPlan.thresholdSeconds,
       parentElapsedSeconds: qaFlashTotal - qaFlashRemaining,
+      expectedParentTotalSeconds: qaFlashExpectedTotal > 0 ? qaFlashExpectedTotal : null,
+      nowMs: Date.now() + (Number(clockOffset) || 0),
     });
-  /** Replace countdown with "Q&A - MM:SS"; pulse 30s then stay until Q&A ends. */
+  /** Purple Q&A label + time; ends after flash window duration. */
   const qaFlashLine = useQaFlashTimerLine({
     active: showQaFlashReminder,
     label: qaFlashPlan?.label || 'Q&A',
+    durationSeconds: qaFlashPlan?.durationSeconds ?? null,
   });
   const qaFlashTimerClass = qaFlashLine.timerClass;
   const renderMainTimerDigits = (seconds: number, className?: string) => {
     if (qaFlashLine.show) {
       return (
-        <span className={className}>
-          {qaFlashLine.formatLine(formatTimeBody(Math.max(0, seconds)))}
-        </span>
+        <QaFlashTimerDigits
+          label={qaFlashLine.label}
+          timeBody={formatTimeBody(Math.max(0, seconds))}
+          className={className}
+        />
       );
     }
     return renderSignedTime(seconds, className);
