@@ -11,7 +11,6 @@ import { OvertimeClockText } from '../lib/OvertimeClockText';
 import { isPreshowTimerMessage, findTopPreshowCue } from '../lib/preshowCountdown';
 import { shouldUsePreshowRainbow } from '../lib/usePreshowRainbow';
 import { AltTimerBadge } from './AltTimerBadge';
-import { QaFlashReminder } from './QaFlashReminder';
 import CueCardClockOverlay from './CueCardClockOverlay';
 import {
   getLiveIndentedSubTimer,
@@ -31,6 +30,7 @@ import {
   isQaFlashPlan,
   shouldShowQaFlashReminder,
 } from '../lib/qaPlan';
+import { useQaFlashTimerLine } from '../hooks/useQaFlashTimerLine';
 
 interface FullScreenTimerProps {
   isRunning?: boolean;
@@ -748,12 +748,17 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
       thresholdSeconds: qaFlashPlan.thresholdSeconds,
       parentElapsedSeconds: qaFlashTotal - qaFlashRemaining,
     });
-  const qaFlashOverTimer = showQaFlashReminder ? (
-    <div className="mb-2 flex justify-center z-40">
-      <QaFlashReminder label={qaFlashPlan?.label || 'Q&A'} size={layoutCrowdedFs ? 'sm' : 'lg'} />
-    </div>
-  ) : null;
-  const qaFlashTimerClass = showQaFlashReminder ? 'ros-qa-flash-timer' : '';
+  const qaFlashLine = useQaFlashTimerLine({
+    active: showQaFlashReminder,
+    label: qaFlashPlan?.label || 'Q&A',
+  });
+  const qaFlashTimerClass = qaFlashLine.timerClass;
+  const renderMainTimerDigits = (seconds: number) => {
+    if (qaFlashLine.show) {
+      return <>{qaFlashLine.formatLine(formatTimeBody(Math.max(0, seconds)))}</>;
+    }
+    return formatTime(seconds);
+  };
 
   return (
     <div className="fixed inset-0 bg-black text-white overflow-hidden flex flex-col items-center justify-center" style={{ padding: 0, margin: 0 }}>
@@ -1175,7 +1180,7 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
       })() && (
         <div className={`text-center transition-all duration-500 ease-in-out absolute ${crowdedTimerBottom} left-[18%] -translate-x-1/2 min-w-[11rem]`}>
           {/* Overtime Indicator - Above main timer when both message and secondary timer are active */}
-          {getRemainingTime() < 0 && (
+          {!qaFlashLine.show && getRemainingTime() < 0 && (
             <div className="mb-1">
               <div className="font-bold text-red-500 text-lg leading-none">
                 OVER TIME
@@ -1184,12 +1189,12 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
           )}
           
           <div 
-            className={`font-mono font-bold transition-all duration-500 ease-in-out text-3xl md:text-4xl leading-none ${
+            className={`font-mono font-bold transition-all duration-500 ease-in-out text-3xl md:text-4xl leading-none ${qaFlashTimerClass} ${
               usePreshowRainbow ? 'ros-rainbow-text' : ''
             }`}
             style={usePreshowRainbow ? undefined : { color: getProgressBarColor() }}
           >
-            {formatTime(getRemainingTime())}
+            {renderMainTimerDigits(getRemainingTime())}
           </div>
           <div className="w-40 mx-auto mt-2 bg-slate-700 rounded-full overflow-hidden border border-slate-600 relative h-2">
             <div
@@ -1220,32 +1225,35 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
         return !hasSecondaryTimer && !hasMessage;
       })() && (
         <div className="flex-1 flex flex-col items-center justify-center">
-          {getRemainingTime() < 0 ? (
+          {!qaFlashLine.show && getRemainingTime() < 0 ? (
             <div className="mb-[-50px] text-center relative z-10 translate-y-10">
               <div className="font-bold text-red-500 text-5xl leading-none">
                 OVER TIME
               </div>
             </div>
-          ) : usePreshowRainbow ? (
+          ) : !qaFlashLine.show && usePreshowRainbow ? (
             <div className="mb-[-50px] text-center relative z-10 translate-y-10">
               <div className="ros-preshow-super text-5xl leading-none">PRE SHOW COUNTDOWN</div>
               <span className="ros-preshow-super-rule" aria-hidden />
             </div>
           ) : null}
-          {qaFlashOverTimer}
-          {/* Countdown Timer - Centered */}
+          {/* Countdown Timer - Centered; Q&A flash replaces digits in-place */}
           <div className="text-center">
             <div 
-              className={`font-mono font-bold ${qaFlashTimerClass} ${usePreshowRainbow ? 'ros-rainbow-text' : ''} ${(() => {
-                const remaining = getRemainingTime();
-                const hours = Math.floor(Math.abs(remaining) / 3600);
-                return hours === 0
-                  ? 'text-[15rem] md:text-[16.875rem] lg:text-[22.5rem]'
-                  : 'text-[12rem] md:text-[13.5rem] lg:text-[18rem]';
-              })()}`}
+              className={`font-mono font-bold ${qaFlashTimerClass} ${usePreshowRainbow ? 'ros-rainbow-text' : ''} ${
+                qaFlashLine.show
+                  ? 'text-[8rem] md:text-[9.5rem] lg:text-[11rem]'
+                  : (() => {
+                      const remaining = getRemainingTime();
+                      const hours = Math.floor(Math.abs(remaining) / 3600);
+                      return hours === 0
+                        ? 'text-[15rem] md:text-[16.875rem] lg:text-[22.5rem]'
+                        : 'text-[12rem] md:text-[13.5rem] lg:text-[18rem]';
+                    })()
+              }`}
               style={usePreshowRainbow ? undefined : { color: getProgressBarColor() }}
             >
-              {formatTime(getRemainingTime())}
+              {renderMainTimerDigits(getRemainingTime())}
             </div>
           </div>
           
@@ -1282,7 +1290,7 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
       })() && (
         <div className={`text-center transition-all duration-500 ease-in-out absolute ${crowdedTimerBottom} left-1/2 transform -translate-x-1/2`}>
           {/* Overtime Indicator - Above main timer when message is active */}
-          {getRemainingTime() < 0 && (
+          {!qaFlashLine.show && getRemainingTime() < 0 && (
             <div className="mb-2">
               <div className="font-bold text-red-500 text-lg md:text-xl lg:text-2xl">
                 OVER TIME
@@ -1291,10 +1299,10 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
           )}
           
           <div 
-            className="font-mono font-bold transition-all duration-500 ease-in-out text-3xl md:text-4xl lg:text-5xl"
+            className={`font-mono font-bold transition-all duration-500 ease-in-out text-3xl md:text-4xl lg:text-5xl ${qaFlashTimerClass}`}
             style={{ color: getProgressBarColor() }}
           >
-            {formatTime(getRemainingTime())}
+            {renderMainTimerDigits(getRemainingTime())}
           </div>
         </div>
       )}
@@ -1315,7 +1323,7 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
       })() && (
         <div className="text-center transition-all duration-500 ease-in-out absolute bottom-20 left-1/2 transform -translate-x-1/2">
           {/* Overtime Indicator - Above main timer when secondary timer is active */}
-          {getRemainingTime() < 0 && (
+          {!qaFlashLine.show && getRemainingTime() < 0 && (
             <div className="mb-2">
               <div className="font-bold text-red-500 text-lg md:text-xl lg:text-2xl">
                 OVER TIME
@@ -1324,10 +1332,10 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
           )}
           
           <div 
-            className="font-mono font-bold transition-all duration-500 ease-in-out text-3xl md:text-4xl lg:text-5xl"
+            className={`font-mono font-bold transition-all duration-500 ease-in-out text-3xl md:text-4xl lg:text-5xl ${qaFlashTimerClass}`}
             style={{ color: getProgressBarColor() }}
           >
-            {formatTime(getRemainingTime())}
+            {renderMainTimerDigits(getRemainingTime())}
           </div>
         </div>
       )}

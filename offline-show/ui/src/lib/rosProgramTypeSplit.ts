@@ -1,4 +1,4 @@
-import { isIndentedScheduleItem, type IndentedCueLookup } from './scheduleStartTime';
+﻿import { isIndentedScheduleItem, type IndentedCueLookup } from './scheduleStartTime';
 
 /** Canonical open / close program types (replaces legacy "PreShow/End"). */
 export const PRESHOW_PROGRAM_TYPE = 'PreShow';

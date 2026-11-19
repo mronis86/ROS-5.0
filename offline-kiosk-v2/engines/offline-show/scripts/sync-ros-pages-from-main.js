@@ -87,6 +87,7 @@ const LIBS = [
   'lib/rosProgramTypes.ts',
   'lib/altTimerLabel.ts',
   'lib/qaPlan.ts',
+  'hooks/useQaFlashTimerLine.ts',
 ];
 
 const COMPONENTS_FULL = [

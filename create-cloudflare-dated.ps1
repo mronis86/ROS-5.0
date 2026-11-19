@@ -127,6 +127,7 @@ $OptionalZips = @(
     'companion-module-runofshow-mitti-full.zip',
     'companion-module-runofshow-avplayout-full.zip',
     'offline-show.zip',
+    'offline-kiosk-v4.zip',
     'offline-kiosk-v3.zip',
     'offline-kiosk-v2.zip',
     'ros-led-spout.zip',

@@ -1,4 +1,4 @@
-/** Offline: spellcheck dictionary omitted — helpers no-op so ScheduleRow still builds. */
+﻿/** Offline: spellcheck dictionary omitted — helpers no-op so ScheduleRow still builds. */
 
 export function subscribeSegmentSpellcheck(onStoreChange: () => void): () => void {
   void onStoreChange;

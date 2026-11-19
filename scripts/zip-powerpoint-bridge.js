@@ -13,25 +13,10 @@ const zipPathLegacy = path.join(projectRoot, 'public', 'powerpoint-bridge.zip');
 const prefix = 'powerpoint-bridge-v2';
 
 function findUnpacked() {
-  const candidates = [
-    // Prefer a fresh `npm run pack` / electron-builder --dir output first.
-    path.join(bridgeRoot, 'dist', 'win-unpacked'),
-    path.join(bridgeRoot, 'dist-openfix10', 'win-unpacked'),
-    path.join(bridgeRoot, 'dist-openfix9', 'win-unpacked'),
-    path.join(bridgeRoot, 'dist-openfix8', 'win-unpacked'),
-    path.join(bridgeRoot, 'dist-openfix7', 'win-unpacked'),
-    path.join(bridgeRoot, 'dist-openfix6', 'win-unpacked'),
-    path.join(bridgeRoot, 'dist-openfix5', 'win-unpacked'),
-    path.join(bridgeRoot, 'dist-openfix4', 'win-unpacked'),
-    path.join(bridgeRoot, 'dist-openfix3', 'win-unpacked'),
-    path.join(bridgeRoot, 'dist-openfix2', 'win-unpacked'),
-    path.join(bridgeRoot, 'dist-openfix', 'win-unpacked'),
-    path.join(bridgeRoot, 'dist-syncfix', 'win-unpacked'),
-    path.join(bridgeRoot, 'dist-cuefix', 'win-unpacked'),
-    path.join(bridgeRoot, 'dist-daypick', 'win-unpacked'),
-    path.join(bridgeRoot, 'dist-ready', 'win-unpacked'),
-  ];
-  return candidates.find((p) => fs.existsSync(p)) || null;
+  // Canonical pack output from `npm run pack` / electron-builder --dir (directories.output: dist).
+  const primary = path.join(bridgeRoot, 'dist', 'win-unpacked');
+  if (fs.existsSync(primary)) return primary;
+  return null;
 }
 
 if (!fs.existsSync(bridgeRoot)) {

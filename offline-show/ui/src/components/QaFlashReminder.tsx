@@ -8,7 +8,8 @@ type Props = {
 };
 
 /**
- * Flashing Q&A reminder on Clock / DSM / Full Screen when flash mode is active.
+ * Legacy amber badge (stage clocks now replace the countdown with "Q&A - MM:SS").
+ * Kept for any remaining callers / offline stubs.
  */
 export function QaFlashReminder({ label = 'Q&A', size = 'lg', className = '' }: Props) {
   const text = String(label || 'Q&A').trim() || 'Q&A';

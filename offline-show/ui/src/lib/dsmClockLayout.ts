@@ -1,4 +1,4 @@
-/** DSM Clock layout modes for the schedule DSM column + /dsm-clock page. */
+﻿/** DSM Clock layout modes for the schedule DSM column + /dsm-clock page. */
 
 export const DSM_LAYOUT_MODES = ['full', 'led', 'vid', 'ppt'] as const;
 export type DsmLayoutMode = (typeof DSM_LAYOUT_MODES)[number];

@@ -1,4 +1,4 @@
-import { overtimeSignPrefix, type OvertimeSignId } from './overtimeSign';
+﻿import { overtimeSignPrefix, type OvertimeSignId } from './overtimeSign';
 
 export function pageClockSignClass(seconds: number, sign?: OvertimeSignId): string {
   const prefix = overtimeSignPrefix(seconds, sign).trim();

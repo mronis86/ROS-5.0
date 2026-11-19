@@ -115,6 +115,24 @@ export function shouldShowQaFlashReminder(opts: {
   return shouldAutoStartQa(opts);
 }
 
+/** How long the full "Q&A - MM:SS" line pulses before settling steady. */
+export const QA_FLASH_PULSE_MS = 30_000;
+
+/** Stage countdown line while Q&A flash is active, e.g. "Q&A - 10:00". */
+export function formatQaFlashCountdownLine(label: string, timeBody: string): string {
+  const text = String(label || 'Q&A').trim() || 'Q&A';
+  const time = String(timeBody || '').trim();
+  return time ? `${text} - ${time}` : text;
+}
+
+export function isQaFlashPulsing(
+  startedAtMs: number | null | undefined,
+  nowMs: number = Date.now()
+): boolean {
+  if (startedAtMs == null || !Number.isFinite(Number(startedAtMs))) return false;
+  return nowMs - Number(startedAtMs) < QA_FLASH_PULSE_MS;
+}
+
 /** Flash plan fields stored on the parent cue (no linked sub row). */
 export type QaFlashPlanFields = {
   qaDisplayMode: 'flash';
