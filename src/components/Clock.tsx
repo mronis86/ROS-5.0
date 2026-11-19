@@ -1444,7 +1444,6 @@ const Clock: React.FC<ClockProps> = ({
           const labelNode = (() => {
             const currentSecondaryTimer = supabaseOnly ? secondarySubTimer : secondaryTimer;
             if (!currentSecondaryTimer) return null;
-            if (!supabaseOnly) return <span>ALT</span>;
             return (
               <AltTimerBadge
                 timer={currentSecondaryTimer}

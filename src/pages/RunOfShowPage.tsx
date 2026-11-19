@@ -1664,6 +1664,8 @@ const RunOfShowPage: React.FC = () => {
   const preshowAutoStartedKeyRef = useRef<string | null>(null);
   const preshowAutoStartInFlightRef = useRef(false);
   const loadCueRef = useRef<(itemId: number) => Promise<void>>(async () => {});
+  /** LOAD/JUMP stops prior timers for replace — must not mark those cues completed. */
+  const suppressCompleteFromTimerStopRef = useRef(false);
   const toggleTimerRef = useRef<
     (itemId: number, options?: { ignoreOtherRunning?: boolean }) => Promise<void>
   >(async () => {});
@@ -3281,6 +3283,11 @@ const RunOfShowPage: React.FC = () => {
 
   /** Grey-out a stopped cue + its indented children (local Stop and Companion/WS Stop). */
   const markCueGroupCompleted = (itemId: number | null | undefined) => {
+    // LOAD/JUMP replaces the active timer via stop-all — that must not dim priors.
+    if (suppressCompleteFromTimerStopRef.current) {
+      console.log('⏭️ Skipping markCueGroupCompleted during LOAD/JUMP replace:', itemId);
+      return;
+    }
     const id = normalizeScheduleItemId(itemId);
     if (id == null) return;
     const ids = [id];
@@ -8326,45 +8333,32 @@ const RunOfShowPage: React.FC = () => {
       }
     });
     
-    // Mark any currently running CUE as completed (purple)
-    Object.keys(activeTimers).forEach(async (timerId) => {
+    // Clear local running intervals for replace — do NOT mark completed on LOAD/JUMP.
+    // Only explicit Stop (toggleTimer / Companion Stop) completes a cue + indented kids.
+    Object.keys(activeTimers).forEach((timerId) => {
       if (activeTimers[parseInt(timerId)]) {
         clearInterval(activeTimerIntervals[parseInt(timerId)]);
-        setCompletedCues(prev => ({ ...prev, [parseInt(timerId)]: true }));
-        // Mark as completed in database
-        const item = schedule.find(s => s.id === parseInt(timerId));
-        console.log('🟣 About to mark cue as completed:', {
-          eventId: event.id,
-          itemId: parseInt(timerId),
-          userId: user.id,
-          cueId: item?.customFields?.cue || 'CUE'
-        });
-        try {
-          const result = await DatabaseService.markCueCompleted(
-          event.id, 
-          parseInt(timerId), 
-          item?.customFields?.cue || 'CUE', 
-          user.id, 
-          user.full_name || user.email || 'Unknown User',
-          currentUserRole || 'VIEWER'
-        );
-          console.log('🟣 Mark completed result:', result);
-        } catch (error) {
-          console.error('❌ Error marking cue as completed:', error);
-        }
       }
     });
     setActiveTimers({});
-    
-    // Stop all timers via API
-    console.log('🔄 Stopping all timers in API for event:', event.id, 'user:', user.id);
-    const stopResult = await DatabaseService.stopAllTimersForEvent(
-      event.id, 
-      user.id, 
-      user.full_name || user.email || 'Unknown User',
-      currentUserRole || 'VIEWER'
-    );
-    console.log('🔄 Stop all timers result:', stopResult);
+
+    // stop-all broadcasts WS "stopped" — suppress markCueGroupCompleted for that replace.
+    suppressCompleteFromTimerStopRef.current = true;
+    try {
+      console.log('🔄 Stopping all timers in API for event (LOAD replace, no complete):', event.id, 'user:', user.id);
+      const stopResult = await DatabaseService.stopAllTimersForEvent(
+        event.id,
+        user.id,
+        user.full_name || user.email || 'Unknown User',
+        currentUserRole || 'VIEWER'
+      );
+      console.log('🔄 Stop all timers result:', stopResult);
+    } finally {
+      // Keep suppress briefly so delayed WS stop events from this replace are ignored.
+      window.setTimeout(() => {
+        suppressCompleteFromTimerStopRef.current = false;
+      }, 2500);
+    }
     
     // Stop any running sub-cue / Q&A timer when loading a new cue (local + hybrid).
     // Stale hybrid secondary used to leave Q&A showing ON after parent LOAD.

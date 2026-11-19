@@ -1637,7 +1637,6 @@ const DsmClock: React.FC<DsmClockProps> = ({
           const labelNode = (() => {
             const currentSecondaryTimer = supabaseOnly ? secondarySubTimer : secondaryTimer;
             if (!currentSecondaryTimer) return null;
-            if (!supabaseOnly) return <span>ALT</span>;
             return (
               <AltTimerBadge
                 timer={currentSecondaryTimer}

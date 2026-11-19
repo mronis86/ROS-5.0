@@ -84,6 +84,8 @@ const LIBS = [
   'lib/adminAuth.ts',
   'lib/sessionAuth.ts',
   'lib/rosProgramTypes.ts',
+  'lib/altTimerLabel.ts',
+  'lib/qaPlan.ts',
 ];
 
 const COMPONENTS_FULL = [
