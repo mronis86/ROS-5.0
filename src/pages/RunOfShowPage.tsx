@@ -2784,13 +2784,14 @@ const RunOfShowPage: React.FC = () => {
   };
 
   /**
-   * Dim ONLY cues marked completed (explicit Stop). Never use stoppedItems alone —
-   * LOAD/JUMP replace used to leave stopped flags that greying looked like "completed above".
+   * Dim ONLY if this exact cue id is in completedCues.
+   * Never dim by schedule position / "everything above Stop" (L1 cumulative — removed).
+   * Never dim from stoppedItems alone.
    */
   const isItemDimmed = (itemId: number) => {
     if (!showCompletedHighlight) return false;
     if (isCueRunningOnStage(itemId)) return false;
-    return isItemCompleted(itemId);
+    return isItemCompleted(itemId) === true;
   };
   const isDelayBlock = (itemId: number) =>
     schedule.some(item => item.id === itemId && item.programType === 'Delay Block');
@@ -3293,15 +3294,10 @@ const RunOfShowPage: React.FC = () => {
   const completedDaysRef = useRef(completedDays);
   const indentedCuesRef = useRef(indentedCues);
 
-  /** Grey-out a stopped cue + its indented children (local Stop and Companion/WS Stop). */
-  const markCueGroupCompleted = (itemId: number | null | undefined) => {
-    // LOAD/JUMP replaces the active timer via stop-all — that must not dim priors.
-    if (suppressCompleteFromTimerStopRef.current) {
-      console.log('⏭️ Skipping markCueGroupCompleted during LOAD/JUMP replace:', itemId);
-      return;
-    }
+  /** Stopped cue + indented kids BELOW only — never schedule rows above. */
+  const idsForStoppedCueGroup = (itemId: number | null | undefined): number[] => {
     const id = normalizeScheduleItemId(itemId);
-    if (id == null) return;
+    if (id == null) return [];
     const ids = [id];
     const list = scheduleRef.current || schedule;
     const idx = list.findIndex((s: { id: number }) => s.id === id);
@@ -3311,9 +3307,17 @@ const RunOfShowPage: React.FC = () => {
         else break;
       }
     }
+    return ids;
+  };
+
+  const applyCompletedLocally = (ids: number[]) => {
+    if (ids.length === 0) return;
+    console.log('🟣 Stop complete — ONLY these ids (not rows above):', ids);
     setCompletedCues((prev) => {
       const next = { ...prev };
-      ids.forEach((cueId) => { next[cueId] = true; });
+      ids.forEach((cueId) => {
+        next[cueId] = true;
+      });
       return next;
     });
     setStoppedItems((prev) => {
@@ -3322,7 +3326,20 @@ const RunOfShowPage: React.FC = () => {
       return next;
     });
     setLastLoadedCueId((prev) => (prev != null && ids.includes(prev) ? null : prev));
+  };
+
+  /**
+   * Mark ONLY this cue + indented kids BELOW it. Never touch rows above (no L1 cumulative).
+   */
+  const markOnlyStoppedCueCompleted = (itemId: number | null | undefined): number[] => {
+    if (suppressCompleteFromTimerStopRef.current) {
+      console.log('⏭️ Skipping completed mark during LOAD/JUMP replace:', itemId);
+      return [];
+    }
+    const ids = idsForStoppedCueGroup(itemId);
+    applyCompletedLocally(ids);
     if (event?.id && user?.id) {
+      const list = scheduleRef.current || schedule;
       ids.forEach((cueId) => {
         const item = list.find((s: { id: number }) => s.id === cueId);
         void DatabaseService.markCueCompleted(
@@ -3335,6 +3352,7 @@ const RunOfShowPage: React.FC = () => {
         ).catch((err) => console.warn('⚠️ Failed to persist completed cue:', cueId, err));
       });
     }
+    return ids;
   };
 
   const trackWasDurationsRef = useRef(trackWasDurations);
@@ -8454,7 +8472,7 @@ const RunOfShowPage: React.FC = () => {
     });
     setActiveTimers({});
 
-    // stop-all broadcasts WS "stopped" — suppress markCueGroupCompleted for that replace.
+    // stop-all broadcasts WS "stopped" — suppress completed marks for that replace.
     suppressCompleteFromTimerStopRef.current = true;
     try {
       console.log('🔄 Stopping all timers in API for event (LOAD replace, no complete):', event.id, 'user:', user.id);
@@ -11302,21 +11320,8 @@ const RunOfShowPage: React.FC = () => {
             if (activeLoadedItemIdRef.current === id) {
               return;
             }
-            // Explicit Stop persistence — dim this cue + indented kids (not every row above).
-            const ids = [id];
-            const list = scheduleRef.current || schedule;
-            const idx = list.findIndex((s: { id: number }) => s.id === id);
-            if (idx !== -1) {
-              for (let i = idx + 1; i < list.length; i++) {
-                if (isIndentedScheduleItem(list[i], indentedCuesRef.current)) ids.push(list[i].id);
-                else break;
-              }
-            }
-            setCompletedCues((prev) => {
-              const next = { ...prev };
-              ids.forEach((cueId) => { next[cueId] = true; });
-              return next;
-            });
+            // WS echo — local only (already persisted by Stop); never greys rows above.
+            applyCompletedLocally(idsForStoppedCueGroup(id));
           }
         }
       },
@@ -13763,15 +13768,8 @@ const RunOfShowPage: React.FC = () => {
         return newSet;
       });
       
-      setCompletedCues(prev => {
-        const newCompleted = { ...prev, [itemId]: true };
-        console.log('🔄 ToggleTimer: Updated completedCues for main item:', itemId, 'new state:', newCompleted);
-        return newCompleted;
-      });
-      // Add to stopped items for inactive styling
-      setStoppedItems(prev => new Set([...prev, itemId]));
-      setLastLoadedCueId((prev) => (prev === itemId ? null : prev));
-      // Dim only this cue (+ indented kids marked below) — not every row above
+      // Single-cue complete only (+ indented kids below). Never greys rows above.
+      markOnlyStoppedCueCompleted(itemId);
       logChange('TIMER_STOPPED', `Cue stopped`, { itemId });
       
       // Calculate automatic overtime from hybrid timer (positive or negative) - only when timer stops
@@ -13834,62 +13832,7 @@ const RunOfShowPage: React.FC = () => {
         }
       }
       
-      // Mark cue as completed in database
-      try {
-        const item = schedule.find(s => s.id === itemId);
-        await DatabaseService.markCueCompleted(
-          event.id, 
-          itemId, 
-          item?.customFields?.cue || 'CUE', 
-          user.id, 
-          user.full_name || user.email || 'Unknown User',
-          currentUserRole || 'VIEWER'
-        );
-      } catch (error) {
-        console.warn('⚠️ Failed to mark cue as completed in database:', error);
-        console.log('💡 This means the completed_cues table needs to be created first');
-      }
-      
-      // Also complete any indented items that are part of this CUE group
-      const currentIndex = schedule.findIndex(item => item.id === itemId);
-      console.log('🔄 ToggleTimer: Current index for item', itemId, ':', currentIndex);
-      
-      if (currentIndex !== -1) {
-        console.log('🔄 ToggleTimer: Looking for indented items after index', currentIndex);
-        // Find all indented items that follow this CUE until the next non-indented item
-        for (let i = currentIndex + 1; i < schedule.length; i++) {
-          console.log('🔄 ToggleTimer: Checking item at index', i, ':', schedule[i].segmentName, 'isIndented:', isIndentedScheduleItem(schedule[i], indentedCuesRef.current));
-          if (isIndentedScheduleItem(schedule[i], indentedCuesRef.current)) {
-            console.log('🔄 ToggleTimer: Marking indented item as completed:', schedule[i].id, schedule[i].segmentName);
-            setCompletedCues(prev => {
-              const newCompleted = { ...prev, [schedule[i].id]: true };
-              console.log('🔄 ToggleTimer: Updated completedCues for indented item:', schedule[i].id, 'new state:', newCompleted);
-              return newCompleted;
-            });
-            setStoppedItems(prev => new Set([...prev, schedule[i].id]));
-            // Mark indented items as completed in database too
-            try {
-              await DatabaseService.markCueCompleted(
-                event.id, 
-                schedule[i].id, 
-                schedule[i].customFields?.cue || 'CUE', 
-                user.id, 
-                user.full_name || user.email || 'Unknown User',
-                currentUserRole || 'VIEWER'
-              );
-              console.log('✅ ToggleTimer: Successfully marked indented item as completed in database:', schedule[i].id);
-            } catch (error) {
-              console.error('❌ ToggleTimer: Failed to mark indented item as completed in database:', schedule[i].id, error);
-            }
-          } else {
-            // Stop when we hit a non-indented item (next CUE group)
-            console.log('🔄 ToggleTimer: Hit non-indented item, stopping search at index', i);
-            break;
-          }
-        }
-      } else {
-        console.log('⚠️ ToggleTimer: Could not find current item in schedule:', itemId);
-      }
+      // Completed mark + Neon persist already handled by markOnlyStoppedCueCompleted (cue + kids only).
       
       // Don't clear dependent row highlighting when timer is stopped - they should stay highlighted
       
