@@ -3,7 +3,7 @@
 @tailwind utilities;
 
 :root {
-  --app-header-height: 3.5rem; /* 56px — matches main AppHeader / Run of Show toolbar offset */
+  --app-header-height: 3.5rem; /* 56px â€” matches main AppHeader / Run of Show toolbar offset */
 }
 
 /* Match main app global styles (App.css) */
@@ -423,7 +423,7 @@ body {
   justify-content: center;
   padding: 1rem;
   background: rgba(2, 6, 23, 0.55);
-  /* No backdrop-filter — keep the page (and countdown) clearly visible underneath */
+  /* No backdrop-filter â€” keep the page (and countdown) clearly visible underneath */
 }
 
 .offline-dialog {
@@ -735,7 +735,7 @@ body {
   animation: ros-timer-message-flash 1s ease-in-out infinite;
 }
 
-/* Pre Show — calm static brand gradient (stage-friendly) */
+/* Pre Show â€” calm static brand gradient (stage-friendly) */
 .ros-rainbow-text,
 .ros-preshow-brand-text {
   background-image: linear-gradient(
@@ -779,39 +779,24 @@ body {
   background: linear-gradient(90deg, #8b5cf6, #3b82f6, #10b981);
 }
 
-/* Q&A flash reminder on Clock / DSM / Full Screen */
+/* Q&A flash reminder on Clock / DSM / Full Screen â€” hard strobe (not soft glow) */
 @keyframes ros-qa-flash-reminder {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.35; transform: scale(1.04); }
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0.12; }
 }
 .ros-qa-flash-reminder {
-  animation: ros-qa-flash-reminder 0.85s ease-in-out infinite;
-}
-
-/* Q&A flash reminder on Clock / DSM / Full Screen â€” purple stage treatment */
-@keyframes ros-qa-flash-reminder {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.45; transform: scale(1.03); }
-}
-.ros-qa-flash-reminder {
-  animation: ros-qa-flash-reminder 0.85s ease-in-out infinite;
+  animation: ros-qa-flash-reminder 0.45s steps(1, end) infinite;
 }
 @keyframes ros-qa-flash-timer {
-  0%, 100% {
-    opacity: 1;
-    filter: drop-shadow(0 0 0 rgba(192, 132, 252, 0));
-  }
-  50% {
-    opacity: 0.72;
-    filter: drop-shadow(0 0 22px rgba(192, 132, 252, 0.95));
-  }
+  0%, 45% { opacity: 1; }
+  46%, 100% { opacity: 0.08; }
 }
 .ros-qa-flash-timer {
-  animation: ros-qa-flash-timer 0.9s ease-in-out infinite;
-  color: #e9d5ff !important; /* violet-200 */
+  animation: ros-qa-flash-timer 0.4s steps(1, end) infinite;
+  color: #f5d0fe !important; /* fuchsia-200 â€” bright on, hard off */
 }
 .ros-qa-flash-steady {
-  color: #d8b4fe !important; /* violet-300 â€” readable after pulse settles */
+  color: #e9d5ff !important; /* violet-200 â€” solid after strobe window */
 }
 .ros-qa-flash-line {
   color: inherit;
@@ -820,15 +805,15 @@ body {
   font-family: ui-sans-serif, system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   font-weight: 800;
   letter-spacing: 0.04em;
-  color: #c084fc; /* violet-400 */
-  text-shadow: 0 0 18px rgba(168, 85, 247, 0.55);
+  color: #e879f9; /* fuchsia-400 â€” no glow */
 }
 .ros-qa-flash-sep {
   font-family: ui-sans-serif, system-ui, sans-serif;
   font-weight: 700;
-  color: #a78bfa; /* violet-400 */
-  opacity: 0.85;
+  color: #d946ef; /* fuchsia-500 */
+  opacity: 0.9;
 }
 .ros-qa-flash-time {
   color: inherit;
 }
+
