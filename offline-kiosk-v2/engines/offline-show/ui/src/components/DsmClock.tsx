@@ -1774,7 +1774,11 @@ const DsmClock: React.FC<DsmClockProps> = ({
             <div className={`absolute ${crowdedTimerBottom} right-1/3 transform translate-x-1/2 flex flex-col items-center animate-in fade-in duration-500`}>
               <div
                 className={`absolute left-1/2 -translate-x-1/2 ${secondaryDisplayColor} ${dsmCrowdedLabelClass} font-bold whitespace-nowrap`}
-                style={{ lineHeight: '1.2', bottom: 'calc(100% + 0.35rem)' }}
+                style={{
+                  lineHeight: '1.2',
+                  // 16:9: keep badge under the PiP band; otherwise float just above digits
+                  bottom: show16x9Frame ? 'calc(100% - 1.25rem)' : 'calc(100% + 0.35rem)',
+                }}
               >
                 {labelNode}
               </div>
@@ -1852,8 +1856,11 @@ const DsmClock: React.FC<DsmClockProps> = ({
         <div className={`text-center transition-all duration-500 ease-in-out absolute ${crowdedTimerBottom} right-[18%] translate-x-1/2 min-w-[14rem] ${
           dualAltLayout ? indentedDisplayColor : secondaryDisplayColor
         }`}>
-          {/* Small secondary: ALT + CUE only — same scale as small main */}
-          <div className={`mb-1 ${dsmCrowdedLabelClass} font-bold leading-none`}>
+          {/* Small secondary: ALT + CUE only — same scale as small main.
+              Under 16:9, tuck badge down so it sits in the footer (not into the PiP). */}
+          <div
+            className={`${show16x9Frame ? 'mb-0 translate-y-6' : 'mb-1'} ${dsmCrowdedLabelClass} font-bold leading-none`}
+          >
             <AltTimerBadge
               timer={dualAltLayout ? indentedSubTimer : secondarySubTimer}
               scheduleItems={scheduleItems}
