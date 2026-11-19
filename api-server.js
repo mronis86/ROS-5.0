@@ -7105,34 +7105,45 @@ app.get('/api/completed-cues/:eventId', async (req, res) => {
   }
 });
 
+/** Persist one completed cue. Schema is event_id/item_id/user_id/completed_at (no cue_id columns). */
+async function upsertCompletedCueRow(event_id, item_id, user_id) {
+  const eid = String(event_id);
+  const iid = Number(item_id);
+  const uid = String(user_id || 'system');
+  if (!eid || !Number.isFinite(iid)) return null;
+  // One row per event+item — replace so Stop never stacks duplicates / stale L1 priors stay untouched
+  await pool.query(
+    `DELETE FROM completed_cues WHERE event_id = $1 AND item_id = $2`,
+    [eid, iid]
+  );
+  const result = await pool.query(
+    `INSERT INTO completed_cues (event_id, item_id, user_id, completed_at)
+     VALUES ($1, $2, $3, NOW()) RETURNING *`,
+    [eid, iid, uid]
+  );
+  return result.rows[0] || null;
+}
+
 app.post('/api/completed-cues', async (req, res) => {
   try {
-    const { event_id, item_id, user_id, cue_id, user_name, user_role } = req.body;
+    const { event_id, item_id, user_id } = req.body;
     
-    if (!event_id || !item_id || !user_id) {
+    if (!event_id || item_id == null || !user_id) {
       return res.status(400).json({ error: 'event_id, item_id, and user_id are required' });
     }
     
-    const result = await pool.query(
-      `INSERT INTO completed_cues (event_id, item_id, cue_id, user_id, user_name, user_role, completed_at) 
-       VALUES ($1, $2, $3, $4, $5, $6, NOW()) RETURNING *`,
-      [
-        event_id, 
-        item_id, 
-        cue_id || `CUE ${item_id}`,
-        user_id,
-        user_name || 'Unknown User',
-        user_role || 'VIEWER'
-      ]
-    );
+    const row = await upsertCompletedCueRow(event_id, item_id, user_id);
+    if (!row) {
+      return res.status(400).json({ error: 'Invalid event_id or item_id' });
+    }
     
     // Broadcast update via SSE
-    broadcastUpdate(event_id, 'completedCuesUpdated', result.rows[0]);
+    broadcastUpdate(event_id, 'completedCuesUpdated', row);
     
-    res.status(201).json(result.rows[0]);
+    res.status(201).json(row);
   } catch (error) {
-    console.error('Error marking cue as completed:', error);
-    res.status(500).json({ error: 'Failed to mark cue as completed' });
+    console.error('Error marking cue as completed:', error.message || error);
+    res.status(500).json({ error: 'Failed to mark cue as completed', details: error.message });
   }
 });
 
@@ -7160,19 +7171,22 @@ app.delete('/api/completed-cues/:eventId', async (req, res) => {
   }
 });
 
-// Delete a single completed cue
+// Delete a single completed cue (by event + item — not per-user; one grey per cue)
 app.delete('/api/completed-cues', async (req, res) => {
   try {
-    const { event_id, item_id, user_id } = req.body;
+    const { event_id, item_id } = req.body;
+    if (!event_id || item_id == null) {
+      return res.status(400).json({ error: 'event_id and item_id are required' });
+    }
     const result = await pool.query(
-      'DELETE FROM completed_cues WHERE event_id = $1 AND item_id = $2 AND user_id = $3 RETURNING *',
-      [event_id, item_id, user_id]
+      'DELETE FROM completed_cues WHERE event_id = $1 AND item_id = $2 RETURNING *',
+      [event_id, item_id]
     );
     
     // Broadcast update via SSE
-    broadcastUpdate(event_id, 'completedCuesUpdated', { removed: true, item_id, user_id });
+    broadcastUpdate(event_id, 'completedCuesUpdated', { removed: true, item_id });
     
-    res.status(204).send();
+    res.status(200).json({ success: true, removed: result.rows.length });
   } catch (error) {
     console.error('Error unmarking cue as completed:', error);
     res.status(500).json({ error: 'Failed to unmark cue as completed' });
@@ -8879,32 +8893,17 @@ app.put('/api/active-timers/stop', async (req, res) => {
       }
     }
 
-    // Only mark completed when an actually RUNNING timer is explicitly stopped.
-    // Never complete a merely LOADED cue (LOAD/JUMP replace must not grey priors).
+    // Only mark THIS cue completed when an actually RUNNING timer is explicitly stopped.
+    // Never complete a merely LOADED cue; never write priors (LOAD/JUMP must not grey above).
     const wasRunning =
       timerBeforeStop.rows.length > 0 && timerBeforeStop.rows[0].is_running === true;
     if (!skipComplete && wasRunning && item_id != null) {
       try {
-        const existing = await pool.query(
-          'SELECT * FROM completed_cues WHERE event_id = $1 AND item_id = $2 LIMIT 1',
-          [event_id, item_id]
+        const completedRow = await upsertCompletedCueRow(
+          event_id,
+          item_id,
+          user_id || 'system'
         );
-        let completedRow = existing.rows[0];
-        if (!completedRow) {
-          const completed = await pool.query(
-            `INSERT INTO completed_cues (event_id, item_id, cue_id, user_id, user_name, user_role, completed_at)
-             VALUES ($1, $2, $3, $4, $5, $6, NOW()) RETURNING *`,
-            [
-              event_id,
-              item_id,
-              `CUE ${item_id}`,
-              user_id || 'system',
-              user_name || 'Unknown User',
-              user_role || 'VIEWER',
-            ]
-          );
-          completedRow = completed.rows[0];
-        }
         if (completedRow) {
           broadcastUpdate(event_id, 'completedCuesUpdated', completedRow);
         }
