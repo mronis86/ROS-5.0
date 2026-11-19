@@ -1,4 +1,4 @@
-export const API_TOKEN_KEY = 'ros_api_token';
+﻿export const API_TOKEN_KEY = 'ros_api_token';
 export const ROS_SESSION_ENDED_EVENT = 'ros-session-ended';
 
 /**

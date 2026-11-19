@@ -38,14 +38,9 @@ import {
 } from '../lib/autoRoll';
 import { shouldUsePreshowRainbow, isActiveTimerRunning } from '../lib/usePreshowRainbow';
 import {
-  ENDSHOW_PROGRAM_TYPE,
-  PRESHOW_PROGRAM_TYPE,
-  isEndShowProgramType,
   normalizeSchedulePreshowEndTypes,
   programTypeSurfaceStyle,
-  shouldSuggestEndShowInsteadOfPreshow,
 } from '../lib/rosProgramTypeSplit';
-import PreshowEndShowWarnModal from '../components/PreshowEndShowWarnModal';
 import { shotTypePatchFromSpeakers, shotTypeManualEditPatch, defaultSpeakerLocationForProgram, parseSpeakersForShotType } from '../lib/shotTypeFromSpeakers';
 import { getAutoShotTypeFromSpeakers } from '../lib/branding';
 import {
@@ -99,11 +94,6 @@ import { sseClient } from '../services/sse-client';
 import { socketClient, onCloudModeChange } from '../services/socket-client';
 import { canAccessAccessManager, canAccessAdmin, canAccessPreFlightChecklist, canSelectOperatorRole } from '../services/auth-service';
 import { eventHasExtendEventControls, parseExtendEventControls } from '../lib/extendEventControls';
-import {
-  getPreflightFeatureEnabled,
-  parsePreflightChecklistEnabled,
-  PREFLIGHT_FEATURE_CHANGE_EVENT,
-} from '../lib/preflightFeature';
 import { shouldConfirmCueRecordingMark, CUE_RECORDING_HOVER_TITLE, CUE_RECORDING_HOVER_BODY } from '../lib/cueRecording';
 import {
   applyNewerCheckboxFields,
@@ -165,16 +155,6 @@ import ImportEventModal from '../components/ImportEventModal';
 import ConfirmModal from '../components/ConfirmModal';
 import OperatorCountdownModal from '../components/OperatorCountdownModal';
 import TimedMarkerModal, { TimedMarkerModalResult } from '../components/TimedMarkerModal';
-import QaPlanModal from '../components/QaPlanModal';
-import type { QaPlanModalResult } from '../lib/qaPlan';
-import {
-  clearQaFlashFields,
-  formatClockFromSeconds as formatQaClock,
-  isQaPlanRow,
-  parentDurationSeconds as qaParentDurationSeconds,
-  qaCueFromParent,
-  shouldAutoStartQa,
-} from '../lib/qaPlan';
 import { mapOperatorCountdownRow, operatorCountdownRemaining, formatOperatorCountdownTime } from '../lib/operatorCountdown';
 import ShowVsRehearsalPanel from '../components/ShowVsRehearsalPanel';
 import TimeToastIcon from '../components/TimeToastIcon';
@@ -387,24 +367,6 @@ interface ScheduleItem {
   speakersText: string;
   hasPPT: boolean;
   hasQA: boolean;
-  /** Linked indented Q&A timer row created from the Q&A plan modal (sub mode). */
-  qaLinkedSubId?: number | null;
-  /** 'sub' = indented Q&A timer row; 'flash' = display reminder only (no sub row). */
-  qaDisplayMode?: 'sub' | 'flash' | null;
-  /** Flash mode: label shown on Clock / DSM. */
-  qaFlashLabel?: string | null;
-  /** Flash mode: start flashing when parent remaining reaches this (seconds). */
-  qaFlashAtRemainingSeconds?: number | null;
-  /** Flash mode: auto-enable flash at threshold. */
-  qaFlashAuto?: boolean | null;
-  /** Flash mode: planned Q&A window length (seconds); informs "end of cue" threshold. */
-  qaFlashDurationSeconds?: number | null;
-  /** On Q&A timer row: auto-start when parent remaining reaches this many seconds. */
-  qaAutoStartAtRemainingSeconds?: number | null;
-  /** On Q&A timer row: managed by Q&A plan (safe to remove when unchecking Q&A). */
-  qaIsAutoQa?: boolean;
-  /** On Q&A timer row: auto-start enabled. */
-  qaAutoStart?: boolean;
   needsRecording?: boolean;
   /** Exclusive: the next Mitti play syncs this row. Only one cue is true. */
   mittiWatch?: boolean;
@@ -1601,16 +1563,6 @@ const RunOfShowPage: React.FC = () => {
   const [extendEventControlsEnabled, setExtendEventControlsEnabled] = useState(
     event?.extendEventControlsEnabled === true
   );
-  const [preflightChecklistEnabled, setPreflightChecklistEnabled] = useState(
-    event?.preflightChecklistEnabled === true
-  );
-  const [preflightFeatureEnabled, setPreflightFeatureEnabled] = useState(() =>
-    getPreflightFeatureEnabled()
-  );
-  const preflightUiAllowed =
-    !!canAccessPreFlightChecklist(user) &&
-    preflightFeatureEnabled &&
-    preflightChecklistEnabled;
   
   // Change tracking state
   const [lastChangeAt, setLastChangeAt] = useState<string | null>(null);
@@ -1635,18 +1587,6 @@ const RunOfShowPage: React.FC = () => {
     insertAfterId?: number;
   } | null>(null);
   const timedMarkerIdSeqRef = useRef(0);
-  const [qaPlanModalParentId, setQaPlanModalParentId] = useState<number | null>(null);
-  /** Sub-cue ids that already auto-started for the current parent timer run. */
-  const qaAutoStartedRef = useRef<Set<number>>(new Set());
-  /**
-   * After parent LOAD, suppress auto-QA (and WS re-apply) until parent actually STARTs
-   * (is_running). Keys may be child Q&A ids and/or parent ids.
-   */
-  const qaSuppressUntilParentRunningRef = useRef<Set<number>>(new Set());
-  /** Ref so Q&A auto-start can call the secondary-timer starter defined later. */
-  const startSecondaryTimerRef = useRef<
-    (itemId: number, options?: { fromAuto?: boolean }) => Promise<void>
-  >(async () => {});
   const [delayBlockDay, setDelayBlockDay] = useState(1);
   const [delayDuration, setDelayDuration] = useState({ hours: 0, minutes: 5, seconds: 0 });
   const [showCustomColumnModal, setShowCustomColumnModal] = useState(false);
@@ -1691,14 +1631,10 @@ const RunOfShowPage: React.FC = () => {
   const preshowAutoStartedKeyRef = useRef<string | null>(null);
   const preshowAutoStartInFlightRef = useRef(false);
   const loadCueRef = useRef<(itemId: number) => Promise<void>>(async () => {});
-  /** LOAD/JUMP stops prior timers for replace — must not mark those cues completed. */
   const suppressCompleteFromTimerStopRef = useRef(false);
   const toggleTimerRef = useRef<
     (itemId: number, options?: { ignoreOtherRunning?: boolean }) => Promise<void>
   >(async () => {});
-  /** Prevents double EndShow auto-stop for the same running timer instance. */
-  const endShowAutoStopKeyRef = useRef<string | null>(null);
-  const endShowAutoStopInFlightRef = useRef(false);
   const preshowShowDayArmedRef = useRef<PreshowShowDayArmed | null>(null);
   const [autoRollArmed, setAutoRollArmed] = useState<AutoRollArmed | null>(null);
   const [autoRollHud, setAutoRollHud] = useState('');
@@ -1833,7 +1769,6 @@ const RunOfShowPage: React.FC = () => {
   const [showInShowConfirmModal, setShowInShowConfirmModal] = useState(false);
   const [showRehearsalConfirmModal, setShowRehearsalConfirmModal] = useState(false);
   const [showClearOffsetsConfirmModal, setShowClearOffsetsConfirmModal] = useState(false);
-  const [preshowEndShowWarnOpen, setPreshowEndShowWarnOpen] = useState(false);
   const [offsetAdjustTarget, setOffsetAdjustTarget] = useState<'root' | 'prev'>('root');
   const [trackWasDurations, setTrackWasDurations] = useState(false);
   const [liveStartProjectionArmed, setLiveStartProjectionArmed] = useState(false);
@@ -2102,11 +2037,6 @@ const RunOfShowPage: React.FC = () => {
   useEffect(() => {
     hybridTimerDataRef.current = hybridTimerData;
   }, [hybridTimerData]);
-  const timerProgressRef = useRef(timerProgress);
-  useEffect(() => {
-    timerProgressRef.current = timerProgress;
-  }, [timerProgress]);
-
   useEffect(() => {
     const fromHybrid =
       hybridTimerData?.activeTimer?.item_id != null
@@ -2123,10 +2053,6 @@ const RunOfShowPage: React.FC = () => {
   const [resolumeSyncPulse, setResolumeSyncPulse] = useState(false);
   const resolumeSyncPulseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [hybridTimerProgress, setHybridTimerProgress] = useState<{ elapsed: number; total: number }>({ elapsed: 0, total: 0 });
-  const hybridTimerProgressRef = useRef(hybridTimerProgress);
-  useEffect(() => {
-    hybridTimerProgressRef.current = hybridTimerProgress;
-  }, [hybridTimerProgress]);
   const [todClockTick, setTodClockTick] = useState(0);
   const [clockOffset, setClockOffset] = useState<number>(0); // Offset between client and server clocks in ms
   const rosClockWallTime = useMemo(() => {
@@ -2146,6 +2072,21 @@ const RunOfShowPage: React.FC = () => {
   }, [showTodOnClock]);
   const [selectedTimerId, setSelectedTimerId] = useState<number | null>(null);
   const [loadedItems, setLoadedItems] = useState<Record<number, boolean>>({});
+  /** Latest timer UI for cloud reconnect — refs avoid stale state when toggling Cloud on. */
+  const reconnectTimerStateRef = useRef({
+    hybridTimerData: { activeTimer: null as Record<string, unknown> | null },
+    activeItemId: null as number | null,
+    activeTimers: {} as Record<number, boolean>,
+    loadedItems: {} as Record<number, boolean>,
+    timerProgress: {} as Record<number, { elapsed: number; total: number; startedAt: Date | null }>,
+    schedule: [] as any[],
+    eventId: null as string | undefined,
+    userId: null as string | undefined,
+    userName: '',
+    userRole: 'OPERATOR' as string,
+    completedCues: {} as Record<number, boolean>,
+    clockOffset: 0,
+  });
   const [showMenuDropdown, setShowMenuDropdown] = useState(false);
   const [showImportExportSubmenu, setShowImportExportSubmenu] = useState(false);
   const [importExportGroup, setImportExportGroup] = useState<'export' | 'import' | null>(null);
@@ -2799,7 +2740,6 @@ const RunOfShowPage: React.FC = () => {
     return Boolean(t?.is_running || t?.timer_state === 'running');
   };
 
-  /** Dim only cues that were actually stopped/completed (plus kids via markCueGroupCompleted). */
   const isItemDimmed = (itemId: number) => {
     if (!showCompletedHighlight) return false;
     // Only skip dimming while RUNNING. A just-stopped cue can still be "loaded"
@@ -2904,13 +2844,12 @@ const RunOfShowPage: React.FC = () => {
     ...extra,
   });
 
-  const getRowContainerClass = (itemId: number, index: number) => {
-    if (isShowBreakRow(itemId) && !isItemDimmed(itemId)) return SHOW_BREAK_ROW_CLASS;
-    if (isDelayBlock(itemId) && !isItemDimmed(itemId)) return DELAY_BLOCK_ROW_CLASS;
-    const row = schedule.find((s) => s.id === itemId);
-    if (isQaPlanRow(row) && !isItemDimmed(itemId)) return 'bg-amber-950/35';
-    return rowClassNames.get(itemId) || (index % 2 === 0 ? 'bg-slate-800' : 'bg-slate-900');
-  };
+  const getRowContainerClass = (itemId: number, index: number) =>
+    isShowBreakRow(itemId) && !isItemDimmed(itemId)
+      ? SHOW_BREAK_ROW_CLASS
+      : isDelayBlock(itemId) && !isItemDimmed(itemId)
+      ? DELAY_BLOCK_ROW_CLASS
+      : rowClassNames.get(itemId) || (index % 2 === 0 ? 'bg-slate-800' : 'bg-slate-900');
 
   /** CUE + Timer columns: neutral unless completed/stopped, or timed marker linked to loaded parent. */
   const getSideColumnRowClass = (itemId: number, index: number) => {
@@ -2921,18 +2860,6 @@ const RunOfShowPage: React.FC = () => {
     if (row?.isTimedMarker) {
       if (loadedCueDependents.has(itemId)) return 'bg-amber-950 border-amber-600';
       return 'bg-sky-950/50';
-    }
-    if (isQaPlanRow(row)) {
-      const qaSubOn =
-        (subCueTimers[itemId] ||
-          (hybridSecondaryTimer &&
-            itemMatchesTimerRow(itemId, hybridSecondaryTimer) &&
-            hybridSecondaryTimer.is_running === true)) &&
-        isParentCueRunning(itemId);
-      if (qaSubOn) {
-        return 'bg-amber-950/70 border-amber-500';
-      }
-      return 'bg-amber-950/40';
     }
     return index % 2 === 0 ? 'bg-slate-800' : 'bg-slate-900';
   };
@@ -3310,7 +3237,6 @@ const RunOfShowPage: React.FC = () => {
 
   /** Grey-out a stopped cue + its indented children (local Stop and Companion/WS Stop). */
   const markCueGroupCompleted = (itemId: number | null | undefined) => {
-    // LOAD/JUMP replaces the active timer via stop-all — that must not dim priors.
     if (suppressCompleteFromTimerStopRef.current) {
       console.log('⏭️ Skipping markCueGroupCompleted during LOAD/JUMP replace:', itemId);
       return;
@@ -3566,12 +3492,9 @@ const RunOfShowPage: React.FC = () => {
     }
     const localById = new Map((localItems || []).map((item: any) => [Number(item.id), item]));
     const remoteById = new Map((remoteItems || []).map((item: any) => [Number(item.id), item]));
-    // Keep brand-new local rows (timed markers / Q&A) that remote has not caught up with yet
+    // Keep brand-new local rows (e.g. timed markers) that remote has not caught up with yet
     for (const [id, local] of localById.entries()) {
-      if (
-        !remoteById.has(id) &&
-        (local?.isTimedMarker || local?.qaIsAutoQa || protectIds.has(id))
-      ) {
+      if (!remoteById.has(id) && (local?.isTimedMarker || protectIds.has(id))) {
         protectIds.add(id);
       }
     }
@@ -3608,35 +3531,6 @@ const RunOfShowPage: React.FC = () => {
           durationHours: 0,
           durationMinutes: 0,
           durationSeconds: 0,
-        };
-      }
-      // Prefer local Q&A plan rows if remote is stale/missing them
-      if (local?.qaIsAutoQa && !remote?.qaIsAutoQa) {
-        return local;
-      }
-      if (local?.qaIsAutoQa && remote?.qaIsAutoQa) {
-        return {
-          ...remote,
-          ...local,
-          isIndented: true,
-          qaIsAutoQa: true,
-        };
-      }
-      // Prefer local flash Q&A plan on parent if remote is stale
-      if (
-        local?.hasQA &&
-        String(local?.qaDisplayMode || '') === 'flash' &&
-        (!remote?.hasQA || String(remote?.qaDisplayMode || '') !== 'flash')
-      ) {
-        return {
-          ...remote,
-          hasQA: true,
-          qaDisplayMode: 'flash',
-          qaFlashLabel: local.qaFlashLabel,
-          qaFlashAtRemainingSeconds: local.qaFlashAtRemainingSeconds,
-          qaFlashAuto: local.qaFlashAuto,
-          qaFlashDurationSeconds: local.qaFlashDurationSeconds,
-          qaLinkedSubId: null,
         };
       }
       return remote;
@@ -4029,8 +3923,7 @@ const RunOfShowPage: React.FC = () => {
         setActivePreshowWarn((prev) => (prev?.itemId === cue.id ? null : prev));
       }
 
-      // Auto load+start: Operator always, or any role once show day is armed.
-      // Server claim is single-flight — only one client may start (stops multi-tab restarts).
+      // Auto load+start: Operator always, or any role once show day is armed for this key
       const canAutoStart = currentUserRole === 'OPERATOR' || showDayArmed;
       if (!canAutoStart) return;
 
@@ -4057,20 +3950,6 @@ const RunOfShowPage: React.FC = () => {
       setActivePreshowWarn(null);
       void (async () => {
         try {
-          const claim = await DatabaseService.claimPreshowAutoStart(event.id, {
-            key,
-            cueId: cue.id,
-            startHHMM,
-            claimedBy: user?.id != null ? String(user.id) : null,
-            claimedByName: user?.full_name || user?.email || null,
-          });
-          if (!claim.won) {
-            console.log('🎬 Pre-show auto start skipped — another client claimed', {
-              reason: claim.reason,
-              key,
-            });
-            return;
-          }
           console.log('🎬 Pre-show auto load+start for cue', cue.id, 'at', startHHMM, {
             role: currentUserRole,
             showDayArmed,
@@ -4318,8 +4197,6 @@ const RunOfShowPage: React.FC = () => {
   // Function to handle modal editing state (stays paused until modal closes)
   const handleModalEditing = useCallback(() => {
     console.log('✏️ Modal opened - pausing sync until closed');
-    // Sync ref immediately so remote sync / save guards see editing before re-render
-    isUserEditingRef.current = true;
     setIsUserEditing(true);
     
     // Clear any existing timeout since modal will stay open
@@ -4458,7 +4335,6 @@ const RunOfShowPage: React.FC = () => {
       showDelayBlockModal ||
       showShowBreakModal ||
       !!timedMarkerModal ||
-      qaPlanModalParentId != null ||
       showCustomColumnModal ||
       showPublicBulkModal;
     const shouldPause = isUserEditing || anyModalOpen || scheduleSyncState !== 'ready';
@@ -4477,7 +4353,7 @@ const RunOfShowPage: React.FC = () => {
         startCountdownTimer();
       }
     }
-  }, [isUserEditing, showSpeakersModal, showNotesModal, showVoModal, showVogModal, showAssetsModal, showParticipantsModal, showBackupModal, showExcelImportModal, showAgendaImportModal, showCSVImportModal, showGoogleSheetExportModal, showImportEventModal, showSpeakerManagerModal, showAddModal, showBreakoutRoomModal, showOtherRoomModal, showDelayBlockModal, showShowBreakModal, timedMarkerModal, qaPlanModalParentId, showCustomColumnModal, showPublicBulkModal, event?.id, startCountdownTimer, scheduleSyncState]);
+  }, [isUserEditing, showSpeakersModal, showNotesModal, showVoModal, showVogModal, showAssetsModal, showParticipantsModal, showBackupModal, showExcelImportModal, showAgendaImportModal, showCSVImportModal, showGoogleSheetExportModal, showImportEventModal, showSpeakerManagerModal, showAddModal, showBreakoutRoomModal, showOtherRoomModal, showDelayBlockModal, showShowBreakModal, timedMarkerModal, showCustomColumnModal, showPublicBulkModal, event?.id, startCountdownTimer, scheduleSyncState]);
   
   
   // Load user role from navigation state or localStorage
@@ -4630,7 +4506,7 @@ const RunOfShowPage: React.FC = () => {
 
   // Pre-Flight progress for BTS Crew / Admin (menu badge for selected day + takeoff hold for today's day)
   useEffect(() => {
-    if (!event?.id || !user || !preflightUiAllowed) {
+    if (!event?.id || !user || !canAccessPreFlightChecklist(user)) {
       setPreflightProgress(null);
       return;
     }
@@ -4648,7 +4524,7 @@ const RunOfShowPage: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [event?.id, event?.date, event?.numberOfDays, user, showMode, selectedDay, preflightUiAllowed]);
+  }, [event?.id, event?.date, event?.numberOfDays, user, showMode, selectedDay]);
 
   // Load change log data and sync status
   useEffect(() => {
@@ -4661,7 +4537,177 @@ const RunOfShowPage: React.FC = () => {
       setChangeLog(localChanges);
       console.log('📝 Loaded local changes:', localChanges.length);
       
-      useEffect(() => {
+        const buildActiveTimerForReconnect = useCallback(async (): Promise<Record<string, unknown> | null> => {
+    const ui = reconnectTimerStateRef.current;
+    const eventId = ui.eventId ?? event?.id;
+    const userId = ui.userId ?? user?.id;
+    if (!eventId || !userId) return null;
+
+    const hybrid = ui.hybridTimerData?.activeTimer;
+    const fromDb = await DatabaseService.getActiveTimer(eventId);
+
+    const dbLive =
+      fromDb &&
+      (fromDb.timer_state === 'running' ||
+        fromDb.timer_state === 'loaded' ||
+        fromDb.is_running === true ||
+        fromDb.is_active === true);
+
+    const toNum = (v: unknown): number | null => {
+      if (v == null || v === '') return null;
+      const n = typeof v === 'string' ? parseInt(v, 10) : Number(v);
+      return Number.isNaN(n) ? null : n;
+    };
+
+    let itemId: number | null = null;
+
+    if (hybrid?.item_id != null) {
+      itemId = toNum(hybrid.item_id);
+    } else if (ui.activeItemId != null && (ui.loadedItems[ui.activeItemId] || ui.activeTimers[ui.activeItemId])) {
+      itemId = ui.activeItemId;
+    } else {
+      const runningKey = Object.keys(ui.activeTimers).find((k) => ui.activeTimers[parseInt(k, 10)]);
+      if (runningKey) {
+        itemId = parseInt(runningKey, 10);
+      } else {
+        const loadedKey = Object.keys(ui.loadedItems).find((k) => ui.loadedItems[parseInt(k, 10)]);
+        if (loadedKey) itemId = parseInt(loadedKey, 10);
+        else if (ui.activeItemId != null) itemId = ui.activeItemId;
+        else if (dbLive && fromDb?.item_id != null) itemId = toNum(fromDb.item_id);
+      }
+    }
+
+    if (itemId == null) return null;
+
+    const isRunning =
+      hybrid?.is_running === true ||
+      Boolean(ui.activeTimers[itemId]) ||
+      (dbLive &&
+        fromDb?.item_id === itemId &&
+        (fromDb?.is_running === true || fromDb?.timer_state === 'running'));
+
+    const isLoaded =
+      isRunning ||
+      hybrid?.is_active === true ||
+      Boolean(ui.loadedItems[itemId]) ||
+      ui.activeItemId === itemId ||
+      (dbLive &&
+        fromDb?.item_id === itemId &&
+        (fromDb?.is_active === true || fromDb?.timer_state === 'loaded'));
+
+    if (!isLoaded && !isRunning) return null;
+
+    const timerState = isRunning ? 'running' : 'loaded';
+    const progress = ui.timerProgress[itemId];
+    const scheduleItems = ui.schedule.length > 0 ? ui.schedule : schedule;
+    const scheduleItem = scheduleItems.find((s) => s.id === itemId);
+    const totalSeconds =
+      hybrid?.duration_seconds ??
+      (fromDb?.item_id === itemId ? fromDb?.duration_seconds : null) ??
+      progress?.total ??
+      (scheduleItem
+        ? scheduleItem.durationHours * 3600 +
+          scheduleItem.durationMinutes * 60 +
+          scheduleItem.durationSeconds
+        : 300);
+
+    let startedAt: string | null =
+      (hybrid?.started_at as string | null | undefined) ??
+      (fromDb?.item_id === itemId ? (fromDb?.started_at as string | null) : null) ??
+      null;
+    if (isRunning && progress?.startedAt) {
+      startedAt =
+        progress.startedAt instanceof Date
+          ? progress.startedAt.toISOString()
+          : typeof progress.startedAt === 'string'
+            ? progress.startedAt
+            : startedAt;
+    }
+
+    // Far-future placeholder means "loaded / not started" — never use it for a running handoff.
+    const startedMs = startedAt ? new Date(startedAt).getTime() : NaN;
+    const startedAtIsPlausible =
+      Number.isFinite(startedMs) && startedMs < Date.now() + 60_000;
+    if (isRunning && !startedAtIsPlausible) {
+      startedAt = null;
+    }
+
+    const cueIs =
+      (hybrid?.cue_is as string | undefined) ??
+      (fromDb?.item_id === itemId ? (fromDb?.cue_is as string | undefined) : undefined) ??
+      (scheduleItem ? formatCueDisplay(scheduleItem.customFields?.cue) : null);
+
+    // Screen remaining (with clockOffset) so cloud handoff matches what operators see.
+    let remainingSeconds: number | null = null;
+    if (isRunning) {
+      if (startedAt && typeof totalSeconds === 'number' && startedAtIsPlausible) {
+        const elapsed = (Date.now() + (ui.clockOffset || 0) - startedMs) / 1000;
+        remainingSeconds = Number(totalSeconds) - elapsed;
+      } else if (
+        progress &&
+        typeof progress.total === 'number' &&
+        typeof progress.elapsed === 'number'
+      ) {
+        remainingSeconds = Number(progress.total) - Number(progress.elapsed);
+      }
+    }
+
+    return {
+      event_id: eventId,
+      item_id: itemId,
+      user_id: (hybrid?.user_id as string | undefined) ?? (fromDb?.user_id as string | undefined) ?? userId,
+      user_name: ui.userName || user?.full_name || user?.email || 'Unknown',
+      user_role: ui.userRole || currentUserRole || 'OPERATOR',
+      timer_state: timerState,
+      is_active: true,
+      is_running: isRunning,
+      started_at: startedAt,
+      last_loaded_cue_id:
+        toNum(hybrid?.last_loaded_cue_id) ??
+        (fromDb?.item_id === itemId ? toNum(fromDb?.last_loaded_cue_id) : null) ??
+        itemId,
+      cue_is: cueIs,
+      duration_seconds: totalSeconds,
+      ...(remainingSeconds != null && Number.isFinite(remainingSeconds)
+        ? { remaining_seconds: remainingSeconds }
+        : {}),
+    };
+  }, [event?.id, user?.id, user?.full_name, user?.email, schedule, currentUserRole]);
+
+  useEffect(() => {
+    reconnectTimerStateRef.current = {
+      hybridTimerData,
+      activeItemId,
+      activeTimers,
+      loadedItems,
+      completedCues,
+      timerProgress,
+      schedule,
+      eventId: event?.id,
+      userId: user?.id,
+      userName: user?.full_name || user?.email || 'Unknown',
+      userRole: currentUserRole || 'OPERATOR',
+      clockOffset,
+    };
+  }, [
+    hybridTimerData,
+    activeItemId,
+    activeTimers,
+    loadedItems,
+    completedCues,
+    timerProgress,
+    schedule,
+    event?.id,
+    user?.id,
+    user?.full_name,
+    user?.email,
+    currentUserRole,
+    clockOffset,
+  ]);
+
+
+
+useEffect(() => {
     registerRunOfShowLocalFlush(async () => {
       if (!event?.id || !user?.id) return;
       await backupScheduleData();
@@ -5487,325 +5533,6 @@ const RunOfShowPage: React.FC = () => {
         ...markerFields,
         parentId,
         parentName: parent.segmentName,
-      },
-    });
-  };
-
-  const openQaPlanModal = (parentId: number) => {
-    if (currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') {
-      alert('Only EDITORs can plan Q&A.');
-      return;
-    }
-    const parent = schedule.find((s) => Number(s.id) === Number(parentId));
-    if (!parent || isIndentedScheduleItem(parent, indentedCues) || parent.isTimedMarker) {
-      return;
-    }
-    // Claim parent row lock + pause sync (same as notes/speakers/timed-marker edit)
-    if (!beginRowAction(parentId, 'modal')) return;
-    modalLockRowIdRef.current = parentId;
-    setQaPlanModalParentId(parentId);
-  };
-
-  const clearQaPlan = async (parentId: number) => {
-    if (!beginRowAction(parentId, 'idle')) return;
-    const parent =
-      (scheduleRef.current || schedule).find((s) => Number(s.id) === Number(parentId)) ||
-      schedule.find((s) => Number(s.id) === Number(parentId));
-    if (!parent) return;
-    const linkedId = parent.qaLinkedSubId != null ? Number(parent.qaLinkedSubId) : null;
-    handleUserEditing();
-
-    let next = (scheduleRef.current || []).map((row) =>
-      Number(row.id) === Number(parentId)
-        ? stampScheduleCheckboxes(
-            clearQaFlashFields({
-              ...row,
-              hasQA: false,
-              qaLinkedSubId: null,
-              qaDisplayMode: null,
-            }),
-            ['hasQA']
-          )
-        : row
-    );
-    if (linkedId != null) {
-      const linked = next.find((row) => Number(row.id) === linkedId);
-      if (linked?.qaIsAutoQa) {
-        next = next.filter((row) => Number(row.id) !== linkedId);
-      }
-      const copy = { ...indentedCuesRef.current };
-      delete copy[linkedId];
-      indentedCuesRef.current = copy;
-      setIndentedCues(copy);
-    }
-    structureDirtyRef.current = true;
-    scheduleRef.current = next;
-    setSchedule(next);
-
-    if (linkedId != null && event?.id) {
-      try {
-        await DatabaseService.unmarkCueIndented(event.id, linkedId);
-      } catch (e) {
-        console.warn('Q&A indent clear failed:', e);
-      }
-    }
-    try {
-      if (flushSaveToAPIRef.current) await flushSaveToAPIRef.current();
-    } catch (e) {
-      console.error('Q&A clear save failed:', e);
-      alert('Could not clear the Q&A timer. Please try again.');
-    }
-    logChangeDebounced(
-      `hasQA_${parentId}`,
-      'FIELD_UPDATE',
-      `Cleared Q&A plan for "${parent.segmentName}"`,
-      {
-        changeType: 'FIELD_CHANGE',
-        itemId: parentId,
-        itemName: parent.segmentName,
-        fieldName: 'hasQA',
-        oldValue: 'TRUE',
-        newValue: 'FALSE',
-        details: { fieldType: 'checkbox', booleanChange: true, clearedQaPlan: true },
-      }
-    );
-  };
-
-  const applyQaPlanModal = async (result: QaPlanModalResult) => {
-    if (qaPlanModalParentId == null) return;
-    const parentId = qaPlanModalParentId;
-    // Prefer live ref so we don't race a stale React schedule snapshot
-    const parent =
-      (scheduleRef.current || schedule).find((s) => Number(s.id) === Number(parentId)) ||
-      schedule.find((s) => Number(s.id) === Number(parentId));
-    if (!parent) {
-      setQaPlanModalParentId(null);
-      modalLockRowIdRef.current = null;
-      handleModalClosed();
-      return;
-    }
-
-    // Keep sync paused + row lock until the save finishes
-    handleModalEditing();
-    modalLockRowIdRef.current = parentId;
-
-    // Replace prior auto Q&A row if present (flash mode has no linked row)
-    const priorLinked =
-      parent.qaLinkedSubId != null ? Number(parent.qaLinkedSubId) : null;
-    const userId = user?.id || 'local';
-    const userName = user?.full_name || user?.email || 'Local User';
-
-    // ——— Flash reminder: plan lives on parent only (no indented sub-timer row) ———
-    if (result.displayMode === 'flash') {
-      let working = [...(scheduleRef.current || [])];
-      if (priorLinked != null) {
-        const prior = working.find((row) => Number(row.id) === priorLinked);
-        if (prior?.qaIsAutoQa) {
-          working = working.filter((row) => Number(row.id) !== priorLinked);
-        }
-        const nextIndented = { ...indentedCuesRef.current };
-        delete nextIndented[priorLinked];
-        indentedCuesRef.current = nextIndented;
-        setIndentedCues(nextIndented);
-      }
-      const pIdx = working.findIndex((item) => Number(item.id) === Number(parentId));
-      if (pIdx < 0) {
-        setQaPlanModalParentId(null);
-        modalLockRowIdRef.current = null;
-        handleModalClosed();
-        alert('Could not find the parent cue for this Q&A. Please try again.');
-        return;
-      }
-      const nextSchedule = [...working];
-      nextSchedule[pIdx] = stampScheduleCheckboxes(
-        {
-          ...nextSchedule[pIdx],
-          hasQA: true,
-          qaLinkedSubId: null,
-          qaDisplayMode: 'flash',
-          qaFlashLabel: result.label || 'Q&A',
-          qaFlashAtRemainingSeconds: result.startAtRemainingSeconds,
-          qaFlashAuto: result.autoStart,
-          qaFlashDurationSeconds: result.durationSeconds,
-        },
-        ['hasQA']
-      );
-      structureDirtyRef.current = true;
-      scheduleRef.current = nextSchedule;
-      setSchedule(nextSchedule);
-      handleUserEditing();
-      setQaPlanModalParentId(null);
-
-      let saveOk = true;
-      try {
-        if (event?.id && priorLinked != null) {
-          try {
-            await DatabaseService.unmarkCueIndented(event.id, priorLinked);
-          } catch (e) {
-            console.warn('Q&A flash: prior indent clear failed:', e);
-          }
-        }
-        if (flushSaveToAPIRef.current) {
-          await flushSaveToAPIRef.current();
-        }
-      } catch (e) {
-        saveOk = false;
-        console.error('Q&A flash save failed:', e);
-        alert('Could not save the Q&A flash reminder. Please try again.');
-      } finally {
-        modalLockRowIdRef.current = null;
-        handleModalClosed();
-      }
-      if (!saveOk) return;
-      logChange('FIELD_UPDATE', `Set Q&A flash reminder on "${parent.segmentName}"`, {
-        changeType: 'FIELD_CHANGE',
-        itemId: parentId,
-        itemName: parent.segmentName,
-        fieldName: 'hasQA',
-        details: {
-          qaDisplayMode: 'flash',
-          qaFlashLabel: result.label || 'Q&A',
-          qaFlashAtRemainingSeconds: result.startAtRemainingSeconds,
-          qaFlashAuto: result.autoStart,
-          qaFlashDurationSeconds: result.durationSeconds,
-        },
-      });
-      return;
-    }
-
-    // ——— Sub timer: indented Q&A row (existing behavior) ———
-    timedMarkerIdSeqRef.current += 1;
-    const newId = Date.now() * 1000 + (timedMarkerIdSeqRef.current % 1000);
-    const hours = Math.floor(result.durationSeconds / 3600);
-    const minutes = Math.floor((result.durationSeconds % 3600) / 60);
-    const seconds = result.durationSeconds % 60;
-    const qaCue = qaCueFromParent(parent.customFields?.cue);
-
-    const qaRow: ScheduleItem = {
-      id: newId,
-      day: parent.day || selectedDay || 1,
-      // Not a Sub Cue / ALT — marker-style Q&A timer under the parent.
-      programType: '',
-      shotType: '',
-      segmentName: result.label || 'Q&A',
-      durationHours: hours,
-      durationMinutes: minutes,
-      durationSeconds: seconds,
-      notes: '',
-      assets: '',
-      speakers: '',
-      speakersText: '',
-      hasPPT: false,
-      hasQA: false,
-      timerId: 'QA',
-      customFields: { cue: qaCue },
-      isPublic: false,
-      isIndented: true,
-      qaIsAutoQa: true,
-      qaAutoStart: result.autoStart,
-      qaAutoStartAtRemainingSeconds: result.autoStart ? result.startAtRemainingSeconds : null,
-    };
-
-    // Update indented map synchronously so save/sync cannot wipe grouping
-    const nextIndented = { ...indentedCuesRef.current, [newId]: { parentId, userId, userName } };
-    if (priorLinked != null) delete nextIndented[priorLinked];
-    indentedCuesRef.current = nextIndented;
-    setIndentedCues(nextIndented);
-
-    let working = [...(scheduleRef.current || [])];
-    if (priorLinked != null) {
-      const prior = working.find((row) => Number(row.id) === priorLinked);
-      if (prior?.qaIsAutoQa) {
-        working = working.filter((row) => Number(row.id) !== priorLinked);
-      }
-    }
-    const pIdx = working.findIndex((item) => Number(item.id) === Number(parentId));
-    if (pIdx < 0) {
-      setQaPlanModalParentId(null);
-      modalLockRowIdRef.current = null;
-      handleModalClosed();
-      alert('Could not find the parent cue for this Q&A. Please try again.');
-      return;
-    }
-    let insertAt = pIdx;
-    for (let i = pIdx + 1; i < working.length; i++) {
-      if (
-        isTimedMarkerItem(working[i]) ||
-        isIndentedScheduleItem(working[i], indentedCuesRef.current) ||
-        isQaPlanRow(working[i])
-      ) {
-        insertAt = i;
-      } else {
-        break;
-      }
-    }
-    const nextSchedule = [...working];
-    nextSchedule[pIdx] = stampScheduleCheckboxes(
-      clearQaFlashFields({
-        ...nextSchedule[pIdx],
-        hasQA: true,
-        qaLinkedSubId: newId,
-        qaDisplayMode: 'sub',
-      }),
-      ['hasQA']
-    );
-    nextSchedule.splice(insertAt + 1, 0, qaRow);
-
-    // Mark structure dirty + update refs BEFORE any await so sync merge / flush see the new row
-    structureDirtyRef.current = true;
-    scheduleRef.current = nextSchedule;
-    setSchedule(nextSchedule);
-    handleUserEditing();
-    setQaPlanModalParentId(null);
-    qaAutoStartedRef.current.delete(newId);
-
-    let saveOk = true;
-    try {
-      if (event?.id && user?.id) {
-        try {
-          if (priorLinked != null) {
-            await DatabaseService.unmarkCueIndented(event.id, priorLinked);
-          }
-          await DatabaseService.markCueIndented(
-            event.id,
-            newId,
-            parentId,
-            user.id,
-            userName,
-            currentUserRole || 'EDITOR'
-          );
-        } catch (e) {
-          console.warn('Q&A indent mark failed (row still grouped locally):', e);
-        }
-      }
-
-      // Full schedule save (structure change) — await so sync cannot resume on a stale snapshot
-      if (flushSaveToAPIRef.current) {
-        await flushSaveToAPIRef.current();
-      }
-    } catch (e) {
-      saveOk = false;
-      console.error('Q&A create save failed:', e);
-      alert('Could not save the Q&A timer. Please try again.');
-    } finally {
-      modalLockRowIdRef.current = null;
-      handleModalClosed();
-    }
-
-    if (!saveOk) return;
-
-    logChange('ADD_ITEM', `Added Q&A timer under "${parent.segmentName}"`, {
-      changeType: 'ADD',
-      itemId: newId,
-      itemName: qaRow.segmentName,
-      details: {
-        parentId,
-        parentName: parent.segmentName,
-        qaCue,
-        qaDisplayMode: 'sub',
-        qaDurationSeconds: result.durationSeconds,
-        qaStartAtRemainingSeconds: result.startAtRemainingSeconds,
-        qaAutoStart: result.autoStart,
       },
     });
   };
@@ -6790,7 +6517,6 @@ const RunOfShowPage: React.FC = () => {
       showDelayBlockModal ||
       showShowBreakModal ||
       timedMarkerModal ||
-      qaPlanModalParentId != null ||
       showCustomColumnModal ||
       showPublicBulkModal
     ) {
@@ -8246,28 +7972,6 @@ const RunOfShowPage: React.FC = () => {
     return `${sign}${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  /**
-   * Parent cue is actually counting (is_running), not merely LOADED.
-   * Hybrid: is_running===true. Local: activeTimers + real startedAt.
-   */
-  const isParentIdActuallyRunning = (parentId: number): boolean => {
-    const hybridActive = hybridTimerData?.activeTimer ?? hybridTimerDataRef.current?.activeTimer;
-    if (
-      hybridActive &&
-      Number(hybridActive.item_id) === Number(parentId) &&
-      hybridActive.is_active !== false &&
-      hybridActive.is_running === true &&
-      (hybridActive.timer_state == null ||
-        hybridActive.timer_state === 'running' ||
-        hybridActive.timer_state === 'unknown')
-    ) {
-      return true;
-    }
-    const localOn = activeTimers[parentId] ?? activeTimersRef.current?.[parentId];
-    const progress = timerProgress[parentId] ?? timerProgressRef.current?.[parentId];
-    return !!localOn && progress?.startedAt != null;
-  };
-
   // Helper function to check if the parent CUE (row above) is running
   const isParentCueRunning = (itemId: number) => {
     // Check if this item is indented using the new database state
@@ -8277,20 +7981,8 @@ const RunOfShowPage: React.FC = () => {
     const parentId = indentedCues[itemId].parentId;
     if (!parentId) return false;
     
-    return isParentIdActuallyRunning(parentId);
-  };
-
-  const clearQaSuppressForParent = (parentId: number) => {
-    const suppress = qaSuppressUntilParentRunningRef.current;
-    if (suppress.size === 0) return;
-    suppress.delete(parentId);
-    Object.keys(indentedCuesRef.current || {}).forEach((childIdStr) => {
-      const childId = Number(childIdStr);
-      const link = indentedCuesRef.current?.[childId];
-      if (link?.parentId === parentId) {
-        suppress.delete(childId);
-      }
-    });
+    // Check if the parent is running
+    return activeTimers[parentId] !== undefined;
   };
 
   // Get remaining time for active timer, sub-cue timer, or loaded CUE - allow negative values
@@ -8714,7 +8406,6 @@ const RunOfShowPage: React.FC = () => {
     });
     
     // Clear local running intervals for replace — do NOT mark completed on LOAD/JUMP.
-    // Only explicit Stop (toggleTimer / Companion Stop) completes a cue + indented kids.
     Object.keys(activeTimers).forEach((timerId) => {
       if (activeTimers[parseInt(timerId)]) {
         clearInterval(activeTimerIntervals[parseInt(timerId)]);
@@ -8722,7 +8413,6 @@ const RunOfShowPage: React.FC = () => {
     });
     setActiveTimers({});
 
-    // stop-all broadcasts WS "stopped" — suppress markCueGroupCompleted for that replace.
     suppressCompleteFromTimerStopRef.current = true;
     try {
       console.log('🔄 Stopping all timers in API for event (LOAD replace, no complete):', event.id, 'user:', user.id);
@@ -8734,79 +8424,21 @@ const RunOfShowPage: React.FC = () => {
       );
       console.log('🔄 Stop all timers result:', stopResult);
     } finally {
-      // Keep suppress briefly so delayed WS stop events from this replace are ignored.
       window.setTimeout(() => {
         suppressCompleteFromTimerStopRef.current = false;
       }, 5000);
     }
     
-    // Stop any running sub-cue / Q&A timer when loading a new cue (local + hybrid).
-    // Stale hybrid secondary used to leave Q&A showing ON after parent LOAD.
-    if (secondaryTimer || hybridTimerData?.secondaryTimer) {
-      console.log('🛑 Stopping sub-cue/Q&A timer because new cue is being loaded');
+    // Stop any running sub-cue timer when loading a new cue
+    if (secondaryTimer) {
+      console.log('🛑 Stopping sub-cue timer because new cue is being loaded');
       await stopSecondaryTimer();
     }
-    // Parent LOAD must leave linked Q&A idle so AUTO can re-arm after a real START.
-    // Hard-clear every indented auto-QA child and suppress until parent actually runs.
-    const scheduleNow = scheduleRef.current || schedule;
-    const autoQaChildIds: number[] = [];
-    Object.keys(indentedCuesRef.current || {}).forEach((childIdStr) => {
-      const childId = Number(childIdStr);
-      const link = indentedCuesRef.current?.[childId];
-      if (link?.parentId !== itemId) return;
-      qaAutoStartedRef.current.delete(childId);
-      const childRow = scheduleNow.find((s) => Number(s.id) === childId);
-      if (childRow && isQaPlanRow(childRow)) {
-        autoQaChildIds.push(childId);
-        qaSuppressUntilParentRunningRef.current.add(childId);
-      }
-    });
-    if (autoQaChildIds.length > 0) {
-      qaSuppressUntilParentRunningRef.current.add(itemId);
-      const matchesAutoQaChild = (id: number | null | undefined) =>
-        id != null && autoQaChildIds.some((cid) => Number(cid) === Number(id));
-      // Clear local secondary / subCueTimers if they match a linked auto-QA child.
-      setSubCueTimers((prev) => {
-        let changed = false;
-        const next = { ...prev };
-        for (const cid of autoQaChildIds) {
-          if (next[cid]) {
-            clearInterval(next[cid]);
-            delete next[cid];
-            changed = true;
-          }
-        }
-        return changed ? next : prev;
-      });
-      setSubCueTimerProgress((prev) => {
-        let changed = false;
-        const next = { ...prev };
-        for (const cid of autoQaChildIds) {
-          if (next[cid]) {
-            delete next[cid];
-            changed = true;
-          }
-        }
-        return changed ? next : prev;
-      });
-      setSecondaryTimer((prev) => (prev && matchesAutoQaChild(prev.itemId) ? null : prev));
-      setHybridTimerData((prev) => {
-        const sec = prev?.secondaryTimer;
-        if (sec && matchesAutoQaChild(Number(sec.item_id))) {
-          return { ...prev, secondaryTimer: null };
-        }
-        return prev;
-      });
-      try {
-        console.log('🛑 loadCue: stopping DB sub-cue for auto-QA children of parent', itemId, autoQaChildIds);
-        await DatabaseService.stopSubCueTimer(event.id);
-      } catch (err) {
-        console.warn('⚠️ loadCue: stopSubCueTimer for auto-QA children failed:', err);
-      }
-    }
     
-    // Do NOT auto-complete prior cues on LOAD/JUMP — only explicit Stop marks completed.
-    // Jump-back undim for this cue (+ kids) is handled below by clearing completed/stopped.
+    // Loading a later cue means everything above it on this day is done
+    if (activeItemId !== itemId) {
+    }
+
     
     // Clear completed status for this CUE and its indented items
     setCompletedCues(prev => {
@@ -9039,7 +8671,7 @@ const RunOfShowPage: React.FC = () => {
     if (!user || !event?.id) return;
 
     const item = schedule.find(s => s.id === itemId);
-    if (!item || !isIndentedScheduleItem(item, indentedCuesRef.current)) return;
+    if (!item || !item.isIndented) return;
 
     if (subCueTimers[itemId]) {
       // Stop sub-cue timer
@@ -9125,110 +8757,6 @@ const RunOfShowPage: React.FC = () => {
       }
     }
   };
-
-  const toggleSubCueTimerRef = useRef(toggleSubCueTimer);
-  toggleSubCueTimerRef.current = toggleSubCueTimer;
-
-  // Auto-start planned Q&A only when parent remaining hits the configured threshold.
-  // Do NOT fire on parent LOAD/START — require an actively ticking parent countdown
-  // (is_running / startedAt) and remaining < total (see shouldAutoStartQa).
-  useEffect(() => {
-    const qaRows = schedule.filter(
-      (row) =>
-        row.qaIsAutoQa &&
-        row.qaAutoStart &&
-        row.qaAutoStartAtRemainingSeconds != null &&
-        Number(row.qaAutoStartAtRemainingSeconds) >= 0
-    );
-    if (qaRows.length === 0) return;
-
-    const hybridActive = hybridTimerData?.activeTimer;
-    const hybridMatchesParent = (parentId: number) =>
-      !!hybridActive && Number(hybridActive.item_id) === Number(parentId);
-    /** Hybrid parent must be actively counting — not merely LOADED/active. */
-    const hybridParentRunning = (parentId: number) =>
-      hybridMatchesParent(parentId) &&
-      hybridActive?.is_active !== false &&
-      hybridActive?.is_running === true &&
-      (hybridActive?.timer_state == null ||
-        hybridActive?.timer_state === 'running' ||
-        hybridActive?.timer_state === 'unknown');
-    /**
-     * Local activeTimers is set for RUNNING only in happy paths, but treat LOAD-safe:
-     * require a real startedAt (LOAD initializes progress with startedAt: null).
-     * Never treat loaded-only (activeItemId / loadedItems) as running.
-     */
-    const localParentRunning = (parentId: number) =>
-      !!activeTimers[parentId] && timerProgress[parentId]?.startedAt != null;
-
-    for (const qa of qaRows) {
-      const qaId = Number(qa.id);
-      const parentId = indentedCues[qaId]?.parentId;
-      if (parentId == null) continue;
-
-      if (
-        qaSuppressUntilParentRunningRef.current.has(qaId) ||
-        qaSuppressUntilParentRunningRef.current.has(parentId)
-      ) {
-        continue;
-      }
-
-      const parentRunning = hybridParentRunning(parentId) || localParentRunning(parentId);
-
-      if (!parentRunning) {
-        qaAutoStartedRef.current.delete(qaId);
-        continue;
-      }
-
-      const alreadyRunningLocally = !!subCueTimers[qaId];
-      const alreadyRunningHybrid =
-        !!hybridSecondaryTimer &&
-        itemMatchesTimerRow(qaId, hybridSecondaryTimer) &&
-        hybridSecondaryTimer.is_running === true &&
-        hybridSecondaryTimer.is_active !== false;
-      if (qaAutoStartedRef.current.has(qaId) || alreadyRunningLocally || alreadyRunningHybrid) {
-        continue;
-      }
-
-      let remaining: number | null = null;
-      let total = 0;
-      let elapsed = 0;
-      if (hybridParentRunning(parentId)) {
-        total = Number(hybridTimerProgress.total) || 0;
-        elapsed = Number(hybridTimerProgress.elapsed) || 0;
-        remaining = total - elapsed;
-      } else if (timerProgress[parentId]) {
-        total = Number(timerProgress[parentId].total) || 0;
-        elapsed = Number(timerProgress[parentId].elapsed) || 0;
-        remaining = total - elapsed;
-      }
-
-      const threshold = Number(qa.qaAutoStartAtRemainingSeconds);
-      if (
-        !shouldAutoStartQa({
-          parentRunning: true,
-          parentRemainingSeconds: remaining,
-          parentTotalSeconds: total,
-          thresholdSeconds: threshold,
-          parentElapsedSeconds: elapsed,
-        })
-      ) {
-        continue;
-      }
-
-      qaAutoStartedRef.current.add(qaId);
-      void startSecondaryTimerRef.current(qaId, { fromAuto: true });
-    }
-  }, [
-    schedule,
-    indentedCues,
-    activeTimers,
-    subCueTimers,
-    timerProgress,
-    hybridTimerProgress,
-    hybridTimerData?.activeTimer,
-    hybridSecondaryTimer,
-  ]);
 
   const resetAllStates = async () => {
     // Stop any active timers
@@ -9835,7 +9363,7 @@ const RunOfShowPage: React.FC = () => {
 
     const newClockWindow = window.open(
       clockUrl,
-      'clock',
+      'offlineShowTimer',
       'width=1920,height=1080,fullscreen=yes,menubar=no,toolbar=no,location=no,status=no,scrollbars=no,resizable=yes'
     );
 
@@ -11323,9 +10851,6 @@ const RunOfShowPage: React.FC = () => {
           const ext = await DatabaseService.getExtendEventControls(event.id);
           if (!cancelled) setExtendEventControlsEnabled(ext.enabled);
         }
-        if (!cancelled) {
-          setPreflightChecklistEnabled(parsePreflightChecklistEnabled(cal?.schedule_data));
-        }
       } catch (e) {
         console.warn('🌍 Could not load calendar event metadata:', e);
       }
@@ -11334,13 +10859,6 @@ const RunOfShowPage: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  useEffect(() => {
-    const sync = () => setPreflightFeatureEnabled(getPreflightFeatureEnabled());
-    sync();
-    window.addEventListener(PREFLIGHT_FEATURE_CHANGE_EVENT, sync);
-    return () => window.removeEventListener(PREFLIGHT_FEATURE_CHANGE_EVENT, sync);
-  }, []);
-
   }, [event?.id, event?.timezone]);
 
 
@@ -11637,9 +11155,6 @@ const RunOfShowPage: React.FC = () => {
           const numericItemId = typeof data.item_id === 'string' ? parseInt(data.item_id, 10) : data.item_id;
           const isCleared = data.timer_state === 'stopped' || data.is_active === false;
           if (isCleared) {
-            // Clear local timer UI only. Do NOT mark completed here —
-            // LOAD/JUMP replace and stop-all can arrive as stopped/inactive.
-            // Explicit Stop uses onTimerStopped → markCueGroupCompleted (or local toggleTimer).
             setHybridTimerData((prev) => (prev?.activeTimer == null ? prev : { ...prev, activeTimer: null }));
             setActiveItemId((prev) => (prev === numericItemId ? null : prev));
             setLastLoadedCueId((prev) => (prev === numericItemId ? null : prev));
@@ -11728,7 +11243,6 @@ const RunOfShowPage: React.FC = () => {
               setActiveTimers({ [numericItemId]: true });
               setActiveItemId((prev) => (prev === numericItemId ? prev : numericItemId));
               setLoadedItems(prev => (prev[numericItemId] ? prev : { ...prev, [numericItemId]: true }));
-              clearQaSuppressForParent(numericItemId);
               console.log('✅ RunOfShow: Timer RUNNING - button states updated:', numericItemId);
             } else if (data.timer_state === 'loaded') {
               setActiveTimers(prev => {
@@ -11745,6 +11259,8 @@ const RunOfShowPage: React.FC = () => {
                 setActiveItemId((prev) => (prev === numericItemId ? prev : numericItemId));
               }
               setLoadedItems(prev => (prev[numericItemId] ? prev : { ...prev, [numericItemId]: true }));
+              if (!stealRunning) {
+              }
               console.log('✅ RunOfShow: Timer LOADED - button states updated:', numericItemId);
             } else if (data.timer_state === 'stopped') {
               setActiveTimers(prev => {
@@ -11828,47 +11344,6 @@ const RunOfShowPage: React.FC = () => {
       },
       onSubCueTimerStarted: (data: any) => {
         if (data && eventIdsMatch(data.event_id, event?.id)) {
-          const numericItemId =
-            typeof data.item_id === 'string' ? parseInt(data.item_id, 10) : data.item_id;
-          // Ignore auto-QA secondary starts while parent is only LOADED/idle — never show Q&A ON.
-          if (numericItemId != null) {
-            const row = (scheduleRef.current || []).find(
-              (s) => Number(s.id) === Number(numericItemId)
-            );
-            if (row && isQaPlanRow(row)) {
-              const parentId = indentedCuesRef.current?.[Number(numericItemId)]?.parentId;
-              const hybridActive = hybridTimerDataRef.current?.activeTimer;
-              const hybridParentRunning =
-                parentId != null &&
-                !!hybridActive &&
-                Number(hybridActive.item_id) === Number(parentId) &&
-                hybridActive.is_active !== false &&
-                hybridActive.is_running === true &&
-                (hybridActive.timer_state == null ||
-                  hybridActive.timer_state === 'running' ||
-                  hybridActive.timer_state === 'unknown');
-              const localParentRunning =
-                parentId != null &&
-                !!activeTimersRef.current?.[parentId] &&
-                timerProgressRef.current?.[parentId]?.startedAt != null;
-              const suppressed =
-                qaSuppressUntilParentRunningRef.current.has(Number(numericItemId)) ||
-                (parentId != null && qaSuppressUntilParentRunningRef.current.has(parentId));
-              if (suppressed || (!hybridParentRunning && !localParentRunning)) {
-                console.warn(
-                  '🛑 Ignoring sub-cue start for auto-QA — parent not running / suppressed:',
-                  numericItemId,
-                  { parentId, suppressed, hybridParentRunning, localParentRunning }
-                );
-                if (event?.id) {
-                  void DatabaseService.stopSubCueTimer(event.id).catch((err) =>
-                    console.warn('⚠️ stopSubCueTimer after ignoring auto-QA WS start failed:', err)
-                  );
-                }
-                return;
-              }
-            }
-          }
           setHybridTimerData(prev => {
             const enrichedIncoming = enrichSubCueTimer(data);
             let secondaryTimer = enrichedIncoming;
@@ -11887,6 +11362,8 @@ const RunOfShowPage: React.FC = () => {
               secondaryTimer,
             };
           });
+          const numericItemId =
+            typeof data.item_id === 'string' ? parseInt(data.item_id, 10) : data.item_id;
           if (numericItemId != null) {
             const nextRemaining = Math.max(0, (data.duration_seconds || 0) - (data.elapsed_seconds || 0));
             const nextDuration = data.duration_seconds || 0;
@@ -11966,8 +11443,6 @@ const RunOfShowPage: React.FC = () => {
           const isStopped =
             timerData.timer_state === 'stopped' || timerData.is_active === false;
           if (isStopped) {
-            // Clear UI only — completing happens on explicit Stop (onTimerStopped / toggleTimer),
-            // never on LOAD replace / stop-all echoes that look "stopped".
             setHybridTimerData(prev => (
               prev?.activeTimer == null ? prev : { ...prev, activeTimer: null }
             ));
@@ -11976,11 +11451,6 @@ const RunOfShowPage: React.FC = () => {
             console.log('✅ RunOfShow: Timer stopped via activeTimersUpdated (no complete)');
           } else if (timerData.is_active === true) {
             if (timerData.timer_state === 'running' || timerData.is_running === true) {
-              const runningParentId =
-                typeof timerData.item_id === 'string'
-                  ? parseInt(timerData.item_id, 10)
-                  : timerData.item_id;
-              if (runningParentId != null) clearQaSuppressForParent(runningParentId);
             }
             noteCueActualStart(timerData);
             setHybridTimerData(prev => {
@@ -12453,8 +11923,6 @@ const RunOfShowPage: React.FC = () => {
       const activeTimer = hybridTimerData.activeTimer;
       const startedAt = new Date(activeTimer.started_at);
       const total = activeTimer.duration_seconds || 0;
-      const itemId = Number(activeTimer.item_id);
-      const stopKey = `${event?.id || ''}:${itemId}:${activeTimer.started_at || ''}`;
       
       console.log('⏰ Hybrid timer - Setup with clock offset:', {
         started_at: activeTimer.started_at,
@@ -12472,79 +11940,6 @@ const RunOfShowPage: React.FC = () => {
           elapsed: elapsed,
           total: total
         });
-
-        // EndShow: stop at 00:00 — do not let the cue run into overtime.
-        if (
-          total > 0 &&
-          elapsed >= total &&
-          Number.isFinite(itemId) &&
-          user &&
-          event?.id &&
-          !endShowAutoStopInFlightRef.current &&
-          endShowAutoStopKeyRef.current !== stopKey
-        ) {
-          const row = (scheduleRef.current || []).find((s) => Number(s.id) === itemId);
-          if (isEndShowProgramType(row?.programType)) {
-            endShowAutoStopKeyRef.current = stopKey;
-            endShowAutoStopInFlightRef.current = true;
-            void (async () => {
-              try {
-                console.log('🛑 EndShow timer reached 0 — auto-stopping (no overtime)');
-                await DatabaseService.stopTimer(
-                  event.id,
-                  itemId,
-                  user.id,
-                  user.full_name || user.email || 'Unknown User',
-                  currentUserRole || 'VIEWER'
-                );
-                try {
-                  await DatabaseService.markCueCompleted(
-                    event.id,
-                    itemId,
-                    row?.customFields?.cue || 'CUE',
-                    user.id,
-                    user.full_name || user.email || 'Unknown User',
-                    currentUserRole || 'VIEWER'
-                  );
-                } catch (markErr) {
-                  console.warn('EndShow auto-stop: mark completed failed', markErr);
-                }
-                setHybridTimerData((prev: any) =>
-                  prev?.activeTimer && Number(prev.activeTimer.item_id) === itemId
-                    ? { ...prev, activeTimer: null }
-                    : prev
-                );
-                setActiveTimers((prev) => {
-                  if (!(itemId in prev)) return prev;
-                  const next = { ...prev };
-                  delete next[itemId];
-                  return next;
-                });
-                setLoadedItems((prev) => {
-                  if (!(itemId in prev)) return prev;
-                  const next = { ...prev };
-                  delete next[itemId];
-                  return next;
-                });
-                setCompletedCues((prev) => ({ ...prev, [itemId]: true }));
-                setActiveItemId((prev) => (prev === itemId ? null : prev));
-                setHybridTimerProgress({ elapsed: total, total });
-                logChange(
-                  'ENDSHOW_AUTO_STOP',
-                  `EndShow timer stopped at 00:00 for "${row?.segmentName || itemId}" (no overtime)`,
-                  { itemId, fieldName: 'timer_state', newValue: 'stopped' }
-                );
-              } catch (err) {
-                console.error('❌ EndShow auto-stop failed:', err);
-                if (endShowAutoStopKeyRef.current === stopKey) {
-                  endShowAutoStopKeyRef.current = null;
-                }
-              } finally {
-                endShowAutoStopInFlightRef.current = false;
-              }
-            })();
-          }
-        }
       };
       
       // Update immediately
@@ -12568,9 +11963,7 @@ const RunOfShowPage: React.FC = () => {
         total: 0
       });
     }
-    // Intentionally omit logChange — restarting this interval every render would fight the countdown.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hybridTimerData?.activeTimer?.is_running, hybridTimerData?.activeTimer?.is_active, hybridTimerData?.activeTimer?.started_at, hybridTimerData?.activeTimer?.duration_seconds, hybridTimerData?.activeTimer, clockOffset, event?.id, user, currentUserRole]);
+  }, [hybridTimerData?.activeTimer?.is_running, hybridTimerData?.activeTimer?.is_active, hybridTimerData?.activeTimer?.started_at, hybridTimerData?.activeTimer?.duration_seconds, hybridTimerData?.activeTimer, clockOffset]);
 
   // Debug: Monitor schedule changes
   useEffect(() => {
@@ -13995,7 +13388,6 @@ const RunOfShowPage: React.FC = () => {
       // Add to stopped items for inactive styling
       setStoppedItems(prev => new Set([...prev, itemId]));
       setLastLoadedCueId((prev) => (prev === itemId ? null : prev));
-      // Dim only this cue (+ indented kids marked below) — not every row above
       logChange('TIMER_STOPPED', `Cue stopped`, { itemId });
       
       // Calculate automatic overtime from hybrid timer (positive or negative) - only when timer stops
@@ -14376,8 +13768,6 @@ const RunOfShowPage: React.FC = () => {
         
         setActiveTimerIntervals(prev => ({ ...prev, [itemId]: timer }));
         setActiveTimers(prev => ({ ...prev, [itemId]: true }));
-        // Parent actually STARTed — allow linked auto-QA to arm / auto-start at threshold.
-        clearQaSuppressForParent(itemId);
         // Don't clear completed state when starting a timer - let it persist
         
         // Start drift detection for long-running timers
@@ -14542,85 +13932,11 @@ const RunOfShowPage: React.FC = () => {
   };
 
   // Start secondary timer for indented CUEs
-  const startSecondaryTimer = async (
-    itemId: number,
-    options?: { fromAuto?: boolean }
-  ) => {
+  const startSecondaryTimer = async (itemId: number) => {
     if (!user || !event?.id) return;
     
-    const item = schedule.find(s => s.id === itemId) || scheduleRef.current?.find((s) => s.id === itemId);
-    const indent = indentedCues[itemId] || indentedCuesRef.current?.[itemId];
-    if (item && indent) {
-      // Hard gates for planned Q&A: never start while parent is only LOADED.
-      if (isQaPlanRow(item)) {
-        const parentId = indent.parentId;
-        if (parentId == null) {
-          console.warn('🛑 Refusing Q&A start — missing parent for', itemId);
-          return;
-        }
-        const parentRunning = isParentIdActuallyRunning(parentId);
-        // Parent LOADED (activeItemId match) but !is_running / no startedAt → refuse always.
-        if (!parentRunning) {
-          console.warn(
-            '🛑 Refusing Q&A start — parent not actually running (loaded/idle):',
-            itemId,
-            'parent',
-            parentId
-          );
-          return;
-        }
-        if (
-          qaSuppressUntilParentRunningRef.current.has(itemId) ||
-          qaSuppressUntilParentRunningRef.current.has(parentId)
-        ) {
-          // Suppress clears on parent START; if somehow still set while running, clear and continue only for manual.
-          if (options?.fromAuto) {
-            console.warn('🛑 Refusing auto Q&A — suppress until parent START cleared:', itemId);
-            return;
-          }
-          clearQaSuppressForParent(parentId);
-        }
-        if (options?.fromAuto) {
-          const hybridActive = hybridTimerData?.activeTimer;
-          const hybridParentRunning =
-            !!hybridActive &&
-            Number(hybridActive.item_id) === Number(parentId) &&
-            hybridActive.is_active !== false &&
-            hybridActive.is_running === true &&
-            (hybridActive.timer_state == null ||
-              hybridActive.timer_state === 'running' ||
-              hybridActive.timer_state === 'unknown');
-          let remaining: number | null = null;
-          let total = 0;
-          let elapsed = 0;
-          if (hybridParentRunning) {
-            total = Number(hybridTimerProgress.total) || 0;
-            elapsed = Number(hybridTimerProgress.elapsed) || 0;
-            remaining = total - elapsed;
-          } else if (timerProgress[parentId]) {
-            total = Number(timerProgress[parentId].total) || 0;
-            elapsed = Number(timerProgress[parentId].elapsed) || 0;
-            remaining = total - elapsed;
-          }
-          if (
-            !shouldAutoStartQa({
-              parentRunning: true,
-              parentRemainingSeconds: remaining,
-              parentTotalSeconds: total,
-              thresholdSeconds: item.qaAutoStartAtRemainingSeconds,
-              parentElapsedSeconds: elapsed,
-            })
-          ) {
-            console.warn('🛑 Refusing auto Q&A — shouldAutoStartQa gate failed:', itemId, {
-              remaining,
-              total,
-              threshold: item.qaAutoStartAtRemainingSeconds,
-            });
-            return;
-          }
-        }
-      }
-
+    const item = schedule.find(s => s.id === itemId);
+    if (item && indentedCues[itemId]) {
       const totalSeconds = item.durationHours * 3600 + item.durationMinutes * 60 + item.durationSeconds;
       
       console.log('🟠 Starting secondary timer for item:', itemId, 'Duration:', totalSeconds, 's');
@@ -14775,7 +14091,6 @@ const RunOfShowPage: React.FC = () => {
       }
     }
   };
-  startSecondaryTimerRef.current = startSecondaryTimer;
 
   // Stop secondary timer
   const stopSecondaryTimer = async () => {
@@ -14798,9 +14113,6 @@ const RunOfShowPage: React.FC = () => {
     });
     setSubCueTimers({});
     setSubCueTimerProgress({});
-    setHybridTimerData((prev) =>
-      prev?.secondaryTimer ? { ...prev, secondaryTimer: null } : prev
-    );
     
     console.log('✅ Local secondary timer state cleared');
     
@@ -15902,8 +15214,9 @@ const RunOfShowPage: React.FC = () => {
         classNames.set(item.id, RESOLUME_RUNNING_ROW_CLASS);
         return;
       }
-      // Completed/stopped cue (+ its kids) → dimmed. Only RUNNING stays green over completed.
-      if (isItemDimmed(item.id)) {
+      // Completed/stopped → dimmed purple immediately (even if still "loaded").
+      // Only a RUNNING cue stays green over completed.
+      if (showCompletedHighlight && (isCompleted || isStopped) && !isCueRunningOnStage(item.id)) {
         classNames.set(item.id, COMPLETED_ROW_CLASS);
         return;
       }
@@ -16209,7 +15522,7 @@ const RunOfShowPage: React.FC = () => {
   }
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 text-slate-200">
-      {preflightUiAllowed &&
+      {canAccessPreFlightChecklist(user) &&
       event?.id &&
       showMode === 'rehearsal' &&
       inShowNudgeEligible &&
@@ -16530,36 +15843,6 @@ const RunOfShowPage: React.FC = () => {
           setShowRoleChangeModal(false);
         }}
         eventId={event?.id || ''}
-      />
-
-      <PreshowEndShowWarnModal
-        isOpen={preshowEndShowWarnOpen}
-        onKeepPreshow={() => {
-          setPreshowEndShowWarnOpen(false);
-          setModalForm((prev) => {
-            const programType = PRESHOW_PROGRAM_TYPE;
-            const autoShot =
-              getAutoShotTypeFromSpeakers() && !prev.shotTypeManualOverride
-                ? shotTypePatchFromSpeakers(parseSpeakersForShotType(prev.speakersText), {
-                    programType,
-                  })
-                : {};
-            return { ...prev, programType, ...autoShot };
-          });
-        }}
-        onUseEndShow={() => {
-          setPreshowEndShowWarnOpen(false);
-          setModalForm((prev) => {
-            const programType = ENDSHOW_PROGRAM_TYPE;
-            const autoShot =
-              getAutoShotTypeFromSpeakers() && !prev.shotTypeManualOverride
-                ? shotTypePatchFromSpeakers(parseSpeakersForShotType(prev.speakersText), {
-                    programType,
-                  })
-                : {};
-            return { ...prev, programType, ...autoShot };
-          });
-        }}
       />
 
       {/* In-Show mode confirmation modal */}
@@ -17863,7 +17146,7 @@ const RunOfShowPage: React.FC = () => {
                         </svg>
                         Green Room
                       </button>
-                      {preflightUiAllowed && (
+                      {canAccessPreFlightChecklist(user) && (
                         <button
                           type="button"
                           onClick={() => {
@@ -21090,7 +20373,6 @@ const RunOfShowPage: React.FC = () => {
                         resumeStartMirror={showBreakResumeMirror(item, originalIndex)}
                         programTypes={programTypes}
                         programTypeColors={programTypeColors}
-                        schedule={schedule}
                         shotTypes={shotTypes}
                         currentUserRole={currentUserRole}
                         segmentSpellingMode="ros"
@@ -21108,10 +20390,6 @@ const RunOfShowPage: React.FC = () => {
                         persistAvWatch={persistAvWatch}
                         persistDsmCue={persistDsmCue}
                         onEditTimedMarker={editTimedMarkerTime}
-                        onRequestQaPlan={openQaPlanModal}
-                        onClearQaPlan={(id) => {
-                          void clearQaPlan(id);
-                        }}
                         setEditingNotesItem={setEditingNotesItem}
                         setShowNotesModal={setShowNotesModal}
                         setEditingVoItemId={setEditingVoItemId}
@@ -21192,29 +20470,11 @@ const RunOfShowPage: React.FC = () => {
                        isResolumeSynced(hybridTimerData?.activeTimer)
                    );
                    const isSubResolumePlayingRow = isSubCueResolumeSyncedRow(item.id);
-                   // Q&A/sub ON only when actually running — never from a loaded/stale secondary row.
-                   const subPlayingLocal =
-                     !!subCueTimers[item.id] ||
-                     (secondaryTimer?.itemId === item.id &&
-                       secondaryTimer?.isActive === true &&
-                       secondaryTimer?.timerState === 'running');
-                   const subPlayingHybrid =
-                     !!hybridSecondaryTimer &&
+                   const subPlaying =
+                     hybridSecondaryTimer &&
                      itemMatchesTimerRow(item.id, hybridSecondaryTimer) &&
                      hybridSecondaryTimer.is_running === true &&
-                     hybridSecondaryTimer.is_active !== false &&
-                     (hybridSecondaryTimer.timer_state == null ||
-                       hybridSecondaryTimer.timer_state === 'running' ||
-                       hybridSecondaryTimer.timer_state === 'unknown');
-                   const subPlayingRaw = subPlayingLocal || subPlayingHybrid;
-                   // Q&A ON only when secondary is playing AND parent is actually running
-                   // (never from loadedCueDependents / LOADED-only parent).
-                   const parentActuallyRunningForQa = isQaPlanRow(item)
-                     ? isParentCueRunning(item.id)
-                     : true;
-                   const subPlaying = isQaPlanRow(item)
-                     ? subPlayingRaw && parentActuallyRunningForQa
-                     : subPlayingRaw;
+                     hybridSecondaryTimer.is_active !== false;
                    return (
                    <div 
                      key={`${item.id}-${item.notes?.length || 0}-${item.speakers?.length || 0}`}
@@ -21223,12 +20483,8 @@ const RunOfShowPage: React.FC = () => {
                      title={isRowLockedByOther(item.id) ? rowEditorLabel(item.id) : undefined}
                    >
                     <div className="flex flex-col items-center justify-center h-full gap-1">
-                      <div className={`text-sm font-mono ${isQaPlanRow(item) ? 'text-amber-300 font-bold' : 'text-slate-300'}`}>
-                        {isQaPlanRow(item)
-                          ? 'Q&A'
-                          : isScheduleOnlyProgramType(item.programType)
-                            ? 'SCHEDULE ONLY'
-                            : (item.timerId || 'TIMER')}
+                      <div className="text-sm font-mono text-slate-300">
+                        {isScheduleOnlyProgramType(item.programType) ? 'SCHEDULE ONLY' : (item.timerId || 'TIMER')}
                       </div>
                       <div className="flex flex-col gap-1">
                         {isTimedMarkerItem(item) ? (
@@ -21249,61 +20505,6 @@ const RunOfShowPage: React.FC = () => {
                               title="Timed markers cannot play or stop"
                             >
                               —
-                            </button>
-                          </>
-                        ) : isQaPlanRow(item) ? (
-                          <>
-                            <button
-                              onClick={() => {
-                                if (currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR') {
-                                  alert('Only OPERATORs can start Q&A timers. Please change your role to OPERATOR.');
-                                  return;
-                                }
-                                startSecondaryTimer(item.id);
-                              }}
-                              disabled={subPlaying || currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR' || !isParentCueRunning(item.id)}
-                              className={`px-3 py-1 rounded text-sm font-bold transition-colors ${
-                                currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR'
-                                  ? 'bg-gray-500 text-gray-300 cursor-not-allowed'
-                                  : !isParentCueRunning(item.id)
-                                    ? 'bg-gray-500 text-gray-300 cursor-not-allowed'
-                                    : subPlaying
-                                      ? 'bg-amber-500 text-slate-950 cursor-default'
-                                      : 'bg-amber-600 hover:bg-amber-500 text-white'
-                              }`}
-                              title={
-                                currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR'
-                                  ? 'Only OPERATORs can start Q&A timers'
-                                  : !isParentCueRunning(item.id)
-                                    ? 'Start the parent cue first'
-                                    : item.qaAutoStart
-                                      ? `Q&A timer — auto at ${formatQaClock(Number(item.qaAutoStartAtRemainingSeconds) || 0)} remaining, or PLAY now`
-                                      : 'Start Q&A timer'
-                              }
-                            >
-                              {subPlaying ? 'Q&A ON' : item.qaAutoStart ? 'AUTO' : 'PLAY'}
-                            </button>
-                            <button
-                              onClick={() => {
-                                if (currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR') {
-                                  alert('Only OPERATORs can stop Q&A timers. Please change your role to OPERATOR.');
-                                  return;
-                                }
-                                stopSecondaryTimer();
-                              }}
-                              disabled={!subPlaying || currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR' || !isParentCueRunning(item.id)}
-                              className={`px-3 py-1 rounded text-sm font-bold transition-colors ${
-                                currentUserRole === 'VIEWER' || currentUserRole === 'EDITOR'
-                                  ? 'bg-gray-500 text-gray-300 cursor-not-allowed'
-                                  : !isParentCueRunning(item.id)
-                                    ? 'bg-gray-500 text-gray-300 cursor-not-allowed'
-                                    : subPlaying
-                                      ? 'bg-red-600 hover:bg-red-500 text-white'
-                                      : 'bg-slate-600 text-slate-400 cursor-not-allowed'
-                              }`}
-                              title="Stop Q&A timer"
-                            >
-                              STOP
                             </button>
                           </>
                         ) : isShowBreakProgramType(item.programType) ? (
@@ -21617,27 +20818,15 @@ const RunOfShowPage: React.FC = () => {
                       handleModalEditing();
                     }}
                     onChange={(e) => {
-                      const rawType = e.target.value;
-                      if (
-                        rawType === PRESHOW_PROGRAM_TYPE &&
-                        shouldSuggestEndShowInsteadOfPreshow(schedule, {
-                          atIndex: schedule.length,
-                          day: modalForm.day || selectedDay,
-                          indentedLookup: indentedCues,
-                        })
-                      ) {
-                        setPreshowEndShowWarnOpen(true);
-                        handleModalClosed();
-                        return;
-                      }
                       setModalForm((prev) => {
+                        const programType = e.target.value;
                         const autoShot =
                           getAutoShotTypeFromSpeakers() && !prev.shotTypeManualOverride
                             ? shotTypePatchFromSpeakers(parseSpeakersForShotType(prev.speakersText), {
-                                programType: rawType,
+                                programType,
                               })
                             : {};
-                        return { ...prev, programType: rawType, ...autoShot };
+                        return { ...prev, programType, ...autoShot };
                       });
                       // Resume syncing when dropdown selection is made
                       handleModalClosed();
@@ -23888,26 +23077,6 @@ const RunOfShowPage: React.FC = () => {
         );
       })()}
 
-      {qaPlanModalParentId != null && (() => {
-        const parent = schedule.find((s) => Number(s.id) === Number(qaPlanModalParentId));
-        if (!parent) return null;
-        return (
-          <QaPlanModal
-            isOpen
-            parentSegmentName={parent.segmentName || 'cue'}
-            parentDurationSeconds={qaParentDurationSeconds(parent)}
-            onClose={() => {
-              setQaPlanModalParentId(null);
-              modalLockRowIdRef.current = null;
-              handleModalClosed();
-            }}
-            onConfirm={(result) => {
-              void applyQaPlanModal(result);
-            }}
-          />
-        );
-      })()}
-
       {/* Filter View Modal — left-to-right chips (matches column strip) */}
       {showFilterModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -24428,9 +23597,7 @@ const RunOfShowPage: React.FC = () => {
       <DisplayModal
         isOpen={showDisplayModal}
         onClose={() => setShowDisplayModal(false)}
-        onSelectFullscreenTimer={openFullScreenTimer}
         onSelectOfflineTimer={openTimerDisplay}
-        eventId={event?.id}
       />
 
       {/* Pin-Notes popout: choose one or more columns, then open movable window */}
@@ -24471,7 +23638,7 @@ const RunOfShowPage: React.FC = () => {
         </>
       ) : null}
 
-      {preflightUiAllowed && event?.id && user?.id ? (
+      {canAccessPreFlightChecklist(user) && event?.id && user?.id ? (
         <PreFlightChecklistModal
           isOpen={showPreFlightChecklistModal}
           onClose={() => setShowPreFlightChecklistModal(false)}
