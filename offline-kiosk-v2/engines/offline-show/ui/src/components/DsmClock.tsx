@@ -1583,7 +1583,7 @@ const DsmClock: React.FC<DsmClockProps> = ({
               <PptClockOverlay feed={pptClockFeed} className="h-full w-full" />
             ) : null}
             {!mediaFeedActive && force16x9Ref ? (
-              <div className="absolute inset-0 flex flex-col items-center justify-end bg-zinc-950 pb-[12%]">
+              <div className="absolute inset-0 flex flex-col items-center justify-end bg-zinc-950 pb-3 md:pb-4">
                 <div
                   className="pointer-events-none absolute inset-0 opacity-40"
                   style={{
@@ -1592,9 +1592,9 @@ const DsmClock: React.FC<DsmClockProps> = ({
                     backgroundSize: '10% 10%',
                   }}
                 />
-                <div className="relative z-10 text-center text-amber-300">
-                  <div className="text-lg md:text-xl font-bold tracking-[0.22em]">16 : 9</div>
-                  <div className="mt-1 text-[10px] md:text-xs text-amber-200/75">DSM reference frame</div>
+                <div className="relative z-10 text-center text-amber-300/90">
+                  <div className="text-xs md:text-sm font-semibold tracking-[0.18em]">16 : 9</div>
+                  <div className="mt-0.5 text-[9px] md:text-[10px] text-amber-200/60">DSM reference frame</div>
                 </div>
               </div>
             ) : null}
