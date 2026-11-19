@@ -7105,34 +7105,57 @@ app.get('/api/completed-cues/:eventId', async (req, res) => {
   }
 });
 
-/** Persist one completed cue. Schema is event_id/item_id/user_id/completed_at (no cue_id columns). */
-async function upsertCompletedCueRow(event_id, item_id, user_id) {
+/**
+ * Persist one completed cue (one grey per event+item).
+ * Production still has legacy cue_id/user_name/user_role columns — always supply cue_id
+ * so NOT NULL schemas never reject the insert (that was wiping greys on refresh).
+ */
+async function upsertCompletedCueRow(event_id, item_id, user_id, extras = {}) {
   const eid = String(event_id);
   const iid = Number(item_id);
   const uid = String(user_id || 'system');
+  const cueId = String(extras.cue_id ?? extras.cueId ?? '');
+  const userName = extras.user_name != null ? String(extras.user_name) : null;
+  const userRole = extras.user_role != null ? String(extras.user_role) : null;
   if (!eid || !Number.isFinite(iid)) return null;
   // One row per event+item — replace so Stop never stacks duplicates / stale L1 priors stay untouched
   await pool.query(
     `DELETE FROM completed_cues WHERE event_id = $1 AND item_id = $2`,
     [eid, iid]
   );
-  const result = await pool.query(
-    `INSERT INTO completed_cues (event_id, item_id, user_id, completed_at)
-     VALUES ($1, $2, $3, NOW()) RETURNING *`,
-    [eid, iid, uid]
-  );
-  return result.rows[0] || null;
+  try {
+    const result = await pool.query(
+      `INSERT INTO completed_cues (event_id, item_id, cue_id, user_id, user_name, user_role, completed_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW()) RETURNING *`,
+      [eid, iid, cueId, uid, userName, userRole]
+    );
+    return result.rows[0] || null;
+  } catch (err) {
+    // Narrower schema (cue_id dropped) — core columns only
+    const msg = String(err?.message || err);
+    if (!/column .* does not exist/i.test(msg)) throw err;
+    const result = await pool.query(
+      `INSERT INTO completed_cues (event_id, item_id, user_id, completed_at)
+       VALUES ($1, $2, $3, NOW()) RETURNING *`,
+      [eid, iid, uid]
+    );
+    return result.rows[0] || null;
+  }
 }
 
 app.post('/api/completed-cues', async (req, res) => {
   try {
-    const { event_id, item_id, user_id } = req.body;
+    const { event_id, item_id, user_id, cue_id, user_name, user_role } = req.body;
     
     if (!event_id || item_id == null || !user_id) {
       return res.status(400).json({ error: 'event_id, item_id, and user_id are required' });
     }
     
-    const row = await upsertCompletedCueRow(event_id, item_id, user_id);
+    const row = await upsertCompletedCueRow(event_id, item_id, user_id, {
+      cue_id,
+      user_name,
+      user_role,
+    });
     if (!row) {
       return res.status(400).json({ error: 'Invalid event_id or item_id' });
     }
@@ -8902,7 +8925,12 @@ app.put('/api/active-timers/stop', async (req, res) => {
         const completedRow = await upsertCompletedCueRow(
           event_id,
           item_id,
-          user_id || 'system'
+          user_id || 'system',
+          {
+            cue_id: '',
+            user_name: user_name || null,
+            user_role: user_role || null,
+          }
         );
         if (completedRow) {
           broadcastUpdate(event_id, 'completedCuesUpdated', completedRow);
