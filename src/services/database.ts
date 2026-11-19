@@ -1775,29 +1775,35 @@ export class DatabaseService {
     }
   }
 
-  // Clear all completed cues for an event
+  // Clear all completed cues for an event (ROS Reset — greys must not survive refresh)
   static async clearCompletedCues(eventId: string): Promise<boolean> {
     try {
       console.log('🟣 Clearing all completed cues from Neon database via API:', { eventId });
-      
-      const response = await DatabaseService.apiFetch(`${API_BASE_URL}/api/completed-cues/${eventId}`, {
-        method: 'DELETE',
-        headers: apiJsonHeaders(),
-      });
 
-      // Must drop client cache or Reset + sync re-greys every prior cue from stale TTL
+      // Prefer apiClient so 200/204 both work and cache is invalidated in one path
+      await apiClient.clearCompletedCues(eventId);
       apiClient.invalidateCompletedCuesCache(eventId);
-
-      if (!response.ok) {
-        console.error('❌ Error clearing completed cues from Neon via API:', response.statusText);
-        return false;
-      }
 
       console.log('✅ Successfully deleted all completed cues from Neon database for event:', eventId);
       return true;
     } catch (error) {
       console.error('❌ Error clearing completed cues from Neon:', error);
-      apiClient.invalidateCompletedCuesCache(eventId);
+      // Fallback raw DELETE if apiClient path fails
+      try {
+        const response = await DatabaseService.apiFetch(`${API_BASE_URL}/api/completed-cues/${eventId}`, {
+          method: 'DELETE',
+          headers: apiJsonHeaders(),
+        });
+        apiClient.invalidateCompletedCuesCache(eventId);
+        if (response.ok || response.status === 204) {
+          console.log('✅ Fallback DELETE cleared completed cues for event:', eventId);
+          return true;
+        }
+        console.error('❌ Fallback DELETE failed:', response.status, response.statusText);
+      } catch (fallbackErr) {
+        console.error('❌ Fallback DELETE error:', fallbackErr);
+        apiClient.invalidateCompletedCuesCache(eventId);
+      }
       return false;
     }
   }

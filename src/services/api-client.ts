@@ -183,8 +183,13 @@ class ApiClient {
       }
 
       if (!publicGet) this.authBackoffUntil = 0;
-      
-      const data = await response.json();
+
+      // 204 / empty body (legacy clear endpoints) — do not throw on response.json()
+      if (response.status === 204 || response.status === 205) {
+        return undefined as T;
+      }
+      const text = await response.text();
+      const data = (text ? JSON.parse(text) : undefined) as T;
       
       // Cache the response (only for GET requests)
       if (options.method === 'GET' || !options.method) {

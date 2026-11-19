@@ -7177,17 +7177,18 @@ app.delete('/api/completed-cues/:eventId', async (req, res) => {
     console.log(`🗑️ Deleting all completed cues for event: ${eventId}`);
     
     const result = await pool.query(
-      'DELETE FROM completed_cues WHERE event_id = $1 RETURNING *',
+      'DELETE FROM completed_cues WHERE event_id = $1 RETURNING id',
       [eventId]
     );
     await clearCueActualStarts(eventId);
     
     console.log(`✅ Deleted ${result.rows.length} completed cues from Neon database for event: ${eventId}`);
     
-    // Broadcast update via SSE
+    // Broadcast so every client drops greys (ROS Reset includes completed rows)
     broadcastUpdate(eventId, 'completedCuesUpdated', { cleared: true, count: result.rows.length });
     
-    res.status(204).send();
+    // 200 + JSON (not 204) so api-client can parse without throwing
+    res.status(200).json({ cleared: true, event_id: eventId, count: result.rows.length });
   } catch (error) {
     console.error('❌ Error clearing all completed cues from Neon:', error);
     res.status(500).json({ error: 'Failed to clear all completed cues' });

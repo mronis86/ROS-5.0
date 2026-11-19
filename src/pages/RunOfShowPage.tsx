@@ -8978,21 +8978,34 @@ const RunOfShowPage: React.FC = () => {
     });
     
     setCueActualStarts({});
-    // Clear completed cues from database
+    // ROS Reset: clear THIS event's completed cues (greys), timers, overtime — Neon + local.
+    // Local greys clear first so UI never keeps completed rows while DB catches up.
+    setCompletedCues({});
+    setStoppedItems(new Set());
     if (event?.id) {
       try {
-        await DatabaseService.clearCompletedCues(event.id);
-        console.log('✅ Cleared completed cues from database');
-        
-        // Clear active_timers table
+        const cleared = await DatabaseService.clearCompletedCues(event.id);
+        console.log(cleared
+          ? '✅ Cleared completed cues from database for event'
+          : '⚠️ clearCompletedCues returned false — timers/reset will retry delete');
+
+        // Also clears completed_cues again server-side (belt-and-suspenders for Reset)
         await DatabaseService.clearAllActiveTimersForEvent(event.id);
         console.log('✅ Cleared all active timers from API');
-        
-        // Clear overtime_minutes table
+
         await DatabaseService.clearOvertimeMinutes(event.id);
         console.log('✅ Cleared overtime minutes from database');
+
+        // Confirm Neon has no completed rows left for this event (Reset must stick on refresh)
+        const leftover = await DatabaseService.getCompletedCues(event.id);
+        if (Array.isArray(leftover) && leftover.length > 0) {
+          console.warn('⚠️ Reset: completed cues still in Neon after clear — retrying delete', leftover.length);
+          await DatabaseService.clearCompletedCues(event.id);
+        }
+        setCompletedCues({});
       } catch (error) {
-        console.warn('⚠️ Failed to clear database:', error);
+        console.warn('⚠️ Failed to clear database on Reset:', error);
+        setCompletedCues({});
       }
     }
     
