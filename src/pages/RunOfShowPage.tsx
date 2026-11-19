@@ -8370,11 +8370,20 @@ const RunOfShowPage: React.FC = () => {
     );
     console.log('🔄 Stop all timers result:', stopResult);
     
-    // Stop any running sub-cue timer when loading a new cue
-    if (secondaryTimer) {
-      console.log('🛑 Stopping sub-cue timer because new cue is being loaded');
+    // Stop any running sub-cue / Q&A timer when loading a new cue (local + hybrid).
+    // Stale hybrid secondary used to leave Q&A showing ON after parent LOAD.
+    if (secondaryTimer || hybridTimerData?.secondaryTimer) {
+      console.log('🛑 Stopping sub-cue/Q&A timer because new cue is being loaded');
       await stopSecondaryTimer();
     }
+    // Parent LOAD must leave linked Q&A idle so AUTO can re-arm after a real START.
+    Object.keys(indentedCuesRef.current || {}).forEach((childIdStr) => {
+      const childId = Number(childIdStr);
+      const link = indentedCuesRef.current?.[childId];
+      if (link?.parentId === itemId) {
+        qaAutoStartedRef.current.delete(childId);
+      }
+    });
     
     // Loading a later cue means everything above it on this day is done
     if (activeItemId !== itemId) {
@@ -8755,8 +8764,8 @@ const RunOfShowPage: React.FC = () => {
   toggleSubCueTimerRef.current = toggleSubCueTimer;
 
   // Auto-start planned Q&A only when parent remaining hits the configured threshold.
-  // Do NOT fire on parent LOAD/START — loaded hybrid rows and {0,0} progress used to
-  // make remaining look like 0 and trip any threshold immediately.
+  // Do NOT fire on parent LOAD/START — require an actively ticking parent countdown
+  // (is_running / startedAt) and remaining < total (see shouldAutoStartQa).
   useEffect(() => {
     const qaRows = schedule.filter(
       (row) =>
@@ -8770,17 +8779,27 @@ const RunOfShowPage: React.FC = () => {
     const hybridActive = hybridTimerData?.activeTimer;
     const hybridMatchesParent = (parentId: number) =>
       !!hybridActive && Number(hybridActive.item_id) === Number(parentId);
+    /** Hybrid parent must be actively counting — not merely LOADED/active. */
     const hybridParentRunning = (parentId: number) =>
       hybridMatchesParent(parentId) &&
       hybridActive?.is_active !== false &&
-      (hybridActive?.is_running === true || hybridActive?.timer_state === 'running');
+      hybridActive?.is_running === true &&
+      (hybridActive?.timer_state == null ||
+        hybridActive?.timer_state === 'running' ||
+        hybridActive?.timer_state === 'unknown');
+    /**
+     * Local activeTimers is set for RUNNING only in happy paths, but treat LOAD-safe:
+     * require a real startedAt (LOAD initializes progress with startedAt: null).
+     */
+    const localParentRunning = (parentId: number) =>
+      !!activeTimers[parentId] && timerProgress[parentId]?.startedAt != null;
 
     for (const qa of qaRows) {
       const qaId = Number(qa.id);
       const parentId = indentedCues[qaId]?.parentId;
       if (parentId == null) continue;
 
-      const parentRunning = !!activeTimers[parentId] || hybridParentRunning(parentId);
+      const parentRunning = hybridParentRunning(parentId) || localParentRunning(parentId);
 
       if (!parentRunning) {
         qaAutoStartedRef.current.delete(qaId);
@@ -8799,12 +8818,15 @@ const RunOfShowPage: React.FC = () => {
 
       let remaining: number | null = null;
       let total = 0;
+      let elapsed = 0;
       if (hybridParentRunning(parentId)) {
         total = Number(hybridTimerProgress.total) || 0;
-        remaining = total - (Number(hybridTimerProgress.elapsed) || 0);
+        elapsed = Number(hybridTimerProgress.elapsed) || 0;
+        remaining = total - elapsed;
       } else if (timerProgress[parentId]) {
         total = Number(timerProgress[parentId].total) || 0;
-        remaining = total - (Number(timerProgress[parentId].elapsed) || 0);
+        elapsed = Number(timerProgress[parentId].elapsed) || 0;
+        remaining = total - elapsed;
       }
 
       const threshold = Number(qa.qaAutoStartAtRemainingSeconds);
@@ -8814,6 +8836,7 @@ const RunOfShowPage: React.FC = () => {
           parentRemainingSeconds: remaining,
           parentTotalSeconds: total,
           thresholdSeconds: threshold,
+          parentElapsedSeconds: elapsed,
         })
       ) {
         continue;
@@ -14280,6 +14303,9 @@ const RunOfShowPage: React.FC = () => {
     });
     setSubCueTimers({});
     setSubCueTimerProgress({});
+    setHybridTimerData((prev) =>
+      prev?.secondaryTimer ? { ...prev, secondaryTimer: null } : prev
+    );
     
     console.log('✅ Local secondary timer state cleared');
     
@@ -20673,11 +20699,21 @@ const RunOfShowPage: React.FC = () => {
                        isResolumeSynced(hybridTimerData?.activeTimer)
                    );
                    const isSubResolumePlayingRow = isSubCueResolumeSyncedRow(item.id);
-                   const subPlaying =
-                     hybridSecondaryTimer &&
+                   // Q&A/sub ON only when actually running — never from a loaded/stale secondary row.
+                   const subPlayingLocal =
+                     !!subCueTimers[item.id] ||
+                     (secondaryTimer?.itemId === item.id &&
+                       secondaryTimer?.isActive === true &&
+                       secondaryTimer?.timerState === 'running');
+                   const subPlayingHybrid =
+                     !!hybridSecondaryTimer &&
                      itemMatchesTimerRow(item.id, hybridSecondaryTimer) &&
                      hybridSecondaryTimer.is_running === true &&
-                     hybridSecondaryTimer.is_active !== false;
+                     hybridSecondaryTimer.is_active !== false &&
+                     (hybridSecondaryTimer.timer_state == null ||
+                       hybridSecondaryTimer.timer_state === 'running' ||
+                       hybridSecondaryTimer.timer_state === 'unknown');
+                   const subPlaying = subPlayingLocal || subPlayingHybrid;
                    return (
                    <div 
                      key={`${item.id}-${item.notes?.length || 0}-${item.speakers?.length || 0}`}

@@ -52,14 +52,22 @@ export function resolveQaStartAtRemaining(draft: QaPlanDraft, parentTotal: numbe
 
 /**
  * Gate Q&A auto-start on a real running parent countdown that has known duration.
- * Rejects the common false-positive where hybrid progress is still {0,0} on parent LOAD/START
- * (remaining would compute as 0 and trip any threshold immediately).
+ *
+ * Rejects:
+ * - parent not actively counting (caller must pass is_running / ticking, not merely LOADED)
+ * - unknown / zero total (incl. hybrid progress still {0,0} on LOAD)
+ * - remaining === total (LOAD or just-STARTED — never auto-start at full duration)
+ * - remaining above the configured threshold
+ * - elapsed < 1s (blocks the START tick before the clock has moved)
  */
 export function shouldAutoStartQa(opts: {
+  /** Must mean the parent timer is actively counting down (is_running), not merely loaded/active. */
   parentRunning: boolean;
   parentRemainingSeconds: number | null | undefined;
   parentTotalSeconds: number | null | undefined;
   thresholdSeconds: number | null | undefined;
+  /** Optional explicit elapsed; otherwise derived as total - remaining. */
+  parentElapsedSeconds?: number | null | undefined;
 }): boolean {
   if (!opts.parentRunning) return false;
   const total = Number(opts.parentTotalSeconds);
@@ -68,7 +76,15 @@ export function shouldAutoStartQa(opts: {
   if (!Number.isFinite(total) || total <= 0) return false;
   if (!Number.isFinite(remaining)) return false;
   if (!Number.isFinite(threshold) || threshold < 0) return false;
-  return remaining <= threshold;
+  // Strictly past start: LOAD/START both have remaining === total.
+  if (!(remaining < total)) return false;
+  if (!(remaining <= threshold)) return false;
+  const elapsed =
+    opts.parentElapsedSeconds != null && Number.isFinite(Number(opts.parentElapsedSeconds))
+      ? Number(opts.parentElapsedSeconds)
+      : total - remaining;
+  if (!(elapsed >= 1)) return false;
+  return true;
 }
 
 export function formatClockFromSeconds(total: number): string {
