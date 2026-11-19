@@ -2754,12 +2754,54 @@ const RunOfShowPage: React.FC = () => {
     return Boolean(t?.is_running || t?.timer_state === 'running');
   };
 
+  /**
+   * Furthest completed/stopped index per day. Used so "Show completed" greys the
+   * cumulative range (that cue and every row above it), not only the single Stop row.
+   */
+  const completedThroughIndexByDay = useMemo(() => {
+    const map = new Map<number, number>();
+    schedule.forEach((item, index) => {
+      if (isCueRunningOnStage(item.id)) return;
+      if (!isItemCompleted(item.id) && !stoppedItems.has(item.id)) return;
+      const day = Number(item.day || 1);
+      map.set(day, Math.max(map.get(day) ?? -1, index));
+    });
+    return map;
+  }, [
+    schedule,
+    completedCues,
+    stoppedItems,
+    activeTimers,
+    hybridTimerData?.activeTimer?.item_id,
+    hybridTimerData?.activeTimer?.is_running,
+    hybridTimerData?.activeTimer?.timer_state,
+    hybridTimerData?.activeTimer?.is_active,
+  ]);
+
+  /** Loaded (not running) cue — allow re-jump without cumulative grey covering it. */
+  const isCueLoadedNotRunning = (itemId: number) => {
+    if (isCueRunningOnStage(itemId)) return false;
+    const t = hybridTimerData?.activeTimer;
+    const fromHybrid = normalizeScheduleItemId(t?.item_id);
+    if (fromHybrid === itemId && t?.is_active !== false) return true;
+    return activeItemId === itemId;
+  };
+
   const isItemDimmed = (itemId: number) => {
     if (!showCompletedHighlight) return false;
     // Only skip dimming while RUNNING. A just-stopped cue can still be "loaded"
     // and must go straight to dimmed-complete (not a bright purple last-loaded flash).
     if (isCueRunningOnStage(itemId)) return false;
-    return isItemCompleted(itemId) || stoppedItems.has(itemId);
+    if (isItemCompleted(itemId) || stoppedItems.has(itemId)) return true;
+    // Cumulative: any later same-day completed cue implies this row is done
+    const index = schedule.findIndex((s) => s.id === itemId);
+    if (index < 0) return false;
+    const day = Number(schedule[index].day || 1);
+    const through = completedThroughIndexByDay.get(day) ?? -1;
+    if (index > through) return false;
+    // Gap above furthest completed (or priors not yet persisted) — dim unless re-loaded
+    if (isCueLoadedNotRunning(itemId)) return false;
+    return true;
   };
   const isDelayBlock = (itemId: number) =>
     schedule.some(item => item.id === itemId && item.programType === 'Delay Block');
@@ -3307,6 +3349,12 @@ const RunOfShowPage: React.FC = () => {
       if (Number(list[i].day || 1) !== liveDay) continue;
       markCueGroupCompleted(list[i].id);
     }
+  };
+
+  /** Stop/clear: this cue and every earlier same-day cue are done (cumulative completed range). */
+  const completeCuesThroughOnDay = (itemId: number | null | undefined) => {
+    completePriorCuesOnDay(itemId);
+    markCueGroupCompleted(itemId);
   };
   const trackWasDurationsRef = useRef(trackWasDurations);
   const originalDurationsRef = useRef(originalDurations);
@@ -11211,7 +11259,7 @@ const RunOfShowPage: React.FC = () => {
                 return next;
               });
             }
-            markCueGroupCompleted(numericItemId);
+            completeCuesThroughOnDay(numericItemId);
             console.log('✅ RunOfShow: Timer cleared from timerUpdated:', numericItemId);
             return;
           }
@@ -11338,7 +11386,7 @@ const RunOfShowPage: React.FC = () => {
               return next;
             });
           }
-          markCueGroupCompleted(numericItemId);
+          completeCuesThroughOnDay(numericItemId);
           console.log('✅ RunOfShow: Timer cleared via WebSocket');
         }
       },
@@ -11484,7 +11532,7 @@ const RunOfShowPage: React.FC = () => {
             ));
             setActiveItemId(null);
             setActiveTimers({});
-            markCueGroupCompleted(timerData.item_id);
+            completeCuesThroughOnDay(timerData.item_id);
             console.log('✅ RunOfShow: Timer stopped via WebSocket - cleared timer data and old state');
           } else if (timerData.is_active === true) {
             if (timerData.timer_state === 'running' || timerData.is_running === true) {
@@ -13503,6 +13551,8 @@ const RunOfShowPage: React.FC = () => {
       // Add to stopped items for inactive styling
       setStoppedItems(prev => new Set([...prev, itemId]));
       setLastLoadedCueId((prev) => (prev === itemId ? null : prev));
+      // Grey this cue and every row above it on the same day (cumulative completed range)
+      completePriorCuesOnDay(itemId);
       logChange('TIMER_STOPPED', `Cue stopped`, { itemId });
       
       // Calculate automatic overtime from hybrid timer (positive or negative) - only when timer stops
@@ -15331,9 +15381,9 @@ const RunOfShowPage: React.FC = () => {
         classNames.set(item.id, RESOLUME_RUNNING_ROW_CLASS);
         return;
       }
-      // Completed/stopped → dimmed purple immediately (even if still "loaded").
+      // Cumulative completed range (this row and all above through furthest completed).
       // Only a RUNNING cue stays green over completed.
-      if (showCompletedHighlight && (isCompleted || isStopped) && !isCueRunningOnStage(item.id)) {
+      if (isItemDimmed(item.id)) {
         classNames.set(item.id, COMPLETED_ROW_CLASS);
         return;
       }
@@ -15413,6 +15463,7 @@ const RunOfShowPage: React.FC = () => {
     hybridTimerData?.secondaryTimer?.time_source,
     completedCues,
     stoppedItems,
+    completedThroughIndexByDay,
     loadedCueDependents,
     indentedCues,
     activeItemId,
