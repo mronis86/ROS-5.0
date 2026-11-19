@@ -50,6 +50,27 @@ export function resolveQaStartAtRemaining(draft: QaPlanDraft, parentTotal: numbe
   return at;
 }
 
+/**
+ * Gate Q&A auto-start on a real running parent countdown that has known duration.
+ * Rejects the common false-positive where hybrid progress is still {0,0} on parent LOAD/START
+ * (remaining would compute as 0 and trip any threshold immediately).
+ */
+export function shouldAutoStartQa(opts: {
+  parentRunning: boolean;
+  parentRemainingSeconds: number | null | undefined;
+  parentTotalSeconds: number | null | undefined;
+  thresholdSeconds: number | null | undefined;
+}): boolean {
+  if (!opts.parentRunning) return false;
+  const total = Number(opts.parentTotalSeconds);
+  const remaining = Number(opts.parentRemainingSeconds);
+  const threshold = Number(opts.thresholdSeconds);
+  if (!Number.isFinite(total) || total <= 0) return false;
+  if (!Number.isFinite(remaining)) return false;
+  if (!Number.isFinite(threshold) || threshold < 0) return false;
+  return remaining <= threshold;
+}
+
 export function formatClockFromSeconds(total: number): string {
   const s = Math.max(0, Math.floor(total));
   const h = Math.floor(s / 3600);

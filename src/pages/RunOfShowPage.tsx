@@ -156,6 +156,7 @@ import {
   isQaPlanRow,
   parentDurationSeconds as qaParentDurationSeconds,
   qaCueFromParent,
+  shouldAutoStartQa,
 } from '../lib/qaPlan';
 import { mapOperatorCountdownRow, operatorCountdownRemaining, formatOperatorCountdownTime } from '../lib/operatorCountdown';
 import ShowVsRehearsalPanel from '../components/ShowVsRehearsalPanel';
@@ -1610,6 +1611,8 @@ const RunOfShowPage: React.FC = () => {
   const [qaPlanModalParentId, setQaPlanModalParentId] = useState<number | null>(null);
   /** Sub-cue ids that already auto-started for the current parent timer run. */
   const qaAutoStartedRef = useRef<Set<number>>(new Set());
+  /** Ref so Q&A auto-start can call the secondary-timer starter defined later. */
+  const startSecondaryTimerRef = useRef<(itemId: number) => Promise<void>>(async () => {});
   const [delayBlockDay, setDelayBlockDay] = useState(1);
   const [delayDuration, setDelayDuration] = useState({ hours: 0, minutes: 5, seconds: 0 });
   const [showCustomColumnModal, setShowCustomColumnModal] = useState(false);
@@ -8703,7 +8706,9 @@ const RunOfShowPage: React.FC = () => {
   const toggleSubCueTimerRef = useRef(toggleSubCueTimer);
   toggleSubCueTimerRef.current = toggleSubCueTimer;
 
-  // Auto-start planned Q&A ALT when parent remaining hits the threshold.
+  // Auto-start planned Q&A only when parent remaining hits the configured threshold.
+  // Do NOT fire on parent LOAD/START — loaded hybrid rows and {0,0} progress used to
+  // make remaining look like 0 and trip any threshold immediately.
   useEffect(() => {
     const qaRows = schedule.filter(
       (row) =>
@@ -8714,39 +8719,60 @@ const RunOfShowPage: React.FC = () => {
     );
     if (qaRows.length === 0) return;
 
+    const hybridActive = hybridTimerData?.activeTimer;
+    const hybridMatchesParent = (parentId: number) =>
+      !!hybridActive && Number(hybridActive.item_id) === Number(parentId);
+    const hybridParentRunning = (parentId: number) =>
+      hybridMatchesParent(parentId) &&
+      hybridActive?.is_active !== false &&
+      (hybridActive?.is_running === true || hybridActive?.timer_state === 'running');
+
     for (const qa of qaRows) {
       const qaId = Number(qa.id);
       const parentId = indentedCues[qaId]?.parentId;
       if (parentId == null) continue;
 
-      const parentRunning =
-        !!activeTimers[parentId] ||
-        (hybridTimerData?.activeTimer &&
-          Number(hybridTimerData.activeTimer.item_id) === Number(parentId));
+      const parentRunning = !!activeTimers[parentId] || hybridParentRunning(parentId);
 
       if (!parentRunning) {
         qaAutoStartedRef.current.delete(qaId);
         continue;
       }
 
-      if (qaAutoStartedRef.current.has(qaId) || subCueTimers[qaId]) continue;
+      const alreadyRunningLocally = !!subCueTimers[qaId];
+      const alreadyRunningHybrid =
+        !!hybridSecondaryTimer &&
+        itemMatchesTimerRow(qaId, hybridSecondaryTimer) &&
+        hybridSecondaryTimer.is_running === true &&
+        hybridSecondaryTimer.is_active !== false;
+      if (qaAutoStartedRef.current.has(qaId) || alreadyRunningLocally || alreadyRunningHybrid) {
+        continue;
+      }
 
       let remaining: number | null = null;
-      if (
-        hybridTimerData?.activeTimer &&
-        Number(hybridTimerData.activeTimer.item_id) === Number(parentId)
-      ) {
-        remaining = hybridTimerProgress.total - hybridTimerProgress.elapsed;
+      let total = 0;
+      if (hybridParentRunning(parentId)) {
+        total = Number(hybridTimerProgress.total) || 0;
+        remaining = total - (Number(hybridTimerProgress.elapsed) || 0);
       } else if (timerProgress[parentId]) {
-        remaining = timerProgress[parentId].total - timerProgress[parentId].elapsed;
+        total = Number(timerProgress[parentId].total) || 0;
+        remaining = total - (Number(timerProgress[parentId].elapsed) || 0);
       }
-      if (remaining == null) continue;
 
       const threshold = Number(qa.qaAutoStartAtRemainingSeconds);
-      if (remaining <= threshold) {
-        qaAutoStartedRef.current.add(qaId);
-        void toggleSubCueTimerRef.current(qaId);
+      if (
+        !shouldAutoStartQa({
+          parentRunning: true,
+          parentRemainingSeconds: remaining,
+          parentTotalSeconds: total,
+          thresholdSeconds: threshold,
+        })
+      ) {
+        continue;
       }
+
+      qaAutoStartedRef.current.add(qaId);
+      void startSecondaryTimerRef.current(qaId);
     }
   }, [
     schedule,
@@ -8756,6 +8782,7 @@ const RunOfShowPage: React.FC = () => {
     timerProgress,
     hybridTimerProgress,
     hybridTimerData?.activeTimer,
+    hybridSecondaryTimer,
   ]);
 
   const resetAllStates = async () => {
@@ -14180,6 +14207,7 @@ const RunOfShowPage: React.FC = () => {
       }
     }
   };
+  startSecondaryTimerRef.current = startSecondaryTimer;
 
   // Stop secondary timer
   const stopSecondaryTimer = async () => {
