@@ -3519,9 +3519,12 @@ const RunOfShowPage: React.FC = () => {
     }
     const localById = new Map((localItems || []).map((item: any) => [Number(item.id), item]));
     const remoteById = new Map((remoteItems || []).map((item: any) => [Number(item.id), item]));
-    // Keep brand-new local rows (e.g. timed markers) that remote has not caught up with yet
+    // Keep brand-new local rows (timed markers / Q&A) that remote has not caught up with yet
     for (const [id, local] of localById.entries()) {
-      if (!remoteById.has(id) && (local?.isTimedMarker || protectIds.has(id))) {
+      if (
+        !remoteById.has(id) &&
+        (local?.isTimedMarker || local?.qaIsAutoQa || protectIds.has(id))
+      ) {
         protectIds.add(id);
       }
     }
@@ -3558,6 +3561,18 @@ const RunOfShowPage: React.FC = () => {
           durationHours: 0,
           durationMinutes: 0,
           durationSeconds: 0,
+        };
+      }
+      // Prefer local Q&A plan rows if remote is stale/missing them
+      if (local?.qaIsAutoQa && !remote?.qaIsAutoQa) {
+        return local;
+      }
+      if (local?.qaIsAutoQa && remote?.qaIsAutoQa) {
+        return {
+          ...remote,
+          ...local,
+          isIndented: true,
+          qaIsAutoQa: true,
         };
       }
       return remote;
@@ -4239,6 +4254,8 @@ const RunOfShowPage: React.FC = () => {
   // Function to handle modal editing state (stays paused until modal closes)
   const handleModalEditing = useCallback(() => {
     console.log('✏️ Modal opened - pausing sync until closed');
+    // Sync ref immediately so remote sync / save guards see editing before re-render
+    isUserEditingRef.current = true;
     setIsUserEditing(true);
     
     // Clear any existing timeout since modal will stay open
@@ -5173,47 +5190,56 @@ const RunOfShowPage: React.FC = () => {
     if (!parent || isIndentedScheduleItem(parent, indentedCues) || parent.isTimedMarker) {
       return;
     }
-    handleModalEditing();
+    // Claim parent row lock + pause sync (same as notes/speakers/timed-marker edit)
+    if (!beginRowAction(parentId, 'modal')) return;
+    modalLockRowIdRef.current = parentId;
     setQaPlanModalParentId(parentId);
   };
 
   const clearQaPlan = async (parentId: number) => {
-    const parent = schedule.find((s) => Number(s.id) === Number(parentId));
+    if (!beginRowAction(parentId, 'idle')) return;
+    const parent =
+      (scheduleRef.current || schedule).find((s) => Number(s.id) === Number(parentId)) ||
+      schedule.find((s) => Number(s.id) === Number(parentId));
     if (!parent) return;
     const linkedId = parent.qaLinkedSubId != null ? Number(parent.qaLinkedSubId) : null;
     handleUserEditing();
-    setSchedule((prev) => {
-      let next = prev.map((row) =>
-        Number(row.id) === Number(parentId)
-          ? stampScheduleCheckboxes(
-              { ...row, hasQA: false, qaLinkedSubId: null },
-              ['hasQA']
-            )
-          : row
-      );
-      if (linkedId != null) {
-        const linked = next.find((row) => Number(row.id) === linkedId);
-        if (linked?.qaIsAutoQa) {
-          next = next.filter((row) => Number(row.id) !== linkedId);
-        }
-      }
-      return next;
-    });
+
+    let next = (scheduleRef.current || []).map((row) =>
+      Number(row.id) === Number(parentId)
+        ? stampScheduleCheckboxes(
+            { ...row, hasQA: false, qaLinkedSubId: null },
+            ['hasQA']
+          )
+        : row
+    );
     if (linkedId != null) {
-      setIndentedCues((prev) => {
-        const copy = { ...prev };
-        delete copy[linkedId];
-        return copy;
-      });
-      if (event?.id) {
-        try {
-          await DatabaseService.unmarkCueIndented(event.id, linkedId);
-        } catch (e) {
-          console.warn('Q&A indent clear failed:', e);
-        }
+      const linked = next.find((row) => Number(row.id) === linkedId);
+      if (linked?.qaIsAutoQa) {
+        next = next.filter((row) => Number(row.id) !== linkedId);
+      }
+      const copy = { ...indentedCuesRef.current };
+      delete copy[linkedId];
+      indentedCuesRef.current = copy;
+      setIndentedCues(copy);
+    }
+    structureDirtyRef.current = true;
+    scheduleRef.current = next;
+    setSchedule(next);
+
+    if (linkedId != null && event?.id) {
+      try {
+        await DatabaseService.unmarkCueIndented(event.id, linkedId);
+      } catch (e) {
+        console.warn('Q&A indent clear failed:', e);
       }
     }
-    void Promise.resolve(persistScheduleCheckboxes?.(parentId, { hasQA: false })).catch(() => {});
+    try {
+      if (flushSaveToAPIRef.current) await flushSaveToAPIRef.current();
+    } catch (e) {
+      console.error('Q&A clear save failed:', e);
+      alert('Could not clear the Q&A timer. Please try again.');
+    }
     logChangeDebounced(
       `hasQA_${parentId}`,
       'FIELD_UPDATE',
@@ -5233,12 +5259,20 @@ const RunOfShowPage: React.FC = () => {
   const applyQaPlanModal = async (result: QaPlanModalResult) => {
     if (qaPlanModalParentId == null) return;
     const parentId = qaPlanModalParentId;
-    const parent = schedule.find((s) => Number(s.id) === Number(parentId));
+    // Prefer live ref so we don't race a stale React schedule snapshot
+    const parent =
+      (scheduleRef.current || schedule).find((s) => Number(s.id) === Number(parentId)) ||
+      schedule.find((s) => Number(s.id) === Number(parentId));
     if (!parent) {
       setQaPlanModalParentId(null);
+      modalLockRowIdRef.current = null;
       handleModalClosed();
       return;
     }
+
+    // Keep sync paused + row lock until the save finishes
+    handleModalEditing();
+    modalLockRowIdRef.current = parentId;
 
     // Replace prior auto Q&A row if present
     const priorLinked =
@@ -5251,6 +5285,7 @@ const RunOfShowPage: React.FC = () => {
     const seconds = result.durationSeconds % 60;
     const userId = user?.id || 'local';
     const userName = user?.full_name || user?.email || 'Local User';
+    const qaCue = qaCueFromParent(parent.customFields?.cue);
 
     const qaRow: ScheduleItem = {
       id: newId,
@@ -5269,7 +5304,7 @@ const RunOfShowPage: React.FC = () => {
       hasPPT: false,
       hasQA: false,
       timerId: 'QA',
-      customFields: { cue: qaCueFromParent(parent.customFields?.cue) },
+      customFields: { cue: qaCue },
       isPublic: false,
       isIndented: true,
       qaIsAutoQa: true,
@@ -5277,66 +5312,89 @@ const RunOfShowPage: React.FC = () => {
       qaAutoStartAtRemainingSeconds: result.autoStart ? result.startAtRemainingSeconds : null,
     };
 
-    setIndentedCues((prev) => {
-      const next = { ...prev, [newId]: { parentId, userId, userName } };
-      if (priorLinked != null) delete next[priorLinked];
-      return next;
-    });
+    // Update indented map synchronously so save/sync cannot wipe grouping
+    const nextIndented = { ...indentedCuesRef.current, [newId]: { parentId, userId, userName } };
+    if (priorLinked != null) delete nextIndented[priorLinked];
+    indentedCuesRef.current = nextIndented;
+    setIndentedCues(nextIndented);
 
-    setSchedule((prev) => {
-      let working = prev;
-      if (priorLinked != null) {
-        const prior = working.find((row) => Number(row.id) === priorLinked);
-        if (prior?.qaIsAutoQa) {
-          working = working.filter((row) => Number(row.id) !== priorLinked);
-        }
-      }
-      const pIdx = working.findIndex((item) => Number(item.id) === Number(parentId));
-      if (pIdx < 0) return working;
-      let insertAt = pIdx;
-      for (let i = pIdx + 1; i < working.length; i++) {
-        if (
-          isTimedMarkerItem(working[i]) ||
-          isIndentedScheduleItem(working[i], indentedCuesRef.current)
-        ) {
-          insertAt = i;
-        } else {
-          break;
-        }
-      }
-      const next = [...working];
-      next[pIdx] = stampScheduleCheckboxes(
-        { ...next[pIdx], hasQA: true, qaLinkedSubId: newId },
-        ['hasQA']
-      );
-      next.splice(insertAt + 1, 0, qaRow);
-      return next;
-    });
-
-    handleUserEditing();
-    setQaPlanModalParentId(null);
-    handleModalClosed();
-    qaAutoStartedRef.current.delete(newId);
-
-    if (event?.id && user?.id) {
-      try {
-        if (priorLinked != null) {
-          await DatabaseService.unmarkCueIndented(event.id, priorLinked);
-        }
-        await DatabaseService.markCueIndented(
-          event.id,
-          newId,
-          parentId,
-          user.id,
-          userName,
-          currentUserRole || 'EDITOR'
-        );
-      } catch (e) {
-        console.warn('Q&A indent mark failed (row still grouped locally):', e);
+    let working = [...(scheduleRef.current || [])];
+    if (priorLinked != null) {
+      const prior = working.find((row) => Number(row.id) === priorLinked);
+      if (prior?.qaIsAutoQa) {
+        working = working.filter((row) => Number(row.id) !== priorLinked);
       }
     }
+    const pIdx = working.findIndex((item) => Number(item.id) === Number(parentId));
+    if (pIdx < 0) {
+      setQaPlanModalParentId(null);
+      modalLockRowIdRef.current = null;
+      handleModalClosed();
+      alert('Could not find the parent cue for this Q&A. Please try again.');
+      return;
+    }
+    let insertAt = pIdx;
+    for (let i = pIdx + 1; i < working.length; i++) {
+      if (
+        isTimedMarkerItem(working[i]) ||
+        isIndentedScheduleItem(working[i], indentedCuesRef.current) ||
+        isQaPlanRow(working[i])
+      ) {
+        insertAt = i;
+      } else {
+        break;
+      }
+    }
+    const nextSchedule = [...working];
+    nextSchedule[pIdx] = stampScheduleCheckboxes(
+      { ...nextSchedule[pIdx], hasQA: true, qaLinkedSubId: newId },
+      ['hasQA']
+    );
+    nextSchedule.splice(insertAt + 1, 0, qaRow);
 
-    void Promise.resolve(persistScheduleCheckboxes?.(parentId, { hasQA: true })).catch(() => {});
+    // Mark structure dirty + update refs BEFORE any await so sync merge / flush see the new row
+    structureDirtyRef.current = true;
+    scheduleRef.current = nextSchedule;
+    setSchedule(nextSchedule);
+    handleUserEditing();
+    setQaPlanModalParentId(null);
+    qaAutoStartedRef.current.delete(newId);
+
+    let saveOk = true;
+    try {
+      if (event?.id && user?.id) {
+        try {
+          if (priorLinked != null) {
+            await DatabaseService.unmarkCueIndented(event.id, priorLinked);
+          }
+          await DatabaseService.markCueIndented(
+            event.id,
+            newId,
+            parentId,
+            user.id,
+            userName,
+            currentUserRole || 'EDITOR'
+          );
+        } catch (e) {
+          console.warn('Q&A indent mark failed (row still grouped locally):', e);
+        }
+      }
+
+      // Full schedule save (structure change) — await so sync cannot resume on a stale snapshot
+      if (flushSaveToAPIRef.current) {
+        await flushSaveToAPIRef.current();
+      }
+    } catch (e) {
+      saveOk = false;
+      console.error('Q&A create save failed:', e);
+      alert('Could not save the Q&A timer. Please try again.');
+    } finally {
+      modalLockRowIdRef.current = null;
+      handleModalClosed();
+    }
+
+    if (!saveOk) return;
+
     logChange('ADD_ITEM', `Added Q&A timer under "${parent.segmentName}"`, {
       changeType: 'ADD',
       itemId: newId,
@@ -5344,6 +5402,7 @@ const RunOfShowPage: React.FC = () => {
       details: {
         parentId,
         parentName: parent.segmentName,
+        qaCue,
         qaDurationSeconds: result.durationSeconds,
         qaStartAtRemainingSeconds: result.startAtRemainingSeconds,
         qaAutoStart: result.autoStart,
@@ -23223,6 +23282,7 @@ const RunOfShowPage: React.FC = () => {
             parentDurationSeconds={qaParentDurationSeconds(parent)}
             onClose={() => {
               setQaPlanModalParentId(null);
+              modalLockRowIdRef.current = null;
               handleModalClosed();
             }}
             onConfirm={(result) => {
