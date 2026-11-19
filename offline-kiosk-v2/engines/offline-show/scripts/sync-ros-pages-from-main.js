@@ -10,7 +10,8 @@ const fs = require('fs');
 const path = require('path');
 
 const offlineRoot = path.join(__dirname, '..');
-const repoRoot = path.join(offlineRoot, '..');
+// scripts/ → offline-show → engines → offline-kiosk-v2 → repo root
+const repoRoot = path.join(offlineRoot, '..', '..', '..');
 const mainSrc = path.join(repoRoot, 'src');
 const offSrc = path.join(offlineRoot, 'ui', 'src');
 
@@ -96,6 +97,11 @@ const COMPONENTS_FULL = [
   'components/ConfirmModal.tsx',
   'components/PinNotesColumnModal.tsx',
   'components/AltTimerBadge.tsx',
+  'components/QaPlanModal.tsx',
+  'components/QaFlashReminder.tsx',
+  'components/Clock.tsx',
+  'components/DsmClock.tsx',
+  'components/FullScreenTimer.tsx',
   'components/StartTimeColumnCell.tsx',
   'components/SegmentSpellingFlag.tsx',
   'components/DuplicateCueFlag.tsx',

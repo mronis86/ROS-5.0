@@ -12,6 +12,7 @@ import { OvertimeClockText } from '../lib/OvertimeClockText';
 import { findTopPreshowCue, isPreshowTimerMessage } from '../lib/preshowCountdown';
 import { shouldUsePreshowRainbow } from '../lib/usePreshowRainbow';
 import { AltTimerBadge } from './AltTimerBadge';
+import { QaFlashReminder } from './QaFlashReminder';
 import CueCardClockOverlay from './CueCardClockOverlay';
 import {
   getLiveIndentedSubTimer,
@@ -27,6 +28,11 @@ import PptClockOverlay from './PptClockOverlay';
 import { parsePptClockSync, type PptClockFeed } from '../lib/pptClockFeed';
 import type { CueCardComment, CueCardSlide } from '../lib/cueCards';
 import { resolveLiveCueLabel, shouldKeepExistingRunningTimer } from '../lib/cueDisplay';
+import {
+  flashPlanFromParent,
+  isQaFlashPlan,
+  shouldShowQaFlashReminder,
+} from '../lib/qaPlan';
 
 interface ClockProps {
   isRunning?: boolean;
@@ -1150,8 +1156,35 @@ const Clock: React.FC<ClockProps> = ({
   const hasLargeAlt = secondaryStillVisible(secondarySubTimer);
   const hasIndentedSmall = dualAltLayout && secondaryStillVisible(indentedSubTimer);
 
+  const qaFlashPlan = isQaFlashPlan(activeCue) ? flashPlanFromParent(activeCue) : null;
+  const parentRunningForQaFlash = !!(
+    hybridTimerData?.activeTimer?.is_running &&
+    hybridTimerData?.activeTimer?.is_active !== false &&
+    (hybridTimerData?.activeTimer?.timer_state == null ||
+      hybridTimerData?.activeTimer?.timer_state === 'running' ||
+      hybridTimerData?.activeTimer?.timer_state === 'unknown')
+  );
+  const qaFlashRemaining = getRemainingTime();
+  const qaFlashTotal = Number(timerProgress.total) || 0;
+  const showQaFlashReminder =
+    !!qaFlashPlan &&
+    qaFlashPlan.auto !== false &&
+    shouldShowQaFlashReminder({
+      parentRunning: parentRunningForQaFlash,
+      parentRemainingSeconds: qaFlashRemaining,
+      parentTotalSeconds: qaFlashTotal,
+      thresholdSeconds: qaFlashPlan.thresholdSeconds,
+      parentElapsedSeconds: qaFlashTotal - qaFlashRemaining,
+    });
+
   return (
     <div className="fixed inset-0 bg-black text-white overflow-hidden flex flex-col items-center justify-center" style={{ padding: 0, margin: 0 }}>
+
+      {showQaFlashReminder ? (
+        <div className="absolute top-8 left-1/2 z-40 -translate-x-1/2">
+          <QaFlashReminder label={qaFlashPlan?.label || 'Q&A'} size={layoutCrowded ? 'sm' : 'lg'} />
+        </div>
+      ) : null}
 
       {/* Top Left: hide when cue/teleprompter feed is filling the stage */}
       {!useTodOnly && !stageFeedActive && (

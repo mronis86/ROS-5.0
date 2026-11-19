@@ -11,6 +11,7 @@ import { OvertimeClockText } from '../lib/OvertimeClockText';
 import { isPreshowTimerMessage, findTopPreshowCue } from '../lib/preshowCountdown';
 import { shouldUsePreshowRainbow } from '../lib/usePreshowRainbow';
 import { AltTimerBadge } from './AltTimerBadge';
+import { QaFlashReminder } from './QaFlashReminder';
 import CueCardClockOverlay from './CueCardClockOverlay';
 import {
   getLiveIndentedSubTimer,
@@ -25,6 +26,11 @@ import PptClockOverlay from './PptClockOverlay';
 import type { PptClockFeed } from '../lib/pptClockFeed';
 import type { CueCardComment, CueCardSlide } from '../lib/cueCards';
 import { resolveLiveCueLabel } from '../lib/cueDisplay';
+import {
+  flashPlanFromParent,
+  isQaFlashPlan,
+  shouldShowQaFlashReminder,
+} from '../lib/qaPlan';
 
 interface FullScreenTimerProps {
   isRunning?: boolean;
@@ -114,10 +120,12 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
     null;
   const [topPreshowItemId, setTopPreshowItemId] = useState<number | null>(null);
   const [scheduleCueProgramType, setScheduleCueProgramType] = useState<string | null>(null);
+  const [scheduleItems, setScheduleItems] = useState<any[]>([]);
   useEffect(() => {
     if (!eventId) {
       setTopPreshowItemId(null);
       setScheduleCueProgramType(null);
+      setScheduleItems([]);
       return;
     }
     let cancelled = false;
@@ -142,11 +150,13 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
         if (!cancelled) {
           setTopPreshowItemId(top?.id ?? null);
           setScheduleCueProgramType(cueProgramType);
+          setScheduleItems(items);
         }
       } catch {
         if (!cancelled) {
           setTopPreshowItemId(null);
           setScheduleCueProgramType(null);
+          setScheduleItems([]);
         }
       }
     })();
@@ -706,8 +716,47 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
     return countdownColorForRemaining(remainingSeconds, { mode: countdownColorMode });
   };
 
+  const activeFsCue = (() => {
+    if (!scheduleItems.length || activeTimerItemId == null) return null;
+    const idNum = Number(activeTimerItemId);
+    return (
+      scheduleItems.find(
+        (s: any) =>
+          s?.id === activeTimerItemId ||
+          String(s?.id) === String(activeTimerItemId) ||
+          (Number.isFinite(idNum) && Number(s?.id) === idNum)
+      ) || null
+    );
+  })();
+  const qaFlashPlan = isQaFlashPlan(activeFsCue) ? flashPlanFromParent(activeFsCue) : null;
+  const parentRunningForQaFlash = !!(
+    hybridTimerData?.activeTimer?.is_running &&
+    hybridTimerData?.activeTimer?.is_active !== false &&
+    (hybridTimerData?.activeTimer?.timer_state == null ||
+      hybridTimerData?.activeTimer?.timer_state === 'running' ||
+      hybridTimerData?.activeTimer?.timer_state === 'unknown')
+  );
+  const qaFlashRemaining = getRemainingTime();
+  const qaFlashTotal = Number(timerProgress.total) || 0;
+  const showQaFlashReminder =
+    !!qaFlashPlan &&
+    qaFlashPlan.auto !== false &&
+    shouldShowQaFlashReminder({
+      parentRunning: parentRunningForQaFlash,
+      parentRemainingSeconds: qaFlashRemaining,
+      parentTotalSeconds: qaFlashTotal,
+      thresholdSeconds: qaFlashPlan.thresholdSeconds,
+      parentElapsedSeconds: qaFlashTotal - qaFlashRemaining,
+    });
+
   return (
     <div className="fixed inset-0 bg-black text-white overflow-hidden flex flex-col items-center justify-center" style={{ padding: 0, margin: 0 }}>
+
+      {showQaFlashReminder ? (
+        <div className="absolute top-8 left-1/2 z-40 -translate-x-1/2">
+          <QaFlashReminder label={qaFlashPlan?.label || 'Q&A'} size={layoutCrowdedFs ? 'sm' : 'lg'} />
+        </div>
+      ) : null}
 
       {/* Current Time / Cue — hidden while stage feed fills the stage */}
       {!stageFeedActive && (

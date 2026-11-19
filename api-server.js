@@ -8781,7 +8781,9 @@ app.post('/api/active-timers', async (req, res) => {
 // Stop all timers for an event
 app.put('/api/active-timers/stop-all', async (req, res) => {
   try {
-    const { event_id, user_id, user_name, user_role } = req.body;
+    const { event_id, user_id, user_name, user_role, skip_complete } = req.body;
+    // LOAD/JUMP replace passes skip_complete so clients never grey prior cues.
+    const skipComplete = skip_complete !== false;
     
     // Stop the single active timer for the event
     const result = await pool.query(
@@ -8794,8 +8796,14 @@ app.put('/api/active-timers/stop-all', async (req, res) => {
       [event_id, user_id, user_name, user_role]
     );
     
-    // Broadcast update via WebSocket (include event_id so clients can verify)
-    broadcastUpdate(event_id, 'timersStopped', { count: result.rows.length, event_id });
+    // Broadcast update via WebSocket (include event_id so clients can verify).
+    // skipComplete: true = replace/clear only — do not mark cues completed.
+    broadcastUpdate(event_id, 'timersStopped', {
+      count: result.rows.length,
+      event_id,
+      skipComplete: !!skipComplete,
+      reason: skipComplete ? 'load_replace' : 'stop_all',
+    });
     
     res.json({ 
       success: true, 

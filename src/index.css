@@ -265,6 +265,15 @@ html.led-output-broadcast #root,
   animation: ros-timer-message-flash 1s ease-in-out infinite;
 }
 
+/* Q&A flash reminder on Clock / DSM / Full Screen */
+@keyframes ros-qa-flash-reminder {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.35; transform: scale(1.04); }
+}
+.ros-qa-flash-reminder {
+  animation: ros-qa-flash-reminder 0.85s ease-in-out infinite;
+}
+
 /* Pre Show — calm static brand gradient (stage-friendly, no shifting animation) */
 .ros-rainbow-text,
 .ros-preshow-brand-text {

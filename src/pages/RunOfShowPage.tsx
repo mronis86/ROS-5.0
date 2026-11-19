@@ -152,6 +152,7 @@ import TimedMarkerModal, { TimedMarkerModalResult } from '../components/TimedMar
 import QaPlanModal from '../components/QaPlanModal';
 import type { QaPlanModalResult } from '../lib/qaPlan';
 import {
+  clearQaFlashFields,
   formatClockFromSeconds as formatQaClock,
   isQaPlanRow,
   parentDurationSeconds as qaParentDurationSeconds,
@@ -370,8 +371,18 @@ interface ScheduleItem {
   speakersText: string;
   hasPPT: boolean;
   hasQA: boolean;
-  /** Linked indented Q&A timer row created from the Q&A plan modal. */
+  /** Linked indented Q&A timer row created from the Q&A plan modal (sub mode). */
   qaLinkedSubId?: number | null;
+  /** 'sub' = indented Q&A timer row; 'flash' = display reminder only (no sub row). */
+  qaDisplayMode?: 'sub' | 'flash' | null;
+  /** Flash mode: label shown on Clock / DSM. */
+  qaFlashLabel?: string | null;
+  /** Flash mode: start flashing when parent remaining reaches this (seconds). */
+  qaFlashAtRemainingSeconds?: number | null;
+  /** Flash mode: auto-enable flash at threshold. */
+  qaFlashAuto?: boolean | null;
+  /** Flash mode: planned Q&A window length (seconds); informs "end of cue" threshold. */
+  qaFlashDurationSeconds?: number | null;
   /** On Q&A timer row: auto-start when parent remaining reaches this many seconds. */
   qaAutoStartAtRemainingSeconds?: number | null;
   /** On Q&A timer row: managed by Q&A plan (safe to remove when unchecking Q&A). */
@@ -3595,6 +3606,23 @@ const RunOfShowPage: React.FC = () => {
           qaIsAutoQa: true,
         };
       }
+      // Prefer local flash Q&A plan on parent if remote is stale
+      if (
+        local?.hasQA &&
+        String(local?.qaDisplayMode || '') === 'flash' &&
+        (!remote?.hasQA || String(remote?.qaDisplayMode || '') !== 'flash')
+      ) {
+        return {
+          ...remote,
+          hasQA: true,
+          qaDisplayMode: 'flash',
+          qaFlashLabel: local.qaFlashLabel,
+          qaFlashAtRemainingSeconds: local.qaFlashAtRemainingSeconds,
+          qaFlashAuto: local.qaFlashAuto,
+          qaFlashDurationSeconds: local.qaFlashDurationSeconds,
+          qaLinkedSubId: null,
+        };
+      }
       return remote;
     });
     // Append local-only markers / protected rows in their local order
@@ -5228,7 +5256,12 @@ const RunOfShowPage: React.FC = () => {
     let next = (scheduleRef.current || []).map((row) =>
       Number(row.id) === Number(parentId)
         ? stampScheduleCheckboxes(
-            { ...row, hasQA: false, qaLinkedSubId: null },
+            clearQaFlashFields({
+              ...row,
+              hasQA: false,
+              qaLinkedSubId: null,
+              qaDisplayMode: null,
+            }),
             ['hasQA']
           )
         : row
@@ -5294,17 +5327,96 @@ const RunOfShowPage: React.FC = () => {
     handleModalEditing();
     modalLockRowIdRef.current = parentId;
 
-    // Replace prior auto Q&A row if present
+    // Replace prior auto Q&A row if present (flash mode has no linked row)
     const priorLinked =
       parent.qaLinkedSubId != null ? Number(parent.qaLinkedSubId) : null;
+    const userId = user?.id || 'local';
+    const userName = user?.full_name || user?.email || 'Local User';
 
+    // ——— Flash reminder: plan lives on parent only (no indented sub-timer row) ———
+    if (result.displayMode === 'flash') {
+      let working = [...(scheduleRef.current || [])];
+      if (priorLinked != null) {
+        const prior = working.find((row) => Number(row.id) === priorLinked);
+        if (prior?.qaIsAutoQa) {
+          working = working.filter((row) => Number(row.id) !== priorLinked);
+        }
+        const nextIndented = { ...indentedCuesRef.current };
+        delete nextIndented[priorLinked];
+        indentedCuesRef.current = nextIndented;
+        setIndentedCues(nextIndented);
+      }
+      const pIdx = working.findIndex((item) => Number(item.id) === Number(parentId));
+      if (pIdx < 0) {
+        setQaPlanModalParentId(null);
+        modalLockRowIdRef.current = null;
+        handleModalClosed();
+        alert('Could not find the parent cue for this Q&A. Please try again.');
+        return;
+      }
+      const nextSchedule = [...working];
+      nextSchedule[pIdx] = stampScheduleCheckboxes(
+        {
+          ...nextSchedule[pIdx],
+          hasQA: true,
+          qaLinkedSubId: null,
+          qaDisplayMode: 'flash',
+          qaFlashLabel: result.label || 'Q&A',
+          qaFlashAtRemainingSeconds: result.startAtRemainingSeconds,
+          qaFlashAuto: result.autoStart,
+          qaFlashDurationSeconds: result.durationSeconds,
+        },
+        ['hasQA']
+      );
+      structureDirtyRef.current = true;
+      scheduleRef.current = nextSchedule;
+      setSchedule(nextSchedule);
+      handleUserEditing();
+      setQaPlanModalParentId(null);
+
+      let saveOk = true;
+      try {
+        if (event?.id && priorLinked != null) {
+          try {
+            await DatabaseService.unmarkCueIndented(event.id, priorLinked);
+          } catch (e) {
+            console.warn('Q&A flash: prior indent clear failed:', e);
+          }
+        }
+        if (flushSaveToAPIRef.current) {
+          await flushSaveToAPIRef.current();
+        }
+      } catch (e) {
+        saveOk = false;
+        console.error('Q&A flash save failed:', e);
+        alert('Could not save the Q&A flash reminder. Please try again.');
+      } finally {
+        modalLockRowIdRef.current = null;
+        handleModalClosed();
+      }
+      if (!saveOk) return;
+      logChange('FIELD_UPDATE', `Set Q&A flash reminder on "${parent.segmentName}"`, {
+        changeType: 'FIELD_CHANGE',
+        itemId: parentId,
+        itemName: parent.segmentName,
+        fieldName: 'hasQA',
+        details: {
+          qaDisplayMode: 'flash',
+          qaFlashLabel: result.label || 'Q&A',
+          qaFlashAtRemainingSeconds: result.startAtRemainingSeconds,
+          qaFlashAuto: result.autoStart,
+          qaFlashDurationSeconds: result.durationSeconds,
+        },
+      });
+      return;
+    }
+
+    // ——— Sub timer: indented Q&A row (existing behavior) ———
     timedMarkerIdSeqRef.current += 1;
     const newId = Date.now() * 1000 + (timedMarkerIdSeqRef.current % 1000);
     const hours = Math.floor(result.durationSeconds / 3600);
     const minutes = Math.floor((result.durationSeconds % 3600) / 60);
     const seconds = result.durationSeconds % 60;
-    const userId = user?.id || 'local';
-    const userName = user?.full_name || user?.email || 'Local User';
     const qaCue = qaCueFromParent(parent.customFields?.cue);
 
     const qaRow: ScheduleItem = {
@@ -5367,7 +5479,12 @@ const RunOfShowPage: React.FC = () => {
     }
     const nextSchedule = [...working];
     nextSchedule[pIdx] = stampScheduleCheckboxes(
-      { ...nextSchedule[pIdx], hasQA: true, qaLinkedSubId: newId },
+      clearQaFlashFields({
+        ...nextSchedule[pIdx],
+        hasQA: true,
+        qaLinkedSubId: newId,
+        qaDisplayMode: 'sub',
+      }),
       ['hasQA']
     );
     nextSchedule.splice(insertAt + 1, 0, qaRow);
@@ -5423,6 +5540,7 @@ const RunOfShowPage: React.FC = () => {
         parentId,
         parentName: parent.segmentName,
         qaCue,
+        qaDisplayMode: 'sub',
         qaDurationSeconds: result.durationSeconds,
         qaStartAtRemainingSeconds: result.startAtRemainingSeconds,
         qaAutoStart: result.autoStart,
@@ -8357,7 +8475,7 @@ const RunOfShowPage: React.FC = () => {
       // Keep suppress briefly so delayed WS stop events from this replace are ignored.
       window.setTimeout(() => {
         suppressCompleteFromTimerStopRef.current = false;
-      }, 2500);
+      }, 5000);
     }
     
     // Stop any running sub-cue / Q&A timer when loading a new cue (local + hybrid).
@@ -11253,6 +11371,9 @@ const RunOfShowPage: React.FC = () => {
           const numericItemId = typeof data.item_id === 'string' ? parseInt(data.item_id, 10) : data.item_id;
           const isCleared = data.timer_state === 'stopped' || data.is_active === false;
           if (isCleared) {
+            // Clear local timer UI only. Do NOT mark completed here —
+            // LOAD/JUMP replace and stop-all can arrive as stopped/inactive.
+            // Explicit Stop uses onTimerStopped → markCueGroupCompleted (or local toggleTimer).
             setHybridTimerData((prev) => (prev?.activeTimer == null ? prev : { ...prev, activeTimer: null }));
             setActiveItemId((prev) => (prev === numericItemId ? null : prev));
             setLastLoadedCueId((prev) => (prev === numericItemId ? null : prev));
@@ -11276,8 +11397,7 @@ const RunOfShowPage: React.FC = () => {
                 return next;
               });
             }
-            markCueGroupCompleted(numericItemId);
-            console.log('✅ RunOfShow: Timer cleared from timerUpdated:', numericItemId);
+            console.log('✅ RunOfShow: Timer cleared from timerUpdated (no complete):', numericItemId);
             return;
           }
           noteCueActualStart(data);
@@ -11580,13 +11700,14 @@ const RunOfShowPage: React.FC = () => {
           const isStopped =
             timerData.timer_state === 'stopped' || timerData.is_active === false;
           if (isStopped) {
+            // Clear UI only — completing happens on explicit Stop (onTimerStopped / toggleTimer),
+            // never on LOAD replace / stop-all echoes that look "stopped".
             setHybridTimerData(prev => (
               prev?.activeTimer == null ? prev : { ...prev, activeTimer: null }
             ));
             setActiveItemId(null);
             setActiveTimers({});
-            markCueGroupCompleted(timerData.item_id);
-            console.log('✅ RunOfShow: Timer stopped via WebSocket - cleared timer data and old state');
+            console.log('✅ RunOfShow: Timer stopped via activeTimersUpdated (no complete)');
           } else if (timerData.is_active === true) {
             if (timerData.timer_state === 'running' || timerData.is_running === true) {
               const runningParentId =

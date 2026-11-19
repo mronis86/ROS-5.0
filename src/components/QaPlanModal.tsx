@@ -4,6 +4,7 @@ import {
   defaultQaPlanDraft,
   formatClockFromSeconds,
   resolveQaStartAtRemaining,
+  type QaDisplayMode,
   type QaPlanModalResult,
   type QaStartMode,
 } from '../lib/qaPlan';
@@ -29,6 +30,7 @@ const QaPlanModal: React.FC<Props> = ({
   onConfirm,
 }) => {
   const [label, setLabel] = useState('Q&A');
+  const [displayMode, setDisplayMode] = useState<QaDisplayMode>('sub');
   const [durationMin, setDurationMin] = useState(10);
   const [durationSec, setDurationSec] = useState(0);
   const [startMode, setStartMode] = useState<QaStartMode>('end');
@@ -42,6 +44,7 @@ const QaPlanModal: React.FC<Props> = ({
     const draft = defaultQaPlanDraft(parentDurationSeconds);
     const dur = partsFromSeconds(draft.durationSeconds);
     setLabel(draft.label);
+    setDisplayMode('sub');
     setDurationMin(dur.minutes);
     setDurationSec(dur.seconds);
     setStartMode('end');
@@ -66,6 +69,7 @@ const QaPlanModal: React.FC<Props> = ({
       startMode,
       startAtRemainingSeconds,
       autoStart,
+      displayMode,
     };
     const duration = clampQaDurationSeconds(durationSeconds, parentDurationSeconds || durationSeconds);
     const at = resolveQaStartAtRemaining(draft, parentDurationSeconds || duration);
@@ -73,15 +77,20 @@ const QaPlanModal: React.FC<Props> = ({
       parentDurationSeconds > 0 ? formatClockFromSeconds(parentDurationSeconds) : 'unknown length';
     const intoCue =
       parentDurationSeconds > 0 ? Math.max(0, parentDurationSeconds - at) : null;
+    const flashSummary =
+      startMode === 'end'
+        ? `Flash “${label.trim() || 'Q&A'}” on Clock / DSM while the last ${formatClockFromSeconds(duration)} of this ${parentLabel} cue runs.`
+        : `When ${formatClockFromSeconds(at)} remain on the cue, flash “${label.trim() || 'Q&A'}” on Clock / DSM (no sub-timer).`;
+    const subSummary =
+      startMode === 'end'
+        ? `Q&A runs the last ${formatClockFromSeconds(duration)} of this ${parentLabel} cue.`
+        : `When ${formatClockFromSeconds(at)} remain on the cue, start a ${formatClockFromSeconds(duration)} Q&A timer.`;
     return {
       duration,
       at,
       parentLabel,
       intoCue,
-      summary:
-        startMode === 'end'
-          ? `Q&A runs the last ${formatClockFromSeconds(duration)} of this ${parentLabel} cue.`
-          : `When ${formatClockFromSeconds(at)} remain on the cue, start a ${formatClockFromSeconds(duration)} Q&A timer.`,
+      summary: displayMode === 'flash' ? flashSummary : subSummary,
     };
   }, [
     label,
@@ -89,6 +98,7 @@ const QaPlanModal: React.FC<Props> = ({
     startMode,
     startAtRemainingSeconds,
     autoStart,
+    displayMode,
     parentDurationSeconds,
   ]);
 
@@ -119,10 +129,12 @@ const QaPlanModal: React.FC<Props> = ({
           startMode,
           startAtRemainingSeconds,
           autoStart,
+          displayMode,
         },
         parentDurationSeconds || duration
       ),
       autoStart,
+      displayMode,
     });
   };
 
@@ -136,16 +148,52 @@ const QaPlanModal: React.FC<Props> = ({
       <button type="button" className="absolute inset-0 bg-black/70" aria-label="Close" onClick={onClose} />
       <div className="relative flex w-full max-w-lg max-h-[min(85vh,640px)] flex-col overflow-hidden rounded-2xl border border-amber-700/40 bg-slate-900 shadow-2xl">
         <div className="shrink-0 border-b border-slate-700 px-5 py-3 sm:px-6">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-amber-300">Q&A timer</p>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-amber-300">Q&A plan</p>
           <h2 id="qa-plan-title" className="mt-1 text-lg font-semibold text-white sm:text-xl">
             Plan Q&A for “{parentSegmentName || 'this cue'}”
           </h2>
           <p className="mt-1 text-sm text-slate-400">
-            Parent length: {preview.parentLabel}. Adds a marker-style Q&A timer under this cue (not a Sub Cue).
+            Parent length: {preview.parentLabel}. Choose a sub timer under this cue, or a flash reminder on displays.
           </p>
         </div>
 
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4 sm:px-6">
+          <fieldset>
+            <legend className="text-xs font-semibold uppercase tracking-wide text-slate-400">Mode</legend>
+            <div className="mt-2 space-y-2">
+              <label className="flex items-start gap-3 rounded-xl border border-slate-700 bg-slate-950/50 px-3 py-3">
+                <input
+                  type="radio"
+                  name="qaDisplayMode"
+                  checked={displayMode === 'sub'}
+                  onChange={() => setDisplayMode('sub')}
+                  className="mt-1"
+                />
+                <span>
+                  <span className="block text-sm font-semibold text-white">Sub timer</span>
+                  <span className="mt-0.5 block text-xs text-slate-400">
+                    Adds an indented Q&A timer row and “Q&A Timer” badge on displays.
+                  </span>
+                </span>
+              </label>
+              <label className="flex items-start gap-3 rounded-xl border border-slate-700 bg-slate-950/50 px-3 py-3">
+                <input
+                  type="radio"
+                  name="qaDisplayMode"
+                  checked={displayMode === 'flash'}
+                  onChange={() => setDisplayMode('flash')}
+                  className="mt-1"
+                />
+                <span>
+                  <span className="block text-sm font-semibold text-white">Flash reminder</span>
+                  <span className="mt-0.5 block text-xs text-slate-400">
+                    No sub-timer row — flashes Q&A on Clock / DSM while the parent cue runs past the threshold.
+                  </span>
+                </span>
+              </label>
+            </div>
+          </fieldset>
+
           <label className="block">
             <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Label</span>
             <input
@@ -157,7 +205,9 @@ const QaPlanModal: React.FC<Props> = ({
           </label>
 
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Q&A length</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+              {displayMode === 'flash' ? 'Q&A window length' : 'Q&A length'}
+            </p>
             <div className="mt-1.5 flex items-center gap-2">
               <input
                 type="number"
@@ -181,7 +231,7 @@ const QaPlanModal: React.FC<Props> = ({
 
           <fieldset>
             <legend className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-              When should Q&A start?
+              {displayMode === 'flash' ? 'When should flashing start?' : 'When should Q&A start?'}
             </legend>
             <div className="mt-2 space-y-2">
               <label className="flex items-start gap-3 rounded-xl border border-slate-700 bg-slate-950/50 px-3 py-3">
@@ -210,7 +260,7 @@ const QaPlanModal: React.FC<Props> = ({
                 <span className="min-w-0 flex-1">
                   <span className="block text-sm font-semibold text-white">When remaining reaches</span>
                   <span className="mt-0.5 block text-xs text-slate-400">
-                    Example: start a 10:00 Q&A when 20:00 remain on the parent.
+                    Example: start when 20:00 remain on the parent.
                   </span>
                   {startMode === 'remaining' ? (
                     <div className="mt-2 flex items-center gap-2">
@@ -247,7 +297,9 @@ const QaPlanModal: React.FC<Props> = ({
               onChange={(e) => setAutoStart(e.target.checked)}
             />
             <span className="text-sm text-slate-200">
-              Auto-start this Q&A timer when the parent cue hits that remaining time
+              {displayMode === 'flash'
+                ? 'Auto-flash when the parent cue hits that remaining time'
+                : 'Auto-start this Q&A timer when the parent cue hits that remaining time'}
             </span>
           </label>
 
@@ -276,7 +328,7 @@ const QaPlanModal: React.FC<Props> = ({
             onClick={submit}
             className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-amber-500"
           >
-            Create Q&A timer
+            {displayMode === 'flash' ? 'Save flash reminder' : 'Create Q&A timer'}
           </button>
         </div>
       </div>

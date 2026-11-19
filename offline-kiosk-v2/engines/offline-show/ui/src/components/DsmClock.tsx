@@ -12,6 +12,7 @@ import { OvertimeClockText } from '../lib/OvertimeClockText';
 import { findTopPreshowCue, isPreshowTimerMessage } from '../lib/preshowCountdown';
 import { shouldUsePreshowRainbow } from '../lib/usePreshowRainbow';
 import { AltTimerBadge } from './AltTimerBadge';
+import { QaFlashReminder } from './QaFlashReminder';
 import CueCardClockOverlay from './CueCardClockOverlay';
 import {
   getLiveIndentedSubTimer,
@@ -27,6 +28,11 @@ import PptClockOverlay from './PptClockOverlay';
 import { parsePptClockSync, type PptClockFeed } from '../lib/pptClockFeed';
 import type { CueCardComment, CueCardSlide } from '../lib/cueCards';
 import { resolveLiveCueLabel, shouldKeepExistingRunningTimer } from '../lib/cueDisplay';
+import {
+  flashPlanFromParent,
+  isQaFlashPlan,
+  shouldShowQaFlashReminder,
+} from '../lib/qaPlan';
 
 interface DsmClockProps {
   isRunning?: boolean;
@@ -54,6 +60,8 @@ interface DsmClockProps {
   } | null;
   /** DSM layout reference controls (owned by page chrome; hidden in fullscreen) */
   force16x9Ref?: boolean;
+  /** Full DSM (16:9 off) zoom percent 80–100 — event setting; ignored while 16:9 frame is on. */
+  fullZoomPercent?: number;
   simSecondary?: boolean;
   simOvertime?: boolean;
 }
@@ -78,6 +86,7 @@ const DsmClock: React.FC<DsmClockProps> = ({
   mainTimer = null,
   secondaryTimer = null,
   force16x9Ref = true,
+  fullZoomPercent = 100,
   simSecondary = false,
   simOvertime = false,
 }) => {
@@ -1229,6 +1238,11 @@ const DsmClock: React.FC<DsmClockProps> = ({
     : 'w-48 mx-auto mt-2 h-2.5';
   /** 16:9 off → same full-viewport flex shell as original Clock (large timer centering). */
   const classicClockShell = !show16x9Frame;
+  const fullZoomRaw = Number(fullZoomPercent);
+  const fullZoomClamped = Number.isFinite(fullZoomRaw)
+    ? Math.round(Math.min(100, Math.max(80, fullZoomRaw)) / 5) * 5
+    : 100;
+  const fullZoomFactor = classicClockShell ? fullZoomClamped / 100 : 1;
   // Classic Clock hero sizes when 16:9 DSM frame is off
   const dsmHeroMmSs = show16x9Frame
     ? 'text-[4.5rem] md:text-[5.5rem] lg:text-[6.5rem]'
@@ -1251,6 +1265,28 @@ const DsmClock: React.FC<DsmClockProps> = ({
     !useTodOnly &&
     (useCountUp ? isOvertimeCountUp : getRemainingTime() < 0);
 
+  const qaFlashCue = activeCue || activeItem;
+  const qaFlashPlan = isQaFlashPlan(qaFlashCue) ? flashPlanFromParent(qaFlashCue) : null;
+  const parentRunningForQaFlash = !!(
+    hybridTimerData?.activeTimer?.is_running &&
+    hybridTimerData?.activeTimer?.is_active !== false &&
+    (hybridTimerData?.activeTimer?.timer_state == null ||
+      hybridTimerData?.activeTimer?.timer_state === 'running' ||
+      hybridTimerData?.activeTimer?.timer_state === 'unknown')
+  );
+  const qaFlashRemaining = getRemainingTime();
+  const qaFlashTotal = Number(timerProgress.total) || 0;
+  const showQaFlashReminder =
+    !!qaFlashPlan &&
+    qaFlashPlan.auto !== false &&
+    shouldShowQaFlashReminder({
+      parentRunning: parentRunningForQaFlash,
+      parentRemainingSeconds: qaFlashRemaining,
+      parentTotalSeconds: qaFlashTotal,
+      thresholdSeconds: qaFlashPlan.thresholdSeconds,
+      parentElapsedSeconds: qaFlashTotal - qaFlashRemaining,
+    });
+
   const stageW = DSM_DESIGN_W * stageScale;
   const stageH = DSM_DESIGN_H * stageScale;
 
@@ -1262,7 +1298,14 @@ const DsmClock: React.FC<DsmClockProps> = ({
           ? 'fixed inset-0 z-0 bg-black text-white overflow-hidden flex flex-col items-center justify-center'
           : 'fixed inset-0 z-0 flex items-center justify-center overflow-hidden bg-black text-white'
       }
-      style={{ padding: 0, margin: 0 }}
+      style={{
+        padding: 0,
+        margin: 0,
+        // Full DSM only — shrink hero clocks that run too large on some displays
+        ...(classicClockShell && fullZoomFactor < 1
+          ? { zoom: fullZoomFactor }
+          : null),
+      }}
     >
       {/* 16:9 ON: scaled 1920×1080 board. OFF: classic Clock full-viewport flex shell. */}
       <div
@@ -1283,6 +1326,14 @@ const DsmClock: React.FC<DsmClockProps> = ({
         }
         title={!classicClockShell && !isFullScreen ? '16:9 master board (windowed)' : undefined}
       >
+        {showQaFlashReminder ? (
+          <div className="absolute top-6 left-1/2 z-40 -translate-x-1/2">
+            <QaFlashReminder
+              label={qaFlashPlan?.label || 'Q&A'}
+              size={show16x9Frame || layoutCrowded ? 'sm' : 'lg'}
+            />
+          </div>
+        ) : null}
         <div
           className={
             classicClockShell
@@ -1732,9 +1783,13 @@ const DsmClock: React.FC<DsmClockProps> = ({
           
           <div 
             className={`font-mono font-bold transition-all duration-500 ease-in-out ${dsmCrowdedSideTimeClass} leading-none ${
-              usePreshowRainbow ? 'ros-rainbow-text' : ''
+              usePreshowRainbow && getRemainingTime() >= 0 ? 'ros-rainbow-text' : ''
             }`}
-            style={usePreshowRainbow ? undefined : { color: getProgressBarColor() }}
+            style={
+              usePreshowRainbow && getRemainingTime() >= 0
+                ? undefined
+                : { color: getProgressBarColor() }
+            }
           >
             {renderSignedTime(getRemainingTime())}
           </div>
@@ -1869,7 +1924,11 @@ const DsmClock: React.FC<DsmClockProps> = ({
                     OVER TIME
                   </div>
                   <div className={`font-mono text-red-400 ${show16x9Frame ? 'text-lg' : 'text-2xl'} mt-1 leading-none`}>
-                    +{formatTime(overtimeAmount)}
+                    <OvertimeClockText
+                      seconds={-Math.max(1, overtimeAmount || 1)}
+                      body={formatTimeBody(overtimeAmount)}
+                      sign={overtimeSign}
+                    />
                   </div>
                 </div>
               ) : usePreshowRainbow ? (
@@ -1920,12 +1979,18 @@ const DsmClock: React.FC<DsmClockProps> = ({
               {/* Countdown Timer - Centered */}
               <div className="text-center">
                 <div 
-                  className={`font-mono font-bold ${usePreshowRainbow ? 'ros-rainbow-text' : ''} ${(() => {
+                  className={`font-mono font-bold ${
+                    usePreshowRainbow && getRemainingTime() >= 0 ? 'ros-rainbow-text' : ''
+                  } ${(() => {
                     const remaining = getRemainingTime();
                     const hours = Math.floor(Math.abs(remaining) / 3600);
                     return hours === 0 ? dsmHeroMmSs : dsmHeroHhMmSs;
                   })()}`}
-                  style={usePreshowRainbow ? undefined : { color: getProgressBarColor() }}
+                  style={
+                    usePreshowRainbow && getRemainingTime() >= 0
+                      ? undefined
+                      : { color: getProgressBarColor() }
+                  }
                 >
                   {renderSignedTime(getRemainingTime())}
                 </div>

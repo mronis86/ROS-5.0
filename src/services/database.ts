@@ -1299,7 +1299,9 @@ export class DatabaseService {
           event_id: eventId,
           user_id: userId,
           user_name: userName || 'Unknown User',
-          user_role: userRole || 'VIEWER'
+          user_role: userRole || 'VIEWER',
+          // LOAD/JUMP replace — clients must not mark prior cues completed
+          skip_complete: true,
         })
       });
 

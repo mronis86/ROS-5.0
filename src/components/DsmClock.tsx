@@ -12,6 +12,7 @@ import { OvertimeClockText } from '../lib/OvertimeClockText';
 import { findTopPreshowCue, isPreshowTimerMessage } from '../lib/preshowCountdown';
 import { shouldUsePreshowRainbow } from '../lib/usePreshowRainbow';
 import { AltTimerBadge } from './AltTimerBadge';
+import { QaFlashReminder } from './QaFlashReminder';
 import CueCardClockOverlay from './CueCardClockOverlay';
 import {
   getLiveIndentedSubTimer,
@@ -27,6 +28,11 @@ import PptClockOverlay from './PptClockOverlay';
 import { parsePptClockSync, type PptClockFeed } from '../lib/pptClockFeed';
 import type { CueCardComment, CueCardSlide } from '../lib/cueCards';
 import { resolveLiveCueLabel, shouldKeepExistingRunningTimer } from '../lib/cueDisplay';
+import {
+  flashPlanFromParent,
+  isQaFlashPlan,
+  shouldShowQaFlashReminder,
+} from '../lib/qaPlan';
 
 interface DsmClockProps {
   isRunning?: boolean;
@@ -1259,6 +1265,28 @@ const DsmClock: React.FC<DsmClockProps> = ({
     !useTodOnly &&
     (useCountUp ? isOvertimeCountUp : getRemainingTime() < 0);
 
+  const qaFlashCue = activeCue || activeItem;
+  const qaFlashPlan = isQaFlashPlan(qaFlashCue) ? flashPlanFromParent(qaFlashCue) : null;
+  const parentRunningForQaFlash = !!(
+    hybridTimerData?.activeTimer?.is_running &&
+    hybridTimerData?.activeTimer?.is_active !== false &&
+    (hybridTimerData?.activeTimer?.timer_state == null ||
+      hybridTimerData?.activeTimer?.timer_state === 'running' ||
+      hybridTimerData?.activeTimer?.timer_state === 'unknown')
+  );
+  const qaFlashRemaining = getRemainingTime();
+  const qaFlashTotal = Number(timerProgress.total) || 0;
+  const showQaFlashReminder =
+    !!qaFlashPlan &&
+    qaFlashPlan.auto !== false &&
+    shouldShowQaFlashReminder({
+      parentRunning: parentRunningForQaFlash,
+      parentRemainingSeconds: qaFlashRemaining,
+      parentTotalSeconds: qaFlashTotal,
+      thresholdSeconds: qaFlashPlan.thresholdSeconds,
+      parentElapsedSeconds: qaFlashTotal - qaFlashRemaining,
+    });
+
   const stageW = DSM_DESIGN_W * stageScale;
   const stageH = DSM_DESIGN_H * stageScale;
 
@@ -1298,6 +1326,14 @@ const DsmClock: React.FC<DsmClockProps> = ({
         }
         title={!classicClockShell && !isFullScreen ? '16:9 master board (windowed)' : undefined}
       >
+        {showQaFlashReminder ? (
+          <div className="absolute top-6 left-1/2 z-40 -translate-x-1/2">
+            <QaFlashReminder
+              label={qaFlashPlan?.label || 'Q&A'}
+              size={show16x9Frame || layoutCrowded ? 'sm' : 'lg'}
+            />
+          </div>
+        ) : null}
         <div
           className={
             classicClockShell

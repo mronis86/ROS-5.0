@@ -2,13 +2,23 @@
 
 export type QaStartMode = 'end' | 'remaining';
 
+/** How Q&A appears on stage displays while the parent cue runs. */
+export type QaDisplayMode = 'sub' | 'flash';
+
 export function isQaPlanRow(item: { qaIsAutoQa?: boolean } | null | undefined): boolean {
   return item?.qaIsAutoQa === true;
 }
 
+export function isQaFlashPlan(item: {
+  hasQA?: boolean;
+  qaDisplayMode?: QaDisplayMode | string | null;
+} | null | undefined): boolean {
+  return !!item?.hasQA && String(item.qaDisplayMode || '').toLowerCase() === 'flash';
+}
+
 export type QaPlanDraft = {
   label: string;
-  /** Q&A length in seconds. */
+  /** Q&A length in seconds (sub timer duration; also informs flash threshold in "end" mode). */
   durationSeconds: number;
   startMode: QaStartMode;
   /**
@@ -17,10 +27,12 @@ export type QaPlanDraft = {
    */
   startAtRemainingSeconds: number;
   autoStart: boolean;
+  /** Sub timer (indented row) or flash reminder on displays (no secondary timer). */
+  displayMode: QaDisplayMode;
 };
 
 export type QaPlanModalResult = QaPlanDraft & {
-  /** Effective remaining threshold used for auto-start. */
+  /** Effective remaining threshold used for auto-start / flash. */
   startAtRemainingSeconds: number;
 };
 
@@ -87,6 +99,67 @@ export function shouldAutoStartQa(opts: {
   return true;
 }
 
+/**
+ * Flash reminder: parent RUNNING and remaining <= threshold (until parent stops / remaining ≤ 0).
+ * Same gate as auto-start so LOAD/START at full duration never flashes early.
+ */
+export function shouldShowQaFlashReminder(opts: {
+  parentRunning: boolean;
+  parentRemainingSeconds: number | null | undefined;
+  parentTotalSeconds: number | null | undefined;
+  thresholdSeconds: number | null | undefined;
+  parentElapsedSeconds?: number | null | undefined;
+}): boolean {
+  const remaining = Number(opts.parentRemainingSeconds);
+  if (Number.isFinite(remaining) && remaining <= 0) return false;
+  return shouldAutoStartQa(opts);
+}
+
+/** Flash plan fields stored on the parent cue (no linked sub row). */
+export type QaFlashPlanFields = {
+  qaDisplayMode: 'flash';
+  qaFlashLabel: string;
+  qaFlashAtRemainingSeconds: number;
+  qaFlashAuto: boolean;
+  qaFlashDurationSeconds: number;
+};
+
+export function flashPlanFromParent(item: {
+  qaFlashLabel?: string | null;
+  qaFlashAtRemainingSeconds?: number | null;
+  qaFlashAuto?: boolean | null;
+  qaFlashDurationSeconds?: number | null;
+  qaAutoStartAtRemainingSeconds?: number | null;
+} | null | undefined): {
+  label: string;
+  thresholdSeconds: number;
+  auto: boolean;
+  durationSeconds: number;
+} | null {
+  if (!item) return null;
+  const threshold = Number(
+    item.qaFlashAtRemainingSeconds ?? item.qaAutoStartAtRemainingSeconds
+  );
+  if (!Number.isFinite(threshold) || threshold < 0) return null;
+  return {
+    label: String(item.qaFlashLabel || 'Q&A').trim() || 'Q&A',
+    thresholdSeconds: threshold,
+    auto: item.qaFlashAuto !== false,
+    durationSeconds: Math.max(0, Math.floor(Number(item.qaFlashDurationSeconds) || 0)),
+  };
+}
+
+export function clearQaFlashFields<T extends Record<string, unknown>>(row: T): T {
+  return {
+    ...row,
+    qaDisplayMode: null,
+    qaFlashLabel: null,
+    qaFlashAtRemainingSeconds: null,
+    qaFlashAuto: null,
+    qaFlashDurationSeconds: null,
+  };
+}
+
 export function formatClockFromSeconds(total: number): string {
   const s = Math.max(0, Math.floor(total));
   const h = Math.floor(s / 3600);
@@ -104,6 +177,7 @@ export function defaultQaPlanDraft(parentTotalSeconds: number): QaPlanDraft {
     startMode: 'end',
     startAtRemainingSeconds: suggested,
     autoStart: true,
+    displayMode: 'sub',
   };
 }
 

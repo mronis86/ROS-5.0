@@ -778,3 +778,12 @@ body {
   border-radius: 999px;
   background: linear-gradient(90deg, #8b5cf6, #3b82f6, #10b981);
 }
+
+/* Q&A flash reminder on Clock / DSM / Full Screen */
+@keyframes ros-qa-flash-reminder {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.35; transform: scale(1.04); }
+}
+.ros-qa-flash-reminder {
+  animation: ros-qa-flash-reminder 0.85s ease-in-out infinite;
+}

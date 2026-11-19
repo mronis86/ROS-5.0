@@ -29,7 +29,7 @@ import {
   suggestedDsmLayoutMode,
   type DsmLayoutMode,
 } from '../lib/dsmClockLayout';
-import { formatClockFromSeconds, isQaPlanRow } from '../lib/qaPlan';
+import { formatClockFromSeconds, isQaFlashPlan, isQaPlanRow } from '../lib/qaPlan';
 
 export interface ScheduleRowProps {
   item: any;
@@ -514,6 +514,11 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
   const qaAutoAt =
     item.qaAutoStart && item.qaAutoStartAtRemainingSeconds != null
       ? formatClockFromSeconds(Number(item.qaAutoStartAtRemainingSeconds) || 0)
+      : null;
+  const qaIsFlash = isQaFlashPlan(item);
+  const qaFlashAt =
+    qaIsFlash && item.qaFlashAtRemainingSeconds != null
+      ? formatClockFromSeconds(Number(item.qaFlashAtRemainingSeconds) || 0)
       : null;
 
   const setNeedsRecording = (next: boolean) => {
@@ -1426,9 +1431,25 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
                 }}
                 disabled={isLockedByOther || currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'}
                 className={`w-6 h-6 rounded border-2 ${isRowDimmed ? 'border-purple-600/50 bg-purple-950/70' : 'border-slate-400 bg-slate-700'}`}
-                title={isLockedByOther ? lockLabel : currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR' ? 'Only EDITORs can edit Q&A settings' : 'Plan Q&A ALT timer'}
+                title={
+                  isLockedByOther
+                    ? lockLabel
+                    : currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'
+                      ? 'Only EDITORs can edit Q&A settings'
+                      : qaIsFlash
+                        ? `Q&A flash reminder${qaFlashAt ? ` @ ${qaFlashAt} remaining` : ''}`
+                        : 'Plan Q&A sub timer or flash reminder'
+                }
               />
               <span className="text-base font-medium text-white">Q&A</span>
+              {qaIsFlash ? (
+                <span
+                  className="ml-1 rounded bg-amber-500/90 px-1.5 py-0.5 text-[10px] font-black uppercase tracking-wide text-black"
+                  title={qaFlashAt ? `Flash at ${qaFlashAt} remaining` : 'Flash reminder on displays'}
+                >
+                  Flash{qaFlashAt ? ` @ ${qaFlashAt}` : ''}
+                </span>
+              ) : null}
             </label>
           </div>
         </div>
@@ -2222,6 +2243,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
     'checkboxStamps', 'mittiWatch', 'avWatch', 'dsmEnabled', 'dsmMode', 'dsmModeManual',
     'isTimedMarker', 'isIndented', 'markerTimeMode', 'markerOffsetSeconds', 'markerAbsoluteSeconds',
     'qaIsAutoQa', 'qaAutoStart', 'qaAutoStartAtRemainingSeconds', 'qaLinkedSubId',
+    'qaDisplayMode', 'qaFlashLabel', 'qaFlashAtRemainingSeconds', 'qaFlashAuto', 'qaFlashDurationSeconds',
     'breakStartTime',
     'sessionStartTime',
     'sectionStarted',

@@ -995,7 +995,8 @@ export class DatabaseService {
           event_id: eventId,
           user_id: userId,
           user_name: userName || 'Unknown User',
-          user_role: userRole || 'VIEWER'
+          user_role: userRole || 'VIEWER',
+          skip_complete: true,
         })
       });
 
