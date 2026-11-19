@@ -1066,7 +1066,7 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
             if (hasMessage) {
               return (
                 <div className="mb-1 text-lg font-bold leading-none whitespace-nowrap">
-                  <AltTimerBadge timer={displaySecondaryTimer} cueOnly />
+                  <AltTimerBadge timer={displaySecondaryTimer} cueOnly size="sm" />
                 </div>
               );
             }
@@ -1180,7 +1180,7 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
             }`}
           >
             <div className="mb-1 text-lg font-bold leading-none">
-              <AltTimerBadge timer={indentedSubTimer} cueOnly />
+              <AltTimerBadge timer={indentedSubTimer} cueOnly size="sm" />
             </div>
             <div className="font-mono text-3xl md:text-4xl font-bold leading-none">
               {formatSecondaryTime(secondaryRemainingSeconds(indentedSubTimer))}

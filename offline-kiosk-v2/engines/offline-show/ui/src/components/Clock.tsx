@@ -1648,6 +1648,7 @@ const Clock: React.FC<ClockProps> = ({
               timer={dualAltLayout ? indentedSubTimer : secondarySubTimer}
               scheduleItems={scheduleItems}
               cueOnly
+              size="sm"
             />
           </div>
           

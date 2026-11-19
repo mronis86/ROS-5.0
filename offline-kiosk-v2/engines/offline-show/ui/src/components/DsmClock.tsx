@@ -1857,6 +1857,7 @@ const DsmClock: React.FC<DsmClockProps> = ({
               timer={dualAltLayout ? indentedSubTimer : secondarySubTimer}
               scheduleItems={scheduleItems}
               cueOnly
+              size="sm"
             />
           </div>
           
