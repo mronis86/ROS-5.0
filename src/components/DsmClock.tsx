@@ -1286,6 +1286,16 @@ const DsmClock: React.FC<DsmClockProps> = ({
       thresholdSeconds: qaFlashPlan.thresholdSeconds,
       parentElapsedSeconds: qaFlashTotal - qaFlashRemaining,
     });
+  /** Keep Q&A flash on/near the countdown (not the top chrome) so it stays in view on DSM. */
+  const qaFlashOverTimer = showQaFlashReminder ? (
+    <div className="mb-2 flex justify-center z-40">
+      <QaFlashReminder
+        label={qaFlashPlan?.label || 'Q&A'}
+        size={show16x9Frame || layoutCrowded ? 'sm' : 'lg'}
+      />
+    </div>
+  ) : null;
+  const qaFlashTimerClass = showQaFlashReminder ? 'ros-qa-flash-timer' : '';
 
   const stageW = DSM_DESIGN_W * stageScale;
   const stageH = DSM_DESIGN_H * stageScale;
@@ -1326,14 +1336,6 @@ const DsmClock: React.FC<DsmClockProps> = ({
         }
         title={!classicClockShell && !isFullScreen ? '16:9 master board (windowed)' : undefined}
       >
-        {showQaFlashReminder ? (
-          <div className="absolute top-6 left-1/2 z-40 -translate-x-1/2">
-            <QaFlashReminder
-              label={qaFlashPlan?.label || 'Q&A'}
-              size={show16x9Frame || layoutCrowded ? 'sm' : 'lg'}
-            />
-          </div>
-        ) : null}
         <div
           className={
             classicClockShell
@@ -1772,6 +1774,7 @@ const DsmClock: React.FC<DsmClockProps> = ({
         return (hasLargeAlt || hasIndentedSmall) && layoutSmallMain && (hasMessage || dualAltLayout);
       })() && (
         <div className={`text-center transition-all duration-500 ease-in-out absolute ${crowdedTimerBottom} left-[18%] -translate-x-1/2 min-w-[14rem]`}>
+          {qaFlashOverTimer}
           {/* Non-16:9: overtime stays in-flow above side digits */}
           {!show16x9Frame && getRemainingTime() < 0 && (
             <div className="mb-1">
@@ -1782,7 +1785,7 @@ const DsmClock: React.FC<DsmClockProps> = ({
           )}
           
           <div 
-            className={`font-mono font-bold transition-all duration-500 ease-in-out ${dsmCrowdedSideTimeClass} leading-none ${
+            className={`font-mono font-bold transition-all duration-500 ease-in-out ${dsmCrowdedSideTimeClass} leading-none ${qaFlashTimerClass} ${
               usePreshowRainbow && getRemainingTime() >= 0 ? 'ros-rainbow-text' : ''
             }`}
             style={
@@ -1937,9 +1940,10 @@ const DsmClock: React.FC<DsmClockProps> = ({
                   <span className="ros-preshow-super-rule" aria-hidden />
                 </div>
               ) : null}
+              {qaFlashOverTimer}
               <div className="text-center">
                 <div 
-                  className={`font-mono font-bold ${usePreshowRainbow ? 'ros-rainbow-text' : ''} ${(() => {
+                  className={`font-mono font-bold ${qaFlashTimerClass} ${usePreshowRainbow ? 'ros-rainbow-text' : ''} ${(() => {
                     const hours = Math.floor(Math.abs(elapsedForDisplay) / 3600);
                     return hours === 0 ? dsmHeroMmSs : dsmHeroHhMmSs;
                   })()}`}
@@ -1976,10 +1980,11 @@ const DsmClock: React.FC<DsmClockProps> = ({
                   <span className="ros-preshow-super-rule" aria-hidden />
                 </div>
               ) : null}
+              {qaFlashOverTimer}
               {/* Countdown Timer - Centered */}
               <div className="text-center">
                 <div 
-                  className={`font-mono font-bold ${
+                  className={`font-mono font-bold ${qaFlashTimerClass} ${
                     usePreshowRainbow && getRemainingTime() >= 0 ? 'ros-rainbow-text' : ''
                   } ${(() => {
                     const remaining = getRemainingTime();
@@ -2029,8 +2034,9 @@ const DsmClock: React.FC<DsmClockProps> = ({
         return hasMessage && !hasSecondaryTimer;
       })() && (
         <div className={`text-center transition-all duration-500 ease-in-out absolute ${crowdedTimerBottom} left-1/2 transform -translate-x-1/2 flex flex-col items-center`}>
+          {qaFlashOverTimer}
           {useTimeOfDay ? (
-            <div className={`font-mono font-bold ${dsmCrowdedTimeClass} text-white leading-none`}>
+            <div className={`font-mono font-bold ${dsmCrowdedTimeClass} text-white leading-none ${qaFlashTimerClass}`}>
               {formatTimeOfDay(currentTime)}
             </div>
           ) : useCountUp ? (
@@ -2049,7 +2055,7 @@ const DsmClock: React.FC<DsmClockProps> = ({
                 </div>
               ) : null}
               <div 
-                className={`font-mono font-bold transition-all duration-500 ease-in-out ${dsmCrowdedTimeClass} leading-none ${
+                className={`font-mono font-bold transition-all duration-500 ease-in-out ${dsmCrowdedTimeClass} leading-none ${qaFlashTimerClass} ${
                   usePreshowRainbow ? 'ros-rainbow-text' : ''
                 }`}
                 style={usePreshowRainbow ? undefined : { color: getCountUpProgressBarColor() }}
@@ -2072,7 +2078,7 @@ const DsmClock: React.FC<DsmClockProps> = ({
                 </div>
               ) : null}
               <div 
-                className={`font-mono font-bold transition-all duration-500 ease-in-out ${dsmCrowdedTimeClass} leading-none ${
+                className={`font-mono font-bold transition-all duration-500 ease-in-out ${dsmCrowdedTimeClass} leading-none ${qaFlashTimerClass} ${
                   usePreshowRainbow ? 'ros-rainbow-text' : ''
                 }`}
                 style={usePreshowRainbow ? undefined : { color: getProgressBarColor() }}
@@ -2119,8 +2125,9 @@ const DsmClock: React.FC<DsmClockProps> = ({
         return hasSecondaryTimer && !hasMessage && !dualAltLayout;
       })() && (
         <div className="text-center transition-all duration-500 ease-in-out absolute bottom-20 left-1/2 transform -translate-x-1/2">
+          {qaFlashOverTimer}
           {useTimeOfDay ? (
-            <div className="font-mono font-bold text-3xl md:text-4xl lg:text-5xl text-white">
+            <div className={`font-mono font-bold text-3xl md:text-4xl lg:text-5xl text-white ${qaFlashTimerClass}`}>
               {formatTimeOfDay(currentTime)}
             </div>
           ) : useCountUp ? (
@@ -2136,7 +2143,7 @@ const DsmClock: React.FC<DsmClockProps> = ({
                 </div>
               ) : null}
               <div 
-                className={`font-mono font-bold transition-all duration-500 ease-in-out text-3xl md:text-4xl lg:text-5xl ${
+                className={`font-mono font-bold transition-all duration-500 ease-in-out text-3xl md:text-4xl lg:text-5xl ${qaFlashTimerClass} ${
                   usePreshowRainbow ? 'ros-rainbow-text' : ''
                 }`}
                 style={usePreshowRainbow ? undefined : { color: getCountUpProgressBarColor() }}
@@ -2157,7 +2164,7 @@ const DsmClock: React.FC<DsmClockProps> = ({
                 </div>
               ) : null}
               <div 
-                className={`font-mono font-bold transition-all duration-500 ease-in-out text-3xl md:text-4xl lg:text-5xl ${
+                className={`font-mono font-bold transition-all duration-500 ease-in-out text-3xl md:text-4xl lg:text-5xl ${qaFlashTimerClass} ${
                   usePreshowRainbow ? 'ros-rainbow-text' : ''
                 }`}
                 style={usePreshowRainbow ? undefined : { color: getProgressBarColor() }}

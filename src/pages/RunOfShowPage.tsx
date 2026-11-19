@@ -2783,13 +2783,14 @@ const RunOfShowPage: React.FC = () => {
     return Boolean(t?.is_running || t?.timer_state === 'running');
   };
 
-  /** Dim only cues that were actually stopped/completed (plus kids via markCueGroupCompleted). */
+  /**
+   * Dim ONLY cues marked completed (explicit Stop). Never use stoppedItems alone —
+   * LOAD/JUMP replace used to leave stopped flags that greying looked like "completed above".
+   */
   const isItemDimmed = (itemId: number) => {
     if (!showCompletedHighlight) return false;
-    // Only skip dimming while RUNNING. A just-stopped cue can still be "loaded"
-    // and must go straight to dimmed-complete (not a bright purple last-loaded flash).
     if (isCueRunningOnStage(itemId)) return false;
-    return isItemCompleted(itemId) || stoppedItems.has(itemId);
+    return isItemCompleted(itemId);
   };
   const isDelayBlock = (itemId: number) =>
     schedule.some(item => item.id === itemId && item.programType === 'Delay Block');
@@ -4718,22 +4719,23 @@ const RunOfShowPage: React.FC = () => {
   //   // ... old polling code disabled to prevent conflicts
   // }, [event?.id, user?.id]);
 
-  // Sync completed cues function
+  // Sync completed cues — REPLACE from server (never merge). Empty list must clear greys.
   const syncCompletedCues = async () => {
     if (!event?.id) return;
     
     try {
-      const completedData = await apiClient.getCompletedCues(event.id);
+      const completedData = await apiClient.getCompletedCues(event.id, { bypassCache: true });
 
+      const completedCuesMap: Record<number, boolean> = {};
       if (Array.isArray(completedData)) {
-        const completedCuesMap: Record<number, boolean> = {};
         completedData.forEach((cue: any) => {
           const id = normalizeScheduleItemId(cue.item_id);
           if (id != null) completedCuesMap[id] = true;
         });
-        setCompletedCues((prev) => stripLiveCuesFromCompletedMap({ ...prev, ...completedCuesMap }));
-        console.log('🟣 Synced completed cues:', stripLiveCuesFromCompletedMap(completedCuesMap));
       }
+      const next = stripLiveCuesFromCompletedMap(completedCuesMap);
+      setCompletedCues(next);
+      console.log('🟣 Synced completed cues (replace):', next);
     } catch (error) {
       console.warn('⚠️ Error syncing completed cues:', error);
     }
@@ -4955,7 +4957,7 @@ const RunOfShowPage: React.FC = () => {
     };
   }, [event?.id, user?.id, user?.full_name, user?.email]);
 
-  // Load completed cues from API
+  // Load completed cues from API — replace local map (empty means clear all greys)
   const loadCompletedCuesFromAPI = async () => {
     if (!event?.id) return;
 
@@ -4963,23 +4965,15 @@ const RunOfShowPage: React.FC = () => {
       console.log('🟣 Loading completed cues from API for event:', event.id);
       const completedResult = await DatabaseService.getCompletedCues(event.id);
       const completedCuesData: any[] = Array.isArray(completedResult) ? completedResult : [];
-      
-      if (completedCuesData.length > 0) {
-        console.log('🟣 Found completed cues:', completedCuesData);
-        
-        // Convert the database data to completedCues state format
-        const completedCuesMap: Record<number, boolean> = {};
-        completedCuesData.forEach((cue: any) => {
-          const id = normalizeScheduleItemId(cue.item_id);
-          if (id == null) return;
-          completedCuesMap[id] = true;
-        });
-        const filtered = stripLiveCuesFromCompletedMap(completedCuesMap);
-        setCompletedCues((prev) => stripLiveCuesFromCompletedMap({ ...prev, ...filtered }));
-        console.log('🟣 Set completedCues state:', filtered);
-      } else {
-        console.log('🟣 No completed cues found');
-      }
+      const completedCuesMap: Record<number, boolean> = {};
+      completedCuesData.forEach((cue: any) => {
+        const id = normalizeScheduleItemId(cue.item_id);
+        if (id == null) return;
+        completedCuesMap[id] = true;
+      });
+      const filtered = stripLiveCuesFromCompletedMap(completedCuesMap);
+      setCompletedCues(filtered);
+      console.log('🟣 Set completedCues state (replace):', filtered);
     } catch (error) {
       console.error('❌ Error loading completed cues from API:', error);
       console.log('💡 This means the completed_cues table or functions need to be created first');
@@ -11250,7 +11244,10 @@ const RunOfShowPage: React.FC = () => {
         if (data && data.cleared) {
           // All completed cues cleared (from reset button)
           setCompletedCues({});
-        } else if (data && data.removed && data.item_id != null) {
+          setStoppedItems(new Set());
+          return;
+        }
+        if (data && data.removed && data.item_id != null) {
           const id = normalizeScheduleItemId(data.item_id);
           if (id != null) {
             setCompletedCues((prev) => {
@@ -11258,19 +11255,38 @@ const RunOfShowPage: React.FC = () => {
               delete newCompleted[id];
               return newCompleted;
             });
+            setStoppedItems((prev) => {
+              if (!prev.has(id)) return prev;
+              const next = new Set(prev);
+              next.delete(id);
+              return next;
+            });
           }
-        } else if (data && Array.isArray(data)) {
+          return;
+        }
+        // LOAD/JUMP replace must never grey priors from a delayed completedCues echo
+        if (suppressCompleteFromTimerStopRef.current) {
+          console.log('⏭️ Ignoring completedCuesUpdated during LOAD/JUMP replace');
+          return;
+        }
+        if (data && Array.isArray(data)) {
           const completedObject = data.reduce((acc: Record<number, boolean>, cue: { item_id?: unknown }) => {
             const id = normalizeScheduleItemId(cue.item_id);
             if (id != null) acc[id] = true;
             return acc;
           }, {});
-          setCompletedCues((prev) => stripLiveCuesFromCompletedMap({ ...prev, ...completedObject }));
-        } else if (data && data.item_id != null) {
+          // Full list from server — replace, do not merge stale locals
+          setCompletedCues(stripLiveCuesFromCompletedMap(completedObject));
+          return;
+        }
+        if (data && data.item_id != null) {
           const id = normalizeScheduleItemId(data.item_id);
           if (id != null) {
-            // Never re-complete a cue that is currently RUNNING
+            // Never re-complete a cue that is currently RUNNING or just LOADED
             if (isCueRunningOnStage(id) || activeTimersRef.current[id]) {
+              return;
+            }
+            if (activeLoadedItemIdRef.current === id) {
               return;
             }
             // Explicit Stop persistence — dim this cue + indented kids (not every row above).
@@ -11286,11 +11302,6 @@ const RunOfShowPage: React.FC = () => {
             setCompletedCues((prev) => {
               const next = { ...prev };
               ids.forEach((cueId) => { next[cueId] = true; });
-              return next;
-            });
-            setStoppedItems((prev) => {
-              const next = new Set(prev);
-              ids.forEach((cueId) => next.add(cueId));
               return next;
             });
           }
@@ -23643,11 +23654,36 @@ const RunOfShowPage: React.FC = () => {
       {qaPlanModalParentId != null && (() => {
         const parent = schedule.find((s) => Number(s.id) === Number(qaPlanModalParentId));
         if (!parent) return null;
+        const linkedSub =
+          parent.qaLinkedSubId != null
+            ? schedule.find((s) => Number(s.id) === Number(parent.qaLinkedSubId))
+            : null;
+        const flashInitial =
+          String(parent.qaDisplayMode || '') === 'flash'
+            ? {
+                label: String(parent.qaFlashLabel || 'Q&A'),
+                displayMode: 'flash' as const,
+                durationSeconds: Number(parent.qaFlashDurationSeconds) || 10 * 60,
+                startMode: 'remaining' as const,
+                startAtRemainingSeconds: Number(parent.qaFlashAtRemainingSeconds) || 0,
+                autoStart: parent.qaFlashAuto !== false,
+              }
+            : linkedSub
+              ? {
+                  label: String(linkedSub.segmentName || 'Q&A'),
+                  displayMode: 'sub' as const,
+                  durationSeconds: qaParentDurationSeconds(linkedSub),
+                  startMode: 'remaining' as const,
+                  startAtRemainingSeconds: Number(linkedSub.qaAutoStartAtRemainingSeconds) || 0,
+                  autoStart: linkedSub.qaAutoStart !== false,
+                }
+              : null;
         return (
           <QaPlanModal
             isOpen
             parentSegmentName={parent.segmentName || 'cue'}
             parentDurationSeconds={qaParentDurationSeconds(parent)}
+            initialDraft={flashInitial}
             onClose={() => {
               setQaPlanModalParentId(null);
               modalLockRowIdRef.current = null;

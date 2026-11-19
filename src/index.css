@@ -273,6 +273,14 @@ html.led-output-broadcast #root,
 .ros-qa-flash-reminder {
   animation: ros-qa-flash-reminder 0.85s ease-in-out infinite;
 }
+/* Pulse the countdown itself so Q&A flash stays in-view with the timer */
+@keyframes ros-qa-flash-timer {
+  0%, 100% { opacity: 1; filter: drop-shadow(0 0 0 rgba(251, 191, 36, 0)); }
+  50% { opacity: 0.55; filter: drop-shadow(0 0 18px rgba(251, 191, 36, 0.95)); }
+}
+.ros-qa-flash-timer {
+  animation: ros-qa-flash-timer 0.85s ease-in-out infinite;
+}
 
 /* Pre Show — calm static brand gradient (stage-friendly, no shifting animation) */
 .ros-rainbow-text,

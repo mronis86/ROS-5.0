@@ -653,9 +653,20 @@ class ApiClient {
     return result;
   }
 
-  // Completed Cues
-  async getCompletedCues(eventId: string) {
-    return this.request(`/api/completed-cues/${eventId}`, {}, `completedCues_${eventId}`, this.CACHE_TTL.completedCues);
+  // Completed Cues — never serve stale greys after Reset / Stop / LOAD unmark
+  invalidateCompletedCuesCache(eventId: string): void {
+    this.cache.delete(`completedCues_${eventId}`);
+  }
+
+  async getCompletedCues(eventId: string, options?: { bypassCache?: boolean }) {
+    if (options?.bypassCache) this.invalidateCompletedCuesCache(eventId);
+    // Short TTL: completed list must track Reset/Stop closely (was 2 min — revived greys after Reset)
+    return this.request(
+      `/api/completed-cues/${eventId}`,
+      {},
+      `completedCues_${eventId}`,
+      options?.bypassCache ? 0 : 5 * 1000
+    );
   }
 
   async markCueAsCompleted(eventId: string, itemId: number, userId: string) {
@@ -664,8 +675,7 @@ class ApiClient {
       body: JSON.stringify({ event_id: eventId, item_id: itemId, user_id: userId }),
     });
     
-    // Invalidate completed cues cache
-    this.cache.delete(`completedCues_${eventId}`);
+    this.invalidateCompletedCuesCache(eventId);
     return result;
   }
 
@@ -675,8 +685,15 @@ class ApiClient {
       body: JSON.stringify({ event_id: eventId, item_id: itemId, user_id: userId }),
     });
     
-    // Invalidate completed cues cache
-    this.cache.delete(`completedCues_${eventId}`);
+    this.invalidateCompletedCuesCache(eventId);
+    return result;
+  }
+
+  async clearCompletedCues(eventId: string) {
+    const result = await this.request(`/api/completed-cues/${eventId}`, {
+      method: 'DELETE',
+    });
+    this.invalidateCompletedCuesCache(eventId);
     return result;
   }
 

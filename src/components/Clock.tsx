@@ -1176,15 +1176,15 @@ const Clock: React.FC<ClockProps> = ({
       thresholdSeconds: qaFlashPlan.thresholdSeconds,
       parentElapsedSeconds: qaFlashTotal - qaFlashRemaining,
     });
+  const qaFlashOverTimer = showQaFlashReminder ? (
+    <div className="mb-2 flex justify-center z-40">
+      <QaFlashReminder label={qaFlashPlan?.label || 'Q&A'} size={layoutCrowded ? 'sm' : 'lg'} />
+    </div>
+  ) : null;
+  const qaFlashTimerClass = showQaFlashReminder ? 'ros-qa-flash-timer' : '';
 
   return (
     <div className="fixed inset-0 bg-black text-white overflow-hidden flex flex-col items-center justify-center" style={{ padding: 0, margin: 0 }}>
-
-      {showQaFlashReminder ? (
-        <div className="absolute top-8 left-1/2 z-40 -translate-x-1/2">
-          <QaFlashReminder label={qaFlashPlan?.label || 'Q&A'} size={layoutCrowded ? 'sm' : 'lg'} />
-        </div>
-      ) : null}
 
       {/* Top Left: hide when cue/teleprompter feed is filling the stage */}
       {!useTodOnly && !stageFeedActive && (
@@ -1565,6 +1565,7 @@ const Clock: React.FC<ClockProps> = ({
         return (hasLargeAlt || hasIndentedSmall) && layoutSmallMain && (hasMessage || dualAltLayout);
       })() && (
         <div className={`text-center transition-all duration-500 ease-in-out absolute ${crowdedTimerBottom} left-[18%] -translate-x-1/2 min-w-[11rem]`}>
+          {qaFlashOverTimer}
           {/* Overtime Indicator - Above main timer when both message and secondary timer are active */}
           {getRemainingTime() < 0 && (
             <div className="mb-1">
@@ -1575,7 +1576,7 @@ const Clock: React.FC<ClockProps> = ({
           )}
           
           <div 
-            className={`font-mono font-bold transition-all duration-500 ease-in-out text-3xl md:text-4xl leading-none ${
+            className={`font-mono font-bold transition-all duration-500 ease-in-out text-3xl md:text-4xl leading-none ${qaFlashTimerClass} ${
               usePreshowRainbow && getRemainingTime() >= 0 ? 'ros-rainbow-text' : ''
             }`}
             style={
@@ -1771,10 +1772,11 @@ const Clock: React.FC<ClockProps> = ({
                   <span className="ros-preshow-super-rule" aria-hidden />
                 </div>
               ) : null}
+              {qaFlashOverTimer}
               {/* Countdown Timer - Centered */}
               <div className="text-center">
                 <div 
-                  className={`font-mono font-bold ${
+                  className={`font-mono font-bold ${qaFlashTimerClass} ${
                     usePreshowRainbow && getRemainingTime() >= 0 ? 'ros-rainbow-text' : ''
                   } ${(() => {
                     const remaining = getRemainingTime();
@@ -1826,8 +1828,9 @@ const Clock: React.FC<ClockProps> = ({
         return hasMessage && !hasSecondaryTimer;
       })() && (
         <div className={`text-center transition-all duration-500 ease-in-out absolute ${crowdedTimerBottom} left-1/2 transform -translate-x-1/2`}>
+          {qaFlashOverTimer}
           {useTimeOfDay ? (
-            <div className="font-mono font-bold text-3xl md:text-4xl lg:text-5xl text-white">
+            <div className={`font-mono font-bold text-3xl md:text-4xl lg:text-5xl text-white ${qaFlashTimerClass}`}>
               {formatTimeOfDay(currentTime)}
             </div>
           ) : useCountUp ? (
@@ -1843,7 +1846,7 @@ const Clock: React.FC<ClockProps> = ({
                 </div>
               ) : null}
               <div 
-                className={`font-mono font-bold transition-all duration-500 ease-in-out text-3xl md:text-4xl lg:text-5xl ${
+                className={`font-mono font-bold transition-all duration-500 ease-in-out text-3xl md:text-4xl lg:text-5xl ${qaFlashTimerClass} ${
                   usePreshowRainbow ? 'ros-rainbow-text' : ''
                 }`}
                 style={usePreshowRainbow ? undefined : { color: getCountUpProgressBarColor() }}
@@ -1864,7 +1867,7 @@ const Clock: React.FC<ClockProps> = ({
                 </div>
               ) : null}
               <div 
-                className={`font-mono font-bold transition-all duration-500 ease-in-out text-3xl md:text-4xl lg:text-5xl ${
+                className={`font-mono font-bold transition-all duration-500 ease-in-out text-3xl md:text-4xl lg:text-5xl ${qaFlashTimerClass} ${
                   usePreshowRainbow ? 'ros-rainbow-text' : ''
                 }`}
                 style={usePreshowRainbow ? undefined : { color: getProgressBarColor() }}
@@ -1891,8 +1894,9 @@ const Clock: React.FC<ClockProps> = ({
         return hasSecondaryTimer && !hasMessage && !dualAltLayout;
       })() && (
         <div className="text-center transition-all duration-500 ease-in-out absolute bottom-20 left-1/2 transform -translate-x-1/2">
+          {qaFlashOverTimer}
           {useTimeOfDay ? (
-            <div className="font-mono font-bold text-3xl md:text-4xl lg:text-5xl text-white">
+            <div className={`font-mono font-bold text-3xl md:text-4xl lg:text-5xl text-white ${qaFlashTimerClass}`}>
               {formatTimeOfDay(currentTime)}
             </div>
           ) : useCountUp ? (
@@ -1908,7 +1912,7 @@ const Clock: React.FC<ClockProps> = ({
                 </div>
               ) : null}
               <div 
-                className={`font-mono font-bold transition-all duration-500 ease-in-out text-3xl md:text-4xl lg:text-5xl ${
+                className={`font-mono font-bold transition-all duration-500 ease-in-out text-3xl md:text-4xl lg:text-5xl ${qaFlashTimerClass} ${
                   usePreshowRainbow ? 'ros-rainbow-text' : ''
                 }`}
                 style={usePreshowRainbow ? undefined : { color: getCountUpProgressBarColor() }}
@@ -1929,7 +1933,7 @@ const Clock: React.FC<ClockProps> = ({
                 </div>
               ) : null}
               <div 
-                className={`font-mono font-bold transition-all duration-500 ease-in-out text-3xl md:text-4xl lg:text-5xl ${
+                className={`font-mono font-bold transition-all duration-500 ease-in-out text-3xl md:text-4xl lg:text-5xl ${qaFlashTimerClass} ${
                   usePreshowRainbow ? 'ros-rainbow-text' : ''
                 }`}
                 style={usePreshowRainbow ? undefined : { color: getProgressBarColor() }}

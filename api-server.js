@@ -8879,9 +8879,11 @@ app.put('/api/active-timers/stop', async (req, res) => {
       }
     }
 
-    // Persist completed so remote clients grey the cue without relying on timerStopped.
-    // Clients no longer treat timerStopped as "complete" (LOAD replace used to false-trigger).
-    if (!skipComplete && item_id != null) {
+    // Only mark completed when an actually RUNNING timer is explicitly stopped.
+    // Never complete a merely LOADED cue (LOAD/JUMP replace must not grey priors).
+    const wasRunning =
+      timerBeforeStop.rows.length > 0 && timerBeforeStop.rows[0].is_running === true;
+    if (!skipComplete && wasRunning && item_id != null) {
       try {
         const existing = await pool.query(
           'SELECT * FROM completed_cues WHERE event_id = $1 AND item_id = $2 LIMIT 1',

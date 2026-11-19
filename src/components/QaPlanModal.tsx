@@ -5,6 +5,7 @@ import {
   formatClockFromSeconds,
   resolveQaStartAtRemaining,
   type QaDisplayMode,
+  type QaPlanDraft,
   type QaPlanModalResult,
   type QaStartMode,
 } from '../lib/qaPlan';
@@ -13,6 +14,8 @@ type Props = {
   isOpen: boolean;
   parentSegmentName: string;
   parentDurationSeconds: number;
+  /** When reopening an existing flash/sub plan, seed the form from these values. */
+  initialDraft?: Partial<QaPlanDraft> | null;
   onClose: () => void;
   onConfirm: (result: QaPlanModalResult) => void;
 };
@@ -26,6 +29,7 @@ const QaPlanModal: React.FC<Props> = ({
   isOpen,
   parentSegmentName,
   parentDurationSeconds,
+  initialDraft = null,
   onClose,
   onConfirm,
 }) => {
@@ -39,25 +43,45 @@ const QaPlanModal: React.FC<Props> = ({
   const [autoStart, setAutoStart] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const seedKey = initialDraft
+    ? [
+        initialDraft.displayMode || '',
+        initialDraft.label || '',
+        initialDraft.durationSeconds ?? '',
+        initialDraft.startMode || '',
+        initialDraft.startAtRemainingSeconds ?? '',
+        initialDraft.autoStart === false ? '0' : '1',
+      ].join('|')
+    : 'new';
+
   useEffect(() => {
     if (!isOpen) return;
     const draft = defaultQaPlanDraft(parentDurationSeconds);
-    const dur = partsFromSeconds(draft.durationSeconds);
-    setLabel(draft.label);
-    setDisplayMode('sub');
+    const durationSeconds = Math.max(
+      1,
+      Math.floor(Number(initialDraft?.durationSeconds) || draft.durationSeconds)
+    );
+    const dur = partsFromSeconds(durationSeconds);
+    setLabel(String(initialDraft?.label || draft.label || 'Q&A'));
+    setDisplayMode(initialDraft?.displayMode === 'flash' ? 'flash' : 'sub');
     setDurationMin(dur.minutes);
     setDurationSec(dur.seconds);
-    setStartMode('end');
-    const remain = partsFromSeconds(
-      parentDurationSeconds > 0
-        ? Math.min(parentDurationSeconds, Math.max(draft.durationSeconds, Math.floor(parentDurationSeconds / 2)))
-        : 20 * 60
-    );
+    const mode: QaStartMode = initialDraft?.startMode === 'remaining' ? 'remaining' : 'end';
+    setStartMode(mode);
+    const remainSeconds =
+      mode === 'remaining' && initialDraft?.startAtRemainingSeconds != null
+        ? Math.max(0, Math.floor(Number(initialDraft.startAtRemainingSeconds) || 0))
+        : parentDurationSeconds > 0
+          ? Math.min(parentDurationSeconds, Math.max(durationSeconds, Math.floor(parentDurationSeconds / 2)))
+          : 20 * 60;
+    const remain = partsFromSeconds(remainSeconds);
     setRemainMin(remain.minutes);
     setRemainSec(remain.seconds);
-    setAutoStart(true);
+    setAutoStart(initialDraft?.autoStart !== false);
     setError(null);
-  }, [isOpen, parentDurationSeconds]);
+    // seedKey captures initialDraft fields so object identity churn does not reset the form mid-edit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional seed on open / seedKey change
+  }, [isOpen, parentDurationSeconds, seedKey]);
 
   const durationSeconds = durationMin * 60 + durationSec;
   const startAtRemainingSeconds = remainMin * 60 + remainSec;

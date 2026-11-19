@@ -1699,17 +1699,15 @@ export class DatabaseService {
 
   // getRecentTimerActions function removed - timer_actions table no longer used
 
-  // Get completed cues for an event
+  // Get completed cues for an event (always bypass short-lived client cache after mutations)
   static async getCompletedCues(eventId: string) {
     try {
       console.log('🔄 Getting completed cues via API:', eventId);
-      
-      // API-based implementation - placeholder
-      console.log('🔄 Getting completed cues via API:', eventId);
-      return null;
+      const rows = await apiClient.getCompletedCues(eventId, { bypassCache: true });
+      return Array.isArray(rows) ? rows : [];
     } catch (error) {
       console.error('❌ Error getting completed cues:', error);
-      return null;
+      return [];
     }
   }
 
@@ -1730,6 +1728,8 @@ export class DatabaseService {
           user_role: userRole
         })
       });
+
+      apiClient.invalidateCompletedCuesCache(eventId);
 
       if (!response.ok) {
         console.error('❌ Failed to mark cue as completed:', response.status, response.statusText);
@@ -1759,6 +1759,8 @@ export class DatabaseService {
         })
       });
 
+      apiClient.invalidateCompletedCuesCache(eventId);
+
       if (!response.ok) {
         console.error('❌ Failed to unmark cue as completed:', response.status, response.statusText);
         return false;
@@ -1783,6 +1785,9 @@ export class DatabaseService {
         headers: apiJsonHeaders(),
       });
 
+      // Must drop client cache or Reset + sync re-greys every prior cue from stale TTL
+      apiClient.invalidateCompletedCuesCache(eventId);
+
       if (!response.ok) {
         console.error('❌ Error clearing completed cues from Neon via API:', response.statusText);
         return false;
@@ -1792,6 +1797,7 @@ export class DatabaseService {
       return true;
     } catch (error) {
       console.error('❌ Error clearing completed cues from Neon:', error);
+      apiClient.invalidateCompletedCuesCache(eventId);
       return false;
     }
   }

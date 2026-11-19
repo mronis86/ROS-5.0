@@ -748,15 +748,15 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
       thresholdSeconds: qaFlashPlan.thresholdSeconds,
       parentElapsedSeconds: qaFlashTotal - qaFlashRemaining,
     });
+  const qaFlashOverTimer = showQaFlashReminder ? (
+    <div className="mb-2 flex justify-center z-40">
+      <QaFlashReminder label={qaFlashPlan?.label || 'Q&A'} size={layoutCrowdedFs ? 'sm' : 'lg'} />
+    </div>
+  ) : null;
+  const qaFlashTimerClass = showQaFlashReminder ? 'ros-qa-flash-timer' : '';
 
   return (
     <div className="fixed inset-0 bg-black text-white overflow-hidden flex flex-col items-center justify-center" style={{ padding: 0, margin: 0 }}>
-
-      {showQaFlashReminder ? (
-        <div className="absolute top-8 left-1/2 z-40 -translate-x-1/2">
-          <QaFlashReminder label={qaFlashPlan?.label || 'Q&A'} size={layoutCrowdedFs ? 'sm' : 'lg'} />
-        </div>
-      ) : null}
 
       {/* Current Time / Cue — hidden while stage feed fills the stage */}
       {!stageFeedActive && (
@@ -1232,11 +1232,11 @@ const FullScreenTimer: React.FC<FullScreenTimerProps> = ({
               <span className="ros-preshow-super-rule" aria-hidden />
             </div>
           ) : null}
-          
+          {qaFlashOverTimer}
           {/* Countdown Timer - Centered */}
           <div className="text-center">
             <div 
-              className={`font-mono font-bold ${usePreshowRainbow ? 'ros-rainbow-text' : ''} ${(() => {
+              className={`font-mono font-bold ${qaFlashTimerClass} ${usePreshowRainbow ? 'ros-rainbow-text' : ''} ${(() => {
                 const remaining = getRemainingTime();
                 const hours = Math.floor(Math.abs(remaining) / 3600);
                 return hours === 0

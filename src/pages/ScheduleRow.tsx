@@ -1093,6 +1093,18 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
                   {item.otherRoom}
                 </span>
               ) : null}
+              {qaIsFlash ? (
+                <span
+                  className="mb-1 inline-flex max-w-full items-center truncate rounded px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-amber-500 text-slate-950"
+                  title={
+                    qaFlashAt
+                      ? `Q&A flash on Clock/DSM at ${qaFlashAt} remaining`
+                      : 'Q&A flash reminder on displays'
+                  }
+                >
+                  Q&A flash{qaFlashAt ? ` · @ ${qaFlashAt} left` : ''}
+                </span>
+              ) : null}
               <span
                 className={`block text-left ${
                   segmentWrap ? 'whitespace-pre-wrap break-words leading-snug' : 'truncate'
@@ -1123,6 +1135,32 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
               >
                 ↳ {item.markerTimeMode === 'absolute' ? 'Abs marker' : 'Offset marker'}
               </span>
+            ) : null}
+            {qaIsFlash ? (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  if (currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') return;
+                  if (isLockedByOther) return;
+                  onRequestQaPlan?.(item.id);
+                }}
+                className="self-start inline-flex max-w-full items-center truncate rounded px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-amber-500 text-slate-950 hover:bg-amber-400 disabled:opacity-70"
+                title={
+                  qaFlashAt
+                    ? `Q&A flash on Clock/DSM at ${qaFlashAt} remaining${currentUserRole === 'EDITOR' ? ' — click to edit' : ''}`
+                    : `Q&A flash reminder on displays${currentUserRole === 'EDITOR' ? ' — click to edit' : ''}`
+                }
+                disabled={
+                  isLockedByOther ||
+                  currentUserRole === 'VIEWER' ||
+                  currentUserRole === 'OPERATOR' ||
+                  !onRequestQaPlan
+                }
+              >
+                Q&A flash{qaFlashAt ? ` · @ ${qaFlashAt} left` : ''}
+              </button>
             ) : null}
             {segmentWrap ? (
               <textarea
@@ -1437,19 +1475,11 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
                     : currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'
                       ? 'Only EDITORs can edit Q&A settings'
                       : qaIsFlash
-                        ? `Q&A flash reminder${qaFlashAt ? ` @ ${qaFlashAt} remaining` : ''}`
+                        ? `Q&A flash reminder on this cue${qaFlashAt ? ` (starts @ ${qaFlashAt} remaining)` : ''} — details under Segment Name`
                         : 'Plan Q&A sub timer or flash reminder'
                 }
               />
               <span className="text-base font-medium text-white">Q&A</span>
-              {qaIsFlash ? (
-                <span
-                  className="ml-1 rounded bg-amber-500/90 px-1.5 py-0.5 text-[10px] font-black uppercase tracking-wide text-black"
-                  title={qaFlashAt ? `Flash at ${qaFlashAt} remaining` : 'Flash reminder on displays'}
-                >
-                  Flash{qaFlashAt ? ` @ ${qaFlashAt}` : ''}
-                </span>
-              ) : null}
             </label>
           </div>
         </div>
