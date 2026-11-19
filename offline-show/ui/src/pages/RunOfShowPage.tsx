@@ -8435,10 +8435,7 @@ useEffect(() => {
       await stopSecondaryTimer();
     }
     
-    // Loading a later cue means everything above it on this day is done
-    if (activeItemId !== itemId) {
-    }
-
+    // Do NOT auto-complete prior cues on LOAD/JUMP — only explicit Stop marks completed.
     
     // Clear completed status for this CUE and its indented items
     setCompletedCues(prev => {
@@ -11053,10 +11050,26 @@ useEffect(() => {
             if (isCueRunningOnStage(id) || activeTimersRef.current[id]) {
               return;
             }
-            setCompletedCues((prev) => ({
-              ...prev,
-              [id]: true,
-            }));
+            // Explicit Stop persistence — dim this cue + indented kids (not every row above).
+            const ids = [id];
+            const list = scheduleRef.current || schedule;
+            const idx = list.findIndex((s: { id: number }) => s.id === id);
+            if (idx !== -1) {
+              for (let i = idx + 1; i < list.length; i++) {
+                if (isIndentedScheduleItem(list[i], indentedCuesRef.current)) ids.push(list[i].id);
+                else break;
+              }
+            }
+            setCompletedCues((prev) => {
+              const next = { ...prev };
+              ids.forEach((cueId) => { next[cueId] = true; });
+              return next;
+            });
+            setStoppedItems((prev) => {
+              const next = new Set(prev);
+              ids.forEach((cueId) => next.add(cueId));
+              return next;
+            });
           }
         }
       },
@@ -11302,8 +11315,9 @@ useEffect(() => {
               return next;
             });
           }
-          markCueGroupCompleted(numericItemId);
-          console.log('✅ RunOfShow: Timer cleared via WebSocket');
+          // Never grey cues here. LOAD/JUMP replace and stop-all echoes arrive as
+          // timerStopped — completed highlight is only from explicit Stop.
+          console.log('✅ RunOfShow: Timer cleared via WebSocket (no complete)');
         }
       },
       onTimersStopped: (data: any) => {
@@ -11316,7 +11330,7 @@ useEffect(() => {
           // Also clear old state to prevent hanging blue highlighting
           setActiveItemId(null);
           setActiveTimers({});
-          console.log('✅ RunOfShow: All timers cleared via WebSocket');
+          console.log('✅ RunOfShow: All timers cleared via WebSocket (no complete)');
         }
       },
       onTimerStarted: (data: any) => {

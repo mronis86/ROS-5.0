@@ -8819,7 +8819,9 @@ app.put('/api/active-timers/stop-all', async (req, res) => {
 // Stop a specific timer
 app.put('/api/active-timers/stop', async (req, res) => {
   try {
-    const { event_id, item_id, user_id, user_name, user_role } = req.body;
+    const { event_id, item_id, user_id, user_name, user_role, skip_complete } = req.body;
+    // Explicit Stop completes the cue. LOAD/JUMP must use stop-all (skip_complete), not this.
+    const skipComplete = skip_complete === true;
     
     // Get timer data BEFORE stopping to calculate overtime
     const timerBeforeStop = await pool.query(
@@ -8876,9 +8878,46 @@ app.put('/api/active-timers/stop', async (req, res) => {
         console.log(`🛑 Server: EndShow stop for item ${item_id} — skipping overtime save`);
       }
     }
+
+    // Persist completed so remote clients grey the cue without relying on timerStopped.
+    // Clients no longer treat timerStopped as "complete" (LOAD replace used to false-trigger).
+    if (!skipComplete && item_id != null) {
+      try {
+        const existing = await pool.query(
+          'SELECT * FROM completed_cues WHERE event_id = $1 AND item_id = $2 LIMIT 1',
+          [event_id, item_id]
+        );
+        let completedRow = existing.rows[0];
+        if (!completedRow) {
+          const completed = await pool.query(
+            `INSERT INTO completed_cues (event_id, item_id, cue_id, user_id, user_name, user_role, completed_at)
+             VALUES ($1, $2, $3, $4, $5, $6, NOW()) RETURNING *`,
+            [
+              event_id,
+              item_id,
+              `CUE ${item_id}`,
+              user_id || 'system',
+              user_name || 'Unknown User',
+              user_role || 'VIEWER',
+            ]
+          );
+          completedRow = completed.rows[0];
+        }
+        if (completedRow) {
+          broadcastUpdate(event_id, 'completedCuesUpdated', completedRow);
+        }
+      } catch (markErr) {
+        console.warn('⚠️ stop: completed_cues mark failed:', markErr.message || markErr);
+      }
+    }
     
-    // Broadcast timer stop update via WebSocket
-    broadcastUpdate(event_id, 'timerStopped', result.rows[0]);
+    // Broadcast timer stop update via WebSocket (UI clear only — not a complete signal)
+    const stoppedRow = result.rows[0] || { event_id, item_id, timer_state: 'stopped' };
+    broadcastUpdate(event_id, 'timerStopped', {
+      ...stoppedRow,
+      skipComplete: !!skipComplete,
+      reason: skipComplete ? 'load_replace' : 'explicit_stop',
+    });
     
     res.json({ 
       success: true, 

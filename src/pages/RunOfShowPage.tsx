@@ -11273,10 +11273,26 @@ const RunOfShowPage: React.FC = () => {
             if (isCueRunningOnStage(id) || activeTimersRef.current[id]) {
               return;
             }
-            setCompletedCues((prev) => ({
-              ...prev,
-              [id]: true,
-            }));
+            // Explicit Stop persistence — dim this cue + indented kids (not every row above).
+            const ids = [id];
+            const list = scheduleRef.current || schedule;
+            const idx = list.findIndex((s: { id: number }) => s.id === id);
+            if (idx !== -1) {
+              for (let i = idx + 1; i < list.length; i++) {
+                if (isIndentedScheduleItem(list[i], indentedCuesRef.current)) ids.push(list[i].id);
+                else break;
+              }
+            }
+            setCompletedCues((prev) => {
+              const next = { ...prev };
+              ids.forEach((cueId) => { next[cueId] = true; });
+              return next;
+            });
+            setStoppedItems((prev) => {
+              const next = new Set(prev);
+              ids.forEach((cueId) => next.add(cueId));
+              return next;
+            });
           }
         }
       },
@@ -11373,7 +11389,7 @@ const RunOfShowPage: React.FC = () => {
           if (isCleared) {
             // Clear local timer UI only. Do NOT mark completed here —
             // LOAD/JUMP replace and stop-all can arrive as stopped/inactive.
-            // Explicit Stop uses onTimerStopped → markCueGroupCompleted (or local toggleTimer).
+            // Explicit Stop marks via toggleTimer / completedCuesUpdated.
             setHybridTimerData((prev) => (prev?.activeTimer == null ? prev : { ...prev, activeTimer: null }));
             setActiveItemId((prev) => (prev === numericItemId ? null : prev));
             setLastLoadedCueId((prev) => (prev === numericItemId ? null : prev));
@@ -11520,8 +11536,10 @@ const RunOfShowPage: React.FC = () => {
               return next;
             });
           }
-          markCueGroupCompleted(numericItemId);
-          console.log('✅ RunOfShow: Timer cleared via WebSocket');
+          // Never grey cues here. LOAD/JUMP replace, stop-all echoes, and remote
+          // clears all arrive as timerStopped — completed highlight is only from
+          // explicit Stop (toggleTimer / completedCuesUpdated after markCueCompleted).
+          console.log('✅ RunOfShow: Timer cleared via WebSocket (no complete)');
         }
       },
       onTimersStopped: (data: any) => {
@@ -11534,7 +11552,7 @@ const RunOfShowPage: React.FC = () => {
           // Also clear old state to prevent hanging blue highlighting
           setActiveItemId(null);
           setActiveTimers({});
-          console.log('✅ RunOfShow: All timers cleared via WebSocket');
+          console.log('✅ RunOfShow: All timers cleared via WebSocket (no complete)');
         }
       },
       onTimerStarted: (data: any) => {
