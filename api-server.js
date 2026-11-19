@@ -1431,7 +1431,7 @@ function buildRailwayHealthMeta() {
     env: process.env.NODE_ENV || 'development',
     powerpointRoutes: true,
     // Bump when master should trigger a Railway autodeploy smoke check.
-    apiRevision: 'display-kill-20261108d',
+    apiRevision: 'completed-load-guard-20261119a',
   };
 }
 
@@ -7106,6 +7106,74 @@ app.get('/api/completed-cues/:eventId', async (req, res) => {
 });
 
 /**
+ * LOAD/JUMP replace must never grey priors. Any completed_cues POST during that window
+ * is rejected (204) so Neon cannot gain rows-above from a load/replace.
+ * Explicit Stop uses PUT /api/active-timers/stop (server upsert) and is not blocked.
+ */
+const loadReplaceGuardByEvent = new Map(); // eventId -> { until: number, reason: string, loadedItemId?: number }
+
+function armLoadReplaceGuard(eventId, { ms = 6000, reason = 'load_replace', loadedItemId = null } = {}) {
+  if (eventId == null || eventId === '') return;
+  const eid = String(eventId);
+  loadReplaceGuardByEvent.set(eid, {
+    until: Date.now() + Math.max(500, Number(ms) || 6000),
+    reason: String(reason || 'load_replace'),
+    loadedItemId: loadedItemId == null ? null : Number(loadedItemId),
+  });
+  console.log(`🛡️ Armed completed_cues load-replace guard for ${eid} (${ms}ms, ${reason})`);
+}
+
+function getActiveLoadReplaceGuard(eventId) {
+  if (eventId == null || eventId === '') return null;
+  const eid = String(eventId);
+  const g = loadReplaceGuardByEvent.get(eid);
+  if (!g) return null;
+  if (Date.now() > g.until) {
+    loadReplaceGuardByEvent.delete(eid);
+    return null;
+  }
+  return g;
+}
+
+/** Stopped cue + indented kids BELOW only — never schedule rows above. */
+async function idsForStoppedCueGroupServer(eventId, itemId) {
+  const id = Number(itemId);
+  if (!Number.isFinite(id)) return [];
+  const ids = [id];
+  try {
+    const [rosRes, indentedRes] = await Promise.all([
+      pool.query('SELECT schedule_items FROM run_of_show_data WHERE event_id = $1', [eventId]),
+      pool.query('SELECT item_id FROM indented_cues WHERE event_id = $1', [eventId]),
+    ]);
+    let items = rosRes.rows[0]?.schedule_items;
+    if (typeof items === 'string') {
+      try {
+        items = JSON.parse(items);
+      } catch {
+        items = [];
+      }
+    }
+    if (!Array.isArray(items) || items.length === 0) return ids;
+    const indented = new Set(
+      (indentedRes.rows || []).map((r) => Number(r.item_id)).filter((n) => Number.isFinite(n))
+    );
+    const idx = items.findIndex((s) => Number(s?.id) === id);
+    if (idx === -1) return ids;
+    for (let i = idx + 1; i < items.length; i++) {
+      const row = items[i];
+      const rowId = Number(row?.id);
+      if (!Number.isFinite(rowId)) break;
+      const isIndented = !!(row?.isIndented || indented.has(rowId));
+      if (!isIndented) break;
+      ids.push(rowId);
+    }
+  } catch (err) {
+    console.warn('⚠️ idsForStoppedCueGroupServer failed:', err.message || err);
+  }
+  return ids;
+}
+
+/**
  * Persist one completed cue (one grey per event+item).
  * Production still has legacy cue_id/user_name/user_role columns — always supply cue_id
  * so NOT NULL schemas never reject the insert (that was wiping greys on refresh).
@@ -7150,6 +7218,32 @@ app.post('/api/completed-cues', async (req, res) => {
     if (!event_id || item_id == null || !user_id) {
       return res.status(400).json({ error: 'event_id, item_id, and user_id are required' });
     }
+
+    const guard = getActiveLoadReplaceGuard(event_id);
+    if (guard) {
+      console.warn('⛔ Blocked completed_cues POST during LOAD/JUMP replace', {
+        event_id,
+        item_id,
+        user_id,
+        user_name,
+        reason: guard.reason,
+        loadedItemId: guard.loadedItemId,
+        origin: req.headers.origin || null,
+        referer: req.headers.referer || null,
+        userAgent: req.headers['user-agent'] || null,
+      });
+      return res.status(204).end();
+    }
+
+    console.log('🟣 completed_cues POST', {
+      event_id,
+      item_id,
+      user_id,
+      user_name,
+      user_role,
+      origin: req.headers.origin || null,
+      referer: req.headers.referer || null,
+    });
     
     const row = await upsertCompletedCueRow(event_id, item_id, user_id, {
       cue_id,
@@ -8822,6 +8916,10 @@ app.put('/api/active-timers/stop-all', async (req, res) => {
     const { event_id, user_id, user_name, user_role, skip_complete } = req.body;
     // LOAD/JUMP replace passes skip_complete so clients never grey prior cues.
     const skipComplete = skip_complete !== false;
+    if (skipComplete) {
+      // LOAD/JUMP replace — do not allow completed_cues POSTs for this window.
+      armLoadReplaceGuard(event_id, { ms: 6000, reason: 'stop_all_load_replace' });
+    }
     
     // Stop the single active timer for the event
     const result = await pool.query(
@@ -8917,24 +9015,27 @@ app.put('/api/active-timers/stop', async (req, res) => {
       }
     }
 
-    // Only mark THIS cue completed when an actually RUNNING timer is explicitly stopped.
+    // Only mark THIS cue (+ indented kids below) when an actually RUNNING timer is explicitly stopped.
     // Never complete a merely LOADED cue; never write priors (LOAD/JUMP must not grey above).
     const wasRunning =
       timerBeforeStop.rows.length > 0 && timerBeforeStop.rows[0].is_running === true;
     if (!skipComplete && wasRunning && item_id != null) {
       try {
-        const completedRow = await upsertCompletedCueRow(
-          event_id,
-          item_id,
-          user_id || 'system',
-          {
-            cue_id: '',
-            user_name: user_name || null,
-            user_role: user_role || null,
+        const groupIds = await idsForStoppedCueGroupServer(event_id, item_id);
+        for (const cueItemId of groupIds) {
+          const completedRow = await upsertCompletedCueRow(
+            event_id,
+            cueItemId,
+            user_id || 'system',
+            {
+              cue_id: '',
+              user_name: user_name || null,
+              user_role: user_role || null,
+            }
+          );
+          if (completedRow) {
+            broadcastUpdate(event_id, 'completedCuesUpdated', completedRow);
           }
-        );
-        if (completedRow) {
-          broadcastUpdate(event_id, 'completedCuesUpdated', completedRow);
         }
       } catch (markErr) {
         console.warn('⚠️ stop: completed_cues mark failed:', markErr.message || markErr);
@@ -10107,6 +10208,12 @@ app.post('/api/cues/load', async (req, res) => {
     const { event_id, item_id, user_id, duration_seconds, row_is, cue_is, timer_id, preserve_running } = req.body;
     
     console.log(`🎯 OSC: Loading cue - Event: ${event_id}, Item: ${item_id}, Cue: ${cue_is}`);
+    // LOAD must never grey rows above — arm guard before WS broadcast.
+    armLoadReplaceGuard(event_id, {
+      ms: 6000,
+      reason: 'cues_load',
+      loadedItemId: item_id != null ? Number(item_id) : null,
+    });
     clearAllResolumeState(event_id);
     const resolvedDuration = await resolveCueDurationSeconds(event_id, item_id, duration_seconds);
 
