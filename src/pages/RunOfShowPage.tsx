@@ -1611,8 +1611,15 @@ const RunOfShowPage: React.FC = () => {
   const [qaPlanModalParentId, setQaPlanModalParentId] = useState<number | null>(null);
   /** Sub-cue ids that already auto-started for the current parent timer run. */
   const qaAutoStartedRef = useRef<Set<number>>(new Set());
+  /**
+   * After parent LOAD, suppress auto-QA (and WS re-apply) until parent actually STARTs
+   * (is_running). Keys may be child Q&A ids and/or parent ids.
+   */
+  const qaSuppressUntilParentRunningRef = useRef<Set<number>>(new Set());
   /** Ref so Q&A auto-start can call the secondary-timer starter defined later. */
-  const startSecondaryTimerRef = useRef<(itemId: number) => Promise<void>>(async () => {});
+  const startSecondaryTimerRef = useRef<
+    (itemId: number, options?: { fromAuto?: boolean }) => Promise<void>
+  >(async () => {});
   const [delayBlockDay, setDelayBlockDay] = useState(1);
   const [delayDuration, setDelayDuration] = useState({ hours: 0, minutes: 5, seconds: 0 });
   const [showCustomColumnModal, setShowCustomColumnModal] = useState(false);
@@ -2066,6 +2073,11 @@ const RunOfShowPage: React.FC = () => {
   useEffect(() => {
     hybridTimerDataRef.current = hybridTimerData;
   }, [hybridTimerData]);
+  const timerProgressRef = useRef(timerProgress);
+  useEffect(() => {
+    timerProgressRef.current = timerProgress;
+  }, [timerProgress]);
+
   useEffect(() => {
     const fromHybrid =
       hybridTimerData?.activeTimer?.item_id != null
@@ -2082,6 +2094,10 @@ const RunOfShowPage: React.FC = () => {
   const [resolumeSyncPulse, setResolumeSyncPulse] = useState(false);
   const resolumeSyncPulseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [hybridTimerProgress, setHybridTimerProgress] = useState<{ elapsed: number; total: number }>({ elapsed: 0, total: 0 });
+  const hybridTimerProgressRef = useRef(hybridTimerProgress);
+  useEffect(() => {
+    hybridTimerProgressRef.current = hybridTimerProgress;
+  }, [hybridTimerProgress]);
   const [todClockTick, setTodClockTick] = useState(0);
   const [clockOffset, setClockOffset] = useState<number>(0); // Offset between client and server clocks in ms
   const rosClockWallTime = useMemo(() => {
@@ -2919,7 +2935,13 @@ const RunOfShowPage: React.FC = () => {
       return 'bg-sky-950/50';
     }
     if (isQaPlanRow(row)) {
-      if (subCueTimers[itemId] || (hybridSecondaryTimer && itemMatchesTimerRow(itemId, hybridSecondaryTimer))) {
+      const qaSubOn =
+        (subCueTimers[itemId] ||
+          (hybridSecondaryTimer &&
+            itemMatchesTimerRow(itemId, hybridSecondaryTimer) &&
+            hybridSecondaryTimer.is_running === true)) &&
+        isParentCueRunning(itemId);
+      if (qaSubOn) {
         return 'bg-amber-950/70 border-amber-500';
       }
       return 'bg-amber-950/40';
@@ -7897,6 +7919,28 @@ const RunOfShowPage: React.FC = () => {
     return `${sign}${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
+  /**
+   * Parent cue is actually counting (is_running), not merely LOADED.
+   * Hybrid: is_running===true. Local: activeTimers + real startedAt.
+   */
+  const isParentIdActuallyRunning = (parentId: number): boolean => {
+    const hybridActive = hybridTimerData?.activeTimer ?? hybridTimerDataRef.current?.activeTimer;
+    if (
+      hybridActive &&
+      Number(hybridActive.item_id) === Number(parentId) &&
+      hybridActive.is_active !== false &&
+      hybridActive.is_running === true &&
+      (hybridActive.timer_state == null ||
+        hybridActive.timer_state === 'running' ||
+        hybridActive.timer_state === 'unknown')
+    ) {
+      return true;
+    }
+    const localOn = activeTimers[parentId] ?? activeTimersRef.current?.[parentId];
+    const progress = timerProgress[parentId] ?? timerProgressRef.current?.[parentId];
+    return !!localOn && progress?.startedAt != null;
+  };
+
   // Helper function to check if the parent CUE (row above) is running
   const isParentCueRunning = (itemId: number) => {
     // Check if this item is indented using the new database state
@@ -7906,8 +7950,20 @@ const RunOfShowPage: React.FC = () => {
     const parentId = indentedCues[itemId].parentId;
     if (!parentId) return false;
     
-    // Check if the parent is running
-    return activeTimers[parentId] !== undefined;
+    return isParentIdActuallyRunning(parentId);
+  };
+
+  const clearQaSuppressForParent = (parentId: number) => {
+    const suppress = qaSuppressUntilParentRunningRef.current;
+    if (suppress.size === 0) return;
+    suppress.delete(parentId);
+    Object.keys(indentedCuesRef.current || {}).forEach((childIdStr) => {
+      const childId = Number(childIdStr);
+      const link = indentedCuesRef.current?.[childId];
+      if (link?.parentId === parentId) {
+        suppress.delete(childId);
+      }
+    });
   };
 
   // Get remaining time for active timer, sub-cue timer, or loaded CUE - allow negative values
@@ -8377,13 +8433,63 @@ const RunOfShowPage: React.FC = () => {
       await stopSecondaryTimer();
     }
     // Parent LOAD must leave linked Q&A idle so AUTO can re-arm after a real START.
+    // Hard-clear every indented auto-QA child and suppress until parent actually runs.
+    const scheduleNow = scheduleRef.current || schedule;
+    const autoQaChildIds: number[] = [];
     Object.keys(indentedCuesRef.current || {}).forEach((childIdStr) => {
       const childId = Number(childIdStr);
       const link = indentedCuesRef.current?.[childId];
-      if (link?.parentId === itemId) {
-        qaAutoStartedRef.current.delete(childId);
+      if (link?.parentId !== itemId) return;
+      qaAutoStartedRef.current.delete(childId);
+      const childRow = scheduleNow.find((s) => Number(s.id) === childId);
+      if (childRow && isQaPlanRow(childRow)) {
+        autoQaChildIds.push(childId);
+        qaSuppressUntilParentRunningRef.current.add(childId);
       }
     });
+    if (autoQaChildIds.length > 0) {
+      qaSuppressUntilParentRunningRef.current.add(itemId);
+      const matchesAutoQaChild = (id: number | null | undefined) =>
+        id != null && autoQaChildIds.some((cid) => Number(cid) === Number(id));
+      // Clear local secondary / subCueTimers if they match a linked auto-QA child.
+      setSubCueTimers((prev) => {
+        let changed = false;
+        const next = { ...prev };
+        for (const cid of autoQaChildIds) {
+          if (next[cid]) {
+            clearInterval(next[cid]);
+            delete next[cid];
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+      setSubCueTimerProgress((prev) => {
+        let changed = false;
+        const next = { ...prev };
+        for (const cid of autoQaChildIds) {
+          if (next[cid]) {
+            delete next[cid];
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+      setSecondaryTimer((prev) => (prev && matchesAutoQaChild(prev.itemId) ? null : prev));
+      setHybridTimerData((prev) => {
+        const sec = prev?.secondaryTimer;
+        if (sec && matchesAutoQaChild(Number(sec.item_id))) {
+          return { ...prev, secondaryTimer: null };
+        }
+        return prev;
+      });
+      try {
+        console.log('🛑 loadCue: stopping DB sub-cue for auto-QA children of parent', itemId, autoQaChildIds);
+        await DatabaseService.stopSubCueTimer(event.id);
+      } catch (err) {
+        console.warn('⚠️ loadCue: stopSubCueTimer for auto-QA children failed:', err);
+      }
+    }
     
     // Loading a later cue means everything above it on this day is done
     if (activeItemId !== itemId) {
@@ -8790,6 +8896,7 @@ const RunOfShowPage: React.FC = () => {
     /**
      * Local activeTimers is set for RUNNING only in happy paths, but treat LOAD-safe:
      * require a real startedAt (LOAD initializes progress with startedAt: null).
+     * Never treat loaded-only (activeItemId / loadedItems) as running.
      */
     const localParentRunning = (parentId: number) =>
       !!activeTimers[parentId] && timerProgress[parentId]?.startedAt != null;
@@ -8798,6 +8905,13 @@ const RunOfShowPage: React.FC = () => {
       const qaId = Number(qa.id);
       const parentId = indentedCues[qaId]?.parentId;
       if (parentId == null) continue;
+
+      if (
+        qaSuppressUntilParentRunningRef.current.has(qaId) ||
+        qaSuppressUntilParentRunningRef.current.has(parentId)
+      ) {
+        continue;
+      }
 
       const parentRunning = hybridParentRunning(parentId) || localParentRunning(parentId);
 
@@ -8843,7 +8957,7 @@ const RunOfShowPage: React.FC = () => {
       }
 
       qaAutoStartedRef.current.add(qaId);
-      void startSecondaryTimerRef.current(qaId);
+      void startSecondaryTimerRef.current(qaId, { fromAuto: true });
     }
   }, [
     schedule,
@@ -11349,6 +11463,7 @@ const RunOfShowPage: React.FC = () => {
               setActiveItemId((prev) => (prev === numericItemId ? prev : numericItemId));
               setLoadedItems(prev => (prev[numericItemId] ? prev : { ...prev, [numericItemId]: true }));
               completePriorCuesOnDay(numericItemId);
+              clearQaSuppressForParent(numericItemId);
               console.log('✅ RunOfShow: Timer RUNNING - button states updated:', numericItemId);
             } else if (data.timer_state === 'loaded') {
               setActiveTimers(prev => {
@@ -11451,6 +11566,47 @@ const RunOfShowPage: React.FC = () => {
       },
       onSubCueTimerStarted: (data: any) => {
         if (data && data.event_id === event?.id) {
+          const numericItemId =
+            typeof data.item_id === 'string' ? parseInt(data.item_id, 10) : data.item_id;
+          // Ignore auto-QA secondary starts while parent is only LOADED/idle — never show Q&A ON.
+          if (numericItemId != null) {
+            const row = (scheduleRef.current || []).find(
+              (s) => Number(s.id) === Number(numericItemId)
+            );
+            if (row && isQaPlanRow(row)) {
+              const parentId = indentedCuesRef.current?.[Number(numericItemId)]?.parentId;
+              const hybridActive = hybridTimerDataRef.current?.activeTimer;
+              const hybridParentRunning =
+                parentId != null &&
+                !!hybridActive &&
+                Number(hybridActive.item_id) === Number(parentId) &&
+                hybridActive.is_active !== false &&
+                hybridActive.is_running === true &&
+                (hybridActive.timer_state == null ||
+                  hybridActive.timer_state === 'running' ||
+                  hybridActive.timer_state === 'unknown');
+              const localParentRunning =
+                parentId != null &&
+                !!activeTimersRef.current?.[parentId] &&
+                timerProgressRef.current?.[parentId]?.startedAt != null;
+              const suppressed =
+                qaSuppressUntilParentRunningRef.current.has(Number(numericItemId)) ||
+                (parentId != null && qaSuppressUntilParentRunningRef.current.has(parentId));
+              if (suppressed || (!hybridParentRunning && !localParentRunning)) {
+                console.warn(
+                  '🛑 Ignoring sub-cue start for auto-QA — parent not running / suppressed:',
+                  numericItemId,
+                  { parentId, suppressed, hybridParentRunning, localParentRunning }
+                );
+                if (event?.id) {
+                  void DatabaseService.stopSubCueTimer(event.id).catch((err) =>
+                    console.warn('⚠️ stopSubCueTimer after ignoring auto-QA WS start failed:', err)
+                  );
+                }
+                return;
+              }
+            }
+          }
           setHybridTimerData(prev => {
             const enrichedIncoming = enrichSubCueTimer(data);
             let secondaryTimer = enrichedIncoming;
@@ -11469,8 +11625,6 @@ const RunOfShowPage: React.FC = () => {
               secondaryTimer,
             };
           });
-          const numericItemId =
-            typeof data.item_id === 'string' ? parseInt(data.item_id, 10) : data.item_id;
           if (numericItemId != null) {
             const nextRemaining = Math.max(0, (data.duration_seconds || 0) - (data.elapsed_seconds || 0));
             const nextDuration = data.duration_seconds || 0;
@@ -11560,6 +11714,11 @@ const RunOfShowPage: React.FC = () => {
           } else if (timerData.is_active === true) {
             if (timerData.timer_state === 'running' || timerData.is_running === true) {
               completePriorCuesOnDay(timerData.item_id);
+              const runningParentId =
+                typeof timerData.item_id === 'string'
+                  ? parseInt(timerData.item_id, 10)
+                  : timerData.item_id;
+              if (runningParentId != null) clearQaSuppressForParent(runningParentId);
             }
             noteCueActualStart(timerData);
             setHybridTimerData(prev => {
@@ -13957,6 +14116,8 @@ const RunOfShowPage: React.FC = () => {
         
         setActiveTimerIntervals(prev => ({ ...prev, [itemId]: timer }));
         setActiveTimers(prev => ({ ...prev, [itemId]: true }));
+        // Parent actually STARTed — allow linked auto-QA to arm / auto-start at threshold.
+        clearQaSuppressForParent(itemId);
         // Don't clear completed state when starting a timer - let it persist
         
         // Start drift detection for long-running timers
@@ -14121,11 +14282,85 @@ const RunOfShowPage: React.FC = () => {
   };
 
   // Start secondary timer for indented CUEs
-  const startSecondaryTimer = async (itemId: number) => {
+  const startSecondaryTimer = async (
+    itemId: number,
+    options?: { fromAuto?: boolean }
+  ) => {
     if (!user || !event?.id) return;
     
-    const item = schedule.find(s => s.id === itemId);
-    if (item && indentedCues[itemId]) {
+    const item = schedule.find(s => s.id === itemId) || scheduleRef.current?.find((s) => s.id === itemId);
+    const indent = indentedCues[itemId] || indentedCuesRef.current?.[itemId];
+    if (item && indent) {
+      // Hard gates for planned Q&A: never start while parent is only LOADED.
+      if (isQaPlanRow(item)) {
+        const parentId = indent.parentId;
+        if (parentId == null) {
+          console.warn('🛑 Refusing Q&A start — missing parent for', itemId);
+          return;
+        }
+        const parentRunning = isParentIdActuallyRunning(parentId);
+        // Parent LOADED (activeItemId match) but !is_running / no startedAt → refuse always.
+        if (!parentRunning) {
+          console.warn(
+            '🛑 Refusing Q&A start — parent not actually running (loaded/idle):',
+            itemId,
+            'parent',
+            parentId
+          );
+          return;
+        }
+        if (
+          qaSuppressUntilParentRunningRef.current.has(itemId) ||
+          qaSuppressUntilParentRunningRef.current.has(parentId)
+        ) {
+          // Suppress clears on parent START; if somehow still set while running, clear and continue only for manual.
+          if (options?.fromAuto) {
+            console.warn('🛑 Refusing auto Q&A — suppress until parent START cleared:', itemId);
+            return;
+          }
+          clearQaSuppressForParent(parentId);
+        }
+        if (options?.fromAuto) {
+          const hybridActive = hybridTimerData?.activeTimer;
+          const hybridParentRunning =
+            !!hybridActive &&
+            Number(hybridActive.item_id) === Number(parentId) &&
+            hybridActive.is_active !== false &&
+            hybridActive.is_running === true &&
+            (hybridActive.timer_state == null ||
+              hybridActive.timer_state === 'running' ||
+              hybridActive.timer_state === 'unknown');
+          let remaining: number | null = null;
+          let total = 0;
+          let elapsed = 0;
+          if (hybridParentRunning) {
+            total = Number(hybridTimerProgress.total) || 0;
+            elapsed = Number(hybridTimerProgress.elapsed) || 0;
+            remaining = total - elapsed;
+          } else if (timerProgress[parentId]) {
+            total = Number(timerProgress[parentId].total) || 0;
+            elapsed = Number(timerProgress[parentId].elapsed) || 0;
+            remaining = total - elapsed;
+          }
+          if (
+            !shouldAutoStartQa({
+              parentRunning: true,
+              parentRemainingSeconds: remaining,
+              parentTotalSeconds: total,
+              thresholdSeconds: item.qaAutoStartAtRemainingSeconds,
+              parentElapsedSeconds: elapsed,
+            })
+          ) {
+            console.warn('🛑 Refusing auto Q&A — shouldAutoStartQa gate failed:', itemId, {
+              remaining,
+              total,
+              threshold: item.qaAutoStartAtRemainingSeconds,
+            });
+            return;
+          }
+        }
+      }
+
       const totalSeconds = item.durationHours * 3600 + item.durationMinutes * 60 + item.durationSeconds;
       
       console.log('🟠 Starting secondary timer for item:', itemId, 'Duration:', totalSeconds, 's');
@@ -20713,7 +20948,15 @@ const RunOfShowPage: React.FC = () => {
                      (hybridSecondaryTimer.timer_state == null ||
                        hybridSecondaryTimer.timer_state === 'running' ||
                        hybridSecondaryTimer.timer_state === 'unknown');
-                   const subPlaying = subPlayingLocal || subPlayingHybrid;
+                   const subPlayingRaw = subPlayingLocal || subPlayingHybrid;
+                   // Q&A ON only when secondary is playing AND parent is actually running
+                   // (never from loadedCueDependents / LOADED-only parent).
+                   const parentActuallyRunningForQa = isQaPlanRow(item)
+                     ? isParentCueRunning(item.id)
+                     : true;
+                   const subPlaying = isQaPlanRow(item)
+                     ? subPlayingRaw && parentActuallyRunningForQa
+                     : subPlayingRaw;
                    return (
                    <div 
                      key={`${item.id}-${item.notes?.length || 0}-${item.speakers?.length || 0}`}
