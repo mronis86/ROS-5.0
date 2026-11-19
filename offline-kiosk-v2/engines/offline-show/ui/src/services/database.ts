@@ -1319,12 +1319,19 @@ export class DatabaseService {
         })
       });
 
+      // 204 = server ignored write during LOAD/JUMP replace
+      if (response.status === 204) {
+        console.log('⏭️ completed_cues POST skipped during LOAD/JUMP replace:', { eventId, itemId });
+        return false;
+      }
+
       if (!response.ok) {
         console.error('❌ Failed to mark cue as completed:', response.status, response.statusText);
         return false;
       }
 
-      const data = await response.json();
+      const text = await response.text();
+      const data = text ? JSON.parse(text) : null;
       console.log('✅ Cue marked as completed successfully:', { eventId, itemId, data });
       return true;
     } catch (error) {

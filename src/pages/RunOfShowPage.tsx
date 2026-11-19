@@ -3329,7 +3329,8 @@ const RunOfShowPage: React.FC = () => {
   };
 
   /**
-   * Mark ONLY this cue + indented kids BELOW it. Never touch rows above (no L1 cumulative).
+   * Local grey ONLY for this cue + indented kids BELOW. Never rows above.
+   * Neon persist is owned by PUT /api/active-timers/stop (single writer) — no client POST here.
    */
   const markOnlyStoppedCueCompleted = (itemId: number | null | undefined): number[] => {
     if (suppressCompleteFromTimerStopRef.current) {
@@ -3338,21 +3339,24 @@ const RunOfShowPage: React.FC = () => {
     }
     const ids = idsForStoppedCueGroup(itemId);
     applyCompletedLocally(ids);
-    if (event?.id && user?.id) {
-      const list = scheduleRef.current || schedule;
-      ids.forEach((cueId) => {
-        const item = list.find((s: { id: number }) => s.id === cueId);
-        void DatabaseService.markCueCompleted(
-          event.id,
-          cueId,
-          item?.customFields?.cue || 'CUE',
-          user.id,
-          user.full_name || user.email || 'Unknown User',
-          currentUserRole || 'VIEWER'
-        ).catch((err) => console.warn('⚠️ Failed to persist completed cue:', cueId, err));
-      });
-    }
     return ids;
+  };
+
+  /** Fallback if stopTimer failed to update the server row (rare) — then client may POST once. */
+  const persistCompletedCuesFallback = (ids: number[]) => {
+    if (!event?.id || !user?.id || ids.length === 0) return;
+    const list = scheduleRef.current || schedule;
+    ids.forEach((cueId) => {
+      const item = list.find((s: { id: number }) => s.id === cueId);
+      void DatabaseService.markCueCompleted(
+        event.id,
+        cueId,
+        item?.customFields?.cue || 'CUE',
+        user.id,
+        user.full_name || user.email || 'Unknown User',
+        currentUserRole || 'VIEWER'
+      ).catch((err) => console.warn('⚠️ Fallback persist completed cue failed:', cueId, err));
+    });
   };
 
   const trackWasDurationsRef = useRef(trackWasDurations);
@@ -12271,25 +12275,16 @@ const RunOfShowPage: React.FC = () => {
             void (async () => {
               try {
                 console.log('🛑 EndShow timer reached 0 — auto-stopping (no overtime)');
-                await DatabaseService.stopTimer(
+                const endShowStopped = await DatabaseService.stopTimer(
                   event.id,
                   itemId,
                   user.id,
                   user.full_name || user.email || 'Unknown User',
                   currentUserRole || 'VIEWER'
                 );
-                try {
-                  await DatabaseService.markCueCompleted(
-                    event.id,
-                    itemId,
-                    row?.customFields?.cue || 'CUE',
-                    user.id,
-                    user.full_name || user.email || 'Unknown User',
-                    currentUserRole || 'VIEWER'
-                  );
-                } catch (markErr) {
-                  console.warn('EndShow auto-stop: mark completed failed', markErr);
-                }
+                // Local grey + kids; Neon comes from stop endpoint (fallback POST only if stop missed).
+                const endShowCompletedIds = markOnlyStoppedCueCompleted(itemId);
+                if (!endShowStopped) persistCompletedCuesFallback(endShowCompletedIds);
                 setHybridTimerData((prev: any) =>
                   prev?.activeTimer && Number(prev.activeTimer.item_id) === itemId
                     ? { ...prev, activeTimer: null }
@@ -12307,7 +12302,6 @@ const RunOfShowPage: React.FC = () => {
                   delete next[itemId];
                   return next;
                 });
-                setCompletedCues((prev) => ({ ...prev, [itemId]: true }));
                 setActiveItemId((prev) => (prev === itemId ? null : prev));
                 setHybridTimerProgress({ elapsed: total, total });
                 logChange(
@@ -13768,8 +13762,8 @@ const RunOfShowPage: React.FC = () => {
         return newSet;
       });
       
-      // Single-cue complete only (+ indented kids below). Never greys rows above.
-      markOnlyStoppedCueCompleted(itemId);
+      // Local grey only (+ indented kids below). Neon persist = stop endpoint below.
+      const completedIds = markOnlyStoppedCueCompleted(itemId);
       logChange('TIMER_STOPPED', `Cue stopped`, { itemId });
       
       // Calculate automatic overtime from hybrid timer (positive or negative) - only when timer stops
@@ -13832,8 +13826,6 @@ const RunOfShowPage: React.FC = () => {
         }
       }
       
-      // Completed mark + Neon persist already handled by markOnlyStoppedCueCompleted (cue + kids only).
-      
       // Don't clear dependent row highlighting when timer is stopped - they should stay highlighted
       
       // Clear loaded state - set cue timer buttons back to non-loaded state
@@ -13868,15 +13860,19 @@ const RunOfShowPage: React.FC = () => {
         await stopSecondaryTimer();
       }
 
-      // Update active_timers table in API
+      // Server stop = single Neon writer for completed_cues (cue + kids).
       console.log('🔄 Stopping timer in API for item:', itemId);
-      await DatabaseService.stopTimer(
+      const stopOk = await DatabaseService.stopTimer(
         event.id, 
         itemId, 
         user.id, 
         user.full_name || user.email || 'Unknown User',
         currentUserRole || 'VIEWER'
       );
+      if (!stopOk) {
+        console.warn('⚠️ stopTimer reported no row — falling back to completed_cues POST');
+        persistCompletedCuesFallback(completedIds);
+      }
       console.log('✅ Timer stopped in API');
 
       const stoppedItem = schedule.find((s) => s.id === itemId);

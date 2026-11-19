@@ -2740,12 +2740,15 @@ const RunOfShowPage: React.FC = () => {
     return Boolean(t?.is_running || t?.timer_state === 'running');
   };
 
+  /**
+   * Dim ONLY if this exact cue id is in completedCues.
+   * Never dim by schedule position / "everything above Stop".
+   * Never dim from stoppedItems alone (LOAD/JUMP used to leave those flags).
+   */
   const isItemDimmed = (itemId: number) => {
     if (!showCompletedHighlight) return false;
-    // Only skip dimming while RUNNING. A just-stopped cue can still be "loaded"
-    // and must go straight to dimmed-complete (not a bright purple last-loaded flash).
     if (isCueRunningOnStage(itemId)) return false;
-    return isItemCompleted(itemId) || stoppedItems.has(itemId);
+    return isItemCompleted(itemId) === true;
   };
   const isDelayBlock = (itemId: number) =>
     schedule.some(item => item.id === itemId && item.programType === 'Delay Block');
@@ -3235,14 +3238,10 @@ const RunOfShowPage: React.FC = () => {
   const completedDaysRef = useRef(completedDays);
   const indentedCuesRef = useRef(indentedCues);
 
-  /** Grey-out a stopped cue + its indented children (local Stop and Companion/WS Stop). */
-  const markCueGroupCompleted = (itemId: number | null | undefined) => {
-    if (suppressCompleteFromTimerStopRef.current) {
-      console.log('⏭️ Skipping markCueGroupCompleted during LOAD/JUMP replace:', itemId);
-      return;
-    }
+  /** Stopped cue + indented kids BELOW only — never schedule rows above. */
+  const idsForStoppedCueGroup = (itemId: number | null | undefined): number[] => {
     const id = normalizeScheduleItemId(itemId);
-    if (id == null) return;
+    if (id == null) return [];
     const ids = [id];
     const list = scheduleRef.current || schedule;
     const idx = list.findIndex((s: { id: number }) => s.id === id);
@@ -3252,9 +3251,17 @@ const RunOfShowPage: React.FC = () => {
         else break;
       }
     }
+    return ids;
+  };
+
+  const applyCompletedLocally = (ids: number[]) => {
+    if (ids.length === 0) return;
+    console.log('🟣 Stop complete — ONLY these ids (not rows above):', ids);
     setCompletedCues((prev) => {
       const next = { ...prev };
-      ids.forEach((cueId) => { next[cueId] = true; });
+      ids.forEach((cueId) => {
+        next[cueId] = true;
+      });
       return next;
     });
     setStoppedItems((prev) => {
@@ -3263,19 +3270,37 @@ const RunOfShowPage: React.FC = () => {
       return next;
     });
     setLastLoadedCueId((prev) => (prev != null && ids.includes(prev) ? null : prev));
-    if (event?.id && user?.id) {
-      ids.forEach((cueId) => {
-        const item = list.find((s: { id: number }) => s.id === cueId);
-        void DatabaseService.markCueCompleted(
-          event.id,
-          cueId,
-          item?.customFields?.cue || 'CUE',
-          user.id,
-          user.full_name || user.email || 'Unknown User',
-          currentUserRole || 'VIEWER'
-        ).catch((err) => console.warn('⚠️ Failed to persist completed cue:', cueId, err));
-      });
+  };
+
+  /**
+   * Local grey ONLY for this cue + indented kids BELOW. Never rows above.
+   * Persist is owned by PUT /api/active-timers/stop (single writer) — no client POST here.
+   */
+  const markOnlyStoppedCueCompleted = (itemId: number | null | undefined): number[] => {
+    if (suppressCompleteFromTimerStopRef.current) {
+      console.log('⏭️ Skipping completed mark during LOAD/JUMP replace:', itemId);
+      return [];
     }
+    const ids = idsForStoppedCueGroup(itemId);
+    applyCompletedLocally(ids);
+    return ids;
+  };
+
+  /** Fallback if stopTimer failed to update the server row (rare). */
+  const persistCompletedCuesFallback = (ids: number[]) => {
+    if (!event?.id || !user?.id || ids.length === 0) return;
+    const list = scheduleRef.current || schedule;
+    ids.forEach((cueId) => {
+      const item = list.find((s: { id: number }) => s.id === cueId);
+      void DatabaseService.markCueCompleted(
+        event.id,
+        cueId,
+        item?.customFields?.cue || 'CUE',
+        user.id,
+        user.full_name || user.email || 'Unknown User',
+        currentUserRole || 'VIEWER'
+      ).catch((err) => console.warn('⚠️ Fallback persist completed cue failed:', cueId, err));
+    });
   };
 
   const trackWasDurationsRef = useRef(trackWasDurations);
@@ -5026,22 +5051,23 @@ useEffect(() => {
   //   // ... old polling code disabled to prevent conflicts
   // }, [event?.id, user?.id]);
 
-  // Sync completed cues function
+  // Sync completed cues — REPLACE from server (never merge). Empty list must clear greys.
   const syncCompletedCues = async () => {
     if (!event?.id) return;
     
     try {
-      const completedData = await apiClient.getCompletedCues(event.id);
+      const completedData = await apiClient.getCompletedCues(event.id, { bypassCache: true });
 
+      const completedCuesMap: Record<number, boolean> = {};
       if (Array.isArray(completedData)) {
-        const completedCuesMap: Record<number, boolean> = {};
         completedData.forEach((cue: any) => {
           const id = normalizeScheduleItemId(cue.item_id);
           if (id != null) completedCuesMap[id] = true;
         });
-        setCompletedCues((prev) => stripLiveCuesFromCompletedMap({ ...prev, ...completedCuesMap }));
-        console.log('🟣 Synced completed cues:', stripLiveCuesFromCompletedMap(completedCuesMap));
       }
+      const next = stripLiveCuesFromCompletedMap(completedCuesMap);
+      setCompletedCues(next);
+      console.log('🟣 Synced completed cues (replace):', next);
     } catch (error) {
       console.warn('⚠️ Error syncing completed cues:', error);
     }
@@ -5263,7 +5289,7 @@ useEffect(() => {
     };
   }, [event?.id, user?.id, user?.full_name, user?.email]);
 
-  // Load completed cues from API
+  // Load completed cues from API — replace local map (empty means clear all greys)
   const loadCompletedCuesFromAPI = async () => {
     if (!event?.id) return;
 
@@ -5271,23 +5297,15 @@ useEffect(() => {
       console.log('🟣 Loading completed cues from API for event:', event.id);
       const completedResult = await DatabaseService.getCompletedCues(event.id);
       const completedCuesData: any[] = Array.isArray(completedResult) ? completedResult : [];
-      
-      if (completedCuesData.length > 0) {
-        console.log('🟣 Found completed cues:', completedCuesData);
-        
-        // Convert the database data to completedCues state format
-        const completedCuesMap: Record<number, boolean> = {};
-        completedCuesData.forEach((cue: any) => {
-          const id = normalizeScheduleItemId(cue.item_id);
-          if (id == null) return;
-          completedCuesMap[id] = true;
-        });
-        const filtered = stripLiveCuesFromCompletedMap(completedCuesMap);
-        setCompletedCues((prev) => stripLiveCuesFromCompletedMap({ ...prev, ...filtered }));
-        console.log('🟣 Set completedCues state:', filtered);
-      } else {
-        console.log('🟣 No completed cues found');
-      }
+      const completedCuesMap: Record<number, boolean> = {};
+      completedCuesData.forEach((cue: any) => {
+        const id = normalizeScheduleItemId(cue.item_id);
+        if (id == null) return;
+        completedCuesMap[id] = true;
+      });
+      const filtered = stripLiveCuesFromCompletedMap(completedCuesMap);
+      setCompletedCues(filtered);
+      console.log('🟣 Set completedCues state (replace):', filtered);
     } catch (error) {
       console.error('❌ Error loading completed cues from API:', error);
       console.log('💡 This means the completed_cues table or functions need to be created first');
@@ -11025,9 +11043,11 @@ useEffect(() => {
       onCompletedCuesUpdated: (data: any) => {
         // Update completed cues state directly from WebSocket data - no API polling needed!
         if (data && data.cleared) {
-          // All completed cues cleared (from reset button)
           setCompletedCues({});
-        } else if (data && data.removed && data.item_id != null) {
+          setStoppedItems(new Set());
+          return;
+        }
+        if (data && data.removed && data.item_id != null) {
           const id = normalizeScheduleItemId(data.item_id);
           if (id != null) {
             setCompletedCues((prev) => {
@@ -11035,41 +11055,41 @@ useEffect(() => {
               delete newCompleted[id];
               return newCompleted;
             });
+            setStoppedItems((prev) => {
+              if (!prev.has(id)) return prev;
+              const next = new Set(prev);
+              next.delete(id);
+              return next;
+            });
           }
-        } else if (data && Array.isArray(data)) {
+          return;
+        }
+        // LOAD/JUMP replace must never grey priors from a delayed completedCues echo
+        if (suppressCompleteFromTimerStopRef.current) {
+          console.log('⏭️ Ignoring completedCuesUpdated during LOAD/JUMP replace');
+          return;
+        }
+        if (data && Array.isArray(data)) {
           const completedObject = data.reduce((acc: Record<number, boolean>, cue: { item_id?: unknown }) => {
             const id = normalizeScheduleItemId(cue.item_id);
             if (id != null) acc[id] = true;
             return acc;
           }, {});
-          setCompletedCues((prev) => stripLiveCuesFromCompletedMap({ ...prev, ...completedObject }));
-        } else if (data && data.item_id != null) {
+          // Full list from server — replace, do not merge stale locals
+          setCompletedCues(stripLiveCuesFromCompletedMap(completedObject));
+          return;
+        }
+        if (data && data.item_id != null) {
           const id = normalizeScheduleItemId(data.item_id);
           if (id != null) {
-            // Never re-complete a cue that is currently RUNNING
             if (isCueRunningOnStage(id) || activeTimersRef.current[id]) {
               return;
             }
-            // Explicit Stop persistence — dim this cue + indented kids (not every row above).
-            const ids = [id];
-            const list = scheduleRef.current || schedule;
-            const idx = list.findIndex((s: { id: number }) => s.id === id);
-            if (idx !== -1) {
-              for (let i = idx + 1; i < list.length; i++) {
-                if (isIndentedScheduleItem(list[i], indentedCuesRef.current)) ids.push(list[i].id);
-                else break;
-              }
+            if (activeLoadedItemIdRef.current === id) {
+              return;
             }
-            setCompletedCues((prev) => {
-              const next = { ...prev };
-              ids.forEach((cueId) => { next[cueId] = true; });
-              return next;
-            });
-            setStoppedItems((prev) => {
-              const next = new Set(prev);
-              ids.forEach((cueId) => next.add(cueId));
-              return next;
-            });
+            // WS echo — local only; never greys rows above.
+            applyCompletedLocally(idsForStoppedCueGroup(id));
           }
         }
       },
@@ -13394,14 +13414,8 @@ useEffect(() => {
         return newSet;
       });
       
-      setCompletedCues(prev => {
-        const newCompleted = { ...prev, [itemId]: true };
-        console.log('🔄 ToggleTimer: Updated completedCues for main item:', itemId, 'new state:', newCompleted);
-        return newCompleted;
-      });
-      // Add to stopped items for inactive styling
-      setStoppedItems(prev => new Set([...prev, itemId]));
-      setLastLoadedCueId((prev) => (prev === itemId ? null : prev));
+      // Local grey only (+ indented kids below). Persist = stop endpoint below.
+      const completedIds = markOnlyStoppedCueCompleted(itemId);
       logChange('TIMER_STOPPED', `Cue stopped`, { itemId });
       
       // Calculate automatic overtime from hybrid timer (positive or negative) - only when timer stops
@@ -13464,63 +13478,6 @@ useEffect(() => {
         }
       }
       
-      // Mark cue as completed in database
-      try {
-        const item = schedule.find(s => s.id === itemId);
-        await DatabaseService.markCueCompleted(
-          event.id, 
-          itemId, 
-          item?.customFields?.cue || 'CUE', 
-          user.id, 
-          user.full_name || user.email || 'Unknown User',
-          currentUserRole || 'VIEWER'
-        );
-      } catch (error) {
-        console.warn('⚠️ Failed to mark cue as completed in database:', error);
-        console.log('💡 This means the completed_cues table needs to be created first');
-      }
-      
-      // Also complete any indented items that are part of this CUE group
-      const currentIndex = schedule.findIndex(item => item.id === itemId);
-      console.log('🔄 ToggleTimer: Current index for item', itemId, ':', currentIndex);
-      
-      if (currentIndex !== -1) {
-        console.log('🔄 ToggleTimer: Looking for indented items after index', currentIndex);
-        // Find all indented items that follow this CUE until the next non-indented item
-        for (let i = currentIndex + 1; i < schedule.length; i++) {
-          console.log('🔄 ToggleTimer: Checking item at index', i, ':', schedule[i].segmentName, 'isIndented:', isIndentedScheduleItem(schedule[i], indentedCuesRef.current));
-          if (isIndentedScheduleItem(schedule[i], indentedCuesRef.current)) {
-            console.log('🔄 ToggleTimer: Marking indented item as completed:', schedule[i].id, schedule[i].segmentName);
-            setCompletedCues(prev => {
-              const newCompleted = { ...prev, [schedule[i].id]: true };
-              console.log('🔄 ToggleTimer: Updated completedCues for indented item:', schedule[i].id, 'new state:', newCompleted);
-              return newCompleted;
-            });
-            setStoppedItems(prev => new Set([...prev, schedule[i].id]));
-            // Mark indented items as completed in database too
-            try {
-              await DatabaseService.markCueCompleted(
-                event.id, 
-                schedule[i].id, 
-                schedule[i].customFields?.cue || 'CUE', 
-                user.id, 
-                user.full_name || user.email || 'Unknown User',
-                currentUserRole || 'VIEWER'
-              );
-              console.log('✅ ToggleTimer: Successfully marked indented item as completed in database:', schedule[i].id);
-            } catch (error) {
-              console.error('❌ ToggleTimer: Failed to mark indented item as completed in database:', schedule[i].id, error);
-            }
-          } else {
-            // Stop when we hit a non-indented item (next CUE group)
-            console.log('🔄 ToggleTimer: Hit non-indented item, stopping search at index', i);
-            break;
-          }
-        }
-      } else {
-        console.log('⚠️ ToggleTimer: Could not find current item in schedule:', itemId);
-      }
-      
       // Don't clear dependent row highlighting when timer is stopped - they should stay highlighted
       
       // Clear loaded state - set cue timer buttons back to non-loaded state
@@ -13555,15 +13512,19 @@ useEffect(() => {
         await stopSecondaryTimer();
       }
 
-      // Update active_timers table in API
+      // Server stop = single writer for completed_cues (cue + kids).
       console.log('🔄 Stopping timer in API for item:', itemId);
-      await DatabaseService.stopTimer(
+      const stopOk = await DatabaseService.stopTimer(
         event.id, 
         itemId, 
         user.id, 
         user.full_name || user.email || 'Unknown User',
         currentUserRole || 'VIEWER'
       );
+      if (!stopOk) {
+        console.warn('⚠️ stopTimer reported no row — falling back to completed_cues POST');
+        persistCompletedCuesFallback(completedIds);
+      }
       console.log('✅ Timer stopped in API');
 
       const stoppedItem = schedule.find((s) => s.id === itemId);

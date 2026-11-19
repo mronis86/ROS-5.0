@@ -34,7 +34,7 @@ class ApiClient {
   private readonly CACHE_TTL = {
     calendarEvents: 5 * 60 * 1000,    // 5 minutes
     runOfShowData: 30 * 1000,         // 30 seconds (frequently updated)
-    completedCues: 2 * 60 * 1000,     // 2 minutes
+    completedCues: 5 * 1000,          // 5 seconds (must track Reset/Stop closely)
     activeTimers: 10 * 1000,          // 10 seconds (very dynamic)
     changeLog: 1 * 60 * 1000,         // 1 minute
     timerMessages: 1 * 60 * 1000,     // 1 minute
@@ -353,8 +353,18 @@ class ApiClient {
   }
 
   // Completed Cues
-  async getCompletedCues(eventId: string) {
-    return this.request(`/api/completed-cues/${eventId}`, {}, `completedCues_${eventId}`, this.CACHE_TTL.completedCues);
+  invalidateCompletedCuesCache(eventId: string) {
+    this.cache.delete(`completedCues_${eventId}`);
+  }
+
+  async getCompletedCues(eventId: string, options?: { bypassCache?: boolean }) {
+    if (options?.bypassCache) this.invalidateCompletedCuesCache(eventId);
+    return this.request(
+      `/api/completed-cues/${eventId}`,
+      {},
+      `completedCues_${eventId}`,
+      options?.bypassCache ? 0 : this.CACHE_TTL.completedCues
+    );
   }
 
   async markCueAsCompleted(eventId: string, itemId: number, userId: string) {
@@ -363,8 +373,7 @@ class ApiClient {
       body: JSON.stringify({ event_id: eventId, item_id: itemId, user_id: userId }),
     });
     
-    // Invalidate completed cues cache
-    this.cache.delete(`completedCues_${eventId}`);
+    this.invalidateCompletedCuesCache(eventId);
     return result;
   }
 
@@ -374,8 +383,7 @@ class ApiClient {
       body: JSON.stringify({ event_id: eventId, item_id: itemId, user_id: userId }),
     });
     
-    // Invalidate completed cues cache
-    this.cache.delete(`completedCues_${eventId}`);
+    this.invalidateCompletedCuesCache(eventId);
     return result;
   }
 
