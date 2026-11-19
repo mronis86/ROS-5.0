@@ -13,10 +13,10 @@ type AltTimerBadgeProps = {
   /** Small display: badge + cue only (no segment name) */
   cueOnly?: boolean;
   /**
-   * Q&A badge scale. Full / 16×9 hero alt uses `lg` (default);
+   * Q&A badge scale. Full hero uses `lg` (default); DSM 16×9 uses `md`;
    * crowded side slots pass `sm`.
    */
-  size?: 'sm' | 'lg';
+  size?: 'sm' | 'md' | 'lg';
 };
 
 /**
@@ -43,7 +43,9 @@ export function AltTimerBadge({
   const qaBadgeClass =
     size === 'sm'
       ? 'rounded-md bg-fuchsia-600 px-3 py-1 text-lg md:text-xl lg:text-2xl font-black leading-none tracking-wide text-white shadow-[0_0_14px_rgba(192,38,211,0.5)]'
-      : 'rounded-lg bg-fuchsia-600 px-5 py-2 text-2xl md:text-3xl lg:text-4xl font-black leading-none tracking-wide text-white shadow-[0_0_18px_rgba(192,38,211,0.55)]';
+      : size === 'md'
+        ? 'rounded-md bg-fuchsia-600 px-3.5 py-1.5 text-xl md:text-2xl lg:text-2xl font-black leading-none tracking-wide text-white shadow-[0_0_14px_rgba(192,38,211,0.5)]'
+        : 'rounded-lg bg-fuchsia-600 px-5 py-2 text-2xl md:text-3xl lg:text-4xl font-black leading-none tracking-wide text-white shadow-[0_0_18px_rgba(192,38,211,0.55)]';
   const badgeClass = isOperator
     ? 'rounded bg-violet-500 px-2 py-0.5 text-xs font-black leading-none tracking-widest text-white translate-y-px'
     : isQa

@@ -1710,6 +1710,7 @@ const DsmClock: React.FC<DsmClockProps> = ({
                 scheduleItems={scheduleItems}
                 statusPrefix={secondaryStatusPrefix}
                 resolumeSuffix={secondaryResolumeLabel}
+                size={show16x9Frame ? 'md' : 'lg'}
               />
             );
           })();
