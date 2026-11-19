@@ -1,261 +1,731 @@
-@import './styles/led-fonts.css';
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-html:not(.led-output-broadcast),
-html:not(.led-output-broadcast) body,
-html:not(.led-output-broadcast) #root {
-  min-height: 100%;
-  background-color: #0f172a; /* slate-900 — avoids white flash before route paint */
-  color-scheme: dark;
+:root {
+  --app-header-height: 3.5rem; /* 56px — matches main AppHeader / Run of Show toolbar offset */
 }
 
-/* Noto Color Emoji (Google) – consistent emoji style for location icons */
-@font-face {
-  font-family: 'Noto Color Emoji';
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url(https://cdn.jsdelivr.net/fontsource/fonts/noto-color-emoji@latest/emoji-400-normal.woff2) format('woff2'),
-       url(https://cdn.jsdelivr.net/fontsource/fonts/noto-color-emoji@latest/emoji-400-normal.woff) format('woff');
-}
-
-.noto-emoji {
-  font-family: 'Noto Color Emoji', sans-serif;
-}
-
-/* Custom scrollbar styles */
+/* Match main app global styles (App.css) */
 .overflow-x-auto::-webkit-scrollbar {
   height: 12px;
 }
-
 .overflow-x-auto::-webkit-scrollbar-track {
   background: #475569;
 }
-
 .overflow-x-auto::-webkit-scrollbar-thumb {
   background: #64748b;
   border-radius: 6px;
 }
-
 .overflow-x-auto::-webkit-scrollbar-thumb:hover {
   background: #94a3b8;
 }
 
-.ppt-preview-strip {
-  scrollbar-width: thin;
-  scrollbar-color: #8b5cf6 #1e293b;
-}
-.overflow-x-auto.ppt-preview-strip::-webkit-scrollbar {
-  height: 6px;
-}
-.overflow-x-auto.ppt-preview-strip::-webkit-scrollbar-track {
-  background: #1e293b;
-  border-radius: 999px;
-}
-.overflow-x-auto.ppt-preview-strip::-webkit-scrollbar-thumb {
-  background: #8b5cf6;
-  border-radius: 999px;
-}
-.overflow-x-auto.ppt-preview-strip::-webkit-scrollbar-thumb:hover {
-  background: #a78bfa;
-}
-
-/* Custom focus styles */
-input:focus, select:focus, textarea:focus {
+input:focus,
+select:focus,
+textarea:focus {
   outline: none;
   border-color: #3b82f6;
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
 }
 
-/* Page transitions belong on specific interactive elements (Tailwind transition-*), not globally. */
-
-/* Custom animations */
-@keyframes fadeIn {
-  from { opacity: 0; transform: translateY(-10px); }
-  to { opacity: 1; transform: translateY(0); }
+* {
+  box-sizing: border-box;
 }
 
-.modal-enter {
-  animation: fadeIn 0.3s ease-out;
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  background: #0f172a;
+  color: #e2e8f0;
+}
+.offline-app {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
 }
 
-/* Hide header completely on Clock page */
-.clock-page header {
-  display: none !important;
+.offline-main {
+  flex: 1;
+  padding-bottom: 3.25rem;
 }
 
-.clock-page .App > header {
-  display: none !important;
+.offline-connectivity-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1000;
+  border-top: 1px solid #334155;
+  background: linear-gradient(180deg, #0f172a 0%, #020617 100%);
+  box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.45);
 }
 
-/* LED output — transparent page chrome for OBS / media server keying */
-html.led-output-broadcast,
-html.led-output-broadcast body,
-html.led-output-broadcast #root,
-.App.led-output-page {
-  background: transparent !important;
-  background-color: transparent !important;
-  background-image: none !important;
-}
-
-.led-output-surface {
-  isolation: isolate;
-}
-
-/* Hide scrollbar but allow scrolling */
-.scrollbar-hide {
-  -ms-overflow-style: none;  /* IE and Edge */
-  scrollbar-width: none;  /* Firefox */
-}
-
-.scrollbar-hide::-webkit-scrollbar {
-  display: none;  /* Chrome, Safari and Opera */
-}
-
-/* Viewers modal: fixed size, always-visible grey scrollbar (active when content overflows) */
-.viewers-modal-fixed {
-  min-height: 320px;
-}
-
-.viewers-modal-scroll {
-  scrollbar-gutter: stable;
-  scrollbar-width: thin;
-  scrollbar-color: #64748b #334155;
-}
-
-.viewers-modal-scroll::-webkit-scrollbar {
-  width: 10px;
-}
-
-.viewers-modal-scroll::-webkit-scrollbar-track {
-  background: #334155;
-  border-radius: 5px;
-}
-
-.viewers-modal-scroll::-webkit-scrollbar-thumb {
-  background: #64748b;
-  border-radius: 5px;
-}
-
-.viewers-modal-scroll::-webkit-scrollbar-thumb:hover {
-  background: #94a3b8;
-}
-
-/* Notes Editor List Styles - numbers and bullets format correctly with indentation */
-#notes-editor ul,
-.notes-display ul {
-  list-style-type: disc;
-  list-style-position: outside;
-  margin: 8px 0;
-  padding-left: 24px;
-  color: white;
-}
-
-#notes-editor ol,
-.notes-display ol {
-  list-style-type: decimal;
-  list-style-position: outside;
-  margin: 8px 0;
-  padding-left: 28px; /* enough for "10." etc. */
-  color: white;
-}
-
-#notes-editor li,
-.notes-display li {
-  margin: 4px 0;
-  line-height: 1.5;
-  color: white;
-  padding-left: 2px;
-}
-
-#notes-editor ul ul,
-.notes-display ul ul {
-  list-style-type: circle;
-  margin-top: 2px;
-  padding-left: 24px;
-}
-
-#notes-editor ul ul ul,
-.notes-display ul ul ul {
-  list-style-type: square;
-  padding-left: 24px;
-}
-
-#notes-editor ol ol,
-.notes-display ol ol {
-  list-style-type: lower-alpha;
-  padding-left: 28px;
-}
-
-#notes-editor ol ol ol,
-.notes-display ol ol ol {
-  list-style-type: lower-roman;
-  padding-left: 28px;
-}
-
-/* Notes base: keep body text bright on slate cells (overrides dimmed-row text-slate-500) */
-#notes-editor,
-.notes-display {
-  color: #f8fafc;
-  overflow-wrap: anywhere;
-  word-break: break-word;
-  min-width: 0;
+.offline-connectivity-bar__inner {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.45rem 0.85rem;
   max-width: 100%;
+  flex-wrap: wrap;
 }
 
-#notes-editor *,
-.notes-display * {
-  overflow-wrap: anywhere;
-  word-break: break-word;
-  max-width: 100%;
+.offline-connectivity-bar__brand {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
 }
 
-/* Fix highlight (backColor) sizing - execCommand + font size causes short highlights.
-   Do not force text color here — users mix foreColor with highlights (black, red, etc.). */
-#notes-editor [style*="background-color"]:not([style*="transparent"]),
-.notes-display [style*="background-color"]:not([style*="transparent"]) {
-  padding: 2px 5px;
-  box-decoration-break: clone;
-  -webkit-box-decoration-break: clone;
-  border-radius: 3px;
-  line-height: 1.5;
-  font-weight: 800;
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.28);
-}
-
-/* Colored text (no highlight) — heavier weight on dark rows */
-#notes-editor font[color],
-.notes-display font[color],
-#notes-editor span[style*="color:"],
-.notes-display span[style*="color:"] {
+.offline-connectivity-bar__badge {
+  font-size: 0.7rem;
   font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  color: #fef3c7;
+  background: #78350f;
+  border: 1px solid #f59e0b;
 }
-/* Small (font size 1) - zero vertical padding, horizontal only, size to content */
-#notes-editor [style*="background-color"]:not([style*="transparent"]):has(font[size="1"]),
-.notes-display [style*="background-color"]:not([style*="transparent"]):has(font[size="1"]),
-#notes-editor font[size="1"] [style*="background-color"]:not([style*="transparent"]),
-.notes-display font[size="1"] [style*="background-color"]:not([style*="transparent"]) {
-  padding-top: 0 !important;
-  padding-bottom: 0 !important;
-  padding-left: 6px !important;
-  padding-right: 6px !important;
-  line-height: 1 !important;
-  display: inline-block !important;
+
+.offline-connectivity-bar__host {
+  font-size: 0.7rem;
+  color: #64748b;
+  font-family: ui-monospace, Consolas, monospace;
 }
-/* XL (font size 7) - more padding above, less below so highlight aligns with text cap height */
-#notes-editor [style*="background-color"]:not([style*="transparent"]):has(font[size="7"]),
-.notes-display [style*="background-color"]:not([style*="transparent"]):has(font[size="7"]),
-#notes-editor font[size="7"] [style*="background-color"]:not([style*="transparent"]),
-.notes-display font[size="7"] [style*="background-color"]:not([style*="transparent"]) {
-  padding-top: 20px !important;
-  padding-bottom: 8px !important;
-  padding-left: 10px !important;
-  padding-right: 10px !important;
-  line-height: 1.5 !important;
+
+.offline-connectivity-bar__pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  flex: 1;
+  justify-content: center;
 }
+
+.offline-connectivity-bar__meta {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.offline-connectivity-bar__hint {
+  font-size: 0.65rem;
+  color: #475569;
+  text-transform: uppercase;
+}
+
+.offline-connectivity-bar__error {
+  font-size: 0.65rem;
+  color: #f87171;
+}
+
+.offline-connectivity-bar__refresh {
+  border: 1px solid #475569;
+  background: #1e293b;
+  color: #cbd5e1;
+  border-radius: 4px;
+  width: 1.6rem;
+  height: 1.6rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+  line-height: 1;
+}
+
+.offline-connectivity-bar__refresh:hover {
+  background: #334155;
+}
+
+.offline-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.offline-pill__dot {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.offline-pill--ok {
+  color: #bbf7d0;
+  background: rgba(22, 101, 52, 0.35);
+  border-color: #22c55e;
+}
+
+.offline-pill--ok .offline-pill__dot {
+  background: #4ade80;
+  box-shadow: 0 0 6px #4ade80;
+}
+
+.offline-pill--down {
+  color: #fecaca;
+  background: rgba(127, 29, 29, 0.35);
+  border-color: #ef4444;
+}
+
+.offline-pill--down .offline-pill__dot {
+  background: #f87171;
+}
+
+.offline-pill--checking {
+  color: #fde68a;
+  background: rgba(120, 53, 15, 0.35);
+  border-color: #f59e0b;
+}
+
+.offline-pill--checking .offline-pill__dot {
+  background: #fbbf24;
+  animation: offline-pulse 1s ease-in-out infinite;
+}
+
+.offline-pill--off {
+  color: #94a3b8;
+  background: rgba(51, 65, 85, 0.5);
+  border-color: #475569;
+}
+
+.offline-pill--off .offline-pill__dot {
+  background: #64748b;
+}
+
+.offline-cloud-toggle {
+  flex-shrink: 0;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  padding: 0.35rem 0.65rem;
+  border-radius: 6px;
+  border: 1px solid;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.offline-cloud-toggle:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.offline-cloud-toggle--lan {
+  color: #fde68a;
+  background: #422006;
+  border-color: #b45309;
+}
+
+.offline-cloud-toggle--lan:hover:not(:disabled) {
+  background: #78350f;
+}
+
+.offline-cloud-toggle--cloud {
+  color: #bbf7d0;
+  background: #14532d;
+  border-color: #22c55e;
+}
+
+.offline-cloud-toggle--cloud:hover:not(:disabled) {
+  background: #166534;
+}
+
+.offline-api-token-btn {
+  flex-shrink: 0;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  padding: 0.35rem 0.5rem;
+  border-radius: 6px;
+  border: 1px solid;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.offline-api-token-btn--ok {
+  color: #bbf7d0;
+  background: #052e16;
+  border-color: #16a34a;
+}
+
+.offline-api-token-btn--missing {
+  color: #fecaca;
+  background: #450a0a;
+  border-color: #ef4444;
+}
+
+.offline-api-token-panel {
+  border-top: 1px solid #334155;
+  padding: 0.65rem 0.85rem 0.85rem;
+  background: #0f172a;
+  font-size: 0.75rem;
+  color: #cbd5e1;
+}
+
+.offline-api-token-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.35rem;
+}
+
+.offline-api-token-panel__close {
+  border: none;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 0.25rem;
+}
+
+.offline-api-token-panel__hint {
+  margin: 0 0 0.5rem;
+  color: #94a3b8;
+  line-height: 1.4;
+}
+
+.offline-api-token-panel__status {
+  margin: 0 0 0.5rem;
+}
+
+.offline-api-token-panel__status--warn {
+  color: #fca5a5;
+}
+
+.offline-api-token-panel__input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.45rem 0.55rem;
+  border-radius: 4px;
+  border: 1px solid #475569;
+  background: #020617;
+  color: #e2e8f0;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 0.72rem;
+  margin-bottom: 0.5rem;
+}
+
+.offline-api-token-panel__actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.offline-api-token-panel__save,
+.offline-api-token-panel__clear {
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 0.35rem 0.65rem;
+  border-radius: 4px;
+  border: 1px solid #475569;
+  cursor: pointer;
+}
+
+.offline-api-token-panel__save {
+  color: #e2e8f0;
+  background: #1d4ed8;
+  border-color: #2563eb;
+}
+
+.offline-api-token-panel__save:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.offline-api-token-panel__clear {
+  color: #fecaca;
+  background: #450a0a;
+  border-color: #b91c1c;
+}
+
+@keyframes offline-pulse {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.offline-cloud-sync-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(2, 6, 23, 0.82);
+  backdrop-filter: blur(4px);
+}
+
+.offline-cloud-sync-overlay__panel {
+  max-width: 28rem;
+  padding: 1.75rem 1.5rem;
+  border-radius: 0.75rem;
+  border: 1px solid #334155;
+  background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.55);
+  text-align: center;
+}
+
+.offline-cloud-sync-overlay__spinner {
+  width: 2.5rem;
+  height: 2.5rem;
+  margin: 0 auto 1rem;
+  border: 3px solid #334155;
+  border-top-color: #38bdf8;
+  border-radius: 50%;
+  animation: offline-sync-spin 0.9s linear infinite;
+}
+
+.offline-cloud-sync-overlay__title {
+  margin: 0 0 0.5rem;
+  font-size: 1.125rem;
+  font-weight: 700;
+  color: #f8fafc;
+}
+
+.offline-cloud-sync-overlay__message {
+  margin: 0 0 0.75rem;
+  font-size: 0.95rem;
+  color: #cbd5e1;
+}
+
+.offline-cloud-sync-overlay__hint {
+  margin: 0;
+  font-size: 0.8rem;
+  color: #64748b;
+  line-height: 1.45;
+}
+
+@keyframes offline-sync-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Non-blocking dialogs (replace window.alert / confirm so timers keep ticking) */
+.offline-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 2100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(2, 6, 23, 0.55);
+  /* No backdrop-filter — keep the page (and countdown) clearly visible underneath */
+}
+
+.offline-dialog {
+  width: min(36rem, 100%);
+  max-height: min(90vh, 42rem);
+  overflow-y: auto;
+  padding: 1.25rem 1.15rem 1rem;
+  border-radius: 0.65rem;
+  border: 1px solid #475569;
+  background: #0f172a;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
+}
+
+.offline-dialog__title {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+  font-weight: 700;
+  color: #f8fafc;
+}
+
+.offline-dialog__message {
+  margin: 0 0 0.65rem;
+  font-size: 0.875rem;
+  line-height: 1.45;
+  color: #cbd5e1;
+  white-space: pre-wrap;
+}
+
+.offline-dialog__timer-hint {
+  margin: 0 0 1rem;
+  font-size: 0.72rem;
+  color: #38bdf8;
+}
+
+.offline-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.offline-dialog__btn {
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 0.4rem 0.85rem;
+  border-radius: 6px;
+  border: 1px solid #475569;
+  cursor: pointer;
+}
+
+.offline-dialog__btn:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+.offline-dialog__btn--ghost {
+  color: #cbd5e1;
+  background: transparent;
+}
+
+.offline-dialog__btn--ghost:hover:not(:disabled) {
+  background: #1e293b;
+}
+
+.offline-dialog__btn--primary {
+  color: #f8fafc;
+  background: #1d4ed8;
+  border-color: #2563eb;
+}
+
+.offline-dialog__btn--primary:hover:not(:disabled) {
+  background: #1e40af;
+}
+
+.offline-dialog__btn--warn {
+  background: #b45309;
+  border-color: #d97706;
+}
+
+.offline-dialog__btn--error {
+  background: #b91c1c;
+  border-color: #ef4444;
+}
+
+.cloud-push-preview {
+  margin: 0 0 0.75rem;
+  padding: 0.65rem 0.7rem;
+  border-radius: 0.45rem;
+  border: 1px solid #334155;
+  background: #020617;
+  font-size: 0.78rem;
+  color: #cbd5e1;
+}
+
+.cloud-push-preview--loading,
+.cloud-push-preview--error {
+  color: #94a3b8;
+}
+
+.cloud-push-preview--error {
+  color: #fca5a5;
+}
+
+.cloud-push-preview__summary {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  margin-bottom: 0.65rem;
+  padding-bottom: 0.55rem;
+  border-bottom: 1px solid #1e293b;
+}
+
+.cloud-push-preview__summary strong {
+  color: #f8fafc;
+  font-size: 0.88rem;
+}
+
+.cloud-push-preview__section {
+  margin-bottom: 0.65rem;
+}
+
+.cloud-push-preview__section:last-child {
+  margin-bottom: 0;
+}
+
+.cloud-push-preview__section-title {
+  margin-bottom: 0.35rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.cloud-push-preview__live {
+  padding: 0.5rem 0.55rem;
+  border-radius: 0.35rem;
+  border: 1px solid #334155;
+  background: #0f172a;
+}
+
+.cloud-push-preview__live--running {
+  border-color: #16a34a;
+  background: rgba(22, 163, 74, 0.12);
+}
+
+.cloud-push-preview__live--loaded {
+  border-color: #2563eb;
+  background: rgba(37, 99, 235, 0.12);
+}
+
+.cloud-push-preview__live-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem 0.5rem;
+  margin-bottom: 0.25rem;
+}
+
+.cloud-push-preview__live-time {
+  color: #e2e8f0;
+}
+
+.cloud-push-preview__live-time strong {
+  font-variant-numeric: tabular-nums;
+  color: #f8fafc;
+}
+
+.cloud-push-preview__empty {
+  margin: 0;
+  color: #94a3b8;
+}
+
+.cloud-push-preview__table {
+  max-height: 11rem;
+  overflow-y: auto;
+  border: 1px solid #1e293b;
+  border-radius: 0.35rem;
+}
+
+.cloud-push-preview__row {
+  display: grid;
+  grid-template-columns: 4.5rem minmax(0, 1.4fr) minmax(0, 0.9fr) 3.2rem auto;
+  gap: 0.35rem;
+  align-items: center;
+  padding: 0.28rem 0.4rem;
+  border-bottom: 1px solid #1e293b;
+}
+
+.cloud-push-preview__row:last-child {
+  border-bottom: 0;
+}
+
+.cloud-push-preview__row--running {
+  background: rgba(22, 163, 74, 0.14);
+}
+
+.cloud-push-preview__row--loaded {
+  background: rgba(37, 99, 235, 0.14);
+}
+
+.cloud-push-preview__row--completed {
+  background: rgba(126, 34, 206, 0.16);
+}
+
+.cloud-push-preview__row--sub {
+  display: flex;
+  gap: 0.45rem;
+  align-items: center;
+  padding: 0.35rem 0.4rem;
+  border: 1px solid #1e293b;
+  border-radius: 0.35rem;
+}
+
+.cloud-push-preview__cue {
+  font-weight: 600;
+  color: #f1f5f9;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cloud-push-preview__seg,
+.cloud-push-preview__type {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #94a3b8;
+}
+
+.cloud-push-preview__dur {
+  font-variant-numeric: tabular-nums;
+  color: #cbd5e1;
+  text-align: right;
+}
+
+.cloud-push-preview__flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem;
+  justify-content: flex-end;
+}
+
+.cloud-push-preview__badge,
+.cloud-push-preview__flag {
+  display: inline-block;
+  padding: 0.05rem 0.3rem;
+  border-radius: 0.2rem;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  background: #334155;
+  color: #e2e8f0;
+}
+
+.cloud-push-preview__flag--running,
+.cloud-push-preview__live--running .cloud-push-preview__badge {
+  background: #15803d;
+}
+
+.cloud-push-preview__flag--loaded,
+.cloud-push-preview__live--loaded .cloud-push-preview__badge {
+  background: #1d4ed8;
+}
+
+.cloud-push-preview__flag--completed {
+  background: #57534e;
+}
+
+.cloud-push-preview__flag--indented {
+  background: #6b21a8;
+}
+
+.cloud-push-preview__completed {
+  margin: 0.35rem 0 0;
+  padding-left: 1.1rem;
+  max-height: 7rem;
+  overflow-y: auto;
+}
+
+.cloud-push-preview__completed-block {
+  margin-top: 0.55rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid #1e293b;
+}
+
+.cloud-push-preview__completed li {
+  margin-bottom: 0.2rem;
+}
+
+.cloud-push-preview__footnote,
+.cloud-push-preview__muted {
+  color: #64748b;
+}
+
+.cloud-push-preview__footnote {
+  margin: 0.35rem 0 0;
+  font-size: 0.7rem;
+}
+
+
+
 /* Stage timer/clock message flash (when message.flashing is true) */
 @keyframes ros-timer-message-flash {
   0%, 100% { opacity: 1; }
@@ -265,7 +735,60 @@ html.led-output-broadcast #root,
   animation: ros-timer-message-flash 1s ease-in-out infinite;
 }
 
-/* Q&A flash reminder on Clock / DSM / Full Screen — purple stage treatment */
+/* Pre Show — calm static brand gradient (stage-friendly) */
+.ros-rainbow-text,
+.ros-preshow-brand-text {
+  background-image: linear-gradient(
+    105deg,
+    #a78bfa 0%,
+    #818cf8 35%,
+    #60a5fa 65%,
+    #34d399 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent !important;
+}
+.ros-rainbow-fill,
+.ros-preshow-brand-fill {
+  background-image: linear-gradient(
+    90deg,
+    #8b5cf6 0%,
+    #6366f1 40%,
+    #3b82f6 70%,
+    #10b981 100%
+  );
+}
+
+.ros-preshow-super {
+  letter-spacing: 0.32em;
+  text-indent: 0.32em;
+  font-weight: 700;
+  color: #e8edf5;
+  text-transform: uppercase;
+  text-shadow:
+    0 1px 0 rgba(0, 0, 0, 0.65),
+    0 0 24px rgba(99, 102, 241, 0.25);
+}
+.ros-preshow-super-rule {
+  display: block;
+  width: 5.5rem;
+  height: 3px;
+  margin: 0.55rem auto 0;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #8b5cf6, #3b82f6, #10b981);
+}
+
+/* Q&A flash reminder on Clock / DSM / Full Screen */
+@keyframes ros-qa-flash-reminder {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.35; transform: scale(1.04); }
+}
+.ros-qa-flash-reminder {
+  animation: ros-qa-flash-reminder 0.85s ease-in-out infinite;
+}
+
+/* Q&A flash reminder on Clock / DSM / Full Screen â€” purple stage treatment */
 @keyframes ros-qa-flash-reminder {
   0%, 100% { opacity: 1; transform: scale(1); }
   50% { opacity: 0.45; transform: scale(1.03); }
@@ -288,7 +811,7 @@ html.led-output-broadcast #root,
   color: #e9d5ff !important; /* violet-200 */
 }
 .ros-qa-flash-steady {
-  color: #d8b4fe !important; /* violet-300 — readable after pulse settles */
+  color: #d8b4fe !important; /* violet-300 â€” readable after pulse settles */
 }
 .ros-qa-flash-line {
   color: inherit;
@@ -308,139 +831,4 @@ html.led-output-broadcast #root,
 }
 .ros-qa-flash-time {
   color: inherit;
-}
-
-/* Pre Show — calm static brand gradient (stage-friendly, no shifting animation) */
-.ros-rainbow-text,
-.ros-preshow-brand-text {
-  background-image: linear-gradient(
-    105deg,
-    #a78bfa 0%,
-    #818cf8 35%,
-    #60a5fa 65%,
-    #34d399 100%
-  );
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent !important;
-}
-/* Nested overtime sign must inherit clip or +/− vanishes under rainbow */
-.ros-rainbow-text .ot-sign,
-.ros-preshow-brand-text .ot-sign {
-  background-image: inherit;
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent !important;
-}
-.ot-sign {
-  margin-right: 0.12em;
-}
-.ot-sign-plus {
-  display: inline-block;
-  transform: translateY(-0.02em);
-}
-.ros-rainbow-fill,
-.ros-preshow-brand-fill {
-  background-image: linear-gradient(
-    90deg,
-    #8b5cf6 0%,
-    #6366f1 40%,
-    #3b82f6 70%,
-    #10b981 100%
-  );
-}
-
-/* Broadcast supers — Pre Show sits above countdown like OVER TIME */
-.ros-preshow-super {
-  letter-spacing: 0.32em;
-  text-indent: 0.32em;
-  font-weight: 700;
-  color: #e8edf5;
-  text-transform: uppercase;
-  text-shadow:
-    0 1px 0 rgba(0, 0, 0, 0.65),
-    0 0 24px rgba(99, 102, 241, 0.25);
-}
-.ros-preshow-super-rule {
-  display: block;
-  width: 5.5rem;
-  height: 3px;
-  margin: 0.55rem auto 0;
-  border-radius: 999px;
-  background: linear-gradient(90deg, #8b5cf6, #3b82f6, #10b981);
-}
-
-/* Operator pre-show standing-by callout */
-@keyframes ros-preshow-callout-in {
-  from {
-    opacity: 0;
-    transform: translateY(-10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-@keyframes ros-preshow-tally-pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.4;
-  }
-}
-.ros-preshow-callout {
-  animation: ros-preshow-callout-in 0.35s ease-out;
-}
-.ros-preshow-callout-tally {
-  animation: ros-preshow-tally-pulse 1.6s ease-in-out infinite;
-}
-
-@keyframes ros-inshow-nudge-pulse {
-  0%,
-  100% {
-    background-color: rgb(30, 41, 59);
-    border-color: rgba(139, 92, 246, 0.55);
-    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.55);
-  }
-  50% {
-    background-color: rgb(67, 32, 12);
-    border-color: rgba(251, 146, 60, 0.95);
-    box-shadow:
-      0 25px 50px -12px rgba(0, 0, 0, 0.55),
-      0 0 48px rgba(249, 115, 22, 0.45),
-      0 0 28px rgba(99, 102, 241, 0.35);
-  }
-}
-.ros-inshow-nudge-banner {
-  animation: ros-inshow-nudge-pulse 1.4s ease-in-out infinite;
-}
-.ros-inshow-nudge-title {
-  animation: ros-preshow-tally-pulse 1.4s ease-in-out infinite;
-}
-
-/* Cue Cards — bullets/numbers match text size and sit beside the line (incl. when centered) */
-.cue-card-body ul,
-.cue-card-body ol {
-  list-style-position: inside;
-  margin: 0.35em 0;
-  padding-left: 0;
-  padding-inline-start: 0;
-}
-.cue-card-body ul {
-  list-style-type: disc;
-}
-.cue-card-body ol {
-  list-style-type: decimal;
-}
-.cue-card-body li {
-  margin: 0.2em 0;
-  padding-left: 0;
-  list-style-position: inside;
-}
-.cue-card-body li::marker {
-  font-size: 1em;
-  color: inherit;
-  font-weight: inherit;
 }
