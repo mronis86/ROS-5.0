@@ -5,44 +5,26 @@ import {
   deleteWebQaQuestion,
   fetchWebQaQuestions,
   fetchWebQaSession,
-  updateWebQaQuestionStatus,
+  patchWebQaQuestion,
+  reorderWebQaQueue,
   type WebQaQuestion,
   type WebQaSession,
   type WebQaStatus,
 } from '../lib/webQa';
 
-type FilterTab = 'pending' | 'approved' | 'answered' | 'rejected' | 'all';
-
-const TABS: { id: FilterTab; label: string }[] = [
-  { id: 'pending', label: 'Pending' },
-  { id: 'approved', label: 'Approved' },
-  { id: 'answered', label: 'Answered' },
-  { id: 'rejected', label: 'Rejected' },
-  { id: 'all', label: 'All' },
-];
-
 function formatWhen(iso: string): string {
   try {
-    return new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+    return new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   } catch {
     return '';
   }
 }
 
-function statusPillClass(status: string): string {
-  switch (status) {
-    case 'pending':
-      return 'bg-amber-600/30 text-amber-100 border-amber-500/50';
-    case 'approved':
-      return 'bg-emerald-600/30 text-emerald-100 border-emerald-500/50';
-    case 'answered':
-      return 'bg-sky-600/30 text-sky-100 border-sky-500/50';
-    case 'rejected':
-      return 'bg-rose-600/30 text-rose-100 border-rose-500/50';
-    default:
-      return 'bg-slate-600/40 text-slate-200 border-slate-500/50';
-  }
+function isQueued(q: WebQaQuestion): boolean {
+  return q.is_queued === true;
 }
+
+type LaneId = 'inbox' | 'ready' | 'queue' | 'done';
 
 export default function QaActiveModPage() {
   const { user } = useAuth();
@@ -51,13 +33,14 @@ export default function QaActiveModPage() {
   const params = useMemo(() => new URLSearchParams(location.search), [location.search]);
   const eventId = params.get('eventId') || '';
   const eventName = params.get('eventName') || 'Event';
+  const moderator = user?.full_name || user?.email || undefined;
 
   const [session, setSession] = useState<WebQaSession | null>(null);
   const [questions, setQuestions] = useState<WebQaQuestion[]>([]);
-  const [tab, setTab] = useState<FilterTab>('pending');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [showDone, setShowDone] = useState(false);
 
   const qs = useMemo(
     () =>
@@ -94,28 +77,41 @@ export default function QaActiveModPage() {
     return () => window.clearInterval(id);
   }, [load]);
 
-  const counts = useMemo(() => {
-    const c = { pending: 0, approved: 0, answered: 0, rejected: 0, all: questions.length };
-    for (const q of questions) {
-      if (q.status in c) (c as Record<string, number>)[q.status] += 1;
-    }
-    return c;
-  }, [questions]);
+  const inbox = useMemo(
+    () => questions.filter((q) => q.status === 'pending' && !isQueued(q)),
+    [questions]
+  );
+  const ready = useMemo(
+    () => questions.filter((q) => q.status === 'approved' && !isQueued(q)),
+    [questions]
+  );
+  const queue = useMemo(
+    () =>
+      questions
+        .filter((q) => isQueued(q) && q.status !== 'rejected')
+        .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0) || a.created_at.localeCompare(b.created_at)),
+    [questions]
+  );
+  const done = useMemo(
+    () =>
+      questions.filter(
+        (q) => q.status === 'answered' || q.status === 'rejected' || q.status === 'archived'
+      ),
+    [questions]
+  );
 
-  const visible = useMemo(() => {
-    if (tab === 'all') return questions;
-    return questions.filter((q) => q.status === tab);
-  }, [questions, tab]);
+  const applyLocal = (updated: WebQaQuestion) => {
+    setQuestions((prev) => prev.map((q) => (q.id === updated.id ? updated : q)));
+  };
 
-  const setStatus = async (id: string, status: WebQaStatus) => {
+  const runPatch = async (
+    id: string,
+    patch: { status?: WebQaStatus; is_queued?: boolean }
+  ) => {
     setBusyId(id);
     try {
-      const updated = await updateWebQaQuestionStatus(
-        id,
-        status,
-        user?.full_name || user?.email || undefined
-      );
-      setQuestions((prev) => prev.map((q) => (q.id === id ? updated : q)));
+      const updated = await patchWebQaQuestion(id, { ...patch, moderated_by: moderator });
+      applyLocal(updated);
     } catch (e) {
       alert(e instanceof Error ? e.message : 'Update failed');
     } finally {
@@ -131,6 +127,24 @@ export default function QaActiveModPage() {
       setQuestions((prev) => prev.filter((q) => q.id !== id));
     } catch (e) {
       alert(e instanceof Error ? e.message : 'Delete failed');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const moveInQueue = async (id: string, direction: -1 | 1) => {
+    const ids = queue.map((q) => q.id);
+    const idx = ids.indexOf(id);
+    const swap = idx + direction;
+    if (idx < 0 || swap < 0 || swap >= ids.length) return;
+    const next = [...ids];
+    [next[idx], next[swap]] = [next[swap], next[idx]];
+    setBusyId(id);
+    try {
+      const list = await reorderWebQaQueue(eventId, next, moderator);
+      setQuestions(list);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Reorder failed');
     } finally {
       setBusyId(null);
     }
@@ -153,22 +167,209 @@ export default function QaActiveModPage() {
     );
   }
 
+  const renderCard = (q: WebQaQuestion, lane: LaneId) => {
+    const busy = busyId === q.id;
+    return (
+      <li
+        key={q.id}
+        className={`rounded-lg border px-3 py-2.5 space-y-2 ${
+          lane === 'queue'
+            ? 'border-fuchsia-600/50 bg-fuchsia-950/25'
+            : 'border-slate-700 bg-slate-950/50'
+        }`}
+      >
+        <p className="text-sm text-white whitespace-pre-wrap break-words leading-snug">{q.body}</p>
+        <p className="text-[11px] text-slate-500">
+          <span className="text-slate-400">{q.author_name || 'Anonymous'}</span>
+          <span className="mx-1">·</span>
+          {formatWhen(q.created_at)}
+          {lane === 'queue' && q.sort_order ? (
+            <>
+              <span className="mx-1">·</span>
+              <span className="text-fuchsia-300">#{q.sort_order}</span>
+            </>
+          ) : null}
+        </p>
+        <div className="flex flex-wrap gap-1.5">
+          {lane === 'inbox' ? (
+            <>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void runPatch(q.id, { status: 'approved' })}
+                className="px-2 py-1 text-[11px] font-semibold rounded bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50"
+              >
+                Approve
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void runPatch(q.id, { is_queued: true })}
+                className="px-2 py-1 text-[11px] font-semibold rounded bg-fuchsia-700 hover:bg-fuchsia-600 disabled:opacity-50"
+              >
+                Queue
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void runPatch(q.id, { status: 'rejected' })}
+                className="px-2 py-1 text-[11px] font-semibold rounded bg-slate-700 hover:bg-slate-600 disabled:opacity-50"
+              >
+                Reject
+              </button>
+            </>
+          ) : null}
+
+          {lane === 'ready' ? (
+            <>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void runPatch(q.id, { is_queued: true })}
+                className="px-2 py-1 text-[11px] font-semibold rounded bg-fuchsia-700 hover:bg-fuchsia-600 disabled:opacity-50"
+              >
+                Add to queue
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void runPatch(q.id, { status: 'answered' })}
+                className="px-2 py-1 text-[11px] font-semibold rounded bg-sky-800 hover:bg-sky-700 disabled:opacity-50"
+              >
+                Answered
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void runPatch(q.id, { status: 'rejected' })}
+                className="px-2 py-1 text-[11px] font-semibold rounded bg-slate-700 hover:bg-slate-600 disabled:opacity-50"
+              >
+                Reject
+              </button>
+            </>
+          ) : null}
+
+          {lane === 'queue' ? (
+            <>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void moveInQueue(q.id, -1)}
+                className="px-2 py-1 text-[11px] font-semibold rounded bg-slate-700 hover:bg-slate-600 disabled:opacity-50"
+                title="Move up"
+              >
+                ↑
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void moveInQueue(q.id, 1)}
+                className="px-2 py-1 text-[11px] font-semibold rounded bg-slate-700 hover:bg-slate-600 disabled:opacity-50"
+                title="Move down"
+              >
+                ↓
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void runPatch(q.id, { status: 'answered', is_queued: false })}
+                className="px-2 py-1 text-[11px] font-semibold rounded bg-sky-800 hover:bg-sky-700 disabled:opacity-50"
+              >
+                Answered
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void runPatch(q.id, { is_queued: false })}
+                className="px-2 py-1 text-[11px] font-semibold rounded border border-slate-600 text-slate-300 hover:bg-slate-800 disabled:opacity-50"
+              >
+                Unqueue
+              </button>
+            </>
+          ) : null}
+
+          {lane === 'done' ? (
+            <>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void runPatch(q.id, { status: 'approved', is_queued: false })}
+                className="px-2 py-1 text-[11px] font-semibold rounded bg-slate-700 hover:bg-slate-600 disabled:opacity-50"
+              >
+                Restore
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void remove(q.id)}
+                className="px-2 py-1 text-[11px] font-semibold rounded border border-slate-600 text-slate-400 hover:bg-slate-800 disabled:opacity-50"
+              >
+                Delete
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void remove(q.id)}
+              className="ml-auto px-2 py-1 text-[11px] font-semibold rounded text-slate-500 hover:text-rose-300 hover:bg-rose-950/40 disabled:opacity-50"
+            >
+              Delete
+            </button>
+          )}
+        </div>
+      </li>
+    );
+  };
+
+  const lane = (
+    id: LaneId,
+    title: string,
+    hint: string,
+    items: WebQaQuestion[],
+    accent: string
+  ) => (
+    <section className={`rounded-xl border ${accent} bg-slate-900/60 flex flex-col min-h-[18rem]`}>
+      <header className="px-3 py-2.5 border-b border-slate-800/80">
+        <div className="flex items-baseline justify-between gap-2">
+          <h2 className="text-sm font-semibold text-white">{title}</h2>
+          <span className="text-xs tabular-nums text-slate-400">{items.length}</span>
+        </div>
+        <p className="text-[11px] text-slate-500 mt-0.5">{hint}</p>
+      </header>
+      <div className="p-2.5 flex-1 overflow-y-auto max-h-[calc(100vh-14rem)]">
+        {items.length === 0 ? (
+          <p className="text-xs text-slate-600 text-center py-8">Empty</p>
+        ) : (
+          <ul className="space-y-2">{items.map((q) => renderCard(q, id))}</ul>
+        )}
+      </div>
+    </section>
+  );
+
   return (
     <div className="min-h-screen bg-slate-950 text-white">
       <header className="border-b border-slate-800 bg-slate-900/90 sticky top-0 z-20">
-        <div className="max-w-5xl mx-auto px-4 py-3 flex flex-wrap items-center gap-3 justify-between">
+        <div className="max-w-[1400px] mx-auto px-4 py-3 flex flex-wrap items-center gap-3 justify-between">
           <div>
             <p className="text-[11px] uppercase tracking-wide text-fuchsia-300/90 font-semibold">
               Active Q&A
-              {counts.pending > 0 ? (
+              {inbox.length > 0 ? (
                 <span className="ml-2 inline-flex items-center rounded-full bg-amber-600/40 border border-amber-500/50 px-2 py-0.5 text-[10px] text-amber-50 normal-case tracking-normal">
-                  {counts.pending} pending
+                  {inbox.length} inbox
+                </span>
+              ) : null}
+              {queue.length > 0 ? (
+                <span className="ml-2 inline-flex items-center rounded-full bg-fuchsia-600/40 border border-fuchsia-500/50 px-2 py-0.5 text-[10px] text-fuchsia-50 normal-case tracking-normal">
+                  {queue.length} queued
                 </span>
               ) : null}
             </p>
             <h1 className="text-xl font-bold leading-tight">{eventName}</h1>
             <p className="text-xs text-slate-400 mt-0.5">
-              Submissions: {session?.is_open ? 'OPEN' : 'CLOSED'} (follows current Q&A cue)
+              Submissions {session?.is_open ? 'OPEN' : 'CLOSED'}
+              <span className="mx-1.5 text-slate-600">·</span>
+              Queue = selected for showcase
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -201,124 +402,65 @@ export default function QaActiveModPage() {
         </div>
       </header>
 
-      <main className="max-w-5xl mx-auto px-4 py-5 space-y-4">
-        <div className="flex flex-wrap gap-2">
-          {TABS.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              onClick={() => setTab(t.id)}
-              className={`px-3 py-1.5 rounded-full text-sm border ${
-                tab === t.id
-                  ? 'bg-fuchsia-700/40 border-fuchsia-500 text-white'
-                  : 'bg-slate-900 border-slate-700 text-slate-300 hover:border-slate-500'
-              }`}
-            >
-              {t.label}
-              <span className="ml-1.5 text-slate-400 tabular-nums">{counts[t.id] ?? 0}</span>
-            </button>
-          ))}
-        </div>
-
-        {loading ? (
-          <p className="text-slate-400">Loading moderation queue…</p>
+      <main className="max-w-[1400px] mx-auto px-4 py-4 space-y-4">
+        {loading && questions.length === 0 ? (
+          <p className="text-slate-400">Loading moderation board…</p>
         ) : error ? (
           <div className="rounded-lg border border-rose-700/50 bg-rose-950/30 px-4 py-3 text-rose-100">
             {error}
           </div>
-        ) : visible.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-slate-700 px-6 py-12 text-center text-slate-400">
-            No {tab === 'all' ? '' : tab} questions yet.
-            {session?.is_open ? ' Audience can submit while a Q&A cue is loaded.' : ' Submissions are closed.'}
-          </div>
-        ) : (
-          <ul className="space-y-3">
-            {visible.map((q) => (
-              <li
-                key={q.id}
-                className="rounded-xl border border-slate-700 bg-slate-900/70 px-4 py-3 space-y-3"
-              >
-                <div className="flex flex-wrap items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <p className="text-base text-white whitespace-pre-wrap break-words">{q.body}</p>
-                    <p className="mt-1 text-xs text-slate-400">
-                      {q.author_name ? (
-                        <span className="text-slate-300">{q.author_name}</span>
-                      ) : (
-                        <span>Anonymous</span>
-                      )}
-                      <span className="mx-1.5 text-slate-600">·</span>
-                      {formatWhen(q.created_at)}
-                      {q.cue_item_id != null ? (
-                        <>
-                          <span className="mx-1.5 text-slate-600">·</span>
-                          <span>cue #{q.cue_item_id}</span>
-                        </>
-                      ) : null}
-                    </p>
-                  </div>
-                  <span
-                    className={`shrink-0 px-2 py-0.5 rounded border text-[11px] font-semibold uppercase tracking-wide ${statusPillClass(
-                      q.status
-                    )}`}
-                  >
-                    {q.status}
-                  </span>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {q.status !== 'approved' ? (
-                    <button
-                      type="button"
-                      disabled={busyId === q.id}
-                      onClick={() => void setStatus(q.id, 'approved')}
-                      className="px-2.5 py-1 text-xs font-semibold rounded bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50"
-                    >
-                      Approve
-                    </button>
-                  ) : null}
-                  {q.status !== 'answered' ? (
-                    <button
-                      type="button"
-                      disabled={busyId === q.id}
-                      onClick={() => void setStatus(q.id, 'answered')}
-                      className="px-2.5 py-1 text-xs font-semibold rounded bg-sky-700 hover:bg-sky-600 disabled:opacity-50"
-                    >
-                      Mark answered
-                    </button>
-                  ) : null}
-                  {q.status !== 'rejected' ? (
-                    <button
-                      type="button"
-                      disabled={busyId === q.id}
-                      onClick={() => void setStatus(q.id, 'rejected')}
-                      className="px-2.5 py-1 text-xs font-semibold rounded bg-rose-800 hover:bg-rose-700 disabled:opacity-50"
-                    >
-                      Reject
-                    </button>
-                  ) : null}
-                  {q.status !== 'pending' ? (
-                    <button
-                      type="button"
-                      disabled={busyId === q.id}
-                      onClick={() => void setStatus(q.id, 'pending')}
-                      className="px-2.5 py-1 text-xs font-semibold rounded bg-slate-700 hover:bg-slate-600 disabled:opacity-50"
-                    >
-                      Back to pending
-                    </button>
-                  ) : null}
-                  <button
-                    type="button"
-                    disabled={busyId === q.id}
-                    onClick={() => void remove(q.id)}
-                    className="px-2.5 py-1 text-xs font-semibold rounded border border-slate-600 text-slate-300 hover:bg-slate-800 disabled:opacity-50"
-                  >
-                    Delete
-                  </button>
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
+        ) : null}
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          {lane(
+            'inbox',
+            'Inbox',
+            'New submissions — approve, queue, or reject',
+            inbox,
+            'border-amber-700/40'
+          )}
+          {lane(
+            'ready',
+            'Ready',
+            'Approved — add to showcase queue when you want them live',
+            ready,
+            'border-emerald-700/40'
+          )}
+          {lane(
+            'queue',
+            'Showcase queue',
+            'Selected order for future on-screen display',
+            queue,
+            'border-fuchsia-600/50'
+          )}
+        </div>
+
+        <div className="rounded-xl border border-slate-800 bg-slate-900/40">
+          <button
+            type="button"
+            onClick={() => setShowDone((v) => !v)}
+            className="w-full px-4 py-2.5 flex items-center justify-between text-left hover:bg-slate-800/40 rounded-xl"
+          >
+            <span className="text-sm font-semibold text-slate-300">
+              Done
+              <span className="ml-2 text-xs font-normal text-slate-500 tabular-nums">
+                {done.length} answered / rejected
+              </span>
+            </span>
+            <span className="text-slate-500 text-xs">{showDone ? 'Hide' : 'Show'}</span>
+          </button>
+          {showDone ? (
+            <div className="px-3 pb-3">
+              {done.length === 0 ? (
+                <p className="text-xs text-slate-600 text-center py-4">Nothing here yet</p>
+              ) : (
+                <ul className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  {done.map((q) => renderCard(q, 'done'))}
+                </ul>
+              )}
+            </div>
+          ) : null}
+        </div>
       </main>
     </div>
   );

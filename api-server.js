@@ -155,6 +155,7 @@ const {
   listQuestions: listWebQaQuestions,
   submitQuestion: submitWebQaQuestion,
   updateQuestion: updateWebQaQuestion,
+  reorderQueuedQuestions: reorderWebQaQueuedQuestions,
   deleteQuestion: deleteWebQaQuestion,
   syncSessionOpenFromCue: syncWebQaSessionOpenFromCue,
   buildOverview: buildWebQaOverview,
@@ -7786,6 +7787,11 @@ app.patch('/api/web-qa/questions/:id', async (req, res) => {
     await ensureWebQaSchema(pool);
     const question = await updateWebQaQuestion(pool, id, {
       status: req.body?.status,
+      is_queued: typeof req.body?.is_queued === 'boolean' ? req.body.is_queued : undefined,
+      queue_order:
+        req.body?.queue_order != null && Number.isFinite(Number(req.body.queue_order))
+          ? Number(req.body.queue_order)
+          : undefined,
       moderated_by: req.body?.moderated_by || req.body?.user_name || null,
     });
     if (!question) return res.status(404).json({ error: 'Question not found' });
@@ -7794,6 +7800,24 @@ app.patch('/api/web-qa/questions/:id', async (req, res) => {
     const status = error.status || 500;
     console.error('[web-qa] update question', error);
     res.status(status).json({ error: error.message || 'Failed to update question' });
+  }
+});
+
+app.put('/api/web-qa/:eventId/queue', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    if (!eventId) return res.status(400).json({ error: 'eventId is required' });
+    await ensureWebQaSchema(pool);
+    const questions = await reorderWebQaQueuedQuestions(
+      pool,
+      eventId,
+      req.body?.ordered_ids || req.body?.ids || [],
+      req.body?.moderated_by || req.body?.user_name || null
+    );
+    res.json({ questions });
+  } catch (error) {
+    console.error('[web-qa] reorder queue', error);
+    res.status(500).json({ error: error.message || 'Failed to reorder queue' });
   }
 });
 

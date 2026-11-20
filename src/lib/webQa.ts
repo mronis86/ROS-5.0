@@ -21,6 +21,9 @@ export type WebQaQuestion = {
   author_name?: string | null;
   body: string;
   status: WebQaStatus;
+  /** Selected for showcase / live display queue. */
+  is_queued?: boolean;
+  /** 1-based order when queued. */
   sort_order?: number;
   created_at: string;
   updated_at?: string;
@@ -68,9 +71,143 @@ export function webQaAudienceAbsoluteUrl(token: string, origin = window.location
   return `${origin.replace(/\/$/, '')}${webQaAudiencePath(token)}`;
 }
 
-export function webQaQrImageUrl(audienceUrl: string, size = 240): string {
+export type WebQaQrDownloadOptions = {
+  /** Pixel size of the QR modules area (before border). */
+  size?: number;
+  /** Hex foreground, with or without #. */
+  fg?: string;
+  /** Hex background, or 'transparent'. */
+  bg?: 'transparent' | string;
+  /** Quiet-zone modules (0–50). */
+  margin?: number;
+  /** Outer border thickness in px (0 = none). */
+  borderPx?: number;
+  /** Border color hex. */
+  borderColor?: string;
+};
+
+function hexNoHash(value: string | undefined, fallback: string): string {
+  const raw = String(value || fallback).trim().replace(/^#/, '');
+  return /^[0-9a-fA-F]{3}([0-9a-fA-F]{3})?$/.test(raw) ? raw : fallback;
+}
+
+function hexWithHash(value: string | undefined, fallback: string): string {
+  return `#${hexNoHash(value, fallback)}`;
+}
+
+/** On-page preview URL (api.qrserver). */
+export function webQaQrImageUrl(
+  audienceUrl: string,
+  sizeOrOpts: number | WebQaQrDownloadOptions = 240
+): string {
+  const opts: WebQaQrDownloadOptions =
+    typeof sizeOrOpts === 'number' ? { size: sizeOrOpts } : sizeOrOpts || {};
+  const size = Math.max(64, Math.min(2048, Math.floor(Number(opts.size) || 240)));
+  const margin = Math.max(0, Math.min(50, Math.floor(Number(opts.margin) ?? 4)));
+  const fg = hexNoHash(opts.fg, '000000');
+  // API needs a solid bgcolor; transparent is handled in download compositing.
+  const bg =
+    opts.bg === 'transparent' ? 'ffffff' : hexNoHash(opts.bg, 'ffffff');
   const data = encodeURIComponent(audienceUrl);
-  return `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&data=${data}&margin=8`;
+  return `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&data=${data}&margin=${margin}&color=${fg}&bgcolor=${bg}&format=png`;
+}
+
+function loadImageFromBlob(blob: Blob): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(img);
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('Could not load QR image'));
+    };
+    img.src = url;
+  });
+}
+
+/** Build a styled PNG blob for download (supports transparent bg + border). */
+export async function buildWebQaQrPngBlob(
+  audienceUrl: string,
+  opts: WebQaQrDownloadOptions = {}
+): Promise<Blob> {
+  const size = Math.max(256, Math.min(2048, Math.floor(Number(opts.size) || 1024)));
+  const margin = Math.max(0, Math.min(50, Math.floor(Number(opts.margin) ?? 4)));
+  const borderPx = Math.max(0, Math.min(120, Math.floor(Number(opts.borderPx) || 0)));
+  const transparent = opts.bg === 'transparent';
+  const fg = hexNoHash(opts.fg, '000000');
+  const bgSolid = transparent ? 'ffffff' : hexNoHash(opts.bg, 'ffffff');
+  const borderColor = hexWithHash(opts.borderColor, '000000');
+
+  const srcUrl = webQaQrImageUrl(audienceUrl, {
+    size,
+    margin,
+    fg,
+    bg: bgSolid,
+  });
+  const res = await fetch(srcUrl);
+  if (!res.ok) throw new Error(`QR fetch failed (${res.status})`);
+  const img = await loadImageFromBlob(await res.blob());
+
+  const canvas = document.createElement('canvas');
+  canvas.width = size + borderPx * 2;
+  canvas.height = size + borderPx * 2;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  if (!ctx) throw new Error('Canvas unavailable');
+
+  if (borderPx > 0) {
+    ctx.fillStyle = borderColor;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+
+  if (!transparent) {
+    ctx.fillStyle = hexWithHash(bgSolid, 'ffffff');
+    ctx.fillRect(borderPx, borderPx, size, size);
+  } else if (borderPx > 0) {
+    ctx.clearRect(borderPx, borderPx, size, size);
+  }
+
+  ctx.drawImage(img, borderPx, borderPx, size, size);
+
+  if (transparent) {
+    // Only punch the QR area so a light border stays solid.
+    const imageData = ctx.getImageData(borderPx, borderPx, size, size);
+    const data = imageData.data;
+    for (let i = 0; i < data.length; i += 4) {
+      const r = data[i];
+      const g = data[i + 1];
+      const b = data[i + 2];
+      // Punch near-white (QR quiet zone / modules bg) to alpha 0.
+      if (r > 245 && g > 245 && b > 245) {
+        data[i + 3] = 0;
+      }
+    }
+    ctx.putImageData(imageData, borderPx, borderPx);
+  }
+
+  const blob = await new Promise<Blob | null>((resolve) =>
+    canvas.toBlob((b) => resolve(b), 'image/png')
+  );
+  if (!blob) throw new Error('PNG encode failed');
+  return blob;
+}
+
+export async function downloadWebQaQrPng(
+  audienceUrl: string,
+  filename: string,
+  opts: WebQaQrDownloadOptions = {}
+): Promise<void> {
+  const blob = await buildWebQaQrPngBlob(audienceUrl, opts);
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename.endsWith('.png') ? filename : `${filename}.png`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
 function csvEscape(value: unknown): string {
@@ -217,13 +354,44 @@ export async function updateWebQaQuestionStatus(
   status: WebQaStatus,
   moderatedBy?: string
 ): Promise<WebQaQuestion> {
+  return patchWebQaQuestion(id, { status, moderated_by: moderatedBy });
+}
+
+export async function patchWebQaQuestion(
+  id: string,
+  patch: {
+    status?: WebQaStatus;
+    is_queued?: boolean;
+    queue_order?: number;
+    moderated_by?: string;
+  }
+): Promise<WebQaQuestion> {
   const res = await fetch(`${getApiBaseUrl()}/api/web-qa/questions/${encodeURIComponent(id)}`, {
     method: 'PATCH',
     headers: { ...authHeaders(), 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({ status, moderated_by: moderatedBy || null }),
+    body: JSON.stringify({
+      status: patch.status,
+      is_queued: patch.is_queued,
+      queue_order: patch.queue_order,
+      moderated_by: patch.moderated_by || null,
+    }),
   });
   const data = await parseJson(res);
   return data.question as WebQaQuestion;
+}
+
+export async function reorderWebQaQueue(
+  eventId: string,
+  orderedIds: string[],
+  moderatedBy?: string
+): Promise<WebQaQuestion[]> {
+  const res = await fetch(`${getApiBaseUrl()}/api/web-qa/${encodeURIComponent(eventId)}/queue`, {
+    method: 'PUT',
+    headers: { ...authHeaders(), 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ ordered_ids: orderedIds, moderated_by: moderatedBy || null }),
+  });
+  const data = await parseJson(res);
+  return (data.questions || []) as WebQaQuestion[];
 }
 
 export async function deleteWebQaQuestion(id: string): Promise<void> {
