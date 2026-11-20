@@ -3,13 +3,17 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import {
   buildWebQaQuestionsCsv,
   downloadTextFile,
+  downloadWebQaQrPng,
   fetchWebQaOverview,
   fetchWebQaQuestions,
   rotateWebQaSession,
   webQaAudienceAbsoluteUrl,
   webQaQrImageUrl,
   type WebQaOverview,
+  type WebQaQrDownloadOptions,
 } from '../lib/webQa';
+
+type QrBgMode = 'white' | 'transparent' | 'custom';
 
 export default function QaModPage() {
   const location = useLocation();
@@ -23,6 +27,15 @@ export default function QaModPage() {
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [reportBusy, setReportBusy] = useState(false);
+  const [qrBusy, setQrBusy] = useState(false);
+  const [showQrDownload, setShowQrDownload] = useState(false);
+  const [qrFg, setQrFg] = useState('#111827');
+  const [qrBgMode, setQrBgMode] = useState<QrBgMode>('white');
+  const [qrBgCustom, setQrBgCustom] = useState('#ffffff');
+  const [qrBorderPx, setQrBorderPx] = useState(16);
+  const [qrBorderColor, setQrBorderColor] = useState('#111827');
+  const [qrMargin, setQrMargin] = useState(4);
+  const [qrSize, setQrSize] = useState(1024);
 
   const qs = useMemo(
     () =>
@@ -33,7 +46,33 @@ export default function QaModPage() {
   const audienceUrl = overview?.session
     ? webQaAudienceAbsoluteUrl(overview.session.public_token)
     : '';
-  const qrUrl = audienceUrl ? webQaQrImageUrl(audienceUrl, 260) : '';
+  const qrUrl = audienceUrl ? webQaQrImageUrl(audienceUrl, 140) : '';
+
+  const qrDownloadOpts = useMemo((): WebQaQrDownloadOptions => {
+    const bg =
+      qrBgMode === 'transparent'
+        ? 'transparent'
+        : qrBgMode === 'custom'
+          ? qrBgCustom
+          : '#ffffff';
+    return {
+      size: qrSize,
+      fg: qrFg,
+      bg,
+      margin: qrMargin,
+      borderPx: qrBorderPx,
+      borderColor: qrBorderColor,
+    };
+  }, [qrBgMode, qrBgCustom, qrBorderColor, qrBorderPx, qrFg, qrMargin, qrSize]);
+
+  const qrPreviewUrl = audienceUrl
+    ? webQaQrImageUrl(audienceUrl, {
+        size: 160,
+        fg: qrFg,
+        bg: qrBgMode === 'transparent' ? 'ffffff' : qrDownloadOpts.bg,
+        margin: qrMargin,
+      })
+    : '';
 
   const load = useCallback(async () => {
     if (!eventId) {
@@ -87,6 +126,24 @@ export default function QaModPage() {
       await load();
     } catch (e) {
       alert(e instanceof Error ? e.message : 'Could not rotate link');
+    }
+  };
+
+  const downloadQr = async () => {
+    if (!audienceUrl || qrBusy) return;
+    setQrBusy(true);
+    try {
+      const stamp = new Date().toISOString().slice(0, 10);
+      const safeName = (eventName || 'event')
+        .replace(/[^a-z0-9-_]+/gi, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '')
+        .slice(0, 40);
+      await downloadWebQaQrPng(audienceUrl, `web-qa-qr-${safeName || 'event'}-${stamp}.png`, qrDownloadOpts);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Could not download QR');
+    } finally {
+      setQrBusy(false);
     }
   };
 
@@ -182,27 +239,185 @@ export default function QaModPage() {
           </div>
         ) : null}
 
-        <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-5">
+        <div className="grid grid-cols-1 lg:grid-cols-[260px_1fr] gap-5">
           <aside className="rounded-xl border border-slate-700 bg-slate-900/80 p-4 space-y-4 h-fit">
             <div>
               <h2 className="text-sm font-semibold text-slate-200 mb-1">Audience QR</h2>
-              <p className="text-xs text-slate-400 mb-3">
+              <p className="text-xs text-slate-400 mb-2">
                 Unique per event. Scan to open the submit page.
               </p>
-              {qrUrl ? (
-                <div className="rounded-lg bg-white p-3 inline-block">
-                  <img
-                    src={qrUrl}
-                    alt="Q&A audience QR code"
-                    width={220}
-                    height={220}
-                    className="block"
-                  />
+              <div className="flex items-start gap-3">
+                {qrUrl ? (
+                  <div className="rounded-md bg-white p-1.5 shrink-0">
+                    <img
+                      src={qrUrl}
+                      alt="Q&A audience QR code"
+                      width={112}
+                      height={112}
+                      className="block w-28 h-28"
+                    />
+                  </div>
+                ) : (
+                  <div className="h-28 w-28 rounded-md bg-slate-800 animate-pulse shrink-0" />
+                )}
+                <div className="min-w-0 space-y-2 pt-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setShowQrDownload((v) => !v)}
+                    className="w-full px-2.5 py-1.5 text-xs font-semibold rounded bg-slate-700 hover:bg-slate-600"
+                  >
+                    {showQrDownload ? 'Hide download options' : 'Download QR…'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void rotate()}
+                    className="w-full px-2.5 py-1.5 text-xs rounded border border-slate-600 text-slate-300 hover:bg-slate-800"
+                  >
+                    New QR / link
+                  </button>
                 </div>
-              ) : (
-                <div className="h-[220px] w-[220px] rounded-lg bg-slate-800 animate-pulse" />
-              )}
+              </div>
             </div>
+
+            {showQrDownload ? (
+              <div className="rounded-lg border border-slate-700 bg-slate-950/60 p-3 space-y-3">
+                <p className="text-[11px] uppercase tracking-wide text-slate-500 font-semibold">
+                  Download options
+                </p>
+                <div
+                  className="rounded-md p-2 inline-block"
+                  style={{
+                    background:
+                      qrBgMode === 'transparent'
+                        ? 'repeating-conic-gradient(#cbd5e1 0% 25%, #f8fafc 0% 50%) 50% / 12px 12px'
+                        : qrBgMode === 'custom'
+                          ? qrBgCustom
+                          : '#ffffff',
+                    boxShadow:
+                      qrBorderPx > 0
+                        ? `0 0 0 ${Math.min(8, Math.max(2, Math.round(qrBorderPx / 8)))}px ${qrBorderColor}`
+                        : undefined,
+                  }}
+                >
+                  {qrPreviewUrl ? (
+                    <img
+                      src={qrPreviewUrl}
+                      alt="QR download preview"
+                      width={96}
+                      height={96}
+                      className="block w-24 h-24"
+                      style={{
+                        // Approximate transparent punch for preview only
+                        mixBlendMode: qrBgMode === 'transparent' ? 'multiply' : undefined,
+                      }}
+                    />
+                  ) : null}
+                </div>
+
+                <label className="block text-xs text-slate-400">
+                  Code color
+                  <input
+                    type="color"
+                    value={qrFg}
+                    onChange={(e) => setQrFg(e.target.value)}
+                    className="mt-1 w-full h-8 rounded cursor-pointer bg-transparent border border-slate-600"
+                  />
+                </label>
+
+                <div className="space-y-1.5">
+                  <p className="text-xs text-slate-400">Background</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {(
+                      [
+                        ['white', 'White'],
+                        ['transparent', 'Transparent'],
+                        ['custom', 'Custom'],
+                      ] as const
+                    ).map(([id, label]) => (
+                      <button
+                        key={id}
+                        type="button"
+                        onClick={() => setQrBgMode(id)}
+                        className={`px-2 py-1 text-[11px] rounded border ${
+                          qrBgMode === id
+                            ? 'border-fuchsia-500 bg-fuchsia-900/40 text-white'
+                            : 'border-slate-600 text-slate-300 hover:bg-slate-800'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  {qrBgMode === 'custom' ? (
+                    <input
+                      type="color"
+                      value={qrBgCustom}
+                      onChange={(e) => setQrBgCustom(e.target.value)}
+                      className="w-full h-8 rounded cursor-pointer bg-transparent border border-slate-600"
+                    />
+                  ) : null}
+                </div>
+
+                <label className="block text-xs text-slate-400">
+                  Border ({qrBorderPx}px)
+                  <input
+                    type="range"
+                    min={0}
+                    max={64}
+                    step={2}
+                    value={qrBorderPx}
+                    onChange={(e) => setQrBorderPx(Number(e.target.value))}
+                    className="mt-1 w-full"
+                  />
+                </label>
+                {qrBorderPx > 0 ? (
+                  <label className="block text-xs text-slate-400">
+                    Border color
+                    <input
+                      type="color"
+                      value={qrBorderColor}
+                      onChange={(e) => setQrBorderColor(e.target.value)}
+                      className="mt-1 w-full h-8 rounded cursor-pointer bg-transparent border border-slate-600"
+                    />
+                  </label>
+                ) : null}
+
+                <label className="block text-xs text-slate-400">
+                  Quiet zone ({qrMargin})
+                  <input
+                    type="range"
+                    min={0}
+                    max={12}
+                    step={1}
+                    value={qrMargin}
+                    onChange={(e) => setQrMargin(Number(e.target.value))}
+                    className="mt-1 w-full"
+                  />
+                </label>
+
+                <label className="block text-xs text-slate-400">
+                  Export size
+                  <select
+                    value={qrSize}
+                    onChange={(e) => setQrSize(Number(e.target.value))}
+                    className="mt-1 w-full rounded bg-slate-900 border border-slate-600 px-2 py-1.5 text-sm text-white"
+                  >
+                    <option value={512}>512 px</option>
+                    <option value={1024}>1024 px</option>
+                    <option value={2048}>2048 px</option>
+                  </select>
+                </label>
+
+                <button
+                  type="button"
+                  disabled={!audienceUrl || qrBusy}
+                  onClick={() => void downloadQr()}
+                  className="w-full px-3 py-2 rounded-lg bg-sky-700 hover:bg-sky-600 disabled:opacity-40 font-semibold text-sm"
+                >
+                  {qrBusy ? 'Preparing PNG…' : 'Download PNG'}
+                </button>
+              </div>
+            ) : null}
 
             <div className="space-y-2">
               <label className="text-[11px] uppercase tracking-wide text-slate-500 font-semibold">
@@ -229,13 +444,6 @@ export default function QaModPage() {
                 >
                   Open
                 </a>
-                <button
-                  type="button"
-                  onClick={() => void rotate()}
-                  className="px-3 py-1.5 text-sm rounded border border-slate-600 text-slate-300 hover:bg-slate-800"
-                >
-                  New QR / link
-                </button>
               </div>
             </div>
 
