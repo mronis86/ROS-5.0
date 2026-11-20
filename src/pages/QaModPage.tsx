@@ -288,7 +288,7 @@ export default function QaModPage() {
               {current ? (
                 <div>
                   <p className="text-lg font-semibold">
-                    {current.cue ? `CUE ${current.cue}` : `Item #${current.id}`}
+                    {current.cue || `Item #${current.id}`}
                     {current.has_qa ? (
                       <span className="ml-2 text-xs font-semibold uppercase tracking-wide text-fuchsia-200 bg-fuchsia-900/40 border border-fuchsia-600/40 px-2 py-0.5 rounded">
                         Q&A
@@ -348,7 +348,7 @@ export default function QaModPage() {
                       >
                         <div className="min-w-0">
                           <p className="font-medium text-sm">
-                            {cue.cue ? `CUE ${cue.cue}` : `Item #${cue.id}`}
+                            {cue.cue || `Item #${cue.id}`}
                             {isCurrent ? (
                               <span className="ml-2 text-[10px] uppercase tracking-wide text-emerald-200">
                                 current
