@@ -1,3 +1,8 @@
+import {
+  stripNotesEditorTypingSpacers,
+  withNotesTypingSpacer,
+} from './audioCallouts';
+
 /** Lightweight director call chips under a main cue (not schedule rows / timers). */
 
 export type SubCall = {
@@ -209,6 +214,55 @@ export function buildManualSubCall(
   };
 }
 
+/** e.g. cueKey "22.2", detail "Kill music" → "Cue 22.2: Kill music" (parsed by strip). */
+export function formatSubCallNoteText(cueKey: string, detail: string): string {
+  const key = String(cueKey || '').trim();
+  const text = String(detail || '').replace(/\s+/g, ' ').trim();
+  if (!key) return text ? `Cue ?: ${text}` : '';
+  return text ? `Cue ${key}: ${text}` : `Cue ${key}:`;
+}
+
+function escapeSubCallNotesHtml(s: string): string {
+  return String(s || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/** Sub-call note chip in Notes — fuchsia, distinct from SettleCue blue. */
+export function buildSubCallNotesHtml(cueKey: string, detail: string): string {
+  const chipText = formatSubCallNoteText(cueKey, detail);
+  const bg = 'rgba(192, 38, 211, 0.4)';
+  const border = '#e879f9';
+  const color = '#fdf4ff';
+  return (
+    `<ul style="margin:0.4em 0;padding-left:1.4em;list-style-type:disc;font-size:1em;" data-sub-call="1">` +
+    `<li style="margin:0.25em 0;">` +
+    `<span style="font-weight:700;line-height:1.4;background:${bg};color:${color};` +
+    `border:1px solid ${border};border-radius:5px;padding:0.2em 0.5em;display:inline-block;">` +
+    `${escapeSubCallNotesHtml(chipText)}` +
+    `</span></li></ul>`
+  );
+}
+
+/** Prepend a Cue N.N sub-call line into Notes (feeds the under-row strip). */
+export function prependSubCallNote(
+  notes: string,
+  cueKey: string,
+  detail: string
+): string {
+  const chipText = formatSubCallNoteText(cueKey, detail);
+  const existing = stripNotesEditorTypingSpacers(notes || '');
+  if (!chipText) return existing;
+  if (existing.includes(chipText) || existing.includes(escapeSubCallNotesHtml(chipText))) {
+    return existing;
+  }
+  const block = buildSubCallNotesHtml(cueKey, detail);
+  if (!existing.trim()) return withNotesTypingSpacer(block);
+  return withNotesTypingSpacer(`${block}${existing}`);
+}
+
 /**
  * Prefer notes-derived chips when present; keep called flags from saved subCalls.
  * Manual chips (non-note ids) are kept after the notes list.
@@ -245,14 +299,20 @@ export function resolveSubCalls(item: {
   return stored.map((s) => ({ ...s, fromNotes: false }));
 }
 
-/** Default on so new sub-call strips are visible until the operator hides them. */
-export function loadShowSubCalls(): boolean {
+/**
+ * Editors/Operators: default ON until they hide them.
+ * Viewers: default OFF unless they explicitly enable in Filter prefs.
+ */
+export function loadShowSubCalls(role?: string | null): boolean {
+  const isViewer = String(role || '').toUpperCase() === 'VIEWER';
   try {
     const raw = localStorage.getItem(ROS_SHOW_SUB_CALLS_KEY);
-    if (raw == null) return true;
+    if (raw == null) return !isViewer;
+    // Viewers must opt in (explicit true); others stay on unless explicitly false.
+    if (isViewer) return raw === 'true' || raw === '1';
     return raw !== 'false' && raw !== '0';
   } catch {
-    return true;
+    return !isViewer;
   }
 }
 

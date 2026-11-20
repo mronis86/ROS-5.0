@@ -170,6 +170,13 @@ import { OperatorPptPendingDecks } from '../components/PptPendingDeckBanner';
 // import { driftDetector } from '../services/driftDetector'; // REMOVED: Using WebSocket-only approach
 import ScheduleRow from './ScheduleRow';
 import StartTimeColumnCell from '../components/StartTimeColumnCell';
+import { SubCallsStrip } from '../components/SubCallsStrip';
+import {
+  type SubCall,
+  loadShowSubCalls,
+  resolveSubCalls,
+  saveShowSubCalls,
+} from '../lib/subCalls';
 import {
   findParentScheduleIndex,
   isIndentedScheduleItem,
@@ -427,6 +434,11 @@ interface ScheduleItem {
   timerDisplay?: 'countdown' | 'countUp' | 'timeOfDay' | 'todOnly';
   /** Optional VO / BGM chips in Notes (prototype) — metadata only, not timeline rows */
   voCues?: VoCue[];
+  /**
+   * Director sub-call checklist under a main cue (not timed rows).
+   * Notes lines like "Cue 22.1: …" auto-fill chips; `called` is what we persist.
+   */
+  subCalls?: SubCall[];
   /** ElevenLabs VOG script + last selected voice (preview/download only; audio not stored on ROS). */
   vogText?: string;
   vogVoiceId?: string;
@@ -511,6 +523,7 @@ function scheduleItemSignature(item: any): string {
     item.isSessionStartCue ? '1' : '',
     asText(item.sessionStartOvertime),
     JSON.stringify(item.voCues || []),
+    JSON.stringify(item.subCalls || []),
   ].join('\u001f');
 }
 
@@ -1835,6 +1848,11 @@ const RunOfShowPage: React.FC = () => {
   useEffect(() => {
     showCompletedHighlightRef.current = showCompletedHighlight;
   }, [showCompletedHighlight]);
+  /** Director sub-call chips — Viewers default off until Filter prefs opt-in. */
+  const [showSubCalls, setShowSubCalls] = useState(() => loadShowSubCalls(currentUserRole));
+  useEffect(() => {
+    setShowSubCalls(loadShowSubCalls(currentUserRole));
+  }, [currentUserRole]);
   const [originalDurations, setOriginalDurations] = useState<Record<number, { durationHours: number; durationMinutes: number; durationSeconds: number }>>({});
   /** Start times frozen when entering In-Show — WAS under Start stays on these. */
   const [lockedStartTimes, setLockedStartTimes] = useState<Record<number, string>>({});
@@ -2442,7 +2460,7 @@ const RunOfShowPage: React.FC = () => {
     shotType: 192, // w-48 = 192px
     pptQA: 192, // w-48 = 192px
     recording: 100,
-    notes: 384, // w-96 = 384px
+    notes: 400, // slight bump from 384 so four notes chips fit one line
     vog: 100,
     assets: 192, // w-48 = 192px
     participants: 256, // w-64 = 256px
@@ -2856,6 +2874,36 @@ const RunOfShowPage: React.FC = () => {
    */
   const getRowDimStyle = (_item: { id: number; programType?: string }): React.CSSProperties => ({});
 
+  const itemShowsSubCallsStrip = useCallback(
+    (item: {
+      id: number;
+      programType?: string;
+      notes?: string;
+      subCalls?: SubCall[] | unknown;
+      customFields?: Record<string, unknown>;
+      isTimedMarker?: boolean;
+      isIndented?: boolean;
+    }) => {
+      if (!showSubCalls) return false;
+      if (item.isTimedMarker) return false;
+      if (isIndentedScheduleItem(item as ScheduleItem, indentedCues)) return false;
+      if (isShowBreakProgramType(item.programType)) return false;
+      if (String(item.programType || '') === 'Delay Block') return false;
+      if (isQaPlanRow(item as ScheduleItem)) return false;
+      // Only show the under-row strip when there are actual sub calls (from notes or saved).
+      // Empty main cues stay clean — use "+ Sub call" above Notes to add the first one.
+      const resolved = resolveSubCalls({
+        notes: item.notes,
+        subCalls: item.subCalls,
+        customFields: item.customFields as { cue?: string } | undefined,
+      });
+      return resolved.length > 0;
+    },
+    [showSubCalls, indentedCues]
+  );
+
+  const SUB_CALLS_STRIP_EXTRA_REM = 2.85;
+
   const getRowContainerStyle = (
     item: {
       id: number;
@@ -2866,10 +2914,13 @@ const RunOfShowPage: React.FC = () => {
       speakers?: unknown;
       customFields?: Record<string, unknown>;
       voCues?: VoCue[];
+      subCalls?: SubCall[] | unknown;
+      isTimedMarker?: boolean;
+      isIndented?: boolean;
     },
     extra?: React.CSSProperties
-  ): React.CSSProperties => ({
-    height: getRowHeight(
+  ): React.CSSProperties => {
+    const baseHeight = getRowHeight(
       item.notes ?? '',
       item.speakersText,
       item.speakers as string | undefined,
@@ -2877,23 +2928,29 @@ const RunOfShowPage: React.FC = () => {
       customColumns,
       item.voCues?.length ?? 0,
       item.segmentName
-    ),
-    ...getRowDimStyle(item),
-    ...(item.programType === 'Delay Block'
-      ? {
-          backgroundColor: '#2e1065',
-          backgroundImage:
-            'repeating-linear-gradient(135deg, rgba(167,139,250,0.14) 0, rgba(167,139,250,0.14) 10px, rgba(46,16,101,0.12) 10px, rgba(46,16,101,0.12) 20px)',
-        }
-      : isShowBreakProgramType(item.programType)
+    );
+    const withStrip = itemShowsSubCallsStrip(item);
+    return {
+      height: withStrip
+        ? `calc(${baseHeight} + ${SUB_CALLS_STRIP_EXTRA_REM}rem)`
+        : baseHeight,
+      ...getRowDimStyle(item),
+      ...(item.programType === 'Delay Block'
         ? {
-            backgroundColor: '#083344',
+            backgroundColor: '#2e1065',
             backgroundImage:
-              'repeating-linear-gradient(135deg, rgba(34,211,238,0.14) 0, rgba(34,211,238,0.14) 10px, rgba(8,51,68,0.12) 10px, rgba(8,51,68,0.12) 20px)',
+              'repeating-linear-gradient(135deg, rgba(167,139,250,0.14) 0, rgba(167,139,250,0.14) 10px, rgba(46,16,101,0.12) 10px, rgba(46,16,101,0.12) 20px)',
           }
-        : {}),
-    ...extra,
-  });
+        : isShowBreakProgramType(item.programType)
+          ? {
+              backgroundColor: '#083344',
+              backgroundImage:
+                'repeating-linear-gradient(135deg, rgba(34,211,238,0.14) 0, rgba(34,211,238,0.14) 10px, rgba(8,51,68,0.12) 10px, rgba(8,51,68,0.12) 20px)',
+            }
+          : {}),
+      ...extra,
+    };
+  };
 
   const getRowContainerClass = (itemId: number, index: number) => {
     if (isShowBreakRow(itemId) && !isItemDimmed(itemId)) return SHOW_BREAK_ROW_CLASS;
@@ -2940,11 +2997,14 @@ const RunOfShowPage: React.FC = () => {
     speakers?: unknown;
     customFields?: Record<string, unknown>;
     voCues?: VoCue[];
+    subCalls?: SubCall[] | unknown;
+    isTimedMarker?: boolean;
+    isIndented?: boolean;
   }): React.CSSProperties =>
     isItemDimmed(item.id) || isScheduleOnlyProgramType(item.programType)
       ? getRowContainerStyle(item)
-      : {
-          height: getRowHeight(
+      : (() => {
+          const baseHeight = getRowHeight(
             item.notes ?? '',
             item.speakersText,
             item.speakers as string | undefined,
@@ -2952,8 +3012,13 @@ const RunOfShowPage: React.FC = () => {
             customColumns,
             item.voCues?.length ?? 0,
             item.segmentName
-          ),
-        };
+          );
+          return {
+            height: itemShowsSubCallsStrip(item)
+              ? `calc(${baseHeight} + ${SUB_CALLS_STRIP_EXTRA_REM}rem)`
+              : baseHeight,
+          };
+        })();
 
   const isSubCueResolumeSyncedRow = (itemId: number) =>
     Boolean(
@@ -3470,6 +3535,10 @@ const RunOfShowPage: React.FC = () => {
               visibleCustomColumnsFromNames(customColumnsRef.current || [], prefs.visibleCustomByName)
             );
           }
+          if (typeof prefs.showSubCalls === 'boolean') {
+            saveShowSubCalls(prefs.showSubCalls);
+            setShowSubCalls(prefs.showSubCalls);
+          }
         } else if (localSync === true) {
           setFilterViewSyncToAccount(true);
         } else {
@@ -3505,11 +3574,12 @@ const RunOfShowPage: React.FC = () => {
     }
     const timer = setTimeout(() => {
       const prefs: RosUiPreferences = {
-        ...readLocalRosUiPreferences(columnOrder, customColumns, stickyStartColumn),
+        ...readLocalRosUiPreferences(columnOrder, customColumns, stickyStartColumn, currentUserRole),
         visibleColumns,
         visibleCustomByName: customColumnVisibilityToNames(customColumns, visibleCustomColumns),
         stickyStartColumn,
         columnOrder: toPortableColumnOrder(columnOrder, customColumns),
+        showSubCalls,
       };
       portableColumnOrderRef.current = prefs.columnOrder || null;
       void saveUserUiPreferences(user.id, prefs).catch((err) => {
@@ -3526,6 +3596,8 @@ const RunOfShowPage: React.FC = () => {
     stickyStartColumn,
     columnOrder,
     customColumns,
+    showSubCalls,
+    currentUserRole,
   ]);
   useEffect(() => { eventNameRef.current = eventName; }, [eventName]);
   useEffect(() => { masterStartTimeRef.current = masterStartTime; }, [masterStartTime]);
@@ -7031,7 +7103,9 @@ const RunOfShowPage: React.FC = () => {
       document.body.removeChild(tempDiv);
       
       const contentHeightRem = contentHeight / 16;
-      const paddingRem = 3; // Increased from 2 to add more bottom gap
+      // Chip bar above notes needs its own vertical budget so lines aren't clipped.
+      const notesChipBarRem = 1.75;
+      const paddingRem = 3 + notesChipBarRem;
       const notesHeight = contentHeightRem + paddingRem;
       maxHeight = Math.max(maxHeight, notesHeight);
     }
@@ -17950,37 +18024,6 @@ const RunOfShowPage: React.FC = () => {
                               onClick={() => {
                                 setShowMenuDropdown(false);
                                 setShowOperatorActionsSubmenu(false);
-                                const powerpointUrl = `/powerpoint?eventId=${event?.id}&eventName=${encodeURIComponent(event?.name || '')}`;
-                                window.open(powerpointUrl, '_blank');
-                              }}
-                              className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center gap-3"
-                              title="Map a live slideshow to ROS cues and timers"
-                            >
-                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                              </svg>
-                              PowerPoint Show with Timers
-                            </button>
-                            <button
-                              onClick={() => {
-                                setShowMenuDropdown(false);
-                                setShowOperatorActionsSubmenu(false);
-                                const playbackUrl = `/powerpoint-playback?eventId=${event?.id}&eventName=${encodeURIComponent(event?.name || '')}`;
-                                window.open(playbackUrl, '_blank');
-                              }}
-                              className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center gap-3"
-                              title="Load a cue to open its PowerPoint from the asset bucket"
-                            >
-                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                              </svg>
-                              ROS PPT Launcher
-                            </button>
-                            <button
-                              onClick={() => {
-                                setShowMenuDropdown(false);
-                                setShowOperatorActionsSubmenu(false);
                                 const graphicsLinksUrl = `/graphics-links?eventId=${event?.id}&eventName=${encodeURIComponent(event?.name || '')}`;
                                 window.open(graphicsLinksUrl, '_blank');
                               }}
@@ -19602,6 +19645,22 @@ const RunOfShowPage: React.FC = () => {
                       />
                       <span className="text-white text-sm">Show completed</span>
                     </label>
+                    <label
+                      className="flex items-center gap-2 select-none cursor-pointer"
+                      title="Show director sub-call chips under main cues (from Cue N.N notes lines, or add manually)"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={showSubCalls}
+                        onChange={(e) => {
+                          const next = e.target.checked;
+                          setShowSubCalls(next);
+                          saveShowSubCalls(next);
+                        }}
+                        className="rounded border-slate-500 w-5 h-5"
+                      />
+                      <span className="text-white text-sm">Sub calls</span>
+                    </label>
                     </div>
                   </>
                 )}
@@ -20843,7 +20902,7 @@ const RunOfShowPage: React.FC = () => {
                      <div 
                        key={item.id}
                        data-item-id={item.id}
-                       className={`border-b-2 border-slate-600 flex relative ${getRowContainerClass(item.id, index)} ${rowLocks[item.id] && user?.id && rowLocks[item.id].userId !== user.id ? 'bg-amber-950/40 ring-2 ring-inset ring-amber-400' : ''}`}
+                       className={`border-b-2 border-slate-600 flex flex-col relative ${getRowContainerClass(item.id, index)} ${rowLocks[item.id] && user?.id && rowLocks[item.id].userId !== user.id ? 'bg-amber-950/40 ring-2 ring-inset ring-amber-400' : ''}`}
                        style={getRowContainerStyle(item, {
                          textDecoration: item.programType === 'KILLED' ? 'line-through' : 'none',
                          textDecorationThickness: item.programType === 'KILLED' ? '4px' : 'auto',
@@ -20853,6 +20912,7 @@ const RunOfShowPage: React.FC = () => {
                        onFocusCapture={() => handleRowFocus(item.id)}
                        onBlurCapture={() => handleRowBlur(item.id)}
                      >
+                      <div className="flex flex-1 min-h-0 min-w-0 w-full">
                       <ScheduleRow
                         asFragment
                         className=""
@@ -20939,7 +20999,43 @@ const RunOfShowPage: React.FC = () => {
                         visibleCustomColumns={visibleCustomColumns}
                         customColumnWidths={customColumnWidths}
                         getRowHeight={getRowHeight}
+                        showSubCalls={showSubCalls}
                       />
+                      </div>
+                      {itemShowsSubCallsStrip(item) ? (
+                        <SubCallsStrip
+                          itemId={item.id}
+                          cueLabel={
+                            String(item.customFields?.cue || '').trim() ||
+                            resolveScheduleCueLabel(item, item.id)
+                          }
+                          parentItem={item}
+                          subCalls={resolveSubCalls(item)}
+                          canEdit={currentUserRole === 'EDITOR'}
+                          canConfirm={
+                            currentUserRole === 'EDITOR' || currentUserRole === 'OPERATOR'
+                          }
+                          onChange={(next) => {
+                            setSchedule((prev) =>
+                              prev.map((row) =>
+                                row.id === item.id ? { ...row, subCalls: next } : row
+                              )
+                            );
+                            handleUserEditing();
+                            saveToAPI();
+                            logChangeDebounced(
+                              `subCalls:${item.id}`,
+                              'FIELD_UPDATE',
+                              `Updated sub calls for "${item.segmentName}"`,
+                              {
+                                itemId: item.id,
+                                fieldName: 'subCalls',
+                                newValue: next,
+                              }
+                            );
+                          }}
+                        />
+                      ) : null}
                        {/* shotType, pptQA, notes, assets, participants, speakers, public, custom columns moved to ScheduleRow */}
                     </div>
                   ); })
@@ -23761,7 +23857,12 @@ const RunOfShowPage: React.FC = () => {
                       saveFilterViewAccountSync(enabled);
                       if (enabled && user?.id) {
                         const prefs: RosUiPreferences = {
-                          ...readLocalRosUiPreferences(columnOrder, customColumns, stickyStartColumn),
+                          ...readLocalRosUiPreferences(
+                            columnOrder,
+                            customColumns,
+                            stickyStartColumn,
+                            currentUserRole
+                          ),
                           visibleColumns,
                           visibleCustomByName: customColumnVisibilityToNames(
                             customColumns,
@@ -23769,6 +23870,7 @@ const RunOfShowPage: React.FC = () => {
                           ),
                           stickyStartColumn,
                           columnOrder: toPortableColumnOrder(columnOrder, customColumns),
+                          showSubCalls,
                         };
                         portableColumnOrderRef.current = prefs.columnOrder || null;
                         void saveUserUiPreferences(user.id, prefs).catch((err) => {
@@ -23948,6 +24050,29 @@ const RunOfShowPage: React.FC = () => {
                     Pin Start next to CUE
                     <span className="block text-xs text-slate-400 font-normal">
                       Stays fixed on the left while other columns scroll
+                    </span>
+                  </span>
+                </label>
+
+                <label
+                  className="flex items-start gap-3 rounded-lg border border-fuchsia-700/40 bg-fuchsia-950/20 px-3 py-2.5"
+                  title="Show director sub-call chips under main cues and the + Sub call button above Notes"
+                >
+                  <input
+                    type="checkbox"
+                    checked={showSubCalls}
+                    onChange={(e) => {
+                      const next = e.target.checked;
+                      setShowSubCalls(next);
+                      saveShowSubCalls(next);
+                    }}
+                    className="rounded mt-0.5"
+                  />
+                  <span className="text-slate-200 text-sm">
+                    Show Sub calls
+                    <span className="block text-xs text-slate-400 font-normal">
+                      Under-row chips + Notes “+ Sub call” button. Viewers stay hidden until this is
+                      checked (saved with Filter prefs). Uncheck to hide without deleting notes.
                     </span>
                   </span>
                 </label>

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import {
   type SubCall,
+  buildManualSubCall,
   formatSubCallChip,
   newSubCallId,
   normalizeSubCalls,
@@ -9,6 +10,12 @@ import {
 type Props = {
   itemId: number;
   cueLabel?: string;
+  /** Parent cue field / notes — used to number manual chips as CUE N.N */
+  parentItem?: {
+    notes?: string;
+    subCalls?: SubCall[] | unknown;
+    customFields?: { cue?: string } | Record<string, string>;
+  };
   /** Already resolved (notes + saved called state). */
   subCalls: SubCall[];
   canEdit: boolean;
@@ -23,6 +30,7 @@ type Props = {
 export function SubCallsStrip({
   itemId,
   cueLabel,
+  parentItem,
   subCalls,
   canEdit,
   canConfirm,
@@ -41,7 +49,13 @@ export function SubCallsStrip({
   const addCall = () => {
     const label = draft.trim();
     if (!label || !canEdit) return;
-    onChange([...calls, { id: newSubCallId(), label, called: false, fromNotes: false }]);
+    const numbered = parentItem
+      ? buildManualSubCall({ ...parentItem, subCalls: calls }, label)
+      : null;
+    onChange([
+      ...calls,
+      numbered || { id: newSubCallId(), label, called: false, fromNotes: false },
+    ]);
     setDraft('');
     setAdding(false);
   };

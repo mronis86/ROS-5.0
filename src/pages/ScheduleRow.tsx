@@ -7,6 +7,11 @@ import {
   formatStageDirectionNoteText,
   prependStageDirectionNote,
 } from '../lib/audioCallouts';
+import {
+  buildManualSubCall,
+  formatSubCallNoteText,
+  prependSubCallNote,
+} from '../lib/subCalls';
 import { shotTypeManualEditPatch, shotTypePatchFromSpeakers, parseSpeakersForShotType } from '../lib/shotTypeFromSpeakers';
 import { getAutoShotTypeFromSpeakers } from '../lib/branding';
 import {
@@ -116,6 +121,8 @@ export interface ScheduleRowProps {
   columnFlexOrder?: Record<string, number>;
   getRowHeight?: Function;
   asFragment?: boolean;
+  /** When false, hide + Sub call chip (strip under row is also hidden by parent). */
+  showSubCalls?: boolean;
   showMode?: 'rehearsal' | 'in-show'; // Rehearsal: Start column shows scheduled only, no overtime badge. In-Show: show overtime.
   originalDuration?: { durationHours: number; durationMinutes: number; durationSeconds: number } | null;
   showWasUnderDuration?: boolean; // When true (Track was durations checked), show "was X min" under duration when current differs from original
@@ -223,6 +230,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
   columnFlexOrder,
   getRowHeight,
   asFragment,
+  showSubCalls = true,
   showMode = 'in-show',
   originalDuration,
   showWasUnderDuration = false,
@@ -1605,11 +1613,11 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
       {/* Notes column (after PPT/QA) — VO/BGM text is written into Notes; no chips */}
       {visibleColumns.notes && (
         <div 
-          className="px-4 py-2 border-r border-slate-600 flex flex-col items-stretch justify-center gap-1 flex-shrink-0 min-w-0 overflow-hidden transition-all duration-300 ease-in-out"
+          className="px-3 py-2 border-r border-slate-600 flex flex-col items-stretch justify-start gap-1 flex-shrink-0 min-w-0 h-full min-h-0 overflow-hidden transition-all duration-300 ease-in-out"
           style={colBox(columnWidths.notes, 'notes')}
         >
           {!isLockedByOther && currentUserRole !== 'VIEWER' && (
-            <div className="flex flex-wrap items-center gap-1 self-start">
+            <div className="flex flex-nowrap items-center gap-1 self-stretch w-full min-w-0 shrink-0">
               <button
                 type="button"
                 onClick={(e) => {
@@ -1621,7 +1629,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
                   setEditingVoItemId?.(item.id);
                   setShowVoModal?.(true);
                 }}
-                className="inline-flex items-center rounded border border-dashed border-slate-500/70 px-2 py-0.5 text-xs font-semibold text-slate-300 hover:border-amber-400 hover:text-amber-100 transition-colors"
+                className="inline-flex items-center whitespace-nowrap rounded border border-dashed border-slate-500/70 px-2 py-0.5 text-xs font-semibold text-slate-300 hover:border-amber-400 hover:text-amber-100 transition-colors shrink-0"
                 title="Add VO or Background Music into Notes"
               >
                 + VO / BGM
@@ -1639,7 +1647,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
                   handleModalEditing?.();
                   setShowStageDirectionModal(true);
                 }}
-                className="inline-flex items-center rounded border border-dashed border-violet-500/70 px-2 py-0.5 text-xs font-semibold text-violet-200 hover:border-violet-400 hover:text-violet-100 transition-colors"
+                className="inline-flex items-center whitespace-nowrap rounded border border-dashed border-violet-500/70 px-2 py-0.5 text-xs font-semibold text-violet-200 hover:border-violet-400 hover:text-violet-100 transition-colors shrink-0"
                 title="Add Stage Direction into Notes"
               >
                 + Stage Direction
@@ -1699,11 +1707,86 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
                   }
                   if (saveToAPI) saveToAPI();
                 }}
-                className="inline-flex items-center rounded border border-dashed border-blue-500/70 px-2 py-0.5 text-xs font-semibold text-blue-200 hover:border-blue-400 hover:text-blue-100 transition-colors"
+                className="inline-flex items-center whitespace-nowrap rounded border border-dashed border-blue-500/70 px-2 py-0.5 text-xs font-semibold text-blue-200 hover:border-blue-400 hover:text-blue-100 transition-colors shrink-0"
                 title="Add Cue N.1 Settle Motion & Presenters into Notes"
               >
                 + SettleCue
               </button>
+              {showSubCalls &&
+              !isQaPlanRow(item) &&
+              !item.isTimedMarker &&
+              !(indentedCues?.[item.id] || item.isIndented) ? (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (alertIfLocked(e)) return;
+                    if (currentUserRole === 'OPERATOR') {
+                      alert('Only EDITORs can add Sub call notes. Please change your role to EDITOR.');
+                      return;
+                    }
+                    const cue = String(item.customFields?.cue || '').trim();
+                    if (!cue) {
+                      alert('Set a CUE number on this row first.');
+                      return;
+                    }
+                    const detail = window.prompt('Sub call detail (e.g. Kill music)', '');
+                    if (detail == null) return;
+                    const built = buildManualSubCall(item, detail);
+                    if (!built?.cueKey) {
+                      alert('Could not number this sub call. Check the CUE field.');
+                      return;
+                    }
+                    const noteText = formatSubCallNoteText(built.cueKey, built.detail || detail);
+                    const prevNotes = String(item.notes || '');
+                    if (prevNotes.includes(noteText)) return;
+                    if (!beginCellEdit()) return;
+                    const nextNotes = prependSubCallNote(
+                      item.notes || '',
+                      built.cueKey,
+                      built.detail || detail
+                    );
+                    setSchedule((prev: any[]) =>
+                      prev.map((scheduleItem) =>
+                        scheduleItem.id === item.id
+                          ? { ...scheduleItem, notes: nextNotes }
+                          : scheduleItem
+                      )
+                    );
+                    onNotesChipUpdated?.(item.id, nextNotes);
+                    if (logChange) {
+                      logChange(
+                        'NOTES_UPDATE',
+                        `Added Sub call "${noteText}" on "${item.segmentName}"`,
+                        {
+                          changeType: 'FIELD_CHANGE',
+                          itemId: item.id,
+                          itemName: item.segmentName,
+                          fieldName: 'notes',
+                          details: { subCall: noteText },
+                        }
+                      );
+                    } else {
+                      logChangeDebounced(
+                        'NOTES_UPDATE',
+                        `Added Sub call "${noteText}" on "${item.segmentName}"`,
+                        {
+                          changeType: 'FIELD_CHANGE',
+                          itemId: item.id,
+                          itemName: item.segmentName,
+                          fieldName: 'notes',
+                          details: { subCall: noteText },
+                        }
+                      );
+                    }
+                    if (saveToAPI) saveToAPI();
+                  }}
+                  className="inline-flex items-center whitespace-nowrap rounded border border-dashed border-fuchsia-500/70 px-2 py-0.5 text-xs font-semibold text-fuchsia-200 hover:border-fuchsia-400 hover:text-fuchsia-100 transition-colors shrink-0"
+                  title="Add Cue N.N sub call into Notes (shows under-row chips)"
+                >
+                  + Sub call
+                </button>
+              ) : null}
             </div>
           )}
           <StageDirectionModal
@@ -1776,13 +1859,13 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
               setEditingNotesItem && setEditingNotesItem(item.id);
               setShowNotesModal && setShowNotesModal(true);
             }}
-            className={`w-full min-w-0 overflow-hidden px-3 py-2 border rounded text-base transition-colors text-white ${isLockedByOther ? 'bg-slate-700 border-slate-600 opacity-70 cursor-not-allowed' : 'bg-slate-700 border-slate-600 cursor-pointer hover:bg-slate-600'}`}
+            className={`w-full min-w-0 flex-1 overflow-hidden px-3 py-2 border rounded text-base transition-colors text-white ${isLockedByOther ? 'bg-slate-700 border-slate-600 opacity-70 cursor-not-allowed' : 'bg-slate-700 border-slate-600 cursor-pointer hover:bg-slate-600'}`}
             title={isLockedByOther ? lockLabel : currentUserRole === 'VIEWER' ? 'Viewers cannot edit notes' : currentUserRole === 'OPERATOR' ? 'Click to view notes (read-only)' : 'Click to edit notes'}
           >
             {item.notes ? (
               <div 
                 className="text-left w-full min-w-0 notes-display text-white"
-                style={{ lineHeight: '1.45', overflow: 'hidden', overflowWrap: 'anywhere', wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}
+                style={{ lineHeight: '1.45', overflowWrap: 'anywhere', wordBreak: 'break-word', whiteSpace: 'pre-wrap', paddingBottom: '0.25rem' }}
                 dangerouslySetInnerHTML={{ 
                   __html: boostNotesContrastHtml(
                     String(item.notes)
@@ -2261,6 +2344,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
   if (prevProps.startCueId !== nextProps.startCueId) return false;
   if (prevProps.showStartOvertime !== nextProps.showStartOvertime) return false;
   if (prevProps.showMode !== nextProps.showMode) return false;
+  if (prevProps.showSubCalls !== nextProps.showSubCalls) return false;
   if (prevProps.showWasUnderDuration !== nextProps.showWasUnderDuration) return false;
   if (prevProps.originalDuration !== nextProps.originalDuration) return false;
 

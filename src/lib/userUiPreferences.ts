@@ -11,6 +11,7 @@ import {
   saveRosVisibleCustomByName,
   type RosVisibleColumns,
 } from './rosColumnOrder';
+import { loadShowSubCalls, saveShowSubCalls } from './subCalls';
 
 export type RosUiPreferences = {
   visibleColumns?: RosVisibleColumns;
@@ -18,6 +19,8 @@ export type RosUiPreferences = {
   stickyStartColumn?: boolean;
   /** Builtin + custom-by-name order keys: builtins as-is, customs as `name:Column Name` */
   columnOrder?: string[];
+  /** Under-row Sub calls strip + Notes “+ Sub call” (Viewers default off until enabled). */
+  showSubCalls?: boolean;
 };
 
 /** localStorage: whether Filter View should sync to the signed-in user (Neon). */
@@ -48,6 +51,7 @@ export function rosUiPreferencesHasContent(prefs: RosUiPreferences | null | unde
   if (prefs.visibleCustomByName && Object.keys(prefs.visibleCustomByName).length > 0) return true;
   if (Array.isArray(prefs.columnOrder) && prefs.columnOrder.length > 0) return true;
   if (typeof prefs.stickyStartColumn === 'boolean') return true;
+  if (typeof prefs.showSubCalls === 'boolean') return true;
   return false;
 }
 
@@ -115,13 +119,15 @@ export function fromPortableColumnOrder(
 export function readLocalRosUiPreferences(
   columnOrder: string[],
   customColumns: { id: string; name?: string }[],
-  stickyStartColumn: boolean
+  stickyStartColumn: boolean,
+  role?: string | null
 ): RosUiPreferences {
   return {
     visibleColumns: loadRosVisibleColumns(),
     visibleCustomByName: loadRosVisibleCustomByName(),
     stickyStartColumn,
     columnOrder: toPortableColumnOrder(columnOrder, customColumns),
+    showSubCalls: loadShowSubCalls(role),
   };
 }
 
@@ -138,6 +144,9 @@ export function applyRosUiPreferencesToLocal(prefs: RosUiPreferences): void {
     } catch {
       /* ignore */
     }
+  }
+  if (typeof prefs.showSubCalls === 'boolean') {
+    saveShowSubCalls(prefs.showSubCalls);
   }
   if (Array.isArray(prefs.columnOrder)) {
     try {
