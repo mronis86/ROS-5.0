@@ -8,6 +8,8 @@ import {
   fetchWebQaQuestions,
   rotateWebQaSession,
   webQaAudienceAbsoluteUrl,
+  webQaActiveCsvUrl,
+  webQaQueueCsvUrl,
   webQaQrImageUrl,
   type WebQaOverview,
   type WebQaQrDownloadOptions,
@@ -26,6 +28,8 @@ export default function QaModPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [copiedCsv, setCopiedCsv] = useState(false);
+  const [copiedActiveCsv, setCopiedActiveCsv] = useState(false);
   const [reportBusy, setReportBusy] = useState(false);
   const [qrBusy, setQrBusy] = useState(false);
   const [showQrDownload, setShowQrDownload] = useState(false);
@@ -46,6 +50,8 @@ export default function QaModPage() {
   const audienceUrl = overview?.session
     ? webQaAudienceAbsoluteUrl(overview.session.public_token)
     : '';
+  const queueCsvUrl = eventId ? webQaQueueCsvUrl(eventId) : '';
+  const activeCsvUrl = eventId ? webQaActiveCsvUrl(eventId) : '';
   const qrUrl = audienceUrl ? webQaQrImageUrl(audienceUrl, 140) : '';
 
   const qrDownloadOpts = useMemo((): WebQaQrDownloadOptions => {
@@ -112,6 +118,28 @@ export default function QaModPage() {
     }
   };
 
+  const copyQueueCsv = async () => {
+    if (!queueCsvUrl) return;
+    try {
+      await navigator.clipboard.writeText(queueCsvUrl);
+      setCopiedCsv(true);
+      window.setTimeout(() => setCopiedCsv(false), 1600);
+    } catch {
+      window.prompt('Copy this vMix CSV URL:', queueCsvUrl);
+    }
+  };
+
+  const copyActiveCsv = async () => {
+    if (!activeCsvUrl) return;
+    try {
+      await navigator.clipboard.writeText(activeCsvUrl);
+      setCopiedActiveCsv(true);
+      window.setTimeout(() => setCopiedActiveCsv(false), 1600);
+    } catch {
+      window.prompt('Copy this vMix active CSV URL:', activeCsvUrl);
+    }
+  };
+
   const rotate = async () => {
     if (!eventId) return;
     if (
@@ -151,7 +179,8 @@ export default function QaModPage() {
     if (!eventId || reportBusy) return;
     setReportBusy(true);
     try {
-      const questions = await fetchWebQaQuestions(eventId, 'all');
+      // Report includes overflow (email follow-ups) that live mod UI hides.
+      const questions = await fetchWebQaQuestions(eventId, 'all', { includeOverflow: true });
       const filtered =
         cueItemId != null
           ? questions.filter((q) => Number(q.cue_item_id) === cueItemId)
@@ -447,21 +476,104 @@ export default function QaModPage() {
               </div>
             </div>
 
+            <div className="space-y-2">
+              <label className="text-[11px] uppercase tracking-wide text-slate-500 font-semibold">
+                vMix CSV · active
+              </label>
+              <p className="text-[11px] text-slate-500 leading-snug">
+                Single on-air question only. Updates when Select/Reader taps Make Active /
+                Done. Header-only when nothing is active.
+              </p>
+              <div className="text-xs break-all text-emerald-200/90 bg-slate-950/70 border border-slate-700 rounded-lg px-2.5 py-2">
+                {activeCsvUrl || '…'}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => void copyActiveCsv()}
+                  disabled={!activeCsvUrl}
+                  className="px-3 py-1.5 text-sm rounded bg-emerald-800 hover:bg-emerald-700 disabled:opacity-40"
+                >
+                  {copiedActiveCsv ? 'Copied' : 'Copy active CSV'}
+                </button>
+                <a
+                  href={activeCsvUrl || '#'}
+                  target="_blank"
+                  rel="noreferrer"
+                  className={`px-3 py-1.5 text-sm rounded bg-slate-700 hover:bg-slate-600 ${
+                    !activeCsvUrl ? 'pointer-events-none opacity-40' : ''
+                  }`}
+                >
+                  Preview
+                </a>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-[11px] uppercase tracking-wide text-slate-500 font-semibold">
+                vMix CSV · queued
+              </label>
+              <p className="text-[11px] text-slate-500 leading-snug">
+                Waiting queue (not ACTIVE). Columns: Row, Author, Question, Cue, Segment.
+                Optional&nbsp;
+                <code className="text-slate-400">?row=1</code> for a single slot.
+              </p>
+              <div className="text-xs break-all text-sky-200/90 bg-slate-950/70 border border-slate-700 rounded-lg px-2.5 py-2">
+                {queueCsvUrl || '…'}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => void copyQueueCsv()}
+                  disabled={!queueCsvUrl}
+                  className="px-3 py-1.5 text-sm rounded bg-sky-800 hover:bg-sky-700 disabled:opacity-40"
+                >
+                  {copiedCsv ? 'Copied' : 'Copy queue CSV'}
+                </button>
+                <a
+                  href={queueCsvUrl || '#'}
+                  target="_blank"
+                  rel="noreferrer"
+                  className={`px-3 py-1.5 text-sm rounded bg-slate-700 hover:bg-slate-600 ${
+                    !queueCsvUrl ? 'pointer-events-none opacity-40' : ''
+                  }`}
+                >
+                  Preview
+                </a>
+              </div>
+            </div>
+
             <div className="pt-3 border-t border-slate-700 space-y-2">
-              <p className="text-sm font-semibold text-white">Active moderation</p>
+              <p className="text-sm font-semibold text-white">Moderator tools</p>
               <p className="text-xs text-slate-400 leading-snug">
-                Live queue for pending / approved / answered questions.
+                Active = full mod list. Select / Reader = tablet showcase workflow.
               </p>
               <button
                 type="button"
                 onClick={() => window.open(`/qa-mod/active?${qs}`, '_blank')}
                 className="w-full px-3 py-2.5 rounded-lg bg-fuchsia-700 hover:bg-fuchsia-600 font-semibold text-sm"
               >
-                Open Active Q&A
+                Active Q&A
                 {(overview?.counts?.pending ?? 0) > 0
                   ? ` (${overview?.counts?.pending} pending)`
                   : ''}
               </button>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => window.open(`/qa-mod/select?${qs}`, '_blank')}
+                  className="px-3 py-2.5 rounded-lg bg-slate-700 hover:bg-slate-600 font-semibold text-sm"
+                >
+                  Select
+                </button>
+                <button
+                  type="button"
+                  onClick={() => window.open(`/qa-mod/read?${qs}`, '_blank')}
+                  className="px-3 py-2.5 rounded-lg bg-sky-800 hover:bg-sky-700 font-semibold text-sm"
+                >
+                  Reader
+                </button>
+              </div>
             </div>
           </aside>
 
@@ -497,13 +609,33 @@ export default function QaModPage() {
                     </span>
                   </p>
                   <p>
-                    Total:{' '}
+                    Live pool:{' '}
                     <span className="tabular-nums font-semibold">
-                      {overview?.question_total ?? 0}
+                      {overview?.visible_count ?? overview?.counts?.all ?? 0}
+                      <span className="text-slate-500 font-normal">
+                        /{overview?.soft_limit ?? 300}
+                      </span>
                     </span>
+                  </p>
+                  <p>
+                    Overflow:{' '}
+                    <span
+                      className={`tabular-nums font-semibold ${
+                        (overview?.overflow_count ?? 0) > 0 ? 'text-amber-200' : ''
+                      }`}
+                    >
+                      {overview?.overflow_count ?? 0}
+                    </span>
+                    <span className="text-slate-500"> · report only</span>
                   </p>
                 </div>
               </div>
+              {overview?.at_soft_limit ? (
+                <p className="mt-3 text-xs text-amber-200/90 border-t border-amber-800/40 pt-2">
+                  Live cap reached. New audience submits ask for email and land in overflow
+                  (export CSV to see them).
+                </p>
+              ) : null}
             </div>
 
             <div className="rounded-xl border border-slate-700 bg-slate-900/70 px-4 py-4">

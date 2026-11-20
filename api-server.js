@@ -159,6 +159,9 @@ const {
   deleteQuestion: deleteWebQaQuestion,
   syncSessionOpenFromCue: syncWebQaSessionOpenFromCue,
   buildOverview: buildWebQaOverview,
+  buildQueueCsv: buildWebQaQueueCsv,
+  buildActiveCsv: buildWebQaActiveCsv,
+  getSoftLimitState: getWebQaSoftLimitState,
   isMissingRelation: isMissingWebQaRelation,
 } = require('./lib/web-qa');
 const {
@@ -7772,8 +7775,15 @@ app.get('/api/web-qa/:eventId/questions', async (req, res) => {
     const { eventId } = req.params;
     if (!eventId) return res.status(400).json({ error: 'eventId is required' });
     await ensureWebQaSchema(pool);
-    const questions = await listWebQaQuestions(pool, eventId, req.query.status || 'all');
-    res.json({ questions });
+    const includeOverflow =
+      req.query.include_overflow === '1' ||
+      req.query.include_overflow === 'true' ||
+      req.query.includeOverflow === '1' ||
+      req.query.includeOverflow === 'true';
+    const questions = await listWebQaQuestions(pool, eventId, req.query.status || 'all', {
+      includeOverflow,
+    });
+    res.json({ questions, include_overflow: includeOverflow });
   } catch (error) {
     console.error('[web-qa] list questions', error);
     res.status(500).json({ error: error.message || 'Failed to list questions' });
@@ -7788,6 +7798,8 @@ app.patch('/api/web-qa/questions/:id', async (req, res) => {
     const question = await updateWebQaQuestion(pool, id, {
       status: req.body?.status,
       is_queued: typeof req.body?.is_queued === 'boolean' ? req.body.is_queued : undefined,
+      is_active: typeof req.body?.is_active === 'boolean' ? req.body.is_active : undefined,
+      mark_done: req.body?.mark_done === true || req.body?.complete === true,
       queue_order:
         req.body?.queue_order != null && Number.isFinite(Number(req.body.queue_order))
           ? Number(req.body.queue_order)
@@ -7808,13 +7820,18 @@ app.put('/api/web-qa/:eventId/queue', async (req, res) => {
     const { eventId } = req.params;
     if (!eventId) return res.status(400).json({ error: 'eventId is required' });
     await ensureWebQaSchema(pool);
+    const scope =
+      String(req.body?.scope || req.query.scope || 'queued').toLowerCase() === 'approved'
+        ? 'approved'
+        : 'queued';
     const questions = await reorderWebQaQueuedQuestions(
       pool,
       eventId,
       req.body?.ordered_ids || req.body?.ids || [],
-      req.body?.moderated_by || req.body?.user_name || null
+      req.body?.moderated_by || req.body?.user_name || null,
+      { scope }
     );
-    res.json({ questions });
+    res.json({ questions, scope });
   } catch (error) {
     console.error('[web-qa] reorder queue', error);
     res.status(500).json({ error: error.message || 'Failed to reorder queue' });
@@ -7843,15 +7860,72 @@ app.get('/api/web-qa/public/:token', async (req, res) => {
     const session = await getWebQaSessionByToken(pool, token);
     if (!session) return res.status(404).json({ error: 'Invalid Q&A link' });
     const sync = await syncWebQaSessionOpenFromCue(pool, session.event_id, session.title);
+    const cue = sync.context?.current_cue || null;
+    const soft = await getWebQaSoftLimitState(pool, session.event_id);
     res.json({
       title: sync.session.title || 'Live Q&A',
       is_open: sync.session.is_open === true,
       event_id: sync.session.event_id,
       in_qa_cue: sync.context?.in_qa_cue === true,
+      soft_limit: soft.soft_limit,
+      visible_count: soft.visible_count,
+      at_soft_limit: soft.at_soft_limit,
+      current_cue: cue
+        ? {
+            id: cue.id,
+            cue: cue.cue || null,
+            segment_name: cue.segment_name || null,
+            has_qa: cue.has_qa === true,
+          }
+        : null,
     });
   } catch (error) {
     console.error('[web-qa] public session', error);
     res.status(500).json({ error: 'Failed to load Q&A' });
+  }
+});
+
+/** Public vMix/graphics CSV of showcase-queued questions (waiting, not ACTIVE). */
+app.get('/api/web-qa-queue.csv', async (req, res) => {
+  try {
+    const eventId = String(req.query.eventId || '').trim();
+    if (!eventId) {
+      res.set('Content-Type', 'text/csv; charset=utf-8');
+      return res.status(400).send('Row,Author,Question,Cue,Segment\n');
+    }
+    await ensureWebQaSchema(pool);
+    const csv = await buildWebQaQueueCsv(pool, eventId, { row: req.query.row });
+    res.set({
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Cache-Control': 'no-store',
+    });
+    return res.send(csv);
+  } catch (error) {
+    console.error('[web-qa] queue.csv', error);
+    res.set('Content-Type', 'text/csv; charset=utf-8');
+    return res.status(500).send('Row,Author,Question,Cue,Segment\n');
+  }
+});
+
+/** Public vMix/graphics CSV for the single on-air ACTIVE question. */
+app.get('/api/web-qa-active.csv', async (req, res) => {
+  try {
+    const eventId = String(req.query.eventId || '').trim();
+    if (!eventId) {
+      res.set('Content-Type', 'text/csv; charset=utf-8');
+      return res.status(400).send('Row,Author,Question,Cue,Segment\n');
+    }
+    await ensureWebQaSchema(pool);
+    const csv = await buildWebQaActiveCsv(pool, eventId);
+    res.set({
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Cache-Control': 'no-store',
+    });
+    return res.send(csv);
+  } catch (error) {
+    console.error('[web-qa] active.csv', error);
+    res.set('Content-Type', 'text/csv; charset=utf-8');
+    return res.status(500).send('Row,Author,Question,Cue,Segment\n');
   }
 });
 
@@ -7865,6 +7939,7 @@ app.post('/api/web-qa/public/:token/questions', async (req, res) => {
     const question = await submitWebQaQuestion(pool, session, {
       body: req.body?.body ?? req.body?.question,
       author_name: req.body?.author_name ?? req.body?.name,
+      author_email: req.body?.author_email ?? req.body?.email,
       cue_item_id: req.body?.cue_item_id,
     });
     res.status(201).json({
@@ -7873,6 +7948,7 @@ app.post('/api/web-qa/public/:token/questions', async (req, res) => {
       status: question.status,
       created_at: question.created_at,
       cue_item_id: question.cue_item_id,
+      is_overflow: question.is_overflow === true,
     });
   } catch (error) {
     const status = error.status || 500;

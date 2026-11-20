@@ -19,10 +19,15 @@ export type WebQaQuestion = {
   session_id: string;
   cue_item_id?: number | null;
   author_name?: string | null;
+  author_email?: string | null;
   body: string;
   status: WebQaStatus;
   /** Selected for showcase / live display queue. */
   is_queued?: boolean;
+  /** On-air / ACTIVE for graphics — only one per event. */
+  is_active?: boolean;
+  /** Past visible soft limit — report/export only. */
+  is_overflow?: boolean;
   /** 1-based order when queued. */
   sort_order?: number;
   created_at: string;
@@ -30,6 +35,11 @@ export type WebQaQuestion = {
   moderated_at?: string | null;
   moderated_by?: string | null;
 };
+
+/** Live mod UI soft cap; overflow still stores with email. */
+export const WEB_QA_VISIBLE_SOFT_LIMIT = 300;
+/** Realistic single spoken question (~tweet–paragraph). Enforced client + API. */
+export const WEB_QA_MAX_BODY_CHARS = 400;
 
 export type WebQaCueSummary = {
   id: number;
@@ -61,6 +71,11 @@ export type WebQaOverview = {
     all: number;
   };
   question_total: number;
+  soft_limit?: number;
+  visible_count?: number;
+  overflow_count?: number;
+  at_soft_limit?: boolean;
+  active_question?: WebQaQuestion | null;
 };
 
 export function webQaAudiencePath(token: string): string {
@@ -223,7 +238,9 @@ export function buildWebQaQuestionsCsv(
   const header = [
     'created_at',
     'status',
+    'is_overflow',
     'author_name',
+    'author_email',
     'body',
     'cue',
     'segment_name',
@@ -240,7 +257,9 @@ export function buildWebQaQuestionsCsv(
       [
         q.created_at,
         q.status,
+        q.is_overflow ? 'yes' : 'no',
         q.author_name || '',
+        q.author_email || '',
         q.body,
         meta?.cue || '',
         meta?.segment_name || '',
@@ -338,9 +357,13 @@ export async function rotateWebQaSession(eventId: string): Promise<WebQaSession>
 
 export async function fetchWebQaQuestions(
   eventId: string,
-  status: WebQaStatus | 'all' = 'all'
+  status: WebQaStatus | 'all' = 'all',
+  opts?: { includeOverflow?: boolean }
 ): Promise<WebQaQuestion[]> {
-  const q = status && status !== 'all' ? `?status=${encodeURIComponent(status)}` : '';
+  const params = new URLSearchParams();
+  if (status && status !== 'all') params.set('status', status);
+  if (opts?.includeOverflow) params.set('include_overflow', '1');
+  const q = params.toString() ? `?${params.toString()}` : '';
   const res = await fetch(
     `${getApiBaseUrl()}/api/web-qa/${encodeURIComponent(eventId)}/questions${q}`,
     { headers: { ...authHeaders(), Accept: 'application/json' } }
@@ -362,36 +385,72 @@ export async function patchWebQaQuestion(
   patch: {
     status?: WebQaStatus;
     is_queued?: boolean;
+    is_active?: boolean;
+    mark_done?: boolean;
     queue_order?: number;
     moderated_by?: string;
   }
 ): Promise<WebQaQuestion> {
+  const body: Record<string, unknown> = {
+    moderated_by: patch.moderated_by || null,
+  };
+  if (patch.status != null) body.status = patch.status;
+  if (typeof patch.is_queued === 'boolean') body.is_queued = patch.is_queued;
+  if (typeof patch.is_active === 'boolean') body.is_active = patch.is_active;
+  if (patch.mark_done === true) body.mark_done = true;
+  if (patch.queue_order != null) body.queue_order = patch.queue_order;
+
   const res = await fetch(`${getApiBaseUrl()}/api/web-qa/questions/${encodeURIComponent(id)}`, {
     method: 'PATCH',
     headers: { ...authHeaders(), 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({
-      status: patch.status,
-      is_queued: patch.is_queued,
-      queue_order: patch.queue_order,
-      moderated_by: patch.moderated_by || null,
-    }),
+    body: JSON.stringify(body),
   });
   const data = await parseJson(res);
   return data.question as WebQaQuestion;
 }
 
+/** Promote a queued (or approved) question to the single on-air ACTIVE slot. */
+export async function activateWebQaQuestion(
+  id: string,
+  moderatedBy?: string
+): Promise<WebQaQuestion> {
+  return patchWebQaQuestion(id, { is_active: true, moderated_by: moderatedBy });
+}
+
+/** Mark ACTIVE Done/answered so the next queued question can go on-air. */
+export async function completeWebQaQuestion(
+  id: string,
+  moderatedBy?: string
+): Promise<WebQaQuestion> {
+  return patchWebQaQuestion(id, { mark_done: true, moderated_by: moderatedBy });
+}
+
 export async function reorderWebQaQueue(
   eventId: string,
   orderedIds: string[],
-  moderatedBy?: string
+  moderatedBy?: string,
+  scope: 'queued' | 'approved' = 'queued'
 ): Promise<WebQaQuestion[]> {
   const res = await fetch(`${getApiBaseUrl()}/api/web-qa/${encodeURIComponent(eventId)}/queue`, {
     method: 'PUT',
     headers: { ...authHeaders(), 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({ ordered_ids: orderedIds, moderated_by: moderatedBy || null }),
+    body: JSON.stringify({
+      ordered_ids: orderedIds,
+      moderated_by: moderatedBy || null,
+      scope,
+    }),
   });
   const data = await parseJson(res);
   return (data.questions || []) as WebQaQuestion[];
+}
+
+/** Reorder approved questions for Reader (Make Active order). */
+export async function reorderWebQaApproved(
+  eventId: string,
+  orderedIds: string[],
+  moderatedBy?: string
+): Promise<WebQaQuestion[]> {
+  return reorderWebQaQueue(eventId, orderedIds, moderatedBy, 'approved');
 }
 
 export async function deleteWebQaQuestion(id: string): Promise<void> {
@@ -402,22 +461,47 @@ export async function deleteWebQaQuestion(id: string): Promise<void> {
   await parseJson(res);
 }
 
-export async function fetchPublicWebQa(token: string): Promise<{
+export type PublicWebQaSession = {
   title: string;
   is_open: boolean;
   event_id: string;
   in_qa_cue?: boolean;
-}> {
+  soft_limit?: number;
+  visible_count?: number;
+  at_soft_limit?: boolean;
+  current_cue?: {
+    id: number | null;
+    cue: string | null;
+    segment_name: string | null;
+    has_qa?: boolean;
+  } | null;
+};
+
+/** Live vMix CSV of waiting queued questions (not ACTIVE). */
+export function webQaQueueCsvUrl(eventId: string, opts?: { row?: number }): string {
+  const q = new URLSearchParams({ eventId });
+  if (opts?.row != null && Number.isFinite(opts.row) && opts.row >= 1) {
+    q.set('row', String(Math.floor(opts.row)));
+  }
+  return `${getApiBaseUrl()}/api/web-qa-queue.csv?${q.toString()}`;
+}
+
+/** Live vMix CSV for the single on-air ACTIVE question (header-only when empty). */
+export function webQaActiveCsvUrl(eventId: string): string {
+  return `${getApiBaseUrl()}/api/web-qa-active.csv?eventId=${encodeURIComponent(eventId)}`;
+}
+
+export async function fetchPublicWebQa(token: string): Promise<PublicWebQaSession> {
   const res = await fetch(`${getApiBaseUrl()}/api/web-qa/public/${encodeURIComponent(token)}`, {
     headers: { Accept: 'application/json' },
   });
-  return parseJson(res);
+  return parseJson(res) as Promise<PublicWebQaSession>;
 }
 
 export async function submitPublicWebQa(
   token: string,
-  payload: { body: string; author_name?: string }
-): Promise<{ ok: boolean; id: string }> {
+  payload: { body: string; author_name?: string; author_email?: string }
+): Promise<{ ok: boolean; id: string; is_overflow?: boolean }> {
   const res = await fetch(
     `${getApiBaseUrl()}/api/web-qa/public/${encodeURIComponent(token)}/questions`,
     {

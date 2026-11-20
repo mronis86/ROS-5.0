@@ -48,6 +48,8 @@ import PowerPointPage from './pages/PowerPointPage';
 import PowerPointPlaybackPage from './pages/PowerPointPlaybackPage';
 import QaModPage from './pages/QaModPage';
 import QaActiveModPage from './pages/QaActiveModPage';
+import QaSelectPage from './pages/QaSelectPage';
+import QaReadPage from './pages/QaReadPage';
 import QaAudiencePage from './pages/QaAudiencePage';
 import AdminPage from './pages/AdminPage';
 import PinNotesPopoutPage from './pages/PinNotesPopoutPage';
@@ -91,7 +93,10 @@ function AppContent() {
   const isDirectorControl = location.pathname === '/director-control';
   const isMicManager = location.pathname === '/mic-manager';
   const isQaMod =
-    location.pathname === '/qa-mod' || location.pathname === '/qa-mod/active';
+    location.pathname === '/qa-mod' ||
+    location.pathname === '/qa-mod/active' ||
+    location.pathname === '/qa-mod/select' ||
+    location.pathname === '/qa-mod/read';
   const isQaAudience = location.pathname.startsWith('/qa/');
   const isOperatorCueDisplay = location.pathname === '/operator-cue-display';
   const isScriptsFollow = location.pathname === '/scripts-follow';
@@ -211,6 +216,8 @@ function AppContent() {
             <Route path="/mic-manager" element={<MicManagerPage />} />
             <Route path="/qa-mod" element={<QaModPage />} />
             <Route path="/qa-mod/active" element={<QaActiveModPage />} />
+            <Route path="/qa-mod/select" element={<QaSelectPage />} />
+            <Route path="/qa-mod/read" element={<QaReadPage />} />
             <Route path="/operator-cue-display" element={<OperatorCueDisplayPage />} />
             <Route path="/scripts-follow" element={<ScriptsFollowPage />} />
             <Route path="/teleprompter" element={<TeleprompterPage />} />
