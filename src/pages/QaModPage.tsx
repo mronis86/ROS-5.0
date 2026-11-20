@@ -238,6 +238,23 @@ export default function QaModPage() {
                 </button>
               </div>
             </div>
+
+            <div className="pt-3 border-t border-slate-700 space-y-2">
+              <p className="text-sm font-semibold text-white">Active moderation</p>
+              <p className="text-xs text-slate-400 leading-snug">
+                Live queue for pending / approved / answered questions.
+              </p>
+              <button
+                type="button"
+                onClick={() => window.open(`/qa-mod/active?${qs}`, '_blank')}
+                className="w-full px-3 py-2.5 rounded-lg bg-fuchsia-700 hover:bg-fuchsia-600 font-semibold text-sm"
+              >
+                Open Active Q&A
+                {(overview?.counts?.pending ?? 0) > 0
+                  ? ` (${overview?.counts?.pending} pending)`
+                  : ''}
+              </button>
+            </div>
           </aside>
 
           <section className="space-y-4 min-w-0">
@@ -318,7 +335,7 @@ export default function QaModPage() {
                 <div>
                   <h2 className="text-sm font-semibold text-slate-100">Cues with Q&A</h2>
                   <p className="text-xs text-slate-400">
-                    Schedule rows that have Q&A checked (or a Q&A plan).
+                    Parent cues only — rows with the Q&A checkbox (not indented 13Q timers).
                   </p>
                 </div>
                 <button
@@ -377,24 +394,6 @@ export default function QaModPage() {
               )}
             </div>
 
-            <div className="rounded-xl border border-fuchsia-700/40 bg-fuchsia-950/20 px-4 py-5 flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <h2 className="text-base font-semibold text-white">Manage active Q&A</h2>
-                <p className="text-sm text-slate-300 mt-0.5">
-                  Open the live moderation queue for pending / approved / answered questions.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => window.open(`/qa-mod/active?${qs}`, '_blank')}
-                className="px-4 py-2.5 rounded-lg bg-fuchsia-700 hover:bg-fuchsia-600 font-semibold text-sm"
-              >
-                Open Active Q&A
-                {(overview?.counts?.pending ?? 0) > 0
-                  ? ` (${overview?.counts?.pending} pending)`
-                  : ''}
-              </button>
-            </div>
           </section>
         </div>
       </main>
