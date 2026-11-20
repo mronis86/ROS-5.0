@@ -1,70 +1,38 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { useAuth } from '../contexts/AuthContext';
 import {
-  deleteWebQaQuestion,
+  buildWebQaQuestionsCsv,
+  downloadTextFile,
+  fetchWebQaOverview,
   fetchWebQaQuestions,
-  fetchWebQaSession,
-  patchWebQaSession,
   rotateWebQaSession,
-  updateWebQaQuestionStatus,
   webQaAudienceAbsoluteUrl,
   webQaQrImageUrl,
-  type WebQaQuestion,
-  type WebQaSession,
-  type WebQaStatus,
+  type WebQaOverview,
 } from '../lib/webQa';
 
-type FilterTab = 'pending' | 'approved' | 'answered' | 'rejected' | 'all';
-
-const TABS: { id: FilterTab; label: string }[] = [
-  { id: 'pending', label: 'Pending' },
-  { id: 'approved', label: 'Approved' },
-  { id: 'answered', label: 'Answered' },
-  { id: 'rejected', label: 'Rejected' },
-  { id: 'all', label: 'All' },
-];
-
-function formatWhen(iso: string): string {
-  try {
-    return new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' });
-  } catch {
-    return '';
-  }
-}
-
-function statusPillClass(status: string): string {
-  switch (status) {
-    case 'pending':
-      return 'bg-amber-600/30 text-amber-100 border-amber-500/50';
-    case 'approved':
-      return 'bg-emerald-600/30 text-emerald-100 border-emerald-500/50';
-    case 'answered':
-      return 'bg-sky-600/30 text-sky-100 border-sky-500/50';
-    case 'rejected':
-      return 'bg-rose-600/30 text-rose-100 border-rose-500/50';
-    default:
-      return 'bg-slate-600/40 text-slate-200 border-slate-500/50';
-  }
-}
-
 export default function QaModPage() {
-  const { user } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
   const params = useMemo(() => new URLSearchParams(location.search), [location.search]);
   const eventId = params.get('eventId') || '';
   const eventName = params.get('eventName') || 'Event';
 
-  const [session, setSession] = useState<WebQaSession | null>(null);
-  const [questions, setQuestions] = useState<WebQaQuestion[]>([]);
-  const [tab, setTab] = useState<FilterTab>('pending');
+  const [overview, setOverview] = useState<WebQaOverview | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [busyId, setBusyId] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [reportBusy, setReportBusy] = useState(false);
 
-  const audienceUrl = session ? webQaAudienceAbsoluteUrl(session.public_token) : '';
+  const qs = useMemo(
+    () =>
+      `eventId=${encodeURIComponent(eventId)}&eventName=${encodeURIComponent(eventName)}`,
+    [eventId, eventName]
+  );
+
+  const audienceUrl = overview?.session
+    ? webQaAudienceAbsoluteUrl(overview.session.public_token)
+    : '';
   const qrUrl = audienceUrl ? webQaQrImageUrl(audienceUrl, 260) : '';
 
   const load = useCallback(async () => {
@@ -75,14 +43,12 @@ export default function QaModPage() {
     }
     try {
       setError(null);
-      const [sess, list] = await Promise.all([
-        fetchWebQaSession(eventId, { title: eventName !== 'Event' ? eventName : undefined }),
-        fetchWebQaQuestions(eventId, 'all'),
-      ]);
-      setSession(sess);
-      setQuestions(list);
+      const data = await fetchWebQaOverview(eventId, {
+        title: eventName !== 'Event' ? eventName : undefined,
+      });
+      setOverview(data);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load Q&A');
+      setError(e instanceof Error ? e.message : 'Failed to load Q&A management');
     } finally {
       setLoading(false);
     }
@@ -96,55 +62,14 @@ export default function QaModPage() {
     return () => window.clearInterval(id);
   }, [load]);
 
-  const counts = useMemo(() => {
-    const c = { pending: 0, approved: 0, answered: 0, rejected: 0, all: questions.length };
-    for (const q of questions) {
-      if (q.status in c) (c as Record<string, number>)[q.status] += 1;
-    }
-    return c;
-  }, [questions]);
-
-  const visible = useMemo(() => {
-    if (tab === 'all') return questions;
-    return questions.filter((q) => q.status === tab);
-  }, [questions, tab]);
-
-  const setStatus = async (id: string, status: WebQaStatus) => {
-    setBusyId(id);
+  const copyLink = async () => {
+    if (!audienceUrl) return;
     try {
-      const updated = await updateWebQaQuestionStatus(
-        id,
-        status,
-        user?.full_name || user?.email || undefined
-      );
-      setQuestions((prev) => prev.map((q) => (q.id === id ? updated : q)));
-    } catch (e) {
-      alert(e instanceof Error ? e.message : 'Update failed');
-    } finally {
-      setBusyId(null);
-    }
-  };
-
-  const remove = async (id: string) => {
-    if (!window.confirm('Delete this question permanently?')) return;
-    setBusyId(id);
-    try {
-      await deleteWebQaQuestion(id);
-      setQuestions((prev) => prev.filter((q) => q.id !== id));
-    } catch (e) {
-      alert(e instanceof Error ? e.message : 'Delete failed');
-    } finally {
-      setBusyId(null);
-    }
-  };
-
-  const toggleOpen = async () => {
-    if (!session || !eventId) return;
-    try {
-      const next = await patchWebQaSession(eventId, { is_open: !session.is_open });
-      setSession(next);
-    } catch (e) {
-      alert(e instanceof Error ? e.message : 'Could not update session');
+      await navigator.clipboard.writeText(audienceUrl);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1600);
+    } catch {
+      window.prompt('Copy this Q&A link:', audienceUrl);
     }
   };
 
@@ -158,29 +83,51 @@ export default function QaModPage() {
       return;
     }
     try {
-      const next = await rotateWebQaSession(eventId);
-      setSession(next);
+      await rotateWebQaSession(eventId);
+      await load();
     } catch (e) {
       alert(e instanceof Error ? e.message : 'Could not rotate link');
     }
   };
 
-  const copyLink = async () => {
-    if (!audienceUrl) return;
+  const downloadReport = async (cueItemId?: number) => {
+    if (!eventId || reportBusy) return;
+    setReportBusy(true);
     try {
-      await navigator.clipboard.writeText(audienceUrl);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1600);
-    } catch {
-      window.prompt('Copy this Q&A link:', audienceUrl);
+      const questions = await fetchWebQaQuestions(eventId, 'all');
+      const filtered =
+        cueItemId != null
+          ? questions.filter((q) => Number(q.cue_item_id) === cueItemId)
+          : questions;
+      const cueLookup = new Map(
+        (overview?.qa_cues || []).map((c) => [
+          c.id,
+          { cue: c.cue, segment_name: c.segment_name },
+        ])
+      );
+      const csv = buildWebQaQuestionsCsv(filtered, cueLookup);
+      const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+      const cueTag =
+        cueItemId != null
+          ? `cue-${cueLookup.get(cueItemId)?.cue || cueItemId}`
+          : 'all-cues';
+      downloadTextFile(`web-qa-${cueTag}-${stamp}.csv`, csv);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Could not download report');
+    } finally {
+      setReportBusy(false);
     }
   };
+
+  const current = overview?.current_cue;
+  const isOpen = overview?.session?.is_open === true;
+  const inQaCue = overview?.in_qa_cue === true;
 
   if (!eventId) {
     return (
       <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center p-6">
         <div className="text-center space-y-3">
-          <p className="text-slate-300">Open Web Q&A Mod from an event’s Operator Actions.</p>
+          <p className="text-slate-300">Open Web Q&A from an event’s main menu.</p>
           <button
             type="button"
             onClick={() => navigate('/')}
@@ -196,15 +143,10 @@ export default function QaModPage() {
   return (
     <div className="min-h-screen bg-slate-950 text-white">
       <header className="border-b border-slate-800 bg-slate-900/90 sticky top-0 z-20">
-        <div className="max-w-7xl mx-auto px-4 py-3 flex flex-wrap items-center gap-3 justify-between">
+        <div className="max-w-6xl mx-auto px-4 py-3 flex flex-wrap items-center gap-3 justify-between">
           <div>
             <p className="text-[11px] uppercase tracking-wide text-fuchsia-300/90 font-semibold">
-              Live Web Q&A
-              {counts.pending > 0 ? (
-                <span className="ml-2 inline-flex items-center rounded-full bg-amber-600/40 border border-amber-500/50 px-2 py-0.5 text-[10px] text-amber-50 normal-case tracking-normal">
-                  {counts.pending} pending
-                </span>
-              ) : null}
+              Web Q&A Management
             </p>
             <h1 className="text-xl font-bold leading-tight">{eventName}</h1>
           </div>
@@ -231,188 +173,230 @@ export default function QaModPage() {
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-4 py-5 grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-5">
-        <aside className="rounded-xl border border-slate-700 bg-slate-900/80 p-4 space-y-4 h-fit lg:sticky lg:top-20">
-          <div>
-            <h2 className="text-sm font-semibold text-slate-200 mb-1">Audience QR</h2>
-            <p className="text-xs text-slate-400 mb-3">
-              Unique per event. Scan to open the submit page.
-            </p>
-            {qrUrl ? (
-              <div className="rounded-lg bg-white p-3 inline-block">
-                <img src={qrUrl} alt="Q&A audience QR code" width={220} height={220} className="block" />
+      <main className="max-w-6xl mx-auto px-4 py-5 space-y-5">
+        {loading && !overview ? (
+          <p className="text-slate-400">Loading Q&A management…</p>
+        ) : error ? (
+          <div className="rounded-lg border border-rose-700/50 bg-rose-950/30 px-4 py-3 text-rose-100">
+            {error}
+          </div>
+        ) : null}
+
+        <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-5">
+          <aside className="rounded-xl border border-slate-700 bg-slate-900/80 p-4 space-y-4 h-fit">
+            <div>
+              <h2 className="text-sm font-semibold text-slate-200 mb-1">Audience QR</h2>
+              <p className="text-xs text-slate-400 mb-3">
+                Unique per event. Scan to open the submit page.
+              </p>
+              {qrUrl ? (
+                <div className="rounded-lg bg-white p-3 inline-block">
+                  <img
+                    src={qrUrl}
+                    alt="Q&A audience QR code"
+                    width={220}
+                    height={220}
+                    className="block"
+                  />
+                </div>
+              ) : (
+                <div className="h-[220px] w-[220px] rounded-lg bg-slate-800 animate-pulse" />
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-[11px] uppercase tracking-wide text-slate-500 font-semibold">
+                Public link
+              </label>
+              <div className="text-xs break-all text-sky-200 bg-slate-950/70 border border-slate-700 rounded-lg px-2.5 py-2">
+                {audienceUrl || '…'}
               </div>
-            ) : (
-              <div className="h-[220px] w-[220px] rounded-lg bg-slate-800 animate-pulse" />
-            )}
-          </div>
-
-          <div className="space-y-2">
-            <label className="text-[11px] uppercase tracking-wide text-slate-500 font-semibold">
-              Public link
-            </label>
-            <div className="text-xs break-all text-sky-200 bg-slate-950/70 border border-slate-700 rounded-lg px-2.5 py-2">
-              {audienceUrl || '…'}
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => void copyLink()}
+                  className="px-3 py-1.5 text-sm rounded bg-sky-700 hover:bg-sky-600"
+                >
+                  {copied ? 'Copied' : 'Copy link'}
+                </button>
+                <a
+                  href={audienceUrl || '#'}
+                  target="_blank"
+                  rel="noreferrer"
+                  className={`px-3 py-1.5 text-sm rounded bg-slate-700 hover:bg-slate-600 ${
+                    !audienceUrl ? 'pointer-events-none opacity-40' : ''
+                  }`}
+                >
+                  Open
+                </a>
+                <button
+                  type="button"
+                  onClick={() => void rotate()}
+                  className="px-3 py-1.5 text-sm rounded border border-slate-600 text-slate-300 hover:bg-slate-800"
+                >
+                  New QR / link
+                </button>
+              </div>
             </div>
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => void copyLink()}
-                className="px-3 py-1.5 text-sm rounded bg-sky-700 hover:bg-sky-600"
-              >
-                {copied ? 'Copied' : 'Copy link'}
-              </button>
-              <a
-                href={audienceUrl || '#'}
-                target="_blank"
-                rel="noreferrer"
-                className={`px-3 py-1.5 text-sm rounded bg-slate-700 hover:bg-slate-600 ${
-                  !audienceUrl ? 'pointer-events-none opacity-40' : ''
-                }`}
-              >
-                Open
-              </a>
-              <button
-                type="button"
-                onClick={() => void rotate()}
-                className="px-3 py-1.5 text-sm rounded border border-slate-600 text-slate-300 hover:bg-slate-800"
-              >
-                New QR / link
-              </button>
-            </div>
-          </div>
+          </aside>
 
-          <div className="pt-2 border-t border-slate-700 space-y-2">
-            <button
-              type="button"
-              onClick={() => void toggleOpen()}
-              className={`w-full px-3 py-2 rounded-lg text-sm font-semibold ${
-                session?.is_open
-                  ? 'bg-emerald-700 hover:bg-emerald-600'
-                  : 'bg-slate-700 hover:bg-slate-600'
+          <section className="space-y-4 min-w-0">
+            <div
+              className={`rounded-xl border px-4 py-4 ${
+                isOpen
+                  ? 'border-emerald-600/50 bg-emerald-950/30'
+                  : 'border-slate-700 bg-slate-900/70'
               }`}
             >
-              Submissions: {session?.is_open ? 'OPEN' : 'CLOSED'}
-            </button>
-            <p className="text-[11px] text-slate-500 leading-snug">
-              Later: auto-open when a cue with Q&A is loaded. For now, toggle manually.
-            </p>
-          </div>
-        </aside>
-
-        <section className="min-w-0 space-y-4">
-          <div className="flex flex-wrap gap-2">
-            {TABS.map((t) => (
-              <button
-                key={t.id}
-                type="button"
-                onClick={() => setTab(t.id)}
-                className={`px-3 py-1.5 rounded-full text-sm border ${
-                  tab === t.id
-                    ? 'bg-fuchsia-700/40 border-fuchsia-500 text-white'
-                    : 'bg-slate-900 border-slate-700 text-slate-300 hover:border-slate-500'
-                }`}
-              >
-                {t.label}
-                <span className="ml-1.5 text-slate-400 tabular-nums">{counts[t.id] ?? 0}</span>
-              </button>
-            ))}
-          </div>
-
-          {loading ? (
-            <p className="text-slate-400">Loading moderation queue…</p>
-          ) : error ? (
-            <div className="rounded-lg border border-rose-700/50 bg-rose-950/30 px-4 py-3 text-rose-100">
-              {error}
-            </div>
-          ) : visible.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-slate-700 px-6 py-12 text-center text-slate-400">
-              No {tab === 'all' ? '' : tab} questions yet.
-              {session?.is_open ? ' Share the QR so audience can submit.' : ' Submissions are closed.'}
-            </div>
-          ) : (
-            <ul className="space-y-3">
-              {visible.map((q) => (
-                <li
-                  key={q.id}
-                  className="rounded-xl border border-slate-700 bg-slate-900/70 px-4 py-3 space-y-3"
-                >
-                  <div className="flex flex-wrap items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <p className="text-base text-white whitespace-pre-wrap break-words">{q.body}</p>
-                      <p className="mt-1 text-xs text-slate-400">
-                        {q.author_name ? (
-                          <span className="text-slate-300">{q.author_name}</span>
-                        ) : (
-                          <span>Anonymous</span>
-                        )}
-                        <span className="mx-1.5 text-slate-600">·</span>
-                        {formatWhen(q.created_at)}
-                      </p>
-                    </div>
-                    <span
-                      className={`shrink-0 px-2 py-0.5 rounded border text-[11px] font-semibold uppercase tracking-wide ${statusPillClass(
-                        q.status
-                      )}`}
-                    >
-                      {q.status}
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-[11px] uppercase tracking-wide text-slate-400 font-semibold">
+                    Submissions
+                  </p>
+                  <p className="text-2xl font-bold mt-0.5">
+                    {isOpen ? 'OPEN' : 'CLOSED'}
+                    <span className="ml-2 text-sm font-semibold text-slate-300">
+                      {inQaCue ? '· in Q&A cue' : '· out of Q&A cue'}
                     </span>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {q.status !== 'approved' ? (
-                      <button
-                        type="button"
-                        disabled={busyId === q.id}
-                        onClick={() => void setStatus(q.id, 'approved')}
-                        className="px-2.5 py-1 text-xs font-semibold rounded bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50"
-                      >
-                        Approve
-                      </button>
+                  </p>
+                  <p className="text-sm text-slate-400 mt-1">
+                    Auto-follows the loaded cue. Opens when that cue has Q&A checked; closes when you
+                    leave it.
+                  </p>
+                </div>
+                <div className="text-right text-sm text-slate-300">
+                  <p>
+                    Pending:{' '}
+                    <span className="tabular-nums font-semibold text-amber-200">
+                      {overview?.counts?.pending ?? 0}
+                    </span>
+                  </p>
+                  <p>
+                    Total:{' '}
+                    <span className="tabular-nums font-semibold">
+                      {overview?.question_total ?? 0}
+                    </span>
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-slate-700 bg-slate-900/70 px-4 py-4">
+              <p className="text-[11px] uppercase tracking-wide text-slate-400 font-semibold mb-1">
+                Current cue
+              </p>
+              {current ? (
+                <div>
+                  <p className="text-lg font-semibold">
+                    {current.cue ? `CUE ${current.cue}` : `Item #${current.id}`}
+                    {current.has_qa ? (
+                      <span className="ml-2 text-xs font-semibold uppercase tracking-wide text-fuchsia-200 bg-fuchsia-900/40 border border-fuchsia-600/40 px-2 py-0.5 rounded">
+                        Q&A
+                      </span>
                     ) : null}
-                    {q.status !== 'answered' ? (
-                      <button
-                        type="button"
-                        disabled={busyId === q.id}
-                        onClick={() => void setStatus(q.id, 'answered')}
-                        className="px-2.5 py-1 text-xs font-semibold rounded bg-sky-700 hover:bg-sky-600 disabled:opacity-50"
+                  </p>
+                  <p className="text-slate-300 mt-0.5">
+                    {current.segment_name || 'Untitled segment'}
+                  </p>
+                  {overview?.timer ? (
+                    <p className="text-xs text-slate-500 mt-1">
+                      {overview.timer.is_running
+                        ? 'Timer running'
+                        : overview.timer.is_active
+                          ? 'Loaded'
+                          : 'Last loaded'}
+                    </p>
+                  ) : null}
+                </div>
+              ) : (
+                <p className="text-slate-400">No cue loaded yet.</p>
+              )}
+            </div>
+
+            <div className="rounded-xl border border-slate-700 bg-slate-900/70 px-4 py-4 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h2 className="text-sm font-semibold text-slate-100">Cues with Q&A</h2>
+                  <p className="text-xs text-slate-400">
+                    Schedule rows that have Q&A checked (or a Q&A plan).
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  disabled={reportBusy || (overview?.question_total ?? 0) === 0}
+                  onClick={() => void downloadReport()}
+                  className="px-3 py-1.5 text-sm rounded bg-sky-800 hover:bg-sky-700 disabled:opacity-40"
+                >
+                  {reportBusy ? 'Preparing…' : 'Download all questions CSV'}
+                </button>
+              </div>
+
+              {(overview?.qa_cues || []).length === 0 ? (
+                <p className="text-slate-400 text-sm py-4 text-center border border-dashed border-slate-700 rounded-lg">
+                  No cues have Q&A checked yet.
+                </p>
+              ) : (
+                <ul className="divide-y divide-slate-800 border border-slate-800 rounded-lg overflow-hidden">
+                  {(overview?.qa_cues || []).map((cue) => {
+                    const isCurrent = current?.id === cue.id;
+                    return (
+                      <li
+                        key={cue.id}
+                        className={`px-3 py-2.5 flex flex-wrap items-center justify-between gap-2 ${
+                          isCurrent ? 'bg-fuchsia-950/30' : 'bg-slate-950/40'
+                        }`}
                       >
-                        Mark answered
-                      </button>
-                    ) : null}
-                    {q.status !== 'rejected' ? (
-                      <button
-                        type="button"
-                        disabled={busyId === q.id}
-                        onClick={() => void setStatus(q.id, 'rejected')}
-                        className="px-2.5 py-1 text-xs font-semibold rounded bg-rose-800 hover:bg-rose-700 disabled:opacity-50"
-                      >
-                        Reject
-                      </button>
-                    ) : null}
-                    {q.status !== 'pending' ? (
-                      <button
-                        type="button"
-                        disabled={busyId === q.id}
-                        onClick={() => void setStatus(q.id, 'pending')}
-                        className="px-2.5 py-1 text-xs font-semibold rounded bg-slate-700 hover:bg-slate-600 disabled:opacity-50"
-                      >
-                        Back to pending
-                      </button>
-                    ) : null}
-                    <button
-                      type="button"
-                      disabled={busyId === q.id}
-                      onClick={() => void remove(q.id)}
-                      className="px-2.5 py-1 text-xs font-semibold rounded border border-slate-600 text-slate-300 hover:bg-slate-800 disabled:opacity-50"
-                    >
-                      Delete
-                    </button>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
+                        <div className="min-w-0">
+                          <p className="font-medium text-sm">
+                            {cue.cue ? `CUE ${cue.cue}` : `Item #${cue.id}`}
+                            {isCurrent ? (
+                              <span className="ml-2 text-[10px] uppercase tracking-wide text-emerald-200">
+                                current
+                              </span>
+                            ) : null}
+                          </p>
+                          <p className="text-xs text-slate-400 truncate">
+                            {cue.segment_name || 'Untitled'}
+                            <span className="mx-1.5 text-slate-600">·</span>
+                            {cue.question_count || 0} question
+                            {(cue.question_count || 0) === 1 ? '' : 's'}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          disabled={reportBusy || !(cue.question_count > 0)}
+                          onClick={() => void downloadReport(cue.id)}
+                          className="px-2.5 py-1 text-xs rounded border border-slate-600 text-slate-200 hover:bg-slate-800 disabled:opacity-40"
+                        >
+                          Download CSV
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+
+            <div className="rounded-xl border border-fuchsia-700/40 bg-fuchsia-950/20 px-4 py-5 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-base font-semibold text-white">Manage active Q&A</h2>
+                <p className="text-sm text-slate-300 mt-0.5">
+                  Open the live moderation queue for pending / approved / answered questions.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => window.open(`/qa-mod/active?${qs}`, '_blank')}
+                className="px-4 py-2.5 rounded-lg bg-fuchsia-700 hover:bg-fuchsia-600 font-semibold text-sm"
+              >
+                Open Active Q&A
+                {(overview?.counts?.pending ?? 0) > 0
+                  ? ` (${overview?.counts?.pending} pending)`
+                  : ''}
+              </button>
+            </div>
+          </section>
+        </div>
       </main>
     </div>
   );

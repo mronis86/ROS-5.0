@@ -156,6 +156,8 @@ const {
   submitQuestion: submitWebQaQuestion,
   updateQuestion: updateWebQaQuestion,
   deleteQuestion: deleteWebQaQuestion,
+  syncSessionOpenFromCue: syncWebQaSessionOpenFromCue,
+  buildOverview: buildWebQaOverview,
   isMissingRelation: isMissingWebQaRelation,
 } = require('./lib/web-qa');
 const {
@@ -7707,13 +7709,26 @@ app.delete('/api/complaint-line/:id', async (req, res) => {
 });
 
 // —— Live web Q&A (moderation queue + public audience submit) ——
+app.get('/api/web-qa/:eventId/overview', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    if (!eventId) return res.status(400).json({ error: 'eventId is required' });
+    await ensureWebQaSchema(pool);
+    const overview = await buildWebQaOverview(pool, eventId, req.query.title || null);
+    res.json(overview);
+  } catch (error) {
+    console.error('[web-qa] overview', error);
+    res.status(500).json({ error: error.message || 'Failed to load Q&A overview' });
+  }
+});
+
 app.get('/api/web-qa/:eventId/session', async (req, res) => {
   try {
     const { eventId } = req.params;
     if (!eventId) return res.status(400).json({ error: 'eventId is required' });
     await ensureWebQaSchema(pool);
-    const session = await getOrCreateWebQaSession(pool, eventId, req.query.title || null);
-    res.json({ session });
+    const sync = await syncWebQaSessionOpenFromCue(pool, eventId, req.query.title || null);
+    res.json({ session: sync.session, in_qa_cue: sync.context?.in_qa_cue === true });
   } catch (error) {
     console.error('[web-qa] get session', error);
     res.status(500).json({ error: error.message || 'Failed to load Q&A session' });
@@ -7803,10 +7818,12 @@ app.get('/api/web-qa/public/:token', async (req, res) => {
     await ensureWebQaSchema(pool);
     const session = await getWebQaSessionByToken(pool, token);
     if (!session) return res.status(404).json({ error: 'Invalid Q&A link' });
+    const sync = await syncWebQaSessionOpenFromCue(pool, session.event_id, session.title);
     res.json({
-      title: session.title || 'Live Q&A',
-      is_open: session.is_open === true,
-      event_id: session.event_id,
+      title: sync.session.title || 'Live Q&A',
+      is_open: sync.session.is_open === true,
+      event_id: sync.session.event_id,
+      in_qa_cue: sync.context?.in_qa_cue === true,
     });
   } catch (error) {
     console.error('[web-qa] public session', error);
@@ -7831,6 +7848,7 @@ app.post('/api/web-qa/public/:token/questions', async (req, res) => {
       id: question.id,
       status: question.status,
       created_at: question.created_at,
+      cue_item_id: question.cue_item_id,
     });
   } catch (error) {
     const status = error.status || 500;

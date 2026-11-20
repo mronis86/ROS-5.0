@@ -47,6 +47,7 @@ import CueCardsPage from './pages/CueCardsPage';
 import PowerPointPage from './pages/PowerPointPage';
 import PowerPointPlaybackPage from './pages/PowerPointPlaybackPage';
 import QaModPage from './pages/QaModPage';
+import QaActiveModPage from './pages/QaActiveModPage';
 import QaAudiencePage from './pages/QaAudiencePage';
 import AdminPage from './pages/AdminPage';
 import PinNotesPopoutPage from './pages/PinNotesPopoutPage';
@@ -89,7 +90,8 @@ function AppContent() {
   const isDirectorView = location.pathname === '/director-view';
   const isDirectorControl = location.pathname === '/director-control';
   const isMicManager = location.pathname === '/mic-manager';
-  const isQaMod = location.pathname === '/qa-mod';
+  const isQaMod =
+    location.pathname === '/qa-mod' || location.pathname === '/qa-mod/active';
   const isQaAudience = location.pathname.startsWith('/qa/');
   const isOperatorCueDisplay = location.pathname === '/operator-cue-display';
   const isScriptsFollow = location.pathname === '/scripts-follow';
@@ -208,6 +210,7 @@ function AppContent() {
             <Route path="/director-control" element={<DirectorControlPopout />} />
             <Route path="/mic-manager" element={<MicManagerPage />} />
             <Route path="/qa-mod" element={<QaModPage />} />
+            <Route path="/qa-mod/active" element={<QaActiveModPage />} />
             <Route path="/operator-cue-display" element={<OperatorCueDisplayPage />} />
             <Route path="/scripts-follow" element={<ScriptsFollowPage />} />
             <Route path="/teleprompter" element={<TeleprompterPage />} />
