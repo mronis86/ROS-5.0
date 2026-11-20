@@ -46,6 +46,7 @@ export default function QaSelectPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const loadSeq = React.useRef(0);
 
   const load = useCallback(async () => {
     if (!eventId) {
@@ -53,13 +54,17 @@ export default function QaSelectPage() {
       setLoading(false);
       return;
     }
+    const seq = ++loadSeq.current;
     try {
       setError(null);
-      setQuestions(await fetchWebQaQuestions(eventId, 'all'));
+      const rows = await fetchWebQaQuestions(eventId, 'all');
+      if (seq !== loadSeq.current) return;
+      setQuestions(rows);
     } catch (e) {
+      if (seq !== loadSeq.current) return;
       setError(e instanceof Error ? e.message : 'Failed to load');
     } finally {
-      setLoading(false);
+      if (seq === loadSeq.current) setLoading(false);
     }
   }, [eventId]);
 
@@ -69,16 +74,15 @@ export default function QaSelectPage() {
     return () => window.clearInterval(id);
   }, [load]);
 
-  const active = useMemo(
-    () => questions.find((q) => q.is_active === true) || null,
-    [questions]
-  );
+  const isActiveQ = (q: WebQaQuestion) => q.is_active === true;
+
+  const active = useMemo(() => questions.find((q) => isActiveQ(q)) || null, [questions]);
 
   const queued = useMemo(
     () =>
       sortQueued(
         questions.filter(
-          (q) => isQueued(q) && q.is_active !== true && q.status !== 'rejected'
+          (q) => isQueued(q) && !isActiveQ(q) && q.status !== 'rejected'
         )
       ),
     [questions]
@@ -87,17 +91,19 @@ export default function QaSelectPage() {
   const approvedPool = useMemo(
     () =>
       questions.filter(
-        (q) => q.status === 'approved' && !isQueued(q) && q.is_active !== true
+        (q) => q.status === 'approved' && !isQueued(q) && !isActiveQ(q)
       ),
     [questions]
   );
 
   const applyLocal = (updated: WebQaQuestion) => {
     setQuestions((prev) => {
-      let next = prev.map((q) => (q.id === updated.id ? updated : q));
-      if (updated.is_active) {
+      let next = prev.map((q) => (q.id === updated.id ? { ...q, ...updated } : q));
+      if (isActiveQ(updated)) {
         next = next.map((q) =>
-          q.id !== updated.id && q.is_active ? { ...q, is_active: false } : q
+          q.id !== updated.id && isActiveQ(q)
+            ? { ...q, is_active: false }
+            : q
         );
       }
       return next;
@@ -156,11 +162,19 @@ export default function QaSelectPage() {
       return;
     }
     setBusyId(id);
+    // Bump seq so an in-flight poll cannot overwrite the Active move.
+    loadSeq.current += 1;
     try {
-      applyLocal(await activateWebQaQuestion(id, moderator));
-      await load();
+      const updated = await activateWebQaQuestion(id, moderator);
+      applyLocal({
+        ...updated,
+        is_active: true,
+        is_queued: false,
+        status: updated.status === 'pending' ? 'approved' : updated.status,
+      });
     } catch (e) {
       alert(e instanceof Error ? e.message : 'Could not make active');
+      await load();
     } finally {
       setBusyId(null);
     }

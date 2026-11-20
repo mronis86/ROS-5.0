@@ -414,7 +414,11 @@ export async function activateWebQaQuestion(
   id: string,
   moderatedBy?: string
 ): Promise<WebQaQuestion> {
-  return patchWebQaQuestion(id, { is_active: true, moderated_by: moderatedBy });
+  return patchWebQaQuestion(id, {
+    is_active: true,
+    is_queued: false,
+    moderated_by: moderatedBy,
+  });
 }
 
 /** Mark ACTIVE Done/answered so the next queued question can go on-air. */
