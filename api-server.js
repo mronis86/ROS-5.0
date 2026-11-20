@@ -147,6 +147,18 @@ const {
   emitGuestSocketUpdate,
 } = require('./lib/event-guest-links');
 const {
+  ensureWebQaSchema,
+  getOrCreateSession: getOrCreateWebQaSession,
+  getSessionByToken: getWebQaSessionByToken,
+  rotateSessionToken: rotateWebQaSessionToken,
+  updateSession: updateWebQaSession,
+  listQuestions: listWebQaQuestions,
+  submitQuestion: submitWebQaQuestion,
+  updateQuestion: updateWebQaQuestion,
+  deleteQuestion: deleteWebQaQuestion,
+  isMissingRelation: isMissingWebQaRelation,
+} = require('./lib/web-qa');
+const {
   isMissingQmOpTableError,
   ensureQmOpLinkSchema,
   assertQuickModeEvent,
@@ -7694,6 +7706,139 @@ app.delete('/api/complaint-line/:id', async (req, res) => {
   }
 });
 
+// —— Live web Q&A (moderation queue + public audience submit) ——
+app.get('/api/web-qa/:eventId/session', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    if (!eventId) return res.status(400).json({ error: 'eventId is required' });
+    await ensureWebQaSchema(pool);
+    const session = await getOrCreateWebQaSession(pool, eventId, req.query.title || null);
+    res.json({ session });
+  } catch (error) {
+    console.error('[web-qa] get session', error);
+    res.status(500).json({ error: error.message || 'Failed to load Q&A session' });
+  }
+});
+
+app.patch('/api/web-qa/:eventId/session', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    if (!eventId) return res.status(400).json({ error: 'eventId is required' });
+    await ensureWebQaSchema(pool);
+    await getOrCreateWebQaSession(pool, eventId);
+    const session = await updateWebQaSession(pool, eventId, {
+      is_open: req.body?.is_open,
+      title: req.body?.title,
+    });
+    res.json({ session });
+  } catch (error) {
+    console.error('[web-qa] patch session', error);
+    res.status(500).json({ error: error.message || 'Failed to update Q&A session' });
+  }
+});
+
+app.post('/api/web-qa/:eventId/session/rotate', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    if (!eventId) return res.status(400).json({ error: 'eventId is required' });
+    await ensureWebQaSchema(pool);
+    await getOrCreateWebQaSession(pool, eventId);
+    const session = await rotateWebQaSessionToken(pool, eventId);
+    res.json({ session });
+  } catch (error) {
+    console.error('[web-qa] rotate session', error);
+    res.status(500).json({ error: error.message || 'Failed to rotate Q&A link' });
+  }
+});
+
+app.get('/api/web-qa/:eventId/questions', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    if (!eventId) return res.status(400).json({ error: 'eventId is required' });
+    await ensureWebQaSchema(pool);
+    const questions = await listWebQaQuestions(pool, eventId, req.query.status || 'all');
+    res.json({ questions });
+  } catch (error) {
+    console.error('[web-qa] list questions', error);
+    res.status(500).json({ error: error.message || 'Failed to list questions' });
+  }
+});
+
+app.patch('/api/web-qa/questions/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!id) return res.status(400).json({ error: 'id is required' });
+    await ensureWebQaSchema(pool);
+    const question = await updateWebQaQuestion(pool, id, {
+      status: req.body?.status,
+      moderated_by: req.body?.moderated_by || req.body?.user_name || null,
+    });
+    if (!question) return res.status(404).json({ error: 'Question not found' });
+    res.json({ question });
+  } catch (error) {
+    const status = error.status || 500;
+    console.error('[web-qa] update question', error);
+    res.status(status).json({ error: error.message || 'Failed to update question' });
+  }
+});
+
+app.delete('/api/web-qa/questions/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!id) return res.status(400).json({ error: 'id is required' });
+    await ensureWebQaSchema(pool);
+    const deleted = await deleteWebQaQuestion(pool, id);
+    if (!deleted) return res.status(404).json({ error: 'Question not found' });
+    res.json({ ok: true, id: deleted.id, event_id: deleted.event_id });
+  } catch (error) {
+    console.error('[web-qa] delete question', error);
+    res.status(500).json({ error: error.message || 'Failed to delete question' });
+  }
+});
+
+app.get('/api/web-qa/public/:token', async (req, res) => {
+  try {
+    const token = String(req.params.token || '').trim();
+    if (!token) return res.status(400).json({ error: 'token is required' });
+    await ensureWebQaSchema(pool);
+    const session = await getWebQaSessionByToken(pool, token);
+    if (!session) return res.status(404).json({ error: 'Invalid Q&A link' });
+    res.json({
+      title: session.title || 'Live Q&A',
+      is_open: session.is_open === true,
+      event_id: session.event_id,
+    });
+  } catch (error) {
+    console.error('[web-qa] public session', error);
+    res.status(500).json({ error: 'Failed to load Q&A' });
+  }
+});
+
+app.post('/api/web-qa/public/:token/questions', async (req, res) => {
+  try {
+    const token = String(req.params.token || '').trim();
+    if (!token) return res.status(400).json({ error: 'token is required' });
+    await ensureWebQaSchema(pool);
+    const session = await getWebQaSessionByToken(pool, token);
+    if (!session) return res.status(404).json({ error: 'Invalid Q&A link' });
+    const question = await submitWebQaQuestion(pool, session, {
+      body: req.body?.body ?? req.body?.question,
+      author_name: req.body?.author_name ?? req.body?.name,
+      cue_item_id: req.body?.cue_item_id,
+    });
+    res.status(201).json({
+      ok: true,
+      id: question.id,
+      status: question.status,
+      created_at: question.created_at,
+    });
+  } catch (error) {
+    const status = error.status || 500;
+    if (status >= 500) console.error('[web-qa] public submit', error);
+    res.status(status).json({ error: error.message || 'Failed to submit question' });
+  }
+});
+
 // Pre-Flight / Show Checklist — BTS Crew + Admin (per event day)
 app.get('/api/preflight-checklist/:eventId', async (req, res) => {
   if (!requirePreflightAccess(req, res)) return;
@@ -13056,6 +13201,12 @@ server.listen(PORT, '0.0.0.0', async () => {
       console.log('✅ complaint_line_notes table synced');
     } catch (err) {
       console.warn('⚠️ complaint_line_notes sync skipped:', err.message || err);
+    }
+    try {
+      await ensureWebQaSchema(pool);
+      console.log('✅ event_web_qa tables synced');
+    } catch (err) {
+      console.warn('⚠️ event_web_qa sync skipped:', err.message || err);
     }
     try {
       await runCueCardsSyncTables(pool);

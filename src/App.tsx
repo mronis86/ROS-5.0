@@ -46,6 +46,8 @@ import TeleprompterPage from './pages/TeleprompterPage';
 import CueCardsPage from './pages/CueCardsPage';
 import PowerPointPage from './pages/PowerPointPage';
 import PowerPointPlaybackPage from './pages/PowerPointPlaybackPage';
+import QaModPage from './pages/QaModPage';
+import QaAudiencePage from './pages/QaAudiencePage';
 import AdminPage from './pages/AdminPage';
 import PinNotesPopoutPage from './pages/PinNotesPopoutPage';
 import OperatorTimerPopoutPage from './pages/OperatorTimerPopoutPage';
@@ -87,6 +89,8 @@ function AppContent() {
   const isDirectorView = location.pathname === '/director-view';
   const isDirectorControl = location.pathname === '/director-control';
   const isMicManager = location.pathname === '/mic-manager';
+  const isQaMod = location.pathname === '/qa-mod';
+  const isQaAudience = location.pathname.startsWith('/qa/');
   const isOperatorCueDisplay = location.pathname === '/operator-cue-display';
   const isScriptsFollow = location.pathname === '/scripts-follow';
   const isTeleprompter = location.pathname === '/teleprompter';
@@ -138,6 +142,8 @@ function AppContent() {
     isDirectorView ||
     isDirectorControl ||
     isMicManager ||
+    isQaMod ||
+    isQaAudience ||
     isOperatorCueDisplay ||
     isScriptsFollow ||
     isTeleprompter ||
@@ -165,9 +171,9 @@ function AppContent() {
     <ActiveViewersProvider>
     <div className={`App min-h-screen text-slate-200 ${isLedOutput ? 'led-output-page bg-transparent' : 'bg-slate-900'} ${isClock || isDsmClock ? 'clock-page' : ''}`}>
       {/* Render AppHeader outside AuthGuard for pages that need authentication */}
-      {!isFullScreenTimer && !isPinNotesPopout && !isOperatorTimerPopout && !isGreenRoom && !isPhotoView && !isDirectorView && !isDirectorControl && !isMicManager && !isOperatorCueDisplay && !isScriptsFollow && !isTeleprompter && !isCueCards && !isPowerPoint && !isGoogleSheets && !isLocalXML && !isNetlifyXML && !isAdmin && !isQuickMode && !isComparison && !isResetPassword && !isAccessPortal && !isGuestEvent && !isMeetingHubPublic && !isStreamRequest && !isTraining && !isLedOutput && !isUltritouchHealth && !isStreamGuide && !isReports && <AppHeader />}
+      {!isFullScreenTimer && !isPinNotesPopout && !isOperatorTimerPopout && !isGreenRoom && !isPhotoView && !isDirectorView && !isDirectorControl && !isMicManager && !isQaMod && !isOperatorCueDisplay && !isScriptsFollow && !isTeleprompter && !isCueCards && !isPowerPoint && !isGoogleSheets && !isLocalXML && !isNetlifyXML && !isAdmin && !isQuickMode && !isComparison && !isResetPassword && !isAccessPortal && !isGuestEvent && !isMeetingHubPublic && !isStreamRequest && !isTraining && !isLedOutput && !isUltritouchHealth && !isStreamGuide && !isReports && !isQaAudience && <AppHeader />}
       
-      {!isPinNotesPopout && !isOperatorTimerPopout && !isComparison && !isResetPassword && !isAccessPortal && !isGuestEvent && !isMeetingHubPublic && !isStreamRequest && !isTraining && !isNetlifyXML && !isLocalXML && !isAdmin && !isClock && !isDsmClock && !isGreenRoom && (
+      {!isPinNotesPopout && !isOperatorTimerPopout && !isComparison && !isResetPassword && !isAccessPortal && !isGuestEvent && !isMeetingHubPublic && !isStreamRequest && !isTraining && !isNetlifyXML && !isLocalXML && !isAdmin && !isClock && !isDsmClock && !isGreenRoom && !isQaAudience && (
         <AuthGuard>
           <div className="min-h-screen bg-slate-900">
           <Routes>
@@ -201,6 +207,7 @@ function AppContent() {
             <Route path="/director-view" element={<DirectorViewPage />} />
             <Route path="/director-control" element={<DirectorControlPopout />} />
             <Route path="/mic-manager" element={<MicManagerPage />} />
+            <Route path="/qa-mod" element={<QaModPage />} />
             <Route path="/operator-cue-display" element={<OperatorCueDisplayPage />} />
             <Route path="/scripts-follow" element={<ScriptsFollowPage />} />
             <Route path="/teleprompter" element={<TeleprompterPage />} />
@@ -226,6 +233,7 @@ function AppContent() {
         <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route path="/access" element={<AccessPortalPage />} />
         <Route path="/guest" element={<GuestEventPage />} />
+        <Route path="/qa/:token" element={<QaAudiencePage />} />
         <Route path="/meeting-hub/:token" element={<PublicMeetingHubPage />} />
         <Route path="/stream-request" element={<StreamRequestPage />} />
         <Route path="/training" element={<TrainingBookingPage />} />

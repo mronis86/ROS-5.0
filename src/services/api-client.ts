@@ -68,6 +68,7 @@ function isPublicGetEndpoint(endpoint: string, method?: string): boolean {
   if (new RegExp(`^/api/cue-actual-starts/${EVENT_ID_SEGMENT}$`, 'i').test(path)) return true;
   if (path.startsWith('/api/guest-event/')) return true;
   if (path.startsWith('/api/public/')) return true;
+  if (path.startsWith('/api/web-qa/public/')) return true;
   return false;
 }
 
