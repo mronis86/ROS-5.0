@@ -1777,7 +1777,7 @@ const DsmClock: React.FC<DsmClockProps> = ({
                 style={{
                   lineHeight: '1.2',
                   // 16:9: keep badge under the PiP band; otherwise float just above digits
-                  bottom: show16x9Frame ? 'calc(100% - 1.25rem)' : 'calc(100% + 0.35rem)',
+                  bottom: show16x9Frame ? 'calc(100% - 0.5rem)' : 'calc(100% + 0.35rem)',
                 }}
               >
                 {labelNode}
@@ -1859,7 +1859,7 @@ const DsmClock: React.FC<DsmClockProps> = ({
           {/* Small secondary: ALT + CUE only — same scale as small main.
               Under 16:9, tuck badge down so it sits in the footer (not into the PiP). */}
           <div
-            className={`${show16x9Frame ? 'mb-0 translate-y-6' : 'mb-1'} ${dsmCrowdedLabelClass} font-bold leading-none`}
+            className={`${show16x9Frame ? 'mb-0 translate-y-3' : 'mb-1'} ${dsmCrowdedLabelClass} font-bold leading-none`}
           >
             <AltTimerBadge
               timer={dualAltLayout ? indentedSubTimer : secondarySubTimer}
