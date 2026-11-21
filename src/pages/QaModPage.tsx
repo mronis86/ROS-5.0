@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { Check, Copy } from 'lucide-react';
 import {
   buildWebQaQuestionsCsv,
   downloadTextFile,
@@ -30,6 +31,7 @@ export default function QaModPage() {
   const [copied, setCopied] = useState(false);
   const [copiedCsv, setCopiedCsv] = useState(false);
   const [copiedActiveCsv, setCopiedActiveCsv] = useState(false);
+  const [copiedTool, setCopiedTool] = useState<'active' | 'select' | 'read' | null>(null);
   const [reportBusy, setReportBusy] = useState(false);
   const [qrBusy, setQrBusy] = useState(false);
   const [showQrDownload, setShowQrDownload] = useState(false);
@@ -52,6 +54,10 @@ export default function QaModPage() {
     : '';
   const queueCsvUrl = eventId ? webQaQueueCsvUrl(eventId) : '';
   const activeCsvUrl = eventId ? webQaActiveCsvUrl(eventId) : '';
+  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  const activeToolUrl = eventId ? `${origin}/qa-mod/active?${qs}` : '';
+  const selectToolUrl = eventId ? `${origin}/qa-mod/select?${qs}` : '';
+  const readToolUrl = eventId ? `${origin}/qa-mod/read?${qs}` : '';
   const qrUrl = audienceUrl ? webQaQrImageUrl(audienceUrl, 140) : '';
 
   const qrDownloadOpts = useMemo((): WebQaQrDownloadOptions => {
@@ -137,6 +143,17 @@ export default function QaModPage() {
       window.setTimeout(() => setCopiedActiveCsv(false), 1600);
     } catch {
       window.prompt('Copy this vMix active CSV URL:', activeCsvUrl);
+    }
+  };
+
+  const copyToolLink = async (kind: 'active' | 'select' | 'read', url: string) => {
+    if (!url) return;
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopiedTool(kind);
+      window.setTimeout(() => setCopiedTool(null), 1600);
+    } catch {
+      window.prompt('Copy this link:', url);
     }
   };
 
@@ -476,103 +493,120 @@ export default function QaModPage() {
               </div>
             </div>
 
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               <label className="text-[11px] uppercase tracking-wide text-slate-500 font-semibold">
-                vMix CSV · active
+                vMix CSV
               </label>
-              <p className="text-[11px] text-slate-500 leading-snug">
-                Single on-air question only. Updates when Select/Reader taps Make Active /
-                Done. Header-only when nothing is active.
-              </p>
-              <div className="text-xs break-all text-emerald-200/90 bg-slate-950/70 border border-slate-700 rounded-lg px-2.5 py-2">
-                {activeCsvUrl || '…'}
-              </div>
-              <div className="flex flex-wrap gap-2">
+              <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
                   onClick={() => void copyActiveCsv()}
                   disabled={!activeCsvUrl}
-                  className="px-3 py-1.5 text-sm rounded bg-emerald-800 hover:bg-emerald-700 disabled:opacity-40"
+                  title="Copy active CSV link"
+                  className="px-2 py-1.5 text-xs font-semibold rounded bg-emerald-800 hover:bg-emerald-700 disabled:opacity-40 inline-flex items-center justify-center gap-1.5"
                 >
-                  {copiedActiveCsv ? 'Copied' : 'Copy active CSV'}
+                  {copiedActiveCsv ? (
+                    <Check className="w-3.5 h-3.5 shrink-0" />
+                  ) : (
+                    <Copy className="w-3.5 h-3.5 shrink-0" />
+                  )}
+                  Active
                 </button>
-                <a
-                  href={activeCsvUrl || '#'}
-                  target="_blank"
-                  rel="noreferrer"
-                  className={`px-3 py-1.5 text-sm rounded bg-slate-700 hover:bg-slate-600 ${
-                    !activeCsvUrl ? 'pointer-events-none opacity-40' : ''
-                  }`}
-                >
-                  Preview
-                </a>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-[11px] uppercase tracking-wide text-slate-500 font-semibold">
-                vMix CSV · queued
-              </label>
-              <p className="text-[11px] text-slate-500 leading-snug">
-                Waiting queue (not ACTIVE). Columns: Row, Author, Question, Cue, Segment.
-                Optional&nbsp;
-                <code className="text-slate-400">?row=1</code> for a single slot.
-              </p>
-              <div className="text-xs break-all text-sky-200/90 bg-slate-950/70 border border-slate-700 rounded-lg px-2.5 py-2">
-                {queueCsvUrl || '…'}
-              </div>
-              <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
                   onClick={() => void copyQueueCsv()}
                   disabled={!queueCsvUrl}
-                  className="px-3 py-1.5 text-sm rounded bg-sky-800 hover:bg-sky-700 disabled:opacity-40"
+                  title="Copy queue CSV link"
+                  className="px-2 py-1.5 text-xs font-semibold rounded bg-sky-800 hover:bg-sky-700 disabled:opacity-40 inline-flex items-center justify-center gap-1.5"
                 >
-                  {copiedCsv ? 'Copied' : 'Copy queue CSV'}
+                  {copiedCsv ? (
+                    <Check className="w-3.5 h-3.5 shrink-0" />
+                  ) : (
+                    <Copy className="w-3.5 h-3.5 shrink-0" />
+                  )}
+                  Queue
                 </button>
-                <a
-                  href={queueCsvUrl || '#'}
-                  target="_blank"
-                  rel="noreferrer"
-                  className={`px-3 py-1.5 text-sm rounded bg-slate-700 hover:bg-slate-600 ${
-                    !queueCsvUrl ? 'pointer-events-none opacity-40' : ''
-                  }`}
-                >
-                  Preview
-                </a>
               </div>
             </div>
 
             <div className="pt-3 border-t border-slate-700 space-y-2">
               <p className="text-sm font-semibold text-white">Moderator tools</p>
               <p className="text-xs text-slate-400 leading-snug">
-                Active = full mod list. Select / Reader = tablet showcase workflow.
+                Public tablet links — no login. Open or copy for iPads.
               </p>
-              <button
-                type="button"
-                onClick={() => window.open(`/qa-mod/active?${qs}`, '_blank')}
-                className="w-full px-3 py-2.5 rounded-lg bg-fuchsia-700 hover:bg-fuchsia-600 font-semibold text-sm"
-              >
-                Active Q&A
-                {(overview?.counts?.pending ?? 0) > 0
-                  ? ` (${overview?.counts?.pending} pending)`
-                  : ''}
-              </button>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => window.open(`/qa-mod/select?${qs}`, '_blank')}
-                  className="px-3 py-2.5 rounded-lg bg-slate-700 hover:bg-slate-600 font-semibold text-sm"
-                >
-                  Select
-                </button>
-                <button
-                  type="button"
-                  onClick={() => window.open(`/qa-mod/read?${qs}`, '_blank')}
-                  className="px-3 py-2.5 rounded-lg bg-sky-800 hover:bg-sky-700 font-semibold text-sm"
-                >
-                  Reader
-                </button>
+              <div className="space-y-2">
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => window.open(activeToolUrl || `/qa-mod/active?${qs}`, '_blank')}
+                    className="flex-1 px-3 py-2 rounded-lg bg-amber-700 hover:bg-amber-600 font-semibold text-sm"
+                  >
+                    Active Q&A
+                    {(overview?.counts?.pending ?? 0) > 0
+                      ? ` (${overview?.counts?.pending})`
+                      : ''}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!activeToolUrl}
+                    title="Copy link"
+                    aria-label="Copy Active Q&A link"
+                    onClick={() => void copyToolLink('active', activeToolUrl)}
+                    className="shrink-0 w-10 h-10 inline-flex items-center justify-center rounded-lg bg-slate-700 hover:bg-slate-600 disabled:opacity-40"
+                  >
+                    {copiedTool === 'active' ? (
+                      <Check className="w-4 h-4 text-emerald-300" />
+                    ) : (
+                      <Copy className="w-4 h-4 text-slate-200" />
+                    )}
+                  </button>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => window.open(selectToolUrl || `/qa-mod/select?${qs}`, '_blank')}
+                    className="flex-1 px-3 py-2 rounded-lg bg-fuchsia-700 hover:bg-fuchsia-600 font-semibold text-sm"
+                  >
+                    Select
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!selectToolUrl}
+                    title="Copy link"
+                    aria-label="Copy Select link"
+                    onClick={() => void copyToolLink('select', selectToolUrl)}
+                    className="shrink-0 w-10 h-10 inline-flex items-center justify-center rounded-lg bg-slate-700 hover:bg-slate-600 disabled:opacity-40"
+                  >
+                    {copiedTool === 'select' ? (
+                      <Check className="w-4 h-4 text-emerald-300" />
+                    ) : (
+                      <Copy className="w-4 h-4 text-slate-200" />
+                    )}
+                  </button>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => window.open(readToolUrl || `/qa-mod/read?${qs}`, '_blank')}
+                    className="flex-1 px-3 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 font-semibold text-sm"
+                  >
+                    Reader
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!readToolUrl}
+                    title="Copy link"
+                    aria-label="Copy Reader link"
+                    onClick={() => void copyToolLink('read', readToolUrl)}
+                    className="shrink-0 w-10 h-10 inline-flex items-center justify-center rounded-lg bg-slate-700 hover:bg-slate-600 disabled:opacity-40"
+                  >
+                    {copiedTool === 'read' ? (
+                      <Check className="w-4 h-4 text-emerald-300" />
+                    ) : (
+                      <Copy className="w-4 h-4 text-slate-200" />
+                    )}
+                  </button>
+                </div>
               </div>
             </div>
           </aside>

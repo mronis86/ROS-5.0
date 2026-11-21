@@ -92,11 +92,12 @@ function AppContent() {
   const isDirectorView = location.pathname === '/director-view';
   const isDirectorControl = location.pathname === '/director-control';
   const isMicManager = location.pathname === '/mic-manager';
-  const isQaMod =
-    location.pathname === '/qa-mod' ||
+  const isQaModManage = location.pathname === '/qa-mod';
+  const isQaModTools =
     location.pathname === '/qa-mod/active' ||
     location.pathname === '/qa-mod/select' ||
     location.pathname === '/qa-mod/read';
+  const isQaMod = isQaModManage || isQaModTools;
   const isQaAudience = location.pathname.startsWith('/qa/');
   const isOperatorCueDisplay = location.pathname === '/operator-cue-display';
   const isScriptsFollow = location.pathname === '/scripts-follow';
@@ -180,7 +181,7 @@ function AppContent() {
       {/* Render AppHeader outside AuthGuard for pages that need authentication */}
       {!isFullScreenTimer && !isPinNotesPopout && !isOperatorTimerPopout && !isGreenRoom && !isPhotoView && !isDirectorView && !isDirectorControl && !isMicManager && !isQaMod && !isOperatorCueDisplay && !isScriptsFollow && !isTeleprompter && !isCueCards && !isPowerPoint && !isGoogleSheets && !isLocalXML && !isNetlifyXML && !isAdmin && !isQuickMode && !isComparison && !isResetPassword && !isAccessPortal && !isGuestEvent && !isMeetingHubPublic && !isStreamRequest && !isTraining && !isLedOutput && !isUltritouchHealth && !isStreamGuide && !isReports && !isQaAudience && <AppHeader />}
       
-      {!isPinNotesPopout && !isOperatorTimerPopout && !isComparison && !isResetPassword && !isAccessPortal && !isGuestEvent && !isMeetingHubPublic && !isStreamRequest && !isTraining && !isNetlifyXML && !isLocalXML && !isAdmin && !isClock && !isDsmClock && !isGreenRoom && !isQaAudience && (
+      {!isPinNotesPopout && !isOperatorTimerPopout && !isComparison && !isResetPassword && !isAccessPortal && !isGuestEvent && !isMeetingHubPublic && !isStreamRequest && !isTraining && !isNetlifyXML && !isLocalXML && !isAdmin && !isClock && !isDsmClock && !isGreenRoom && !isQaAudience && !isQaModTools && (
         <AuthGuard>
           <div className="min-h-screen bg-slate-900">
           <Routes>
@@ -215,9 +216,6 @@ function AppContent() {
             <Route path="/director-control" element={<DirectorControlPopout />} />
             <Route path="/mic-manager" element={<MicManagerPage />} />
             <Route path="/qa-mod" element={<QaModPage />} />
-            <Route path="/qa-mod/active" element={<QaActiveModPage />} />
-            <Route path="/qa-mod/select" element={<QaSelectPage />} />
-            <Route path="/qa-mod/read" element={<QaReadPage />} />
             <Route path="/operator-cue-display" element={<OperatorCueDisplayPage />} />
             <Route path="/scripts-follow" element={<ScriptsFollowPage />} />
             <Route path="/teleprompter" element={<TeleprompterPage />} />
@@ -244,6 +242,9 @@ function AppContent() {
         <Route path="/access" element={<AccessPortalPage />} />
         <Route path="/guest" element={<GuestEventPage />} />
         <Route path="/qa/:token" element={<QaAudiencePage />} />
+        <Route path="/qa-mod/active" element={<QaActiveModPage />} />
+        <Route path="/qa-mod/select" element={<QaSelectPage />} />
+        <Route path="/qa-mod/read" element={<QaReadPage />} />
         <Route path="/meeting-hub/:token" element={<PublicMeetingHubPage />} />
         <Route path="/stream-request" element={<StreamRequestPage />} />
         <Route path="/training" element={<TrainingBookingPage />} />

@@ -45,6 +45,7 @@ export default function QaReadPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [orderOpen, setOrderOpen] = useState(false);
 
   const load = useCallback(async () => {
     if (!eventId) {
@@ -73,7 +74,6 @@ export default function QaReadPage() {
     [questions]
   );
 
-  /** Approved waiting to go Active — Reader works from this pool, not the Select queue. */
   const approved = useMemo(
     () =>
       sortApproved(
@@ -85,7 +85,6 @@ export default function QaReadPage() {
   );
 
   const current = approved[0] || null;
-  const rest = approved.slice(1);
 
   const markDone = async () => {
     if (!active || busy) return;
@@ -113,7 +112,6 @@ export default function QaReadPage() {
     }
   };
 
-  /** Skip = send current approved to the back of Reader order. */
   const skip = async () => {
     if (!current || approved.length < 2 || busy || active) return;
     const ids = approved.map((q) => q.id);
@@ -153,6 +151,78 @@ export default function QaReadPage() {
     );
   }
 
+  const orderPanel = (
+    <div className="fixed inset-0 z-40 flex justify-end">
+      <button
+        type="button"
+        className="absolute inset-0 bg-black/60"
+        aria-label="Close order panel"
+        onClick={() => setOrderOpen(false)}
+      />
+      <aside className="relative z-10 w-full max-w-md h-full bg-slate-900 border-l border-slate-700 shadow-2xl flex flex-col">
+        <div className="px-4 py-3 border-b border-slate-700 flex items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-semibold text-white">Approved order</p>
+            <p className="text-[11px] text-slate-500">{approved.length} waiting</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setOrderOpen(false)}
+            className="px-3 py-1.5 text-xs rounded-lg bg-slate-800 hover:bg-slate-700"
+          >
+            Close
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto px-3 py-3">
+          {approved.length === 0 ? (
+            <p className="text-sm text-slate-500 text-center py-10">No approved questions to order.</p>
+          ) : (
+            <ul className="space-y-2">
+              {approved.map((q, i) => (
+                <li
+                  key={q.id}
+                  className={`rounded-xl border px-3 py-2.5 flex gap-2 items-center ${
+                    i === 0
+                      ? 'border-sky-700/50 bg-sky-950/30'
+                      : 'border-slate-700 bg-slate-950/50'
+                  }`}
+                >
+                  <span className="shrink-0 w-7 h-7 rounded-lg bg-slate-800 text-slate-200 text-xs font-bold flex items-center justify-center tabular-nums">
+                    {i + 1}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm text-white leading-snug line-clamp-2">{q.body}</p>
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                      {q.author_name || 'Anonymous'}
+                    </p>
+                  </div>
+                  <div className="shrink-0 flex flex-col gap-1">
+                    <button
+                      type="button"
+                      disabled={busy || i === 0}
+                      onClick={() => void moveApproved(q.id, -1)}
+                      className="w-9 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-30 text-sm"
+                    >
+                      ↑
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busy || i === approved.length - 1}
+                      onClick={() => void moveApproved(q.id, 1)}
+                      className="w-9 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-30 text-sm"
+                    >
+                      ↓
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </aside>
+    </div>
+  );
+
   return (
     <div className="min-h-screen bg-slate-950 text-white flex flex-col">
       <QaModToolHeader
@@ -177,74 +247,43 @@ export default function QaReadPage() {
           </div>
         ) : null}
 
-        <p className="text-xs text-slate-500 leading-relaxed">
-          Works from <span className="text-slate-300">approved</span> questions. Make Active or
-          Skip. Use ↑↓ below to set order.
-        </p>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-xs text-slate-500 leading-relaxed">
+            Approved → Make Active or Skip. Set order anytime.
+          </p>
+          <button
+            type="button"
+            onClick={() => setOrderOpen(true)}
+            className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600"
+          >
+            Set order ({approved.length})
+          </button>
+        </div>
 
         {active ? (
-          <>
-            <article className="rounded-xl border border-emerald-600/40 bg-gradient-to-b from-emerald-950/40 to-slate-900 px-5 py-6 sm:px-6 min-h-[28vh] flex items-center gap-4">
-              <div className="min-w-0 flex-1">
-                <p className="text-[11px] uppercase tracking-[0.2em] text-emerald-300/80 font-semibold mb-3">
-                  Active
-                </p>
-                <p className="text-2xl sm:text-3xl font-semibold text-white leading-snug whitespace-pre-wrap break-words">
-                  {active.body}
-                </p>
-                <p className="mt-5 text-sm text-slate-400">
-                  {active.author_name || 'Anonymous'}
-                  <span className="mx-2 text-slate-600">·</span>
-                  {formatWhen(active.created_at)}
-                </p>
-              </div>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => void markDone()}
-                className="shrink-0 px-5 min-h-[4.5rem] rounded-xl bg-emerald-700 hover:bg-emerald-600 font-semibold text-base disabled:opacity-50"
-              >
-                Done
-              </button>
-            </article>
-
-            {approved.length > 0 ? (
-              <div>
-                <p className="text-[11px] uppercase tracking-wide text-slate-500 font-semibold mb-2">
-                  Next approved ({approved.length})
-                </p>
-                <ul className="space-y-1.5">
-                  {approved.slice(0, 6).map((q, i) => (
-                    <li
-                      key={q.id}
-                      className="rounded-lg border border-slate-800 bg-slate-900/50 px-3 py-2 text-sm text-slate-400 flex gap-2 items-center"
-                    >
-                      <span className="text-slate-600 tabular-nums w-5 shrink-0">{i + 1}.</span>
-                      <span className="line-clamp-1 text-slate-300 flex-1 min-w-0">{q.body}</span>
-                      <div className="shrink-0 flex gap-1">
-                        <button
-                          type="button"
-                          disabled={busy || i === 0}
-                          onClick={() => void moveApproved(q.id, -1)}
-                          className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-30 text-sm"
-                        >
-                          ↑
-                        </button>
-                        <button
-                          type="button"
-                          disabled={busy || i >= approved.length - 1}
-                          onClick={() => void moveApproved(q.id, 1)}
-                          className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-30 text-sm"
-                        >
-                          ↓
-                        </button>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-          </>
+          <article className="rounded-xl border border-emerald-600/40 bg-gradient-to-b from-emerald-950/40 to-slate-900 px-5 py-6 sm:px-6 min-h-[28vh] flex items-center gap-4">
+            <div className="min-w-0 flex-1">
+              <p className="text-[11px] uppercase tracking-[0.2em] text-emerald-300/80 font-semibold mb-3">
+                Active
+              </p>
+              <p className="text-2xl sm:text-3xl font-semibold text-white leading-snug whitespace-pre-wrap break-words">
+                {active.body}
+              </p>
+              <p className="mt-5 text-sm text-slate-400">
+                {active.author_name || 'Anonymous'}
+                <span className="mx-2 text-slate-600">·</span>
+                {formatWhen(active.created_at)}
+              </p>
+            </div>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void markDone()}
+              className="shrink-0 px-5 min-h-[4.5rem] rounded-xl bg-emerald-700 hover:bg-emerald-600 font-semibold text-base disabled:opacity-50"
+            >
+              Done
+            </button>
+          </article>
         ) : !current ? (
           <div className="rounded-xl border border-dashed border-slate-700 px-6 py-14 text-center space-y-3">
             <p className="text-xl text-slate-400">No approved questions</p>
@@ -261,24 +300,11 @@ export default function QaReadPage() {
           </div>
         ) : (
           <>
-            <div className="flex justify-between text-sm text-slate-400">
-              <span>
-                Next approved{' '}
-                <span className="text-sky-300 font-semibold tabular-nums">
-                  1 / {approved.length}
-                </span>
-              </span>
-              <span>{Math.max(0, approved.length - 1)} after</span>
-            </div>
-
-            <article className="rounded-xl border border-sky-600/40 bg-gradient-to-b from-sky-950/50 to-slate-900 px-5 py-8 sm:px-6 min-h-[32vh] flex flex-col justify-center">
-              <p className="text-[11px] uppercase tracking-[0.2em] text-sky-300/80 font-semibold mb-3">
-                Next approved
-              </p>
+            <article className="rounded-xl border border-sky-600/40 bg-gradient-to-b from-sky-950/50 to-slate-900 px-5 py-6 sm:px-7 sm:py-7 min-h-[48vh] flex flex-col justify-start">
               <p className="text-2xl sm:text-3xl font-semibold text-white leading-snug whitespace-pre-wrap break-words">
                 {current.body}
               </p>
-              <p className="mt-5 text-sm text-slate-400">
+              <p className="mt-auto pt-6 text-sm text-slate-400">
                 {current.author_name || 'Anonymous'}
                 <span className="mx-2 text-slate-600">·</span>
                 {formatWhen(current.created_at)}
@@ -309,56 +335,11 @@ export default function QaReadPage() {
                 </span>
               </button>
             </div>
-
-            {rest.length > 0 ? (
-              <div>
-                <p className="text-[11px] uppercase tracking-wide text-slate-500 font-semibold mb-2">
-                  Order (↑↓)
-                </p>
-                <ul className="space-y-1.5">
-                  {approved.map((q, i) => (
-                    <li
-                      key={q.id}
-                      className={`rounded-lg border px-3 py-2 text-sm flex gap-2 items-center ${
-                        i === 0
-                          ? 'border-sky-700/50 bg-sky-950/30'
-                          : 'border-slate-800 bg-slate-900/50'
-                      }`}
-                    >
-                      <span className="text-slate-600 tabular-nums w-5 shrink-0">{i + 1}.</span>
-                      <span
-                        className={`line-clamp-1 flex-1 min-w-0 ${
-                          i === 0 ? 'text-white' : 'text-slate-300'
-                        }`}
-                      >
-                        {q.body}
-                      </span>
-                      <div className="shrink-0 flex gap-1">
-                        <button
-                          type="button"
-                          disabled={busy || i === 0}
-                          onClick={() => void moveApproved(q.id, -1)}
-                          className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-30 text-sm"
-                        >
-                          ↑
-                        </button>
-                        <button
-                          type="button"
-                          disabled={busy || i === approved.length - 1}
-                          onClick={() => void moveApproved(q.id, 1)}
-                          className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-30 text-sm"
-                        >
-                          ↓
-                        </button>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
           </>
         )}
       </main>
+
+      {orderOpen ? orderPanel : null}
     </div>
   );
 }
