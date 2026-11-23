@@ -69,6 +69,7 @@ function isPublicGetEndpoint(endpoint: string, method?: string): boolean {
   if (path.startsWith('/api/guest-event/')) return true;
   if (path.startsWith('/api/public/')) return true;
   if (path.startsWith('/api/web-qa/') || path.startsWith('/api/web-qa-')) return true;
+  if (path.startsWith('/api/web-polls/') || path.startsWith('/api/web-polls-')) return true;
   return false;
 }
 

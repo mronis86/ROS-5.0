@@ -165,6 +165,21 @@ const {
   isMissingRelation: isMissingWebQaRelation,
 } = require('./lib/web-qa');
 const {
+  ensureWebPollsSchema,
+  createPoll: createWebPoll,
+  listPollsForEvent: listWebPollsForEvent,
+  getPollById: getWebPollById,
+  getPollByToken: getWebPollByToken,
+  setPollStatus: setWebPollStatus,
+  acceptVote: acceptWebPollVote,
+  drainInbox: drainWebPollInbox,
+  getRollup: getWebPollRollup,
+  getPollInboxBackend,
+  setPollInboxBackend,
+  redisConfigured: webPollsRedisConfigured,
+  clientIp: webPollsClientIp,
+} = require('./lib/web-polls');
+const {
   isMissingQmOpTableError,
   ensureQmOpLinkSchema,
   assertQuickModeEvent,
@@ -7954,6 +7969,195 @@ app.post('/api/web-qa/public/:token/questions', async (req, res) => {
     const status = error.status || 500;
     if (status >= 500) console.error('[web-qa] public submit', error);
     res.status(status).json({ error: error.message || 'Failed to submit question' });
+  }
+});
+
+// ─── Live web polls (soft Neon inbox → drain → counters / snapshot) ───
+app.get('/api/web-polls/inbox-backend', async (req, res) => {
+  try {
+    await ensureWebPollsSchema(pool);
+    const backend = await getPollInboxBackend(pool);
+    res.json({
+      poll_inbox_backend: backend,
+      redis_configured: webPollsRedisConfigured(),
+    });
+  } catch (error) {
+    console.error('[web-polls] get inbox backend', error);
+    res.status(500).json({ error: error.message || 'Failed to load inbox backend' });
+  }
+});
+
+app.put('/api/web-polls/inbox-backend', async (req, res) => {
+  try {
+    await ensureWebPollsSchema(pool);
+    const next = await setPollInboxBackend(pool, req.body?.poll_inbox_backend ?? req.body?.backend);
+    res.json(next);
+  } catch (error) {
+    const status = error.status || 500;
+    if (status >= 500) console.error('[web-polls] set inbox backend', error);
+    res.status(status).json({ error: error.message || 'Failed to set inbox backend' });
+  }
+});
+
+app.get('/api/web-polls/poll/:pollId', async (req, res) => {
+  try {
+    await ensureWebPollsSchema(pool);
+    const poll = await getWebPollById(pool, req.params.pollId);
+    if (!poll) return res.status(404).json({ error: 'Poll not found' });
+    res.json({ poll });
+  } catch (error) {
+    console.error('[web-polls] get poll', error);
+    res.status(500).json({ error: error.message || 'Failed to load poll' });
+  }
+});
+
+app.get('/api/web-polls/poll/:pollId/rollup', async (req, res) => {
+  try {
+    await ensureWebPollsSchema(pool);
+    const rollup = await getWebPollRollup(pool, req.params.pollId);
+    if (!rollup) return res.status(404).json({ error: 'Poll not found' });
+    res.json(rollup);
+  } catch (error) {
+    console.error('[web-polls] rollup', error);
+    res.status(500).json({ error: error.message || 'Failed to load rollup' });
+  }
+});
+
+app.patch('/api/web-polls/poll/:pollId/status', async (req, res) => {
+  try {
+    await ensureWebPollsSchema(pool);
+    const poll = await setWebPollStatus(
+      pool,
+      req.params.pollId,
+      req.body?.status
+    );
+    res.json({ poll });
+  } catch (error) {
+    const status = error.status || 500;
+    if (status >= 500) console.error('[web-polls] status', error);
+    res.status(status).json({ error: error.message || 'Failed to update status' });
+  }
+});
+
+app.post('/api/web-polls/poll/:pollId/drain', async (req, res) => {
+  try {
+    await ensureWebPollsSchema(pool);
+    const result = await drainWebPollInbox(pool, {
+      pollId: req.params.pollId,
+      limit: req.body?.limit ?? req.query?.limit,
+    });
+    const rollup = await getWebPollRollup(pool, req.params.pollId);
+    res.json({ ...result, rollup });
+  } catch (error) {
+    console.error('[web-polls] drain', error);
+    res.status(500).json({ error: error.message || 'Failed to drain inbox' });
+  }
+});
+
+app.get('/api/web-polls/public/:token', async (req, res) => {
+  try {
+    const token = String(req.params.token || '').trim();
+    if (!token) return res.status(400).json({ error: 'token is required' });
+    await ensureWebPollsSchema(pool);
+    const poll = await getWebPollByToken(pool, token);
+    if (!poll) return res.status(404).json({ error: 'Invalid poll link' });
+    res.json({
+      poll: {
+        id: poll.id,
+        question: poll.question,
+        poll_type: poll.poll_type,
+        status: poll.status,
+        options: (poll.options || []).map((o) => ({
+          id: o.id,
+          label: o.label,
+          color: o.color,
+          sort_order: o.sort_order,
+        })),
+        results_snapshot: poll.status === 'open' || poll.status === 'draft'
+          ? undefined
+          : poll.results_snapshot,
+      },
+    });
+  } catch (error) {
+    console.error('[web-polls] public get', error);
+    res.status(500).json({ error: error.message || 'Failed to load poll' });
+  }
+});
+
+app.get('/api/web-polls/public/:token/rollup', async (req, res) => {
+  try {
+    const token = String(req.params.token || '').trim();
+    if (!token) return res.status(400).json({ error: 'token is required' });
+    await ensureWebPollsSchema(pool);
+    const poll = await getWebPollByToken(pool, token);
+    if (!poll) return res.status(404).json({ error: 'Invalid poll link' });
+    const rollup = await getWebPollRollup(pool, poll.id);
+    res.json({
+      received: rollup.received,
+      counted: rollup.counted,
+      pending_inbox: rollup.pending_inbox,
+      status: poll.status,
+      results_snapshot: rollup.results_snapshot,
+    });
+  } catch (error) {
+    console.error('[web-polls] public rollup', error);
+    res.status(500).json({ error: error.message || 'Failed to load rollup' });
+  }
+});
+
+app.post('/api/web-polls/public/:token/vote', async (req, res) => {
+  try {
+    const token = String(req.params.token || '').trim();
+    if (!token) return res.status(400).json({ error: 'token is required' });
+    await ensureWebPollsSchema(pool);
+    const poll = await getWebPollByToken(pool, token);
+    if (!poll) return res.status(404).json({ error: 'Invalid poll link' });
+    const voterKey =
+      String(req.body?.voter_key || req.body?.voterKey || '').trim() ||
+      webPollsClientIp(req);
+    const result = await acceptWebPollVote(pool, poll, {
+      voterKey,
+      payload: req.body?.payload ?? req.body,
+    });
+    res.status(202).json(result);
+  } catch (error) {
+    const status = error.status || 500;
+    if (status >= 500) console.error('[web-polls] public vote', error);
+    res.status(status).json({ error: error.message || 'Failed to accept vote' });
+  }
+});
+
+// Event-scoped list/create — after /public and /poll so :eventId does not capture them
+app.get('/api/web-polls/:eventId', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    if (!eventId) return res.status(400).json({ error: 'eventId is required' });
+    await ensureWebPollsSchema(pool);
+    const polls = await listWebPollsForEvent(pool, eventId);
+    res.json({ polls });
+  } catch (error) {
+    console.error('[web-polls] list', error);
+    res.status(500).json({ error: error.message || 'Failed to list polls' });
+  }
+});
+
+app.post('/api/web-polls/:eventId', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    if (!eventId) return res.status(400).json({ error: 'eventId is required' });
+    await ensureWebPollsSchema(pool);
+    const poll = await createWebPoll(pool, {
+      eventId,
+      question: req.body?.question,
+      pollType: req.body?.poll_type ?? req.body?.pollType,
+      options: req.body?.options,
+      cueItemId: req.body?.cue_item_id ?? req.body?.cueItemId,
+    });
+    res.status(201).json({ poll });
+  } catch (error) {
+    const status = error.status || 500;
+    if (status >= 500) console.error('[web-polls] create', error);
+    res.status(status).json({ error: error.message || 'Failed to create poll' });
   }
 });
 

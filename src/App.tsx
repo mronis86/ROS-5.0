@@ -51,6 +51,10 @@ import QaActiveModPage from './pages/QaActiveModPage';
 import QaSelectPage from './pages/QaSelectPage';
 import QaReadPage from './pages/QaReadPage';
 import QaAudiencePage from './pages/QaAudiencePage';
+import PollSamplesPage from './pages/PollSamplesPage';
+import PollSetupPage from './pages/PollSetupPage';
+import PollControlPage from './pages/PollControlPage';
+import PollAudiencePage from './pages/PollAudiencePage';
 import AdminPage from './pages/AdminPage';
 import PinNotesPopoutPage from './pages/PinNotesPopoutPage';
 import OperatorTimerPopoutPage from './pages/OperatorTimerPopoutPage';
@@ -99,6 +103,12 @@ function AppContent() {
     location.pathname === '/qa-mod/read';
   const isQaMod = isQaModManage || isQaModTools;
   const isQaAudience = location.pathname.startsWith('/qa/');
+  const isPollSamples = location.pathname === '/poll-samples';
+  const isPollSetup = location.pathname === '/polls-setup';
+  const isPollControl = location.pathname === '/polls-control';
+  const isPollAudience = location.pathname.startsWith('/poll/');
+  const isPollManage = isPollSetup || isPollControl;
+  const isPollPages = isPollSamples || isPollManage || isPollAudience;
   const isOperatorCueDisplay = location.pathname === '/operator-cue-display';
   const isScriptsFollow = location.pathname === '/scripts-follow';
   const isTeleprompter = location.pathname === '/teleprompter';
@@ -152,6 +162,7 @@ function AppContent() {
     isMicManager ||
     isQaMod ||
     isQaAudience ||
+    isPollPages ||
     isOperatorCueDisplay ||
     isScriptsFollow ||
     isTeleprompter ||
@@ -179,9 +190,9 @@ function AppContent() {
     <ActiveViewersProvider>
     <div className={`App min-h-screen text-slate-200 ${isLedOutput ? 'led-output-page bg-transparent' : 'bg-slate-900'} ${isClock || isDsmClock ? 'clock-page' : ''}`}>
       {/* Render AppHeader outside AuthGuard for pages that need authentication */}
-      {!isFullScreenTimer && !isPinNotesPopout && !isOperatorTimerPopout && !isGreenRoom && !isPhotoView && !isDirectorView && !isDirectorControl && !isMicManager && !isQaMod && !isOperatorCueDisplay && !isScriptsFollow && !isTeleprompter && !isCueCards && !isPowerPoint && !isGoogleSheets && !isLocalXML && !isNetlifyXML && !isAdmin && !isQuickMode && !isComparison && !isResetPassword && !isAccessPortal && !isGuestEvent && !isMeetingHubPublic && !isStreamRequest && !isTraining && !isLedOutput && !isUltritouchHealth && !isStreamGuide && !isReports && !isQaAudience && <AppHeader />}
+      {!isFullScreenTimer && !isPinNotesPopout && !isOperatorTimerPopout && !isGreenRoom && !isPhotoView && !isDirectorView && !isDirectorControl && !isMicManager && !isQaMod && !isOperatorCueDisplay && !isScriptsFollow && !isTeleprompter && !isCueCards && !isPowerPoint && !isGoogleSheets && !isLocalXML && !isNetlifyXML && !isAdmin && !isQuickMode && !isComparison && !isResetPassword && !isAccessPortal && !isGuestEvent && !isMeetingHubPublic && !isStreamRequest && !isTraining && !isLedOutput && !isUltritouchHealth && !isStreamGuide && !isReports && !isQaAudience && !isPollPages && <AppHeader />}
       
-      {!isPinNotesPopout && !isOperatorTimerPopout && !isComparison && !isResetPassword && !isAccessPortal && !isGuestEvent && !isMeetingHubPublic && !isStreamRequest && !isTraining && !isNetlifyXML && !isLocalXML && !isAdmin && !isClock && !isDsmClock && !isGreenRoom && !isQaAudience && !isQaModTools && (
+      {!isPinNotesPopout && !isOperatorTimerPopout && !isComparison && !isResetPassword && !isAccessPortal && !isGuestEvent && !isMeetingHubPublic && !isStreamRequest && !isTraining && !isNetlifyXML && !isLocalXML && !isAdmin && !isClock && !isDsmClock && !isGreenRoom && !isQaAudience && !isQaModTools && !isPollSamples && !isPollAudience && (
         <AuthGuard>
           <div className="min-h-screen bg-slate-900">
           <Routes>
@@ -216,6 +227,8 @@ function AppContent() {
             <Route path="/director-control" element={<DirectorControlPopout />} />
             <Route path="/mic-manager" element={<MicManagerPage />} />
             <Route path="/qa-mod" element={<QaModPage />} />
+            <Route path="/polls-setup" element={<PollSetupPage />} />
+            <Route path="/polls-control" element={<PollControlPage />} />
             <Route path="/operator-cue-display" element={<OperatorCueDisplayPage />} />
             <Route path="/scripts-follow" element={<ScriptsFollowPage />} />
             <Route path="/teleprompter" element={<TeleprompterPage />} />
@@ -245,6 +258,8 @@ function AppContent() {
         <Route path="/qa-mod/active" element={<QaActiveModPage />} />
         <Route path="/qa-mod/select" element={<QaSelectPage />} />
         <Route path="/qa-mod/read" element={<QaReadPage />} />
+        <Route path="/poll/:token" element={<PollAudiencePage />} />
+        <Route path="/poll-samples" element={<PollSamplesPage />} />
         <Route path="/meeting-hub/:token" element={<PublicMeetingHubPage />} />
         <Route path="/stream-request" element={<StreamRequestPage />} />
         <Route path="/training" element={<TrainingBookingPage />} />
