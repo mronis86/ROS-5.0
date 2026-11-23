@@ -174,6 +174,9 @@ const {
   acceptVote: acceptWebPollVote,
   drainInbox: drainWebPollInbox,
   getRollup: getWebPollRollup,
+  getPollOverview: getWebPollOverview,
+  rotatePollSessionToken: rotateWebPollSessionToken,
+  getPublicEventPolls: getWebPublicEventPolls,
   getPollInboxBackend,
   setPollInboxBackend,
   redisConfigured: webPollsRedisConfigured,
@@ -1008,6 +1011,7 @@ function buildScheduleXml(eventId, scheduleItems) {
       <notes><![CDATA[${forCdata(item.notes || '')}]]></notes>
       <has_ppt>${item.hasPPT ? 'true' : 'false'}</has_ppt>
       <has_qa>${item.hasQA ? 'true' : 'false'}</has_qa>
+      <has_poll>${item.hasPoll ? 'true' : 'false'}</has_poll>
     </item>`
       )
       .join('')}
@@ -1149,9 +1153,9 @@ async function cacheScheduleFeedsForEvent(eventId, scheduleItems, customColumns 
 
 function buildScheduleCsv(scheduleItems) {
   let csv =
-    'Row,Day,Cue,Program,Segment Name,Duration Hours,Duration Minutes,Duration Seconds,Notes,Has PPT,Has QA\n';
+    'Row,Day,Cue,Program,Segment Name,Duration Hours,Duration Minutes,Duration Seconds,Notes,Has PPT,Has QA,Has Poll\n';
   (scheduleItems || []).forEach((item, index) => {
-    csv += `${index + 1},${Number(item.day) || 1},${escapeCsvField(item.customFields?.cue || '')},${escapeCsvField(item.programType || '')},${escapeCsvField(item.segmentName || '')},${item.durationHours || 0},${item.durationMinutes || 0},${item.durationSeconds || 0},${escapeCsvField(item.notes || '')},${item.hasPPT ? 'Yes' : 'No'},${item.hasQA ? 'Yes' : 'No'}\n`;
+    csv += `${index + 1},${Number(item.day) || 1},${escapeCsvField(item.customFields?.cue || '')},${escapeCsvField(item.programType || '')},${escapeCsvField(item.segmentName || '')},${item.durationHours || 0},${item.durationMinutes || 0},${item.durationSeconds || 0},${escapeCsvField(item.notes || '')},${item.hasPPT ? 'Yes' : 'No'},${item.hasQA ? 'Yes' : 'No'},${item.hasPoll ? 'Yes' : 'No'}\n`;
   });
   return csv;
 }
@@ -2783,7 +2787,7 @@ function buildRunOfShowCSV(row) {
   const customColumnHeaders = (Array.isArray(customColumns) ? customColumns : []).map((c) => c.name || c.id || '');
   const csvHeaders = [
     'ROW', 'CUE', 'Program Type', 'Shot Type', 'Segment Name', 'Duration',
-    'Start Time', 'End Time', 'Notes', 'Assets', 'Speakers', 'Has PPT', 'Has QA',
+    'Start Time', 'End Time', 'Notes', 'Assets', 'Speakers', 'Has PPT', 'Has QA', 'Has Poll',
     'Timer ID', 'Is Public', 'Is Indented', 'Day'
   ].concat(customColumnHeaders);
   const cleanNotes = (html) => {
@@ -2810,6 +2814,7 @@ function buildRunOfShowCSV(row) {
       item.speakersText || '',
       item.hasPPT ? 'Yes' : 'No',
       item.hasQA ? 'Yes' : 'No',
+      item.hasPoll ? 'Yes' : 'No',
       item.timerId || '',
       item.isPublic ? 'Yes' : 'No',
       item.isIndented ? 'Yes' : 'No',
@@ -5539,6 +5544,7 @@ function canWriteCueRecording(auth) {
 const SCHEDULE_CHECKBOX_FIELDS = [
   'hasPPT',
   'hasQA',
+  'hasPoll',
   'needsRecording',
   'recordingSource',
   'mittiWatch',
@@ -5672,6 +5678,10 @@ app.patch('/api/run-of-show-data/:eventId/schedule-checkboxes', async (req, res)
     if (typeof body.hasQA === 'boolean') {
       patch.hasQA = body.hasQA;
       fields.push('hasQA');
+    }
+    if (typeof body.hasPoll === 'boolean') {
+      patch.hasPoll = body.hasPoll;
+      fields.push('hasPoll');
     }
     if (typeof body.isPublic === 'boolean') {
       patch.isPublic = body.isPublic;
@@ -8127,7 +8137,50 @@ app.post('/api/web-polls/public/:token/vote', async (req, res) => {
   }
 });
 
-// Event-scoped list/create — after /public and /poll so :eventId does not capture them
+// One QR / link per event (not per poll)
+app.get('/api/web-polls/public-event/:token', async (req, res) => {
+  try {
+    const token = String(req.params.token || '').trim();
+    if (!token) return res.status(400).json({ error: 'token is required' });
+    await ensureWebPollsSchema(pool);
+    const data = await getWebPublicEventPolls(pool, token);
+    res.json(data);
+  } catch (error) {
+    const status = error.status || 500;
+    if (status >= 500) console.error('[web-polls] public event', error);
+    res.status(status).json({ error: error.message || 'Failed to load event polls' });
+  }
+});
+
+// Event-scoped overview/list/create — after /public and /poll so :eventId does not capture them
+app.get('/api/web-polls/:eventId/overview', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    if (!eventId) return res.status(400).json({ error: 'eventId is required' });
+    await ensureWebPollsSchema(pool);
+    const overview = await getWebPollOverview(pool, eventId);
+    res.json(overview);
+  } catch (error) {
+    const status = error.status || 500;
+    if (status >= 500) console.error('[web-polls] overview', error);
+    res.status(status).json({ error: error.message || 'Failed to load poll overview' });
+  }
+});
+
+app.post('/api/web-polls/:eventId/session/rotate', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    if (!eventId) return res.status(400).json({ error: 'eventId is required' });
+    await ensureWebPollsSchema(pool);
+    const session = await rotateWebPollSessionToken(pool, eventId);
+    res.json({ session });
+  } catch (error) {
+    const status = error.status || 500;
+    if (status >= 500) console.error('[web-polls] rotate session', error);
+    res.status(status).json({ error: error.message || 'Failed to rotate poll link' });
+  }
+});
+
 app.get('/api/web-polls/:eventId', async (req, res) => {
   try {
     const { eventId } = req.params;

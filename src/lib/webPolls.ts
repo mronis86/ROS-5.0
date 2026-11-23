@@ -40,6 +40,57 @@ export type WebPoll = {
   updated_at?: string;
 };
 
+export type WebPollCueSummary = {
+  id: number;
+  cue: string | null;
+  segment_name: string | null;
+  has_poll: boolean;
+  poll_count?: number;
+  open_count?: number;
+  polls?: WebPoll[];
+};
+
+export type WebPollSession = {
+  id?: string;
+  event_id: string;
+  public_token: string;
+  title?: string | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type WebPollOverview = {
+  session: WebPollSession;
+  poll_cues: WebPollCueSummary[];
+  polls: WebPoll[];
+  current_cue: WebPollCueSummary | null;
+  in_poll_cue: boolean;
+  timer: {
+    item_id: number | null;
+    is_running: boolean;
+    is_active: boolean;
+    cue_is: string | null;
+  } | null;
+  counts: {
+    draft: number;
+    open: number;
+    closed: number;
+    finalizing: number;
+    final: number;
+    all: number;
+  };
+};
+
+export type PublicEventPoll = {
+  id: string;
+  public_token: string;
+  question: string;
+  poll_type: WebPollType;
+  status: WebPollStatus;
+  cue_item_id?: number | null;
+  options: WebPollOption[];
+};
+
 async function parseJson(res: Response) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -69,6 +120,49 @@ export async function setPollInboxBackend(backend: PollInboxBackend) {
   return parseJson(res);
 }
 
+export async function fetchWebPollOverview(eventId: string): Promise<WebPollOverview> {
+  const res = await fetch(
+    `${apiBase()}/api/web-polls/${encodeURIComponent(eventId)}/overview`,
+    { headers: { ...authHeaders(), Accept: 'application/json' } }
+  );
+  return parseJson(res);
+}
+
+export async function rotateWebPollSession(eventId: string): Promise<WebPollSession> {
+  const res = await fetch(
+    `${apiBase()}/api/web-polls/${encodeURIComponent(eventId)}/session/rotate`,
+    {
+      method: 'POST',
+      headers: { ...authHeaders(), Accept: 'application/json' },
+    }
+  );
+  const data = await parseJson(res);
+  return data.session;
+}
+
+export async function fetchPublicEventPolls(token: string) {
+  const res = await fetch(
+    `${apiBase()}/api/web-polls/public-event/${encodeURIComponent(token)}`
+  );
+  return parseJson(res) as Promise<{
+    session: WebPollSession;
+    current_cue: WebPollCueSummary | null;
+    in_poll_cue: boolean;
+    open_polls: PublicEventPoll[];
+    active_poll: PublicEventPoll | null;
+  }>;
+}
+
+export function webPollEventAudienceUrl(token: string, origin = window.location.origin) {
+  return `${origin.replace(/\/$/, '')}/polls/${encodeURIComponent(token)}`;
+}
+
+/** Preview QR (same generator as Web Q&A). */
+export function webPollQrImageUrl(audienceUrl: string, size = 140) {
+  const n = Math.max(64, Math.min(1024, Math.floor(size) || 140));
+  return `https://api.qrserver.com/v1/create-qr-code/?size=${n}x${n}&data=${encodeURIComponent(audienceUrl)}&margin=4&color=000000&bgcolor=ffffff&format=png`;
+}
+
 export async function listWebPolls(eventId: string): Promise<WebPoll[]> {
   const res = await fetch(`${apiBase()}/api/web-polls/${encodeURIComponent(eventId)}`, {
     headers: { ...authHeaders(), Accept: 'application/json' },
@@ -83,7 +177,8 @@ export async function createWebPoll(
     question: string;
     pollType: WebPollType;
     options?: { label: string; color?: string }[];
-    cueItemId?: number | null;
+    /** Required — must be a ROS cue with Poll checked. */
+    cueItemId: number;
   }
 ): Promise<WebPoll> {
   const res = await fetch(`${apiBase()}/api/web-polls/${encodeURIComponent(eventId)}`, {
@@ -98,6 +193,62 @@ export async function createWebPoll(
   });
   const data = await parseJson(res);
   return data.poll;
+}
+
+export function buildWebPollsCsv(
+  polls: WebPoll[],
+  cueLookup?: Map<number, { cue?: string | null; segment_name?: string | null }>
+): string {
+  const header = [
+    'Poll ID',
+    'Status',
+    'Type',
+    'Question',
+    'Cue',
+    'Segment',
+    'Received',
+    'Counted',
+    'Audience URL',
+    'Opened At',
+    'Closed At',
+    'Finalized At',
+  ];
+  const escape = (v: unknown) => {
+    const s = String(v ?? '');
+    if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+    return s;
+  };
+  const rows = polls.map((p) => {
+    const cueId = Number(p.cue_item_id);
+    const cueMeta = Number.isFinite(cueId) ? cueLookup?.get(cueId) : undefined;
+    return [
+      p.id,
+      p.status,
+      p.poll_type,
+      p.question,
+      cueMeta?.cue || '',
+      cueMeta?.segment_name || '',
+      p.received_count ?? 0,
+      p.counted_count ?? 0,
+      p.public_token ? webPollAudienceUrl(p.public_token) : '',
+      p.opened_at || '',
+      p.closed_at || '',
+      p.finalized_at || '',
+    ]
+      .map(escape)
+      .join(',');
+  });
+  return '\uFEFF' + [header.join(','), ...rows].join('\n');
+}
+
+export function downloadTextFile(filename: string, contents: string, mime = 'text/csv;charset=utf-8') {
+  const blob = new Blob([contents], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 export async function fetchWebPoll(pollId: string): Promise<WebPoll> {

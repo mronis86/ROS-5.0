@@ -55,6 +55,7 @@ import PollSamplesPage from './pages/PollSamplesPage';
 import PollSetupPage from './pages/PollSetupPage';
 import PollControlPage from './pages/PollControlPage';
 import PollAudiencePage from './pages/PollAudiencePage';
+import PollEventAudiencePage from './pages/PollEventAudiencePage';
 import AdminPage from './pages/AdminPage';
 import PinNotesPopoutPage from './pages/PinNotesPopoutPage';
 import OperatorTimerPopoutPage from './pages/OperatorTimerPopoutPage';
@@ -106,7 +107,8 @@ function AppContent() {
   const isPollSamples = location.pathname === '/poll-samples';
   const isPollSetup = location.pathname === '/polls-setup';
   const isPollControl = location.pathname === '/polls-control';
-  const isPollAudience = location.pathname.startsWith('/poll/');
+  const isPollAudience =
+    location.pathname.startsWith('/poll/') || location.pathname.startsWith('/polls/');
   const isPollManage = isPollSetup || isPollControl;
   const isPollPages = isPollSamples || isPollManage || isPollAudience;
   const isOperatorCueDisplay = location.pathname === '/operator-cue-display';
@@ -259,6 +261,7 @@ function AppContent() {
         <Route path="/qa-mod/select" element={<QaSelectPage />} />
         <Route path="/qa-mod/read" element={<QaReadPage />} />
         <Route path="/poll/:token" element={<PollAudiencePage />} />
+        <Route path="/polls/:token" element={<PollEventAudiencePage />} />
         <Route path="/poll-samples" element={<PollSamplesPage />} />
         <Route path="/meeting-hub/:token" element={<PublicMeetingHubPage />} />
         <Route path="/stream-request" element={<StreamRequestPage />} />

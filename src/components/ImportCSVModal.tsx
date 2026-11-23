@@ -8,6 +8,7 @@ interface ParsedRow {
   shotType: string;
   hasPPT: boolean;
   hasQA: boolean;
+  hasPoll: boolean;
   programType: string;
   notes: string;
   assets: string;
@@ -127,6 +128,7 @@ const ImportCSVModal: React.FC<ImportCSVModalProps> = ({ isOpen, onClose, onImpo
         const speakers = getCol(row, 'Speakers', 'speakers');
         const hasPPTVal = getCol(row, 'Has PPT', 'has ppt');
         const hasQAVal = getCol(row, 'Has QA', 'has qa');
+        const hasPollVal = getCol(row, 'Has Poll', 'has poll');
         const timerId = getCol(row, 'Timer ID', 'timer id');
         const isPublicVal = getCol(row, 'Is Public', 'is public');
         const isIndentedVal = getCol(row, 'Is Indented', 'is indented');
@@ -152,6 +154,7 @@ const ImportCSVModal: React.FC<ImportCSVModalProps> = ({ isOpen, onClose, onImpo
           speakers,
           hasPPT: parseYesNo(hasPPTVal),
           hasQA: parseYesNo(hasQAVal),
+          hasPoll: parseYesNo(hasPollVal),
           timerId,
           isPublic: parseYesNo(isPublicVal),
           isIndented: parseYesNo(isIndentedVal),
@@ -185,6 +188,7 @@ const ImportCSVModal: React.FC<ImportCSVModalProps> = ({ isOpen, onClose, onImpo
       speakers: r.speakers,
       hasPPT: r.hasPPT,
       hasQA: r.hasQA,
+      hasPoll: r.hasPoll,
       timerId: r.timerId || '',
       isPublic: r.isIndented ? false : (r.isPublic ?? true),
       isIndented: r.isIndented ?? false,
@@ -242,9 +246,9 @@ const ImportCSVModal: React.FC<ImportCSVModalProps> = ({ isOpen, onClose, onImpo
             <div className="bg-slate-700 p-4 rounded-md">
               <h3 className="text-white font-semibold mb-2">CSV Format</h3>
               <p className="text-slate-300 text-sm">
-                Use a CSV exported from Run of Show, or one with headers: ROW, CUE, Program Type, Shot Type, Segment Name, Duration, Start Time, End Time, Notes, Assets, Speakers, Has PPT, Has QA, Timer ID, Is Public, Is Indented, Day, plus any custom columns.
+                Use a CSV exported from Run of Show, or one with headers: ROW, CUE, Program Type, Shot Type, Segment Name, Duration, Start Time, End Time, Notes, Assets, Speakers, Has PPT, Has QA, Has Poll, Timer ID, Is Public, Is Indented, Day, plus any custom columns.
               </p>
-              <p className="text-slate-400 text-xs mt-2">Supports comma or tab delimiter. Shot Type: Podium, 1-Shot, 2-Shot … 7-Shot, Ted-Talk. Has PPT, Has QA, Is Public, Is Indented accept Yes/No.</p>
+              <p className="text-slate-400 text-xs mt-2">Supports comma or tab delimiter. Shot Type: Podium, 1-Shot, 2-Shot … 7-Shot, Ted-Talk. Has PPT, Has QA, Has Poll, Is Public, Is Indented accept Yes/No.</p>
             </div>
 
             <div className="flex items-center gap-4">

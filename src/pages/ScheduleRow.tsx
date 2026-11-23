@@ -66,12 +66,13 @@ export interface ScheduleRowProps {
   onNotesChipUpdated?: (itemId: number, notesHtml: string) => void;
   /** Immediate Neon persist for REC checkbox (avoids debounced full-schedule race on navigate away). */
   persistCueRecording?: (itemId: number, needsRecording: boolean, source: 'comms' | 'ros') => void | Promise<void>;
-  /** Immediate Neon persist for PPT / Q&A / Public (same path as REC). */
+  /** Immediate Neon persist for PPT / Q&A / Poll / Public (same path as REC). */
   persistScheduleCheckboxes?: (
     itemId: number,
     fields: {
       hasPPT?: boolean;
       hasQA?: boolean;
+      hasPoll?: boolean;
       needsRecording?: boolean;
       isPublic?: boolean;
       source?: 'comms' | 'ros';
@@ -1366,14 +1367,14 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
           </div>
         </div>
       )}
-      {/* PPT/QA column (after Shot Type) */}
+      {/* PPT/QA/Poll column (after Shot Type) */}
       {visibleColumns.pptQA && (
         <div 
           className="px-4 py-2 border-r border-slate-600 flex items-center justify-center flex-shrink-0"
           style={colBox(columnWidths.pptQA, 'pptQA')}
         >
           <div
-            className="flex items-center gap-2"
+            className="flex items-center gap-2 flex-wrap justify-center"
             onMouseDown={(e) => { if (alertIfLocked(e)) return; }}
           >
             <label className="flex items-center gap-1">
@@ -1488,6 +1489,55 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
                 }
               />
               <span className="text-base font-medium text-white">Q&A</span>
+            </label>
+            <label className="flex items-center gap-1">
+              <input
+                type="checkbox"
+                checked={!!item.hasPoll}
+                onChange={(e) => {
+                  if (currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') {
+                    alert('Only EDITORs can edit Poll settings. Please change your role to EDITOR.');
+                    return;
+                  }
+                  if (!beginCellEdit()) return;
+                  const oldValue = !!item.hasPoll;
+                  const checked = e.target.checked;
+                  setSchedule((prev: any[]) =>
+                    prev.map((scheduleItem) =>
+                      Number(scheduleItem.id) === Number(item.id)
+                        ? stampScheduleCheckboxes({ ...scheduleItem, hasPoll: checked }, ['hasPoll'])
+                        : scheduleItem
+                    )
+                  );
+                  void Promise.resolve(
+                    persistScheduleCheckboxes?.(item.id, { hasPoll: checked })
+                  ).catch((err) => console.warn('persistScheduleCheckboxes hasPoll failed:', err));
+                  logChangeDebounced(
+                    `hasPoll_${item.id}`,
+                    'FIELD_UPDATE',
+                    `Updated Poll status for "${item.segmentName}" from ${oldValue ? 'TRUE' : 'FALSE'} to ${checked ? 'TRUE' : 'FALSE'}`,
+                    {
+                      changeType: 'FIELD_CHANGE',
+                      itemId: item.id,
+                      itemName: item.segmentName,
+                      fieldName: 'hasPoll',
+                      oldValue: oldValue ? 'TRUE' : 'FALSE',
+                      newValue: checked ? 'TRUE' : 'FALSE',
+                      details: { fieldType: 'checkbox', booleanChange: true },
+                    }
+                  );
+                }}
+                disabled={isLockedByOther || currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'}
+                className={`w-6 h-6 rounded border-2 ${isRowDimmed ? 'border-purple-600/50 bg-purple-950/70' : 'border-slate-400 bg-slate-700'}`}
+                title={
+                  isLockedByOther
+                    ? lockLabel
+                    : currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR'
+                      ? 'Only EDITORs can edit Poll settings'
+                      : 'Flag this cue for a live poll'
+                }
+              />
+              <span className="text-base font-medium text-white">Poll</span>
             </label>
           </div>
         </div>
@@ -2353,7 +2403,7 @@ const ScheduleRow: React.FC<ScheduleRowProps> = React.memo(({
     'programType', 'shotType', 'segmentName', 'segmentSpellingOk', 'segmentSpellingAskRos',
     'durationHours', 'durationMinutes', 'durationSeconds',
     'notes', 'vogText', 'vogVoiceId', 'vogVoiceName', 'assets', 'speakers', 'speakersText',
-    'hasPPT', 'hasQA', 'needsRecording', 'recordingSource', 'otherRoom', 'isPublic',
+    'hasPPT', 'hasQA', 'hasPoll', 'needsRecording', 'recordingSource', 'otherRoom', 'isPublic',
     'checkboxStamps', 'mittiWatch', 'avWatch', 'dsmEnabled', 'dsmMode', 'dsmModeManual',
     'isTimedMarker', 'isIndented', 'markerTimeMode', 'markerOffsetSeconds', 'markerAbsoluteSeconds',
     'qaIsAutoQa', 'qaAutoStart', 'qaAutoStartAtRemainingSeconds', 'qaLinkedSubId',

@@ -1,8 +1,9 @@
-/** Per-field stamps so a stale row save cannot undo a newer checkbox (REC / PPT / Q&A / Public / Mitti / AV). */
+/** Per-field stamps so a stale row save cannot undo a newer checkbox (REC / PPT / Q&A / Poll / Public / Mitti / AV). */
 
 export const SCHEDULE_CHECKBOX_FIELDS = [
   'hasPPT',
   'hasQA',
+  'hasPoll',
   'needsRecording',
   'recordingSource',
   'mittiWatch',

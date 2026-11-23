@@ -24,7 +24,7 @@ export const GUEST_COLUMN_LABELS: Record<GuestScrollColumn, string> = {
   duration: 'Duration',
   segmentName: 'Segment',
   shotType: 'Shot',
-  pptQA: 'PPT/Q&A',
+  pptQA: 'PPT/Q&A/Poll',
   notes: 'Notes',
   speakers: 'Speakers',
 };

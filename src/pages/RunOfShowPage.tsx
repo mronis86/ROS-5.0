@@ -379,6 +379,8 @@ interface ScheduleItem {
   speakersText: string;
   hasPPT: boolean;
   hasQA: boolean;
+  /** Cue is flagged for a live web poll (Setup/Control). */
+  hasPoll: boolean;
   /** Linked indented Q&A timer row created from the Q&A plan modal (sub mode). */
   qaLinkedSubId?: number | null;
   /** 'sub' = indented Q&A timer row; 'flash' = display reminder only (no sub row). */
@@ -497,6 +499,7 @@ function scheduleItemSignature(item: any): string {
     asText(item.speakersText),
     item.hasPPT ? '1' : '',
     item.hasQA ? '1' : '',
+    item.hasPoll ? '1' : '',
     item.needsRecording ? '1' : '',
     asText(item.recordingUpdatedAt),
     JSON.stringify(item.checkboxStamps || {}),
@@ -1242,6 +1245,7 @@ const RunOfShowPage: React.FC = () => {
     if (fieldName === 'needsRecording') return { ...item, needsRecording: asBool };
     if (fieldName === 'hasPPT') return { ...item, hasPPT: asBool };
     if (fieldName === 'hasQA') return { ...item, hasQA: asBool };
+    if (fieldName === 'hasPoll') return { ...item, hasPoll: asBool };
     if (fieldName === 'isPublic') return { ...item, isPublic: asBool };
     if (fieldName === 'timerDisplay') return { ...item, timerDisplay: asString as any };
     if (fieldName === 'voCues') {
@@ -1311,6 +1315,7 @@ const RunOfShowPage: React.FC = () => {
       'needsRecording',
       'hasPPT',
       'hasQA',
+      'hasPoll',
       'isPublic',
       'timerDisplay',
       'voCues',
@@ -2458,7 +2463,7 @@ const RunOfShowPage: React.FC = () => {
     duration: 224, // w-56 = 224px
     segmentName: 320, // w-80 = 320px
     shotType: 192, // w-48 = 192px
-    pptQA: 192, // w-48 = 192px
+    pptQA: 260, // PPT + Q&A + Poll
     recording: 100,
     notes: 400, // slight bump from 384 so four notes chips fit one line
     vog: 100,
@@ -5249,6 +5254,7 @@ const RunOfShowPage: React.FC = () => {
       speakersText: '',
       hasPPT: false,
       hasQA: false,
+      hasPoll: false,
       timerId: generateRandomTimerId(),
       customFields: { cue: '' },
       isPublic: false,
@@ -5528,6 +5534,7 @@ const RunOfShowPage: React.FC = () => {
       speakersText: '',
       hasPPT: false,
       hasQA: false,
+      hasPoll: false,
       timerId: 'QA',
       customFields: { cue: qaCue },
       isPublic: false,
@@ -6963,6 +6970,7 @@ const RunOfShowPage: React.FC = () => {
     speakersText: '',
     hasPPT: false,
     hasQA: false,
+    hasPoll: false,
     needsRecording: false,
     timerId: '',
     isPublic: true, // Main (non-indented) cues default to public
@@ -10705,6 +10713,7 @@ const RunOfShowPage: React.FC = () => {
       fields: {
         hasPPT?: boolean;
         hasQA?: boolean;
+        hasPoll?: boolean;
         needsRecording?: boolean;
         isPublic?: boolean;
         source?: 'comms' | 'ros';
@@ -13435,6 +13444,7 @@ const RunOfShowPage: React.FC = () => {
         assets: item.assets || 'None',
         hasPPT: item.hasPPT,
         hasQA: item.hasQA,
+        hasPoll: item.hasPoll,
         
         // Timer Info
         timerId: item.timerId,
@@ -13462,6 +13472,7 @@ const RunOfShowPage: React.FC = () => {
       speakersText: '',
       hasPPT: false,
       hasQA: false,
+      hasPoll: false,
       needsRecording: false,
       timerId: '',
       isPublic: true,
@@ -13495,6 +13506,7 @@ const RunOfShowPage: React.FC = () => {
       speakersText: '',
       hasPPT: false,
       hasQA: false,
+      hasPoll: false,
       needsRecording: false,
       timerId: '',
       isPublic: false,
@@ -13539,6 +13551,7 @@ const RunOfShowPage: React.FC = () => {
       speakersText: '',
       hasPPT: false,
       hasQA: false,
+      hasPoll: false,
       needsRecording: false,
       timerId: '',
       isPublic: false,
@@ -13598,6 +13611,7 @@ const RunOfShowPage: React.FC = () => {
           speakersText: '',
           hasPPT: false,
           hasQA: false,
+          hasPoll: false,
           needsRecording: false,
           timerId: generateRandomTimerId(),
           isPublic: false, // Indented breakout rooms stay private
@@ -14774,6 +14788,7 @@ const RunOfShowPage: React.FC = () => {
           speakersText: transformedSpeakersData,
           hasPPT: row.hasPPT || false,
           hasQA: row.hasQA || false,
+          hasPoll: row.hasPoll || false,
           needsRecording: !!(row.needsRecording || row.recording),
           recordingSource:
             row.recordingSource === 'comms' || row.recording_source === 'comms'
@@ -14898,6 +14913,7 @@ const RunOfShowPage: React.FC = () => {
             assets: itemToDelete.assets || 'None',
             hasPPT: itemToDelete.hasPPT,
             hasQA: itemToDelete.hasQA,
+            hasPoll: itemToDelete.hasPoll,
             
             // Timer Info
             timerId: itemToDelete.timerId,
@@ -15116,6 +15132,7 @@ const RunOfShowPage: React.FC = () => {
         assets: duplicatedItem.assets || 'None',
         hasPPT: duplicatedItem.hasPPT,
         hasQA: duplicatedItem.hasQA,
+        hasPoll: !!duplicatedItem.hasPoll,
         
         // Timer Info
         timerId: duplicatedItem.timerId,
@@ -15298,6 +15315,7 @@ const RunOfShowPage: React.FC = () => {
       'Speakers',
       'Has PPT',
       'Has QA',
+      'Has Poll',
       'Recording',
       'Timer ID',
       'Is Public',
@@ -15356,6 +15374,7 @@ const RunOfShowPage: React.FC = () => {
         item.speakersText || '',
         item.hasPPT ? 'Yes' : 'No',
         item.hasQA ? 'Yes' : 'No',
+        item.hasPoll ? 'Yes' : 'No',
         item.needsRecording ? 'Yes' : 'No',
         item.timerId || '',
         item.isPublic ? 'Yes' : 'No',
@@ -17840,7 +17859,7 @@ const RunOfShowPage: React.FC = () => {
                           window.open(pollsUrl, '_blank');
                         }}
                         className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center gap-3"
-                        title="Web Polls: create polls, audience links, and live control"
+                        title="Web Polls management: cues with Poll checked, setup, control, reports"
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 3.055A9.001 9.001 0 1020.945 13H11V3.055z" />
@@ -19360,7 +19379,7 @@ const RunOfShowPage: React.FC = () => {
                           style={colBox(columnWidths.pptQA, 'pptQA')}
                         >
                           <span className="text-white font-bold flex items-center gap-1">
-                            PPT/Q&A
+                            PPT/Q&A/Poll
                             {(currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') && (
                               <span className="text-yellow-400" title="Read-only for your role">🔒</span>
                             )}
@@ -19878,6 +19897,7 @@ const RunOfShowPage: React.FC = () => {
                     speakersText: '',
                     hasPPT: false,
                     hasQA: false,
+                    hasPoll: false,
                     needsRecording: false,
                     timerId: '',
                     isPublic: true,
@@ -20707,7 +20727,7 @@ const RunOfShowPage: React.FC = () => {
                       style={colBox(columnWidths.pptQA, 'pptQA')}
                     >
                       <span className="text-white font-bold flex items-center gap-1">
-                        PPT/Q&A
+                        PPT/Q&A/Poll
                         {(currentUserRole === 'VIEWER' || currentUserRole === 'OPERATOR') && (
                           <span className="text-yellow-400" title="Read-only for your role">🔒</span>
                         )}
@@ -21714,6 +21734,18 @@ const RunOfShowPage: React.FC = () => {
                     className="rounded"
                   />
                   <span className="text-slate-300 text-sm">Has QA</span>
+                </label>
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={!!modalForm.hasPoll}
+                    onChange={(e) => {
+                      handleUserEditing();
+                      setModalForm(prev => ({ ...prev, hasPoll: e.target.checked }));
+                    }}
+                    className="rounded"
+                  />
+                  <span className="text-slate-300 text-sm">Has Poll</span>
                 </label>
                 <label className="flex items-center gap-2">
                   <input

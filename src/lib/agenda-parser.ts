@@ -35,6 +35,7 @@ export interface AgendaParsedItem {
   shotType: string;
   hasPPT: boolean;
   hasQA: boolean;
+  hasPoll?: boolean;
   programType: string;
   notes: string;
   assets: string;
@@ -628,6 +629,7 @@ export function parseAgenda(
       shotType: '',
       hasPPT: false,
       hasQA: false,
+      hasPoll: false,
       programType: '',
       notes: '',
       assets: '',

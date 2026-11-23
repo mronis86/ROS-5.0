@@ -1079,6 +1079,7 @@ class ApiClient {
     fields: {
       hasPPT?: boolean;
       hasQA?: boolean;
+      hasPoll?: boolean;
       needsRecording?: boolean;
       isPublic?: boolean;
       source?: 'comms' | 'ros';

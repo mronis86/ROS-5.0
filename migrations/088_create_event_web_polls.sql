@@ -1,5 +1,18 @@
 -- Live web polls: config + option counters + ballots + soft Neon inbox.
 -- Surfaces read results_snapshot (or option vote_count); drain commits inbox → ballots/counters.
+-- One audience QR/session per event (event_web_poll_sessions).
+
+CREATE TABLE IF NOT EXISTS public.event_web_poll_sessions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  event_id TEXT NOT NULL UNIQUE,
+  public_token TEXT NOT NULL UNIQUE,
+  title TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_event_web_poll_sessions_token
+  ON public.event_web_poll_sessions (public_token);
 
 CREATE TABLE IF NOT EXISTS public.event_web_polls (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

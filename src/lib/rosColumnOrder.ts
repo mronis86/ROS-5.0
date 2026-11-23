@@ -26,7 +26,7 @@ export const BUILTIN_COLUMN_LABELS: Record<BuiltinScrollColumn, string> = {
   duration: 'Duration',
   segmentName: 'Segment Name',
   shotType: 'Shot Type',
-  pptQA: 'PPT/Q&A',
+  pptQA: 'PPT/Q&A/Poll',
   recording: 'Recording',
   mittiWatch: 'Mitti',
   avWatch: 'AV',
