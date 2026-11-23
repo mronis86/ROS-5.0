@@ -5,6 +5,11 @@ import { getApiBaseUrl } from '../services/api-client';
 import { fetchNetlifyStatus, fetchResendStatus } from '../lib/ultritouchHealthMonitor';
 import { isSentryWebConfigured } from '../lib/sentry';
 import { ROS_APP_VERSION } from '../lib/rosVersion';
+import {
+  fetchPollInboxBackend,
+  setPollInboxBackend,
+  type PollInboxBackend,
+} from '../lib/webPolls';
 import { GOOGLE_APPS_SCRIPT_BACKUP_SOURCE } from '../lib/google-apps-script-backup';
 import {
   getLogoVariant,
@@ -610,6 +615,11 @@ export default function AdminPage() {
   const [platformLoading, setPlatformLoading] = useState(false);
   const [platformError, setPlatformError] = useState<string | null>(null);
   const [healthUrlCopied, setHealthUrlCopied] = useState(false);
+  const [pollInboxBackend, setPollInboxBackendState] = useState<PollInboxBackend>('neon');
+  const [pollInboxRedisConfigured, setPollInboxRedisConfigured] = useState(false);
+  const [pollInboxLoading, setPollInboxLoading] = useState(false);
+  const [pollInboxSaving, setPollInboxSaving] = useState(false);
+  const [pollInboxError, setPollInboxError] = useState<string | null>(null);
   const [eventLifecycleLoading, setEventLifecycleLoading] = useState(false);
   const [eventLifecycleError, setEventLifecycleError] = useState<string | null>(null);
   const [deletedCalendarEvents, setDeletedCalendarEvents] = useState<
@@ -1227,12 +1237,41 @@ export default function AdminPage() {
     }
   }, [lockAdminSession]);
 
+  const loadPollInboxBackend = useCallback(async () => {
+    setPollInboxLoading(true);
+    setPollInboxError(null);
+    try {
+      const data = await fetchPollInboxBackend();
+      setPollInboxBackendState(data.poll_inbox_backend === 'redis' ? 'redis' : 'neon');
+      setPollInboxRedisConfigured(data.redis_configured === true);
+    } catch (e) {
+      setPollInboxError(e instanceof Error ? e.message : 'Failed to load poll inbox setting');
+    } finally {
+      setPollInboxLoading(false);
+    }
+  }, []);
+
+  const savePollInbox = async (backend: PollInboxBackend) => {
+    setPollInboxSaving(true);
+    setPollInboxError(null);
+    try {
+      const data = await setPollInboxBackend(backend);
+      setPollInboxBackendState(data.poll_inbox_backend === 'redis' ? 'redis' : 'neon');
+      setPollInboxRedisConfigured(data.redis_configured === true);
+    } catch (e) {
+      setPollInboxError(e instanceof Error ? e.message : 'Failed to save poll inbox setting');
+    } finally {
+      setPollInboxSaving(false);
+    }
+  };
+
   useEffect(() => {
     if (!unlocked) return;
     fetchHealth();
+    void loadPollInboxBackend();
     const interval = setInterval(fetchHealth, 30_000);
     return () => clearInterval(interval);
-  }, [unlocked, fetchHealth]);
+  }, [unlocked, fetchHealth, loadPollInboxBackend]);
 
   useEffect(() => {
     if (!unlocked) return;
@@ -2942,6 +2981,67 @@ export default function AdminPage() {
           )}
 
           <div className="mt-6 pt-5 border-t border-slate-700/80">
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 shrink-0 rounded-lg flex items-center justify-center bg-sky-500/15 text-sky-400">
+                <Zap className="w-4 h-4" strokeWidth={2} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h3 className="font-semibold text-white text-sm">Web Polls inbox</h3>
+                <p className="text-slate-400 text-sm mt-1">
+                  Soft path writes votes into Neon inbox then drains to counters. Flip to Redis only after
+                  Railway Redis is wired — same project billing as API; keeps big spikes off Neon.
+                </p>
+                {pollInboxError ? (
+                  <p className="mt-2 text-sm text-rose-300">{pollInboxError}</p>
+                ) : null}
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={pollInboxLoading || pollInboxSaving}
+                    onClick={() => void savePollInbox('neon')}
+                    className={`px-3 py-1.5 text-xs rounded-md border font-semibold transition-colors disabled:opacity-50 ${
+                      pollInboxBackend === 'neon'
+                        ? 'border-sky-500 bg-sky-950/40 text-sky-100'
+                        : 'border-slate-600 bg-slate-900 text-slate-300 hover:border-slate-500'
+                    }`}
+                  >
+                    Neon (soft v1)
+                  </button>
+                  <button
+                    type="button"
+                    disabled={pollInboxLoading || pollInboxSaving || !pollInboxRedisConfigured}
+                    onClick={() => void savePollInbox('redis')}
+                    title={
+                      pollInboxRedisConfigured
+                        ? 'Use Railway Redis inbox'
+                        : 'Redis not configured on API yet'
+                    }
+                    className={`px-3 py-1.5 text-xs rounded-md border font-semibold transition-colors disabled:opacity-50 ${
+                      pollInboxBackend === 'redis'
+                        ? 'border-amber-500 bg-amber-950/40 text-amber-100'
+                        : 'border-slate-600 bg-slate-900 text-slate-300 hover:border-slate-500'
+                    }`}
+                  >
+                    Redis (Railway)
+                  </button>
+                  <button
+                    type="button"
+                    disabled={pollInboxLoading || pollInboxSaving}
+                    onClick={() => void loadPollInboxBackend()}
+                    className="px-2.5 py-1.5 text-xs rounded-md bg-slate-700 hover:bg-slate-600 disabled:opacity-50"
+                  >
+                    {pollInboxLoading ? 'Loading…' : 'Refresh'}
+                  </button>
+                  <span className="text-[11px] text-slate-500">
+                    Redis env: {pollInboxRedisConfigured ? 'configured' : 'not set'} · active:{' '}
+                    {pollInboxBackend}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-5 pt-5 border-t border-slate-700/80">
             <div className="flex items-start gap-3">
               <div className="w-9 h-9 shrink-0 rounded-lg flex items-center justify-center bg-sky-500/15 text-sky-400">
                 <Bell className="w-4 h-4" strokeWidth={2} />
