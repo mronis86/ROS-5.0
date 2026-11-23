@@ -2986,7 +2986,7 @@ export default function AdminPage() {
                 <Zap className="w-4 h-4" strokeWidth={2} />
               </div>
               <div className="min-w-0 flex-1">
-                <h3 className="font-semibold text-white text-sm">Web Polls inbox</h3>
+                <h3 className="font-semibold text-white text-sm">Web Polls</h3>
                 <p className="text-slate-400 text-sm mt-1">
                   Soft path writes votes into Neon inbox then drains to counters. Flip to Redis only after
                   Railway Redis is wired — same project billing as API; keeps big spikes off Neon.
@@ -3036,6 +3036,19 @@ export default function AdminPage() {
                     Redis env: {pollInboxRedisConfigured ? 'configured' : 'not set'} · active:{' '}
                     {pollInboxBackend}
                   </span>
+                </div>
+                <div className="mt-4 pt-3 border-t border-slate-700/60">
+                  <p className="text-slate-400 text-sm">
+                    Design lab for poll types, results layouts, surfaces, and ingest limits — not show control.
+                  </p>
+                  <a
+                    href="/poll-samples"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md bg-slate-700 hover:bg-slate-600 text-white transition-colors"
+                  >
+                    Open Poll samples
+                  </a>
                 </div>
               </div>
             </div>
