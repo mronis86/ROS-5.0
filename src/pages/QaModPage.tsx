@@ -263,11 +263,29 @@ export default function QaModPage() {
             </button>
             <button
               type="button"
-              onClick={() =>
+              onClick={() => {
+                let role: string | undefined;
+                try {
+                  role = localStorage.getItem(`userRole_${eventId}`) || undefined;
+                } catch {
+                  /* ignore */
+                }
                 navigate(
-                  `/run-of-show?eventId=${encodeURIComponent(eventId)}&eventName=${encodeURIComponent(eventName)}`
-                )
-              }
+                  `/run-of-show?eventId=${encodeURIComponent(eventId)}&eventName=${encodeURIComponent(eventName)}`,
+                  {
+                    state: {
+                      event: {
+                        id: eventId,
+                        name: eventName || 'Event',
+                        date: new Date().toISOString(),
+                        location: '',
+                        numberOfDays: 1,
+                      },
+                      userRole: role,
+                    },
+                  }
+                );
+              }}
               className="px-3 py-1.5 text-sm rounded bg-slate-700 hover:bg-slate-600"
             >
               Back to ROS

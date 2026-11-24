@@ -1567,13 +1567,32 @@ const RunOfShowPage: React.FC = () => {
   }, [changeLog, pendingChanges]);
 
   
-  // Fallback: Try to get event from localStorage if not in location state
+  // Fallback when opened via ?eventId=… (e.g. Web Polls Back to ROS) without location.state
   if (!event) {
-    const savedEvents = localStorage.getItem('events');
-    if (savedEvents) {
-      const events = JSON.parse(savedEvents);
-      // Get the most recent event as fallback
-      event = events[events.length - 1];
+    const params = new URLSearchParams(location.search);
+    const eid = String(params.get('eventId') || '').trim();
+    const ename = String(params.get('eventName') || '').trim();
+    let savedList: Event[] = [];
+    try {
+      const raw = localStorage.getItem('events');
+      if (raw) savedList = JSON.parse(raw);
+    } catch {
+      savedList = [];
+    }
+    if (eid) {
+      const matched = savedList.find((e) => String(e?.id) === eid);
+      event =
+        matched ||
+        ({
+          id: eid,
+          name: ename || 'Event',
+          date: new Date().toISOString(),
+          location: '',
+          numberOfDays: 1,
+        } as Event);
+    } else if (savedList.length) {
+      // Last resort only when no eventId was provided
+      event = savedList[savedList.length - 1];
     }
   }
 
