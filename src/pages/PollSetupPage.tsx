@@ -15,6 +15,7 @@ import {
 import {
   acquireWebPollDesignLock,
   buildWebPollsCsv,
+  clearWebPollResults,
   createWebPoll,
   downloadTextFile,
   fetchWebPollOverview,
@@ -109,6 +110,7 @@ export default function PollSetupPage() {
     ...DEFAULT_DISPLAY_STYLE,
   }));
   const [statusBusyId, setStatusBusyId] = useState<string | null>(null);
+  const [clearBusyId, setClearBusyId] = useState<string | null>(null);
   const [designPollId, setDesignPollId] = useState<string | null>(null);
   const [designDraft, setDesignDraft] = useState<WebPollDisplayStyle | null>(null);
   const [designBusy, setDesignBusy] = useState(false);
@@ -424,6 +426,29 @@ export default function PollSetupPage() {
       setError(err instanceof Error ? err.message : 'Failed to update poll');
     } finally {
       setStatusBusyId(null);
+    }
+  };
+
+  const clearResults = async (poll: WebPoll) => {
+    if (clearBusyId) return;
+    const received = Number(poll.received_count || 0);
+    const counted = Number(poll.counted_count || 0);
+    const ok = window.confirm(
+      `Clear all results for this poll?\n\n` +
+        `This permanently deletes ${received} received / ${counted} counted vote(s), ` +
+        `empties the inbox (Neon + Redis), and resets option totals to zero.\n\n` +
+        `The poll question, options, and design are kept. This cannot be undone.`
+    );
+    if (!ok) return;
+    setClearBusyId(poll.id);
+    setError(null);
+    try {
+      await clearWebPollResults(poll.id);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to clear results');
+    } finally {
+      setClearBusyId(null);
     }
   };
 
@@ -1216,6 +1241,15 @@ export default function PollSetupPage() {
                                     className="px-2.5 py-1.5 text-xs rounded bg-violet-700 hover:bg-violet-600 font-semibold"
                                   >
                                     Control
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={clearBusyId === poll.id}
+                                    title="Delete all votes and reset counts"
+                                    onClick={() => void clearResults(poll)}
+                                    className="px-2.5 py-1.5 text-xs rounded border border-rose-700/60 text-rose-200 hover:bg-rose-950/50 font-semibold disabled:opacity-40"
+                                  >
+                                    {clearBusyId === poll.id ? 'Clearing…' : 'Clear results'}
                                   </button>
                                 </div>
                                 {!isOpen && !confirmed ? (

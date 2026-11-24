@@ -168,6 +168,7 @@ const {
   ensureWebPollsSchema,
   createPoll: createWebPoll,
   updatePoll: updateWebPoll,
+  clearPollResults: clearWebPollResults,
   listPollsForEvent: listWebPollsForEvent,
   getPollById: getWebPollById,
   getPollByToken: getWebPollByToken,
@@ -8171,6 +8172,18 @@ app.post('/api/web-polls/poll/:pollId/drain', async (req, res) => {
   } catch (error) {
     console.error('[web-polls] drain', error);
     res.status(500).json({ error: error.message || 'Failed to drain inbox' });
+  }
+});
+
+app.post('/api/web-polls/poll/:pollId/clear-results', async (req, res) => {
+  try {
+    await ensureWebPollsSchema(pool);
+    const result = await clearWebPollResults(pool, req.params.pollId);
+    res.json(result);
+  } catch (error) {
+    const status = error.status || 500;
+    if (status >= 500) console.error('[web-polls] clear-results', error);
+    res.status(status).json({ error: error.message || 'Failed to clear results' });
   }
 });
 

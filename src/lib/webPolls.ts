@@ -353,6 +353,22 @@ export async function drainWebPoll(pollId: string, limit = 100) {
   return parseJson(res);
 }
 
+/** Wipe votes / inbox / counters for a poll (keeps question, options, design). */
+export async function clearWebPollResults(pollId: string): Promise<{
+  poll: WebPoll;
+  cleared: boolean;
+  redis_inbox_removed?: number;
+}> {
+  const res = await fetch(
+    `${apiBase()}/api/web-polls/poll/${encodeURIComponent(pollId)}/clear-results`,
+    {
+      method: 'POST',
+      headers: { ...authHeaders(), Accept: 'application/json' },
+    }
+  );
+  return parseJson(res);
+}
+
 export async function fetchWebPollRollup(pollId: string) {
   const res = await fetch(`${apiBase()}/api/web-polls/poll/${encodeURIComponent(pollId)}/rollup`, {
     headers: { ...authHeaders(), Accept: 'application/json' },
