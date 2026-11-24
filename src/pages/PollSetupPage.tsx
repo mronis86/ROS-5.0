@@ -1,11 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Check, Copy, Lock } from 'lucide-react';
+import { Check, Copy, MoreHorizontal } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   downloadWebQaQrPng,
   webQaQrImageUrl,
   type WebQaQrDownloadOptions,
 } from '../lib/webQa';
+import ConfirmModal from '../components/ConfirmModal';
 import WebPollDesignEditor from '../components/WebPollDesignEditor';
 import {
   DEFAULT_DISPLAY_STYLE,
@@ -111,6 +112,8 @@ export default function PollSetupPage() {
   }));
   const [statusBusyId, setStatusBusyId] = useState<string | null>(null);
   const [clearBusyId, setClearBusyId] = useState<string | null>(null);
+  const [clearTarget, setClearTarget] = useState<WebPoll | null>(null);
+  const [menuPollId, setMenuPollId] = useState<string | null>(null);
   const [designPollId, setDesignPollId] = useState<string | null>(null);
   const [designDraft, setDesignDraft] = useState<WebPollDisplayStyle | null>(null);
   const [designBusy, setDesignBusy] = useState(false);
@@ -209,6 +212,7 @@ export default function PollSetupPage() {
     setDesignDraft(null);
     setDesignMsg(null);
     setEditPollId(null);
+    setMenuPollId(null);
     navigate(`/polls-setup?${qs}&cueItemId=${id}`, { replace: true });
   };
 
@@ -429,21 +433,19 @@ export default function PollSetupPage() {
     }
   };
 
-  const clearResults = async (poll: WebPoll) => {
-    if (clearBusyId) return;
-    const received = Number(poll.received_count || 0);
-    const counted = Number(poll.counted_count || 0);
-    const ok = window.confirm(
-      `Clear all results for this poll?\n\n` +
-        `This permanently deletes ${received} received / ${counted} counted vote(s), ` +
-        `empties the inbox (Neon + Redis), and resets option totals to zero.\n\n` +
-        `The poll question, options, and design are kept. This cannot be undone.`
-    );
-    if (!ok) return;
+  const requestClearResults = (poll: WebPoll) => {
+    setMenuPollId(null);
+    setClearTarget(poll);
+  };
+
+  const confirmClearResults = async () => {
+    const poll = clearTarget;
+    if (!poll || clearBusyId) return;
     setClearBusyId(poll.id);
     setError(null);
     try {
       await clearWebPollResults(poll.id);
+      setClearTarget(null);
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to clear results');
@@ -1073,32 +1075,29 @@ export default function PollSetupPage() {
                         const frozen = webPollDesignFrozen(poll);
                         const lockActive = webPollDesignLockActive(poll);
                         const confirmed = Boolean(poll.design_confirmed);
-                        const savedStyle = webPollDisplayStyle(poll);
+                        const menuOpen = menuPollId === poll.id;
+                        const styleLabel =
+                          stylesForPollType(poll.poll_type).find(
+                            (s) => s.id === webPollDisplayStyle(poll).resultStyle
+                          )?.label || webPollDisplayStyle(poll).resultStyle;
                         return (
                           <li
                             key={poll.id}
                             className="rounded-lg border border-slate-700 bg-slate-950/50 overflow-hidden"
                           >
-                            <div className="px-3 py-2.5 flex flex-col sm:flex-row sm:items-center gap-2 justify-between">
-                              <div className="min-w-0">
-                                <div className="flex flex-wrap items-center gap-2 mb-0.5">
+                            <div className="px-3 py-2.5 flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
+                              <div className="min-w-0 flex-1">
+                                <div className="flex flex-wrap items-center gap-1.5 mb-1">
                                   <span
                                     className={`text-[10px] uppercase tracking-wide font-semibold px-2 py-0.5 rounded border ${statusTone(poll.status)}`}
                                   >
                                     {poll.status}
                                   </span>
-                                  <span className="text-[11px] text-slate-500 uppercase">
-                                    {poll.poll_type}
-                                  </span>
-                                  <span className="text-[11px] text-slate-500">
-                                    {stylesForPollType(poll.poll_type).find(
-                                      (s) => s.id === savedStyle.resultStyle
-                                    )?.label || savedStyle.resultStyle}
-                                  </span>
-                                  <span className="text-[11px] text-slate-500 tabular-nums">
-                                    {poll.received_count}/{poll.counted_count} recv/counted
-                                  </span>
-                                  {confirmed ? (
+                                  {frozen ? (
+                                    <span className="text-[10px] uppercase tracking-wide font-semibold px-2 py-0.5 rounded border border-amber-700/50 text-amber-100">
+                                      Locked
+                                    </span>
+                                  ) : confirmed ? (
                                     <span className="text-[10px] uppercase tracking-wide font-semibold px-2 py-0.5 rounded border border-emerald-700/50 text-emerald-300">
                                       Design confirmed
                                     </span>
@@ -1107,6 +1106,9 @@ export default function PollSetupPage() {
                                       Needs design confirmation
                                     </span>
                                   )}
+                                  <span className="text-[11px] text-slate-500 tabular-nums">
+                                    {poll.received_count}/{poll.counted_count}
+                                  </span>
                                   {lockActive && !frozen ? (
                                     <span className="text-[10px] text-sky-300/90">
                                       Editing: {poll.design_lock_name || 'operator'}
@@ -1114,153 +1116,143 @@ export default function PollSetupPage() {
                                   ) : null}
                                 </div>
                                 <p className="font-medium text-white truncate">{poll.question}</p>
-                                <p className="text-[11px] text-slate-500 font-mono truncate">
-                                  {audience}
+                                <p className="text-[11px] text-slate-500 truncate">
+                                  {poll.poll_type} · {styleLabel}
                                 </p>
                               </div>
-                              <div className="flex flex-col items-stretch sm:items-end gap-1.5 shrink-0">
-                                <div className="flex flex-wrap gap-2 justify-end">
+
+                              <div className="flex flex-wrap items-center gap-2 shrink-0 sm:justify-end">
+                                {editing ? (
                                   <button
                                     type="button"
-                                    disabled={frozen && !editing}
-                                    title={
-                                      frozen
-                                        ? 'Content locked while the poll is open. Close voting to edit.'
-                                        : editing
-                                          ? 'Cancel content edit'
-                                          : 'Edit question, type, or options'
-                                    }
                                     onClick={() => openEdit(poll)}
-                                    className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded border font-semibold disabled:cursor-not-allowed ${
-                                      frozen && !editing
-                                        ? 'border-amber-700/60 bg-amber-950/40 text-amber-100'
-                                        : editing
-                                          ? 'border-violet-500 bg-violet-950/40 text-violet-100'
-                                          : 'border-slate-600 text-slate-200 hover:bg-slate-800'
-                                    }`}
+                                    className="px-2.5 py-1.5 text-xs rounded border border-violet-500 bg-violet-950/40 text-violet-100 font-semibold"
                                   >
-                                    {frozen && !editing ? (
-                                      <>
-                                        <Lock className="w-3.5 h-3.5" />
-                                        Edit locked
-                                      </>
-                                    ) : editing ? (
-                                      'Cancel edit'
-                                    ) : (
-                                      'Edit'
-                                    )}
+                                    Cancel edit
                                   </button>
+                                ) : null}
+                                {designing ? (
                                   <button
                                     type="button"
-                                    disabled={frozen && !designing}
-                                    title={
-                                      frozen
-                                        ? 'Design locked while the poll is open. Close voting to edit.'
-                                        : designing
-                                          ? 'Close design editor and release lock'
-                                          : 'Edit design (one editor at a time)'
-                                    }
                                     onClick={() => void openDesign(poll)}
-                                    className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded border font-semibold disabled:cursor-not-allowed ${
-                                      frozen && !designing
-                                        ? 'border-amber-700/60 bg-amber-950/40 text-amber-100'
-                                        : designing
-                                          ? 'border-sky-500 bg-sky-950/40 text-sky-100'
-                                          : 'border-slate-600 text-slate-200 hover:bg-slate-800'
-                                    }`}
+                                    className="px-2.5 py-1.5 text-xs rounded border border-sky-500 bg-sky-950/40 text-sky-100 font-semibold"
                                   >
-                                    {frozen && !designing ? (
-                                      <>
-                                        <Lock className="w-3.5 h-3.5" />
-                                        Design locked
-                                      </>
-                                    ) : designing ? (
-                                      'Close design'
-                                    ) : (
-                                      'Design'
-                                    )}
+                                    Close design
                                   </button>
+                                ) : null}
+                                {!frozen && !designing ? (
                                   <button
                                     type="button"
-                                    disabled={statusBusy || isOpen || !confirmed}
+                                    onClick={() => {
+                                      setMenuPollId(null);
+                                      void openDesign(poll);
+                                    }}
+                                    className="px-2.5 py-1.5 text-xs rounded border border-slate-600 text-slate-200 hover:bg-slate-800 font-semibold"
+                                  >
+                                    Design
+                                  </button>
+                                ) : null}
+                                {isOpen ? (
+                                  <button
+                                    type="button"
+                                    disabled={statusBusy}
+                                    onClick={() => void setPollOpenClosed(poll, 'closed')}
+                                    className="px-2.5 py-1.5 text-xs rounded bg-amber-700 hover:bg-amber-600 text-white font-semibold disabled:opacity-40"
+                                  >
+                                    {statusBusy ? '…' : 'Close'}
+                                  </button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    disabled={statusBusy || !confirmed}
                                     title={
-                                      isOpen
-                                        ? 'Poll is already open'
-                                        : !confirmed
-                                          ? 'Confirm design before opening'
-                                          : 'Open poll for voting'
+                                      !confirmed
+                                        ? 'Confirm design before opening'
+                                        : 'Open poll for voting'
                                     }
                                     onClick={() => void setPollOpenClosed(poll, 'open')}
-                                    className={`px-2.5 py-1.5 text-xs rounded font-semibold disabled:opacity-40 ${
-                                      isOpen
-                                        ? 'bg-emerald-700/60 text-emerald-100'
-                                        : 'bg-emerald-700 hover:bg-emerald-600 text-white'
-                                    }`}
+                                    className="px-2.5 py-1.5 text-xs rounded bg-emerald-700 hover:bg-emerald-600 text-white font-semibold disabled:opacity-40"
                                   >
-                                    {statusBusy && !isOpen ? '…' : 'Open'}
+                                    {statusBusy ? '…' : 'Open'}
                                   </button>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setMenuPollId(null);
+                                    navigate(
+                                      `/polls-control?${qs}&pollId=${encodeURIComponent(poll.id)}`
+                                    );
+                                  }}
+                                  className="px-2.5 py-1.5 text-xs rounded bg-violet-700 hover:bg-violet-600 font-semibold"
+                                >
+                                  Control
+                                </button>
+                                <div className="relative">
                                   <button
                                     type="button"
-                                    disabled={statusBusy || poll.status === 'closed'}
-                                    onClick={() => void setPollOpenClosed(poll, 'closed')}
-                                    className={`px-2.5 py-1.5 text-xs rounded font-semibold disabled:opacity-40 ${
-                                      poll.status === 'closed'
-                                        ? 'bg-amber-800/50 text-amber-100'
-                                        : 'bg-amber-700 hover:bg-amber-600 text-white'
-                                    }`}
-                                  >
-                                    {statusBusy && isOpen ? '…' : 'Close'}
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => void copyLink(poll)}
-                                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded bg-slate-700 hover:bg-slate-600"
-                                  >
-                                    {copiedId === poll.id ? (
-                                      <Check className="w-3.5 h-3.5 text-emerald-400" />
-                                    ) : (
-                                      <Copy className="w-3.5 h-3.5" />
-                                    )}
-                                    {copiedId === poll.id ? 'Copied' : 'Copy link'}
-                                  </button>
-                                  <a
-                                    href={audience}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="px-2.5 py-1.5 text-xs rounded border border-slate-600 text-slate-300 hover:bg-slate-800"
-                                  >
-                                    Audience
-                                  </a>
-                                  <button
-                                    type="button"
+                                    aria-label="More poll actions"
+                                    aria-expanded={menuOpen}
                                     onClick={() =>
-                                      navigate(
-                                        `/polls-control?${qs}&pollId=${encodeURIComponent(poll.id)}`
-                                      )
+                                      setMenuPollId((id) => (id === poll.id ? null : poll.id))
                                     }
-                                    className="px-2.5 py-1.5 text-xs rounded bg-violet-700 hover:bg-violet-600 font-semibold"
+                                    className={`p-1.5 rounded border ${
+                                      menuOpen
+                                        ? 'border-slate-500 bg-slate-800 text-white'
+                                        : 'border-slate-600 text-slate-300 hover:bg-slate-800'
+                                    }`}
                                   >
-                                    Control
+                                    <MoreHorizontal className="w-4 h-4" />
                                   </button>
-                                  <button
-                                    type="button"
-                                    disabled={clearBusyId === poll.id}
-                                    title="Delete all votes and reset counts"
-                                    onClick={() => void clearResults(poll)}
-                                    className="px-2.5 py-1.5 text-xs rounded border border-rose-700/60 text-rose-200 hover:bg-rose-950/50 font-semibold disabled:opacity-40"
-                                  >
-                                    {clearBusyId === poll.id ? 'Clearing…' : 'Clear results'}
-                                  </button>
+                                  {menuOpen ? (
+                                    <div className="absolute right-0 top-full mt-1 z-30 min-w-[11rem] rounded-lg border border-slate-600 bg-slate-900 shadow-xl py-1">
+                                      {!frozen && !editing ? (
+                                        <button
+                                          type="button"
+                                          className="w-full text-left px-3 py-2 text-xs text-slate-200 hover:bg-slate-800"
+                                          onClick={() => {
+                                            setMenuPollId(null);
+                                            openEdit(poll);
+                                          }}
+                                        >
+                                          Edit question / type
+                                        </button>
+                                      ) : null}
+                                      <button
+                                        type="button"
+                                        className="w-full text-left px-3 py-2 text-xs text-slate-200 hover:bg-slate-800 inline-flex items-center gap-2"
+                                        onClick={() => {
+                                          setMenuPollId(null);
+                                          void copyLink(poll);
+                                        }}
+                                      >
+                                        {copiedId === poll.id ? (
+                                          <Check className="w-3.5 h-3.5 text-emerald-400" />
+                                        ) : (
+                                          <Copy className="w-3.5 h-3.5" />
+                                        )}
+                                        {copiedId === poll.id ? 'Copied' : 'Copy audience link'}
+                                      </button>
+                                      <a
+                                        href={audience}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="block px-3 py-2 text-xs text-slate-200 hover:bg-slate-800"
+                                        onClick={() => setMenuPollId(null)}
+                                      >
+                                        Open audience
+                                      </a>
+                                      <button
+                                        type="button"
+                                        disabled={clearBusyId === poll.id}
+                                        className="w-full text-left px-3 py-2 text-xs text-rose-300 hover:bg-rose-950/40 disabled:opacity-40"
+                                        onClick={() => requestClearResults(poll)}
+                                      >
+                                        Clear results…
+                                      </button>
+                                    </div>
+                                  ) : null}
                                 </div>
-                                {!isOpen && !confirmed ? (
-                                  <p className="text-[11px] text-amber-200/90 sm:text-right">
-                                    Confirm design before opening
-                                  </p>
-                                ) : frozen ? (
-                                  <p className="text-[11px] text-slate-500 sm:text-right">
-                                    Design locked while open — Close to edit look again
-                                  </p>
-                                ) : null}
                               </div>
                             </div>
                             {editing ? (
@@ -1452,6 +1444,23 @@ export default function PollSetupPage() {
           </div>
         </div>
       </main>
+
+      <ConfirmModal
+        isOpen={Boolean(clearTarget)}
+        onClose={() => {
+          if (!clearBusyId) setClearTarget(null);
+        }}
+        onConfirm={() => void confirmClearResults()}
+        title="Clear all poll results?"
+        message={
+          clearTarget
+            ? `This permanently deletes ${Number(clearTarget.received_count || 0)} received / ${Number(clearTarget.counted_count || 0)} counted vote(s), empties the inbox (Neon + Redis), and resets option totals to zero.\n\nQuestion, options, and design are kept. This cannot be undone.`
+            : ''
+        }
+        confirmLabel={clearBusyId ? 'Clearing…' : 'Clear results'}
+        cancelLabel="Keep results"
+        confirmClassName="bg-rose-700 hover:bg-rose-600"
+      />
     </div>
   );
 }

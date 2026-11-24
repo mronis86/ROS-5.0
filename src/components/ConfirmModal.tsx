@@ -26,7 +26,7 @@ const ConfirmModal: React.FC<ConfirmModalProps> = ({
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[9999]">
       <div className="bg-slate-800 p-6 rounded-xl border border-slate-600 shadow-xl max-w-md mx-4">
         <h3 className="text-white text-xl font-semibold mb-2">{title}</h3>
-        <p className="text-slate-300 mb-6">{message}</p>
+        <p className="text-slate-300 mb-6 whitespace-pre-line">{message}</p>
         <div className="flex gap-3 justify-center">
           <button
             onClick={onClose}
