@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Check, ChevronDown, Copy } from 'lucide-react';
+import { Check, Copy } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   downloadWebQaQrPng,
@@ -113,7 +113,6 @@ export default function PollSetupPage() {
   const [statusBusyId, setStatusBusyId] = useState<string | null>(null);
   const [clearBusyId, setClearBusyId] = useState<string | null>(null);
   const [clearTarget, setClearTarget] = useState<WebPoll | null>(null);
-  const [menuPollId, setMenuPollId] = useState<string | null>(null);
   const [designPollId, setDesignPollId] = useState<string | null>(null);
   const [designDraft, setDesignDraft] = useState<WebPollDisplayStyle | null>(null);
   const [designBusy, setDesignBusy] = useState(false);
@@ -212,7 +211,6 @@ export default function PollSetupPage() {
     setDesignDraft(null);
     setDesignMsg(null);
     setEditPollId(null);
-    setMenuPollId(null);
     navigate(`/polls-setup?${qs}&cueItemId=${id}`, { replace: true });
   };
 
@@ -434,7 +432,6 @@ export default function PollSetupPage() {
   };
 
   const requestClearResults = (poll: WebPoll) => {
-    setMenuPollId(null);
     setClearTarget(poll);
   };
 
@@ -1075,7 +1072,6 @@ export default function PollSetupPage() {
                         const frozen = webPollDesignFrozen(poll);
                         const lockActive = webPollDesignLockActive(poll);
                         const confirmed = Boolean(poll.design_confirmed);
-                        const menuOpen = menuPollId === poll.id;
                         const styleLabel =
                           stylesForPollType(poll.poll_type).find(
                             (s) => s.id === webPollDisplayStyle(poll).resultStyle
@@ -1130,6 +1126,14 @@ export default function PollSetupPage() {
                                   >
                                     Cancel edit
                                   </button>
+                                ) : !frozen ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => openEdit(poll)}
+                                    className="px-2.5 py-1.5 text-xs rounded border border-slate-600 text-slate-200 hover:bg-slate-800 font-semibold"
+                                  >
+                                    Edit
+                                  </button>
                                 ) : null}
                                 {designing ? (
                                   <button
@@ -1139,14 +1143,10 @@ export default function PollSetupPage() {
                                   >
                                     Close design
                                   </button>
-                                ) : null}
-                                {!frozen && !designing ? (
+                                ) : !frozen ? (
                                   <button
                                     type="button"
-                                    onClick={() => {
-                                      setMenuPollId(null);
-                                      void openDesign(poll);
-                                    }}
+                                    onClick={() => void openDesign(poll)}
                                     className="px-2.5 py-1.5 text-xs rounded border border-slate-600 text-slate-200 hover:bg-slate-800 font-semibold"
                                   >
                                     Design
@@ -1176,68 +1176,6 @@ export default function PollSetupPage() {
                                     {statusBusy ? '…' : 'Open'}
                                   </button>
                                 )}
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setMenuPollId(null);
-                                    navigate(
-                                      `/polls-control?${qs}&pollId=${encodeURIComponent(poll.id)}`
-                                    );
-                                  }}
-                                  className="px-2.5 py-1.5 text-xs rounded bg-violet-700 hover:bg-violet-600 font-semibold"
-                                >
-                                  Control
-                                </button>
-                                <button
-                                  type="button"
-                                  aria-expanded={menuOpen}
-                                  onClick={() =>
-                                    setMenuPollId((id) => (id === poll.id ? null : poll.id))
-                                  }
-                                  className={`inline-flex items-center gap-1 px-2.5 py-1.5 text-xs rounded border font-semibold ${
-                                    menuOpen
-                                      ? 'border-slate-500 bg-slate-800 text-white'
-                                      : 'border-slate-600 text-slate-300 hover:bg-slate-800'
-                                  }`}
-                                >
-                                  More
-                                  <ChevronDown
-                                    className={`w-3.5 h-3.5 transition-transform ${menuOpen ? 'rotate-180' : ''}`}
-                                  />
-                                </button>
-                              </div>
-                            </div>
-
-                            {menuOpen ? (
-                              <div className="border-t border-slate-800 px-3 py-2.5 flex flex-wrap gap-2 bg-slate-950/70">
-                                {!frozen && !editing ? (
-                                  <button
-                                    type="button"
-                                    className="px-2.5 py-1.5 text-xs rounded border border-slate-600 text-slate-200 hover:bg-slate-800"
-                                    onClick={() => {
-                                      setMenuPollId(null);
-                                      openEdit(poll);
-                                    }}
-                                  >
-                                    Edit question / type
-                                  </button>
-                                ) : (
-                                  <span className="px-2.5 py-1.5 text-xs text-slate-500 self-center">
-                                    Edit locked while open
-                                  </span>
-                                )}
-                                <button
-                                  type="button"
-                                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded border border-slate-600 text-slate-200 hover:bg-slate-800"
-                                  onClick={() => void copyLink(poll)}
-                                >
-                                  {copiedId === poll.id ? (
-                                    <Check className="w-3.5 h-3.5 text-emerald-400" />
-                                  ) : (
-                                    <Copy className="w-3.5 h-3.5" />
-                                  )}
-                                  {copiedId === poll.id ? 'Copied' : 'Copy link'}
-                                </button>
                                 <a
                                   href={audience}
                                   target="_blank"
@@ -1248,14 +1186,27 @@ export default function PollSetupPage() {
                                 </a>
                                 <button
                                   type="button"
-                                  disabled={clearBusyId === poll.id}
-                                  className="px-2.5 py-1.5 text-xs rounded border border-rose-700/60 text-rose-200 hover:bg-rose-950/50 font-semibold disabled:opacity-40"
-                                  onClick={() => requestClearResults(poll)}
+                                  title="Copy audience link"
+                                  onClick={() => void copyLink(poll)}
+                                  className="p-1.5 rounded border border-slate-600 text-slate-300 hover:bg-slate-800"
                                 >
-                                  Clear results…
+                                  {copiedId === poll.id ? (
+                                    <Check className="w-3.5 h-3.5 text-emerald-400" />
+                                  ) : (
+                                    <Copy className="w-3.5 h-3.5" />
+                                  )}
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={clearBusyId === poll.id}
+                                  title="Clear all votes for this poll"
+                                  onClick={() => requestClearResults(poll)}
+                                  className="px-2.5 py-1.5 text-xs rounded border border-rose-700/60 text-rose-200 hover:bg-rose-950/50 font-semibold disabled:opacity-40"
+                                >
+                                  {clearBusyId === poll.id ? 'Clearing…' : 'Clear'}
                                 </button>
                               </div>
-                            ) : null}
+                            </div>
                             {editing ? (
                               <form
                                 onSubmit={(e) => void onSaveEdit(e, poll)}
