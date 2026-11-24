@@ -57,6 +57,7 @@ import PollControlPage from './pages/PollControlPage';
 import PollAudiencePage from './pages/PollAudiencePage';
 import PollEventAudiencePage from './pages/PollEventAudiencePage';
 import PollSurfacePage from './pages/PollSurfacePage';
+import EventEngagementPage from './pages/EventEngagementPage';
 import AdminPage from './pages/AdminPage';
 import PinNotesPopoutPage from './pages/PinNotesPopoutPage';
 import OperatorTimerPopoutPage from './pages/OperatorTimerPopoutPage';
@@ -105,6 +106,7 @@ function AppContent() {
     location.pathname === '/qa-mod/read';
   const isQaMod = isQaModManage || isQaModTools;
   const isQaAudience = location.pathname.startsWith('/qa/');
+  const isEngagementAudience = location.pathname.startsWith('/engage/');
   const isPollSamples = location.pathname === '/poll-samples';
   const isPollSetup = location.pathname === '/polls-setup';
   const isPollControl = location.pathname === '/polls-control';
@@ -113,7 +115,8 @@ function AppContent() {
     location.pathname.startsWith('/polls/') ||
     location.pathname.startsWith('/poll-surface/');
   const isPollManage = isPollSetup || isPollControl;
-  const isPollPages = isPollSamples || isPollManage || isPollAudience;
+  const isPollPages =
+    isPollSamples || isPollManage || isPollAudience || isEngagementAudience;
   const isOperatorCueDisplay = location.pathname === '/operator-cue-display';
   const isScriptsFollow = location.pathname === '/scripts-follow';
   const isTeleprompter = location.pathname === '/teleprompter';
@@ -197,7 +200,7 @@ function AppContent() {
       {/* Render AppHeader outside AuthGuard for pages that need authentication */}
       {!isFullScreenTimer && !isPinNotesPopout && !isOperatorTimerPopout && !isGreenRoom && !isPhotoView && !isDirectorView && !isDirectorControl && !isMicManager && !isQaMod && !isOperatorCueDisplay && !isScriptsFollow && !isTeleprompter && !isCueCards && !isPowerPoint && !isGoogleSheets && !isLocalXML && !isNetlifyXML && !isAdmin && !isQuickMode && !isComparison && !isResetPassword && !isAccessPortal && !isGuestEvent && !isMeetingHubPublic && !isStreamRequest && !isTraining && !isLedOutput && !isUltritouchHealth && !isStreamGuide && !isReports && !isQaAudience && !isPollPages && <AppHeader />}
       
-      {!isPinNotesPopout && !isOperatorTimerPopout && !isComparison && !isResetPassword && !isAccessPortal && !isGuestEvent && !isMeetingHubPublic && !isStreamRequest && !isTraining && !isNetlifyXML && !isLocalXML && !isAdmin && !isClock && !isDsmClock && !isGreenRoom && !isQaAudience && !isQaModTools && !isPollSamples && !isPollAudience && (
+      {!isPinNotesPopout && !isOperatorTimerPopout && !isComparison && !isResetPassword && !isAccessPortal && !isGuestEvent && !isMeetingHubPublic && !isStreamRequest && !isTraining && !isNetlifyXML && !isLocalXML && !isAdmin && !isClock && !isDsmClock && !isGreenRoom && !isQaAudience && !isEngagementAudience && !isQaModTools && !isPollSamples && !isPollAudience && (
         <AuthGuard>
           <div className="min-h-screen bg-slate-900">
           <Routes>
@@ -263,6 +266,7 @@ function AppContent() {
         <Route path="/qa-mod/active" element={<QaActiveModPage />} />
         <Route path="/qa-mod/select" element={<QaSelectPage />} />
         <Route path="/qa-mod/read" element={<QaReadPage />} />
+        <Route path="/engage/:token" element={<EventEngagementPage />} />
         <Route path="/poll/:token" element={<PollAudiencePage />} />
         <Route path="/polls/:token" element={<PollEventAudiencePage />} />
         <Route path="/poll-surface/:token/:surface" element={<PollSurfacePage />} />

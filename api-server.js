@@ -190,6 +190,12 @@ const {
   clientIp: webPollsClientIp,
 } = require('./lib/web-polls');
 const {
+  ensureEngagementSchema,
+  getOrCreateEngagementSession,
+  rotateEngagementSessionToken,
+  getPublicEngagement,
+} = require('./lib/web-engagement');
+const {
   isMissingQmOpTableError,
   ensureQmOpLinkSchema,
   assertQuickModeEvent,
@@ -8277,6 +8283,53 @@ app.get('/api/web-polls/public-event/:token', async (req, res) => {
     const status = error.status || 500;
     if (status >= 500) console.error('[web-polls] public event', error);
     res.status(status).json({ error: error.message || 'Failed to load event polls' });
+  }
+});
+
+// Per-event engagement (Q&A + Polls under one audience QR)
+app.get('/api/engagement/:eventId/session', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    if (!eventId) return res.status(400).json({ error: 'eventId is required' });
+    await ensureEngagementSchema(pool);
+    const session = await getOrCreateEngagementSession(
+      pool,
+      eventId,
+      req.query?.title || req.body?.title
+    );
+    res.json({ session });
+  } catch (error) {
+    const status = error.status || 500;
+    if (status >= 500) console.error('[engagement] session', error);
+    res.status(status).json({ error: error.message || 'Failed to load engagement session' });
+  }
+});
+
+app.post('/api/engagement/:eventId/session/rotate', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    if (!eventId) return res.status(400).json({ error: 'eventId is required' });
+    await ensureEngagementSchema(pool);
+    const session = await rotateEngagementSessionToken(pool, eventId);
+    res.json({ session });
+  } catch (error) {
+    const status = error.status || 500;
+    if (status >= 500) console.error('[engagement] rotate', error);
+    res.status(status).json({ error: error.message || 'Failed to rotate engagement link' });
+  }
+});
+
+app.get('/api/engagement/public/:token', async (req, res) => {
+  try {
+    const token = String(req.params.token || '').trim();
+    if (!token) return res.status(400).json({ error: 'token is required' });
+    await ensureEngagementSchema(pool);
+    const data = await getPublicEngagement(pool, token);
+    res.json(data);
+  } catch (error) {
+    const status = error.status || 500;
+    if (status >= 500) console.error('[engagement] public', error);
+    res.status(status).json({ error: error.message || 'Failed to load engagement' });
   }
 });
 

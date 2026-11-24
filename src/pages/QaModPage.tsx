@@ -7,14 +7,18 @@ import {
   downloadWebQaQrPng,
   fetchWebQaOverview,
   fetchWebQaQuestions,
-  rotateWebQaSession,
-  webQaAudienceAbsoluteUrl,
   webQaActiveCsvUrl,
   webQaQueueCsvUrl,
   webQaQrImageUrl,
   type WebQaOverview,
   type WebQaQrDownloadOptions,
 } from '../lib/webQa';
+import {
+  fetchEngagementSession,
+  rotateEngagementSession,
+  webEngagementAudienceUrl,
+  type EngagementSession,
+} from '../lib/webEngagement';
 
 type QrBgMode = 'white' | 'transparent' | 'custom';
 
@@ -26,6 +30,7 @@ export default function QaModPage() {
   const eventName = params.get('eventName') || 'Event';
 
   const [overview, setOverview] = useState<WebQaOverview | null>(null);
+  const [engageSession, setEngageSession] = useState<EngagementSession | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -49,8 +54,8 @@ export default function QaModPage() {
     [eventId, eventName]
   );
 
-  const audienceUrl = overview?.session
-    ? webQaAudienceAbsoluteUrl(overview.session.public_token)
+  const audienceUrl = engageSession?.public_token
+    ? webEngagementAudienceUrl(engageSession.public_token)
     : '';
   const queueCsvUrl = eventId ? webQaQueueCsvUrl(eventId) : '';
   const activeCsvUrl = eventId ? webQaActiveCsvUrl(eventId) : '';
@@ -94,10 +99,16 @@ export default function QaModPage() {
     }
     try {
       setError(null);
-      const data = await fetchWebQaOverview(eventId, {
-        title: eventName !== 'Event' ? eventName : undefined,
-      });
+      const [data, engage] = await Promise.all([
+        fetchWebQaOverview(eventId, {
+          title: eventName !== 'Event' ? eventName : undefined,
+        }),
+        fetchEngagementSession(eventId, {
+          title: eventName !== 'Event' ? eventName : undefined,
+        }),
+      ]);
       setOverview(data);
+      setEngageSession(engage);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load Q&A management');
     } finally {
@@ -120,7 +131,7 @@ export default function QaModPage() {
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1600);
     } catch {
-      window.prompt('Copy this Q&A link:', audienceUrl);
+      window.prompt('Copy this engagement link:', audienceUrl);
     }
   };
 
@@ -161,14 +172,14 @@ export default function QaModPage() {
     if (!eventId) return;
     if (
       !window.confirm(
-        'Generate a new audience link? The old QR / URL will stop working. Existing questions stay.'
+        'Generate a new audience link? The old QR / URL will stop working for both Q&A and polls. Existing questions stay.'
       )
     ) {
       return;
     }
     try {
-      await rotateWebQaSession(eventId);
-      await load();
+      const next = await rotateEngagementSession(eventId);
+      setEngageSession(next);
     } catch (e) {
       alert(e instanceof Error ? e.message : 'Could not rotate link');
     }
@@ -184,7 +195,11 @@ export default function QaModPage() {
         .replace(/-+/g, '-')
         .replace(/^-|-$/g, '')
         .slice(0, 40);
-      await downloadWebQaQrPng(audienceUrl, `web-qa-qr-${safeName || 'event'}-${stamp}.png`, qrDownloadOpts);
+      await downloadWebQaQrPng(
+        audienceUrl,
+        `engagement-qr-${safeName || 'event'}-${stamp}.png`,
+        qrDownloadOpts
+      );
     } catch (e) {
       alert(e instanceof Error ? e.message : 'Could not download QR');
     } finally {
@@ -308,14 +323,14 @@ export default function QaModPage() {
             <div>
               <h2 className="text-sm font-semibold text-slate-200 mb-1">Audience QR</h2>
               <p className="text-xs text-slate-400 mb-2">
-                Unique per event. Scan to open the submit page.
+                One link per event. Shows Q&A and/or an open poll for the live cue.
               </p>
               <div className="flex items-start gap-3">
                 {qrUrl ? (
                   <div className="rounded-md bg-white p-1.5 shrink-0">
                     <img
                       src={qrUrl}
-                      alt="Q&A audience QR code"
+                      alt="Event engagement QR code"
                       width={112}
                       height={112}
                       className="block w-28 h-28"

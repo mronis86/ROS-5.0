@@ -21,7 +21,6 @@ import {
   downloadTextFile,
   fetchWebPollOverview,
   releaseWebPollDesignLock,
-  rotateWebPollSession,
   setWebPollStatus,
   updateWebPoll,
   updateWebPollDisplayStyle,
@@ -29,12 +28,17 @@ import {
   webPollDesignFrozen,
   webPollDesignLockActive,
   webPollDisplayStyle,
-  webPollEventAudienceUrl,
   type WebPoll,
   type WebPollCueSummary,
   type WebPollOverview,
   type WebPollType,
 } from '../lib/webPolls';
+import {
+  fetchEngagementSession,
+  rotateEngagementSession,
+  webEngagementAudienceUrl,
+  type EngagementSession,
+} from '../lib/webEngagement';
 
 type QrBgMode = 'white' | 'transparent' | 'custom';
 
@@ -81,6 +85,7 @@ export default function PollSetupPage() {
   );
 
   const [overview, setOverview] = useState<WebPollOverview | null>(null);
+  const [engageSession, setEngageSession] = useState<EngagementSession | null>(null);
   const [selectedCueId, setSelectedCueId] = useState<number | null>(
     Number.isFinite(cueFromUrl) && cueFromUrl > 0 ? cueFromUrl : null
   );
@@ -133,8 +138,14 @@ export default function PollSetupPage() {
     }
     try {
       setError(null);
-      const data = await fetchWebPollOverview(eventId);
+      const [data, engage] = await Promise.all([
+        fetchWebPollOverview(eventId),
+        fetchEngagementSession(eventId, {
+          title: eventName !== 'Event' ? eventName : undefined,
+        }),
+      ]);
       setOverview(data);
+      setEngageSession(engage);
       setSelectedCueId((prev) => {
         if (prev && data.poll_cues.some((c) => c.id === prev)) return prev;
         if (Number.isFinite(cueFromUrl) && data.poll_cues.some((c) => c.id === cueFromUrl)) {
@@ -147,7 +158,7 @@ export default function PollSetupPage() {
     } finally {
       setLoading(false);
     }
-  }, [eventId, cueFromUrl]);
+  }, [eventId, cueFromUrl, eventName]);
 
   useEffect(() => {
     void load();
@@ -173,8 +184,8 @@ export default function PollSetupPage() {
 
   const cuePolls: WebPoll[] = selectedCue?.polls || [];
 
-  const eventAudienceUrl = overview?.session?.public_token
-    ? webPollEventAudienceUrl(overview.session.public_token)
+  const eventAudienceUrl = engageSession?.public_token
+    ? webEngagementAudienceUrl(engageSession.public_token)
     : '';
   const qrUrl = eventAudienceUrl ? webQaQrImageUrl(eventAudienceUrl, 140) : '';
 
@@ -482,14 +493,20 @@ export default function PollSetupPage() {
 
   const rotateQr = async () => {
     if (!eventId || rotateBusy) return;
-    if (!window.confirm('Generate a new audience QR / link? The old QR will stop working.')) return;
+    if (
+      !window.confirm(
+        'Generate a new audience QR / link? The old QR will stop working for both polls and Q&A.'
+      )
+    ) {
+      return;
+    }
     setRotateBusy(true);
     setError(null);
     try {
-      await rotateWebPollSession(eventId);
-      await load();
+      const next = await rotateEngagementSession(eventId);
+      setEngageSession(next);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not rotate poll link');
+      setError(e instanceof Error ? e.message : 'Could not rotate engagement link');
     } finally {
       setRotateBusy(false);
     }
@@ -507,7 +524,7 @@ export default function PollSetupPage() {
         .slice(0, 40);
       await downloadWebQaQrPng(
         eventAudienceUrl,
-        `web-polls-qr-${safeName || 'event'}-${stamp}.png`,
+        `engagement-qr-${safeName || 'event'}-${stamp}.png`,
         qrDownloadOpts
       );
     } catch (e) {
@@ -609,14 +626,14 @@ export default function PollSetupPage() {
             <div>
               <h2 className="text-sm font-semibold text-slate-200 mb-1">Audience QR</h2>
               <p className="text-xs text-slate-400 mb-2">
-                Unique per event. Scan to open whichever poll is currently open.
+                One link per event. Shows the open poll and/or Q&A for the live cue.
               </p>
               <div className="flex items-start gap-3">
                 {qrUrl ? (
                   <div className="rounded-md bg-white p-1.5 shrink-0">
                     <img
                       src={qrUrl}
-                      alt="Poll audience QR code"
+                      alt="Event engagement QR code"
                       width={112}
                       height={112}
                       className="block w-28 h-28"
