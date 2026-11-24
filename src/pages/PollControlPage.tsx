@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Check, Copy, ExternalLink } from 'lucide-react';
+import { Check, Copy, ExternalLink, Lock } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import WebPollDesignEditor from '../components/WebPollDesignEditor';
 import type { WebPollDisplayStyle } from '../lib/webPollDisplayStyle';
@@ -422,6 +422,13 @@ export default function PollControlPage() {
                     <button
                       type="button"
                       disabled={designFrozen}
+                      title={
+                        designFrozen
+                          ? 'Design locked while the poll is open. Close voting in Setup to edit.'
+                          : showDesign
+                            ? 'Hide design editor and release lock'
+                            : 'Edit design (one editor at a time)'
+                      }
                       onClick={() => {
                         void (async () => {
                           if (!poll || designFrozen) return;
@@ -445,18 +452,33 @@ export default function PollControlPage() {
                           }
                         })();
                       }}
-                      className="px-2.5 py-1.5 text-xs rounded border border-slate-600 text-slate-300 hover:bg-slate-800 disabled:opacity-40"
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded border font-semibold disabled:cursor-not-allowed ${
+                        designFrozen
+                          ? 'border-amber-700/60 bg-amber-950/40 text-amber-100'
+                          : 'border-slate-600 text-slate-300 hover:bg-slate-800'
+                      }`}
                     >
-                      {showDesign ? 'Hide editor' : 'Edit design'}
+                      {designFrozen ? (
+                        <>
+                          <Lock className="w-3.5 h-3.5" />
+                          Design locked
+                        </>
+                      ) : showDesign ? (
+                        'Hide editor'
+                      ) : (
+                        'Edit design'
+                      )}
                     </button>
-                    <button
-                      type="button"
-                      disabled={designBusy || !showDesign || designFrozen}
-                      onClick={() => void saveDesign()}
-                      className="px-3 py-1.5 text-xs rounded bg-violet-600 hover:bg-violet-500 disabled:opacity-50 font-semibold"
-                    >
-                      {designBusy ? 'Saving…' : 'Save design'}
-                    </button>
+                    {!designFrozen ? (
+                      <button
+                        type="button"
+                        disabled={designBusy || !showDesign}
+                        onClick={() => void saveDesign()}
+                        className="px-3 py-1.5 text-xs rounded bg-violet-600 hover:bg-violet-500 disabled:opacity-50 font-semibold"
+                      >
+                        {designBusy ? 'Saving…' : 'Save design'}
+                      </button>
+                    ) : null}
                     {designMsg ? (
                       <span className="text-xs text-emerald-300">{designMsg}</span>
                     ) : null}

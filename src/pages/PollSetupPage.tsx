@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Check, Copy } from 'lucide-react';
+import { Check, Copy, Lock } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   downloadWebQaQrPng,
@@ -995,90 +995,116 @@ export default function PollSetupPage() {
                                       Editing: {poll.design_lock_name || 'operator'}
                                     </span>
                                   ) : null}
-                                  {frozen ? (
-                                    <span className="text-[10px] text-slate-400">
-                                      Design frozen
-                                    </span>
-                                  ) : null}
                                 </div>
                                 <p className="font-medium text-white truncate">{poll.question}</p>
                                 <p className="text-[11px] text-slate-500 font-mono truncate">
                                   {audience}
                                 </p>
                               </div>
-                              <div className="flex flex-wrap gap-2 shrink-0">
-                                <button
-                                  type="button"
-                                  disabled={frozen && !designing}
-                                  onClick={() => void openDesign(poll)}
-                                  className={`px-2.5 py-1.5 text-xs rounded border font-semibold disabled:opacity-40 ${
-                                    designing
-                                      ? 'border-sky-500 bg-sky-950/40 text-sky-100'
-                                      : 'border-slate-600 text-slate-200 hover:bg-slate-800'
-                                  }`}
-                                >
-                                  {designing ? 'Close design' : 'Design'}
-                                </button>
-                                <button
-                                  type="button"
-                                  disabled={statusBusy || isOpen || !confirmed}
-                                  title={
-                                    !confirmed && !isOpen
-                                      ? 'Confirm design before opening'
-                                      : undefined
-                                  }
-                                  onClick={() => void setPollOpenClosed(poll, 'open')}
-                                  className={`px-2.5 py-1.5 text-xs rounded font-semibold disabled:opacity-40 ${
-                                    isOpen
-                                      ? 'bg-emerald-700/60 text-emerald-100'
-                                      : 'bg-emerald-700 hover:bg-emerald-600 text-white'
-                                  }`}
-                                >
-                                  {statusBusy && !isOpen ? '…' : 'Open'}
-                                </button>
-                                <button
-                                  type="button"
-                                  disabled={statusBusy || poll.status === 'closed'}
-                                  onClick={() => void setPollOpenClosed(poll, 'closed')}
-                                  className={`px-2.5 py-1.5 text-xs rounded font-semibold disabled:opacity-40 ${
-                                    poll.status === 'closed'
-                                      ? 'bg-amber-800/50 text-amber-100'
-                                      : 'bg-amber-700 hover:bg-amber-600 text-white'
-                                  }`}
-                                >
-                                  {statusBusy && isOpen ? '…' : 'Close'}
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => void copyLink(poll)}
-                                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded bg-slate-700 hover:bg-slate-600"
-                                >
-                                  {copiedId === poll.id ? (
-                                    <Check className="w-3.5 h-3.5 text-emerald-400" />
-                                  ) : (
-                                    <Copy className="w-3.5 h-3.5" />
-                                  )}
-                                  {copiedId === poll.id ? 'Copied' : 'Copy link'}
-                                </button>
-                                <a
-                                  href={audience}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="px-2.5 py-1.5 text-xs rounded border border-slate-600 text-slate-300 hover:bg-slate-800"
-                                >
-                                  Audience
-                                </a>
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    navigate(
-                                      `/polls-control?${qs}&pollId=${encodeURIComponent(poll.id)}`
-                                    )
-                                  }
-                                  className="px-2.5 py-1.5 text-xs rounded bg-violet-700 hover:bg-violet-600 font-semibold"
-                                >
-                                  Control
-                                </button>
+                              <div className="flex flex-col items-stretch sm:items-end gap-1.5 shrink-0">
+                                <div className="flex flex-wrap gap-2 justify-end">
+                                  <button
+                                    type="button"
+                                    disabled={frozen && !designing}
+                                    title={
+                                      frozen
+                                        ? 'Design locked while the poll is open. Close voting to edit.'
+                                        : designing
+                                          ? 'Close design editor and release lock'
+                                          : 'Edit design (one editor at a time)'
+                                    }
+                                    onClick={() => void openDesign(poll)}
+                                    className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded border font-semibold disabled:cursor-not-allowed ${
+                                      frozen && !designing
+                                        ? 'border-amber-700/60 bg-amber-950/40 text-amber-100'
+                                        : designing
+                                          ? 'border-sky-500 bg-sky-950/40 text-sky-100'
+                                          : 'border-slate-600 text-slate-200 hover:bg-slate-800'
+                                    }`}
+                                  >
+                                    {frozen && !designing ? (
+                                      <>
+                                        <Lock className="w-3.5 h-3.5" />
+                                        Design locked
+                                      </>
+                                    ) : designing ? (
+                                      'Close design'
+                                    ) : (
+                                      'Design'
+                                    )}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={statusBusy || isOpen || !confirmed}
+                                    title={
+                                      isOpen
+                                        ? 'Poll is already open'
+                                        : !confirmed
+                                          ? 'Confirm design before opening'
+                                          : 'Open poll for voting'
+                                    }
+                                    onClick={() => void setPollOpenClosed(poll, 'open')}
+                                    className={`px-2.5 py-1.5 text-xs rounded font-semibold disabled:opacity-40 ${
+                                      isOpen
+                                        ? 'bg-emerald-700/60 text-emerald-100'
+                                        : 'bg-emerald-700 hover:bg-emerald-600 text-white'
+                                    }`}
+                                  >
+                                    {statusBusy && !isOpen ? '…' : 'Open'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={statusBusy || poll.status === 'closed'}
+                                    onClick={() => void setPollOpenClosed(poll, 'closed')}
+                                    className={`px-2.5 py-1.5 text-xs rounded font-semibold disabled:opacity-40 ${
+                                      poll.status === 'closed'
+                                        ? 'bg-amber-800/50 text-amber-100'
+                                        : 'bg-amber-700 hover:bg-amber-600 text-white'
+                                    }`}
+                                  >
+                                    {statusBusy && isOpen ? '…' : 'Close'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => void copyLink(poll)}
+                                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded bg-slate-700 hover:bg-slate-600"
+                                  >
+                                    {copiedId === poll.id ? (
+                                      <Check className="w-3.5 h-3.5 text-emerald-400" />
+                                    ) : (
+                                      <Copy className="w-3.5 h-3.5" />
+                                    )}
+                                    {copiedId === poll.id ? 'Copied' : 'Copy link'}
+                                  </button>
+                                  <a
+                                    href={audience}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="px-2.5 py-1.5 text-xs rounded border border-slate-600 text-slate-300 hover:bg-slate-800"
+                                  >
+                                    Audience
+                                  </a>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      navigate(
+                                        `/polls-control?${qs}&pollId=${encodeURIComponent(poll.id)}`
+                                      )
+                                    }
+                                    className="px-2.5 py-1.5 text-xs rounded bg-violet-700 hover:bg-violet-600 font-semibold"
+                                  >
+                                    Control
+                                  </button>
+                                </div>
+                                {!isOpen && !confirmed ? (
+                                  <p className="text-[11px] text-amber-200/90 sm:text-right">
+                                    Confirm design before opening
+                                  </p>
+                                ) : frozen ? (
+                                  <p className="text-[11px] text-slate-500 sm:text-right">
+                                    Design locked while open — Close to edit look again
+                                  </p>
+                                ) : null}
                               </div>
                             </div>
                             {designing ? (
