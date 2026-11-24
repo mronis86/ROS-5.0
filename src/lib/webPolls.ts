@@ -4,6 +4,13 @@
 
 import { getApiBaseUrl } from '../services/api-client';
 import { authHeaders } from './sessionAuth';
+import {
+  normalizeWebPollDisplayStyle,
+  type WebPollDisplayStyle,
+} from './webPollDisplayStyle';
+
+export type { WebPollDisplayStyle } from './webPollDisplayStyle';
+export { DEFAULT_DISPLAY_STYLE, normalizeWebPollDisplayStyle } from './webPollDisplayStyle';
 
 function apiBase() {
   return getApiBaseUrl() || '';
@@ -32,6 +39,7 @@ export type WebPoll = {
   received_count: number;
   counted_count: number;
   results_snapshot?: Record<string, unknown> | null;
+  display_style?: WebPollDisplayStyle | Record<string, unknown> | null;
   options?: WebPollOption[];
   opened_at?: string | null;
   closed_at?: string | null;
@@ -39,6 +47,13 @@ export type WebPoll = {
   created_at?: string;
   updated_at?: string;
 };
+
+export function webPollDisplayStyle(poll: {
+  display_style?: unknown;
+  poll_type?: WebPollType | string | null;
+}): WebPollDisplayStyle {
+  return normalizeWebPollDisplayStyle(poll.display_style, poll.poll_type);
+}
 
 export type WebPollCueSummary = {
   id: number;
@@ -88,6 +103,7 @@ export type PublicEventPoll = {
   poll_type: WebPollType;
   status: WebPollStatus;
   cue_item_id?: number | null;
+  display_style?: WebPollDisplayStyle | Record<string, unknown> | null;
   options: WebPollOption[];
 };
 
@@ -179,6 +195,7 @@ export async function createWebPoll(
     options?: { label: string; color?: string }[];
     /** Required — must be a ROS cue with Poll checked. */
     cueItemId: number;
+    displayStyle?: WebPollDisplayStyle;
   }
 ): Promise<WebPoll> {
   const res = await fetch(`${apiBase()}/api/web-polls/${encodeURIComponent(eventId)}`, {
@@ -189,8 +206,29 @@ export async function createWebPoll(
       poll_type: body.pollType,
       options: body.options,
       cue_item_id: body.cueItemId,
+      display_style: body.displayStyle,
     }),
   });
+  const data = await parseJson(res);
+  return data.poll;
+}
+
+export async function updateWebPollDisplayStyle(
+  pollId: string,
+  displayStyle: WebPollDisplayStyle,
+  opts?: { recolorOptions?: boolean }
+): Promise<WebPoll> {
+  const res = await fetch(
+    `${apiBase()}/api/web-polls/poll/${encodeURIComponent(pollId)}/display-style`,
+    {
+      method: 'PATCH',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({
+        display_style: displayStyle,
+        recolorOptions: opts?.recolorOptions !== false,
+      }),
+    }
+  );
   const data = await parseJson(res);
   return data.poll;
 }
@@ -310,4 +348,29 @@ export async function submitPublicWebPollVote(
 
 export function webPollAudienceUrl(token: string, origin = window.location.origin) {
   return `${origin}/poll/${encodeURIComponent(token)}`;
+}
+
+export type WebPollSurfaceKind = 'stage' | 'lower' | 'pip';
+
+/** Transparent overlay URLs for broadcast / event graphics. */
+export function webPollSurfaceUrl(
+  token: string,
+  surface: WebPollSurfaceKind,
+  origin = window.location.origin
+) {
+  return `${origin.replace(/\/$/, '')}/poll-surface/${encodeURIComponent(token)}/${surface}`;
+}
+
+/** Toggle Stage / Lower / PiP animate on·off without recoloring options. */
+export async function setWebPollOnAir(pollId: string, onAir: boolean): Promise<WebPoll> {
+  const poll = await fetchWebPoll(pollId);
+  const style = webPollDisplayStyle(poll);
+  return updateWebPollDisplayStyle(
+    pollId,
+    {
+      ...style,
+      surfaces: { ...style.surfaces, onAir: Boolean(onAir) },
+    },
+    { recolorOptions: false }
+  );
 }

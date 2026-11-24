@@ -1,33 +1,34 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { Check, Copy, ExternalLink } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import WebPollDesignEditor from '../components/WebPollDesignEditor';
+import type { WebPollDisplayStyle } from '../lib/webPollDisplayStyle';
 import {
-  drainWebPoll,
   fetchWebPoll,
   fetchWebPollRollup,
   listWebPolls,
-  setWebPollStatus,
-  webPollAudienceUrl,
+  setWebPollOnAir,
+  updateWebPollDisplayStyle,
+  webPollDisplayStyle,
+  webPollSurfaceUrl,
   type WebPoll,
-  type WebPollStatus,
+  type WebPollSurfaceKind,
 } from '../lib/webPolls';
-
-const STATUS_FLOW: { id: WebPollStatus; label: string }[] = [
-  { id: 'draft', label: 'Draft' },
-  { id: 'open', label: 'Open' },
-  { id: 'closed', label: 'Close' },
-  { id: 'finalizing', label: 'Finalizing' },
-  { id: 'final', label: 'Final' },
-];
 
 type Rollup = {
   received?: number;
   counted?: number;
   pending_inbox?: number;
-  status?: string;
   results_snapshot?: {
     options?: { id: string; label: string; color?: string; votes?: number }[];
   };
 };
+
+const SURFACES: { id: WebPollSurfaceKind; label: string; hint: string }[] = [
+  { id: 'stage', label: 'Stage', hint: 'Full-frame results plate' },
+  { id: 'lower', label: 'Lower third', hint: 'Bottom banner overlay' },
+  { id: 'pip', label: 'PiP', hint: 'Corner picture-in-picture' },
+];
 
 export default function PollControlPage() {
   const location = useLocation();
@@ -49,9 +50,12 @@ export default function PollControlPage() {
   const [rollup, setRollup] = useState<Rollup | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [statusBusy, setStatusBusy] = useState(false);
-  const [drainBusy, setDrainBusy] = useState(false);
-  const [drainMsg, setDrainMsg] = useState<string | null>(null);
+  const [onAirBusy, setOnAirBusy] = useState(false);
+  const [designDraft, setDesignDraft] = useState<WebPollDisplayStyle | null>(null);
+  const [designBusy, setDesignBusy] = useState(false);
+  const [designMsg, setDesignMsg] = useState<string | null>(null);
+  const [showDesign, setShowDesign] = useState(false);
+  const [copiedSurface, setCopiedSurface] = useState<string | null>(null);
 
   useEffect(() => {
     setPollId(pollIdParam);
@@ -92,52 +96,90 @@ export default function PollControlPage() {
   useEffect(() => {
     setLoading(true);
     void loadPoll();
-    const id = window.setInterval(() => void loadPoll(), 2500);
+    const id = window.setInterval(() => void loadPoll(), 2000);
     return () => window.clearInterval(id);
   }, [loadPoll]);
+
+  useEffect(() => {
+    setDesignDraft(null);
+    setDesignMsg(null);
+    setShowDesign(false);
+  }, [pollId]);
+
+  useEffect(() => {
+    if (!poll || poll.id !== pollId) return;
+    setDesignDraft((prev) => prev ?? webPollDisplayStyle(poll));
+  }, [poll, pollId]);
 
   const selectPoll = (id: string) => {
     setPollId(id);
     navigate(`/polls-control?${qs}&pollId=${encodeURIComponent(id)}`, { replace: true });
   };
 
-  const changeStatus = async (status: WebPollStatus) => {
-    if (!pollId || statusBusy) return;
-    setStatusBusy(true);
-    setError(null);
+  const liveStyle = poll ? webPollDisplayStyle(poll) : null;
+  const onAir = Boolean(liveStyle?.surfaces.onAir);
+
+  const saveDesign = async () => {
+    if (!poll || !designDraft || designBusy) return;
+    setDesignBusy(true);
+    setDesignMsg(null);
     try {
-      const updated = await setWebPollStatus(pollId, status);
+      // Keep live on-air state when saving look/layout from the draft.
+      const next: WebPollDisplayStyle = {
+        ...designDraft,
+        surfaces: {
+          ...designDraft.surfaces,
+          onAir: Boolean(webPollDisplayStyle(poll).surfaces.onAir),
+        },
+      };
+      const updated = await updateWebPollDisplayStyle(poll.id, next);
       setPoll(updated);
-      await loadPoll();
+      setDesignDraft(webPollDisplayStyle(updated));
+      setDesignMsg('Design saved');
+      await loadList();
+      window.setTimeout(() => setDesignMsg(null), 2000);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Status update failed');
+      setError(e instanceof Error ? e.message : 'Failed to save design');
     } finally {
-      setStatusBusy(false);
+      setDesignBusy(false);
     }
   };
 
-  const runDrain = async () => {
-    if (!pollId || drainBusy) return;
-    setDrainBusy(true);
-    setDrainMsg(null);
+  const toggleOnAir = async () => {
+    if (!pollId || onAirBusy) return;
+    setOnAirBusy(true);
+    setError(null);
     try {
-      const result = await drainWebPoll(pollId, 200);
-      setDrainMsg(
-        `Processed ${result.processed ?? 0} · committed ${result.committed ?? 0}`
-      );
-      await loadPoll();
+      const updated = await setWebPollOnAir(pollId, !onAir);
+      setPoll(updated);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Drain failed');
+      setError(e instanceof Error ? e.message : 'Failed to update on-air');
     } finally {
-      setDrainBusy(false);
+      setOnAirBusy(false);
+    }
+  };
+
+  const copySurface = async (kind: WebPollSurfaceKind, url: string) => {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopiedSurface(kind);
+      window.setTimeout(() => setCopiedSurface(null), 1600);
+    } catch {
+      /* ignore */
     }
   };
 
   const options = rollup?.results_snapshot?.options || poll?.options || [];
+  const look = (designDraft || liveStyle)?.look;
+  const totalVotes = Math.max(
+    1,
+    options.reduce((n, o) => n + Number(o.votes || o.vote_count || 0), 0)
+  );
   const maxVotes = Math.max(1, ...options.map((o) => Number(o.votes || o.vote_count || 0)));
   const received = rollup?.received ?? poll?.received_count ?? 0;
   const counted = rollup?.counted ?? poll?.counted_count ?? 0;
   const pending = rollup?.pending_inbox ?? Math.max(0, received - counted);
+  const token = poll?.public_token || '';
 
   if (!eventId) {
     return (
@@ -158,11 +200,11 @@ export default function PollControlPage() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-white">
-      <header className="border-b border-slate-800 bg-slate-900/90 sticky top-0 z-20">
+      <header className="border-b border-slate-800 bg-slate-900/95 sticky top-0 z-20">
         <div className="max-w-5xl mx-auto px-4 py-3 flex flex-wrap items-center gap-3 justify-between">
           <div>
-            <p className="text-[11px] uppercase tracking-wide text-sky-300/90 font-semibold">
-              Web Polls · Control
+            <p className="text-[11px] uppercase tracking-wide text-violet-300/90 font-semibold">
+              Web Polls · Broadcast control
             </p>
             <h1 className="text-xl font-bold leading-tight">{eventName}</h1>
           </div>
@@ -185,7 +227,7 @@ export default function PollControlPage() {
         </div>
       </header>
 
-      <main className="max-w-5xl mx-auto px-4 py-5 space-y-5">
+      <main className="max-w-5xl mx-auto px-4 py-5 space-y-4">
         {error ? (
           <div className="rounded-lg border border-rose-700/50 bg-rose-950/30 px-4 py-3 text-rose-100">
             {error}
@@ -197,7 +239,7 @@ export default function PollControlPage() {
           <select
             value={pollId}
             onChange={(e) => selectPoll(e.target.value)}
-            className="w-full rounded-lg bg-slate-950 border border-slate-600 px-3 py-2.5 text-white focus:outline-none focus:border-sky-500"
+            className="w-full rounded-lg bg-slate-950 border border-slate-600 px-3 py-2.5 text-white focus:outline-none focus:border-violet-500"
           >
             <option value="">Select a poll…</option>
             {pollList.map((p) => (
@@ -209,71 +251,108 @@ export default function PollControlPage() {
         </div>
 
         {!pollId ? (
-          <p className="text-slate-500 text-sm">Pick a poll to open / close and watch counts.</p>
+          <p className="text-slate-500 text-sm">
+            Pick a poll to drive surfaces, design, and animate on / off.
+          </p>
         ) : loading && !poll ? (
           <p className="text-slate-400">Loading…</p>
         ) : poll ? (
           <>
             <section className="rounded-xl border border-slate-700 bg-slate-900/80 p-5 space-y-4">
-              <div>
-                <p className="text-[11px] uppercase tracking-wide text-slate-500 font-semibold">
-                  {poll.poll_type} · {poll.status}
-                </p>
-                <h2 className="text-lg font-semibold text-white mt-0.5">{poll.question}</h2>
-                <a
-                  href={webPollAudienceUrl(poll.public_token)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-xs text-sky-300 hover:text-sky-200 font-mono break-all"
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-[11px] uppercase tracking-wide text-slate-500 font-semibold">
+                    {poll.poll_type} · voting {poll.status}
+                  </p>
+                  <h2 className="text-lg font-semibold text-white mt-0.5">{poll.question}</h2>
+                </div>
+                <button
+                  type="button"
+                  disabled={onAirBusy}
+                  onClick={() => void toggleOnAir()}
+                  className={`min-w-[9.5rem] px-5 py-3 rounded-xl text-sm font-bold tracking-wide border transition-colors disabled:opacity-50 ${
+                    onAir
+                      ? 'bg-emerald-500 text-emerald-950 border-emerald-300 shadow-[0_0_24px_rgba(16,185,129,0.35)]'
+                      : 'bg-slate-950 text-slate-200 border-slate-600 hover:border-slate-400'
+                  }`}
                 >
-                  {webPollAudienceUrl(poll.public_token)}
-                </a>
+                  {onAirBusy ? '…' : onAir ? 'ON AIR · Off' : 'Animate ON'}
+                </button>
               </div>
 
-              <div className="flex flex-wrap gap-2">
-                {STATUS_FLOW.map((s) => (
-                  <button
-                    key={s.id}
-                    type="button"
-                    disabled={statusBusy || poll.status === s.id}
-                    onClick={() => void changeStatus(s.id)}
-                    className={`px-3 py-1.5 text-xs rounded-md border font-semibold transition-colors disabled:opacity-40 ${
-                      poll.status === s.id
-                        ? 'border-sky-500 bg-sky-950/50 text-sky-100'
-                        : 'border-slate-600 bg-slate-950 text-slate-300 hover:border-slate-500'
-                    }`}
-                  >
-                    {s.label}
-                  </button>
-                ))}
-              </div>
+              <p className="text-xs text-slate-400">
+                {onAir
+                  ? 'Surfaces are animating in. Hit Off to fade them out.'
+                  : 'Surfaces stay clear until you take them on air.'}{' '}
+                Open / close voting is on Management.
+              </p>
 
               <div className="grid grid-cols-3 gap-3">
                 <div className="rounded-lg border border-slate-700 bg-slate-950/60 px-3 py-2.5">
                   <p className="text-[10px] uppercase tracking-wide text-slate-500">Received</p>
-                  <p className="text-2xl font-semibold tabular-nums text-white">{received}</p>
+                  <p className="text-2xl font-semibold tabular-nums">{received}</p>
                 </div>
                 <div className="rounded-lg border border-slate-700 bg-slate-950/60 px-3 py-2.5">
                   <p className="text-[10px] uppercase tracking-wide text-slate-500">Counted</p>
-                  <p className="text-2xl font-semibold tabular-nums text-white">{counted}</p>
+                  <p className="text-2xl font-semibold tabular-nums">{counted}</p>
                 </div>
                 <div className="rounded-lg border border-slate-700 bg-slate-950/60 px-3 py-2.5">
                   <p className="text-[10px] uppercase tracking-wide text-slate-500">Inbox</p>
                   <p className="text-2xl font-semibold tabular-nums text-amber-200">{pending}</p>
                 </div>
               </div>
+            </section>
 
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  disabled={drainBusy}
-                  onClick={() => void runDrain()}
-                  className="px-3 py-1.5 text-xs rounded bg-amber-700/80 hover:bg-amber-600 disabled:opacity-50 font-semibold"
-                >
-                  {drainBusy ? 'Draining…' : 'Drain inbox now'}
-                </button>
-                {drainMsg ? <span className="text-xs text-slate-400">{drainMsg}</span> : null}
+            <section className="rounded-xl border border-slate-700 bg-slate-900/80 p-5 space-y-3">
+              <div>
+                <h3 className="text-sm font-semibold text-slate-200">Surface links</h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Drop these into OBS / vMix as browser sources (transparent). They follow On Air.
+                </p>
               </div>
+              <ul className="space-y-2">
+                {SURFACES.map((s) => {
+                  const url = token ? webPollSurfaceUrl(token, s.id) : '';
+                  return (
+                    <li
+                      key={s.id}
+                      className="rounded-lg border border-slate-700 bg-slate-950/50 px-3 py-2.5 flex flex-col sm:flex-row sm:items-center gap-2 justify-between"
+                    >
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-white">{s.label}</p>
+                        <p className="text-[11px] text-slate-500">{s.hint}</p>
+                        <p className="text-[11px] text-slate-500 font-mono truncate mt-0.5">{url}</p>
+                      </div>
+                      <div className="flex flex-wrap gap-2 shrink-0">
+                        <button
+                          type="button"
+                          disabled={!url}
+                          onClick={() => void copySurface(s.id, url)}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded bg-slate-700 hover:bg-slate-600 disabled:opacity-40"
+                        >
+                          {copiedSurface === s.id ? (
+                            <Check className="w-3.5 h-3.5 text-emerald-400" />
+                          ) : (
+                            <Copy className="w-3.5 h-3.5" />
+                          )}
+                          {copiedSurface === s.id ? 'Copied' : 'Copy'}
+                        </button>
+                        <a
+                          href={url || undefined}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded border border-slate-600 text-slate-200 hover:bg-slate-800 ${
+                            !url ? 'pointer-events-none opacity-40' : ''
+                          }`}
+                        >
+                          <ExternalLink className="w-3.5 h-3.5" />
+                          Open
+                        </a>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
             </section>
 
             <section className="rounded-xl border border-slate-700 bg-slate-900/80 p-5 space-y-3">
@@ -281,23 +360,31 @@ export default function PollControlPage() {
               {options.length === 0 ? (
                 <p className="text-slate-500 text-sm">No options.</p>
               ) : (
-                <ul className="space-y-2.5">
+                <ul className="space-y-2">
                   {options.map((o) => {
                     const votes = Number(o.votes ?? o.vote_count ?? 0);
-                    const pct = Math.round((votes / maxVotes) * 100);
+                    const barPct = Math.round((votes / maxVotes) * 100);
+                    const sharePct = Math.round((votes / totalVotes) * 100);
+                    const fill =
+                      look?.accentBars === false ? '#94a3b8' : o.color || '#38bdf8';
+                    const metric = [
+                      look?.showPct !== false ? `${sharePct}%` : null,
+                      look?.showCounts !== false ? String(votes) : null,
+                    ]
+                      .filter(Boolean)
+                      .join(' · ');
                     return (
                       <li key={o.id}>
                         <div className="flex justify-between text-xs mb-1 gap-2">
-                          <span className="text-slate-200 truncate">{o.label}</span>
-                          <span className="tabular-nums text-slate-400 shrink-0">{votes}</span>
+                          <span className="text-slate-200 truncate">
+                            {look?.showLabels === false ? '' : o.label}
+                          </span>
+                          <span className="tabular-nums text-slate-400 shrink-0">{metric}</span>
                         </div>
-                        <div className="h-2.5 rounded-full bg-slate-800 overflow-hidden">
+                        <div className="h-2 rounded-full bg-slate-800 overflow-hidden">
                           <div
                             className="h-full rounded-full transition-[width] duration-500"
-                            style={{
-                              width: `${pct}%`,
-                              background: o.color || '#38bdf8',
-                            }}
+                            style={{ width: `${barPct}%`, background: fill }}
                           />
                         </div>
                       </li>
@@ -306,6 +393,53 @@ export default function PollControlPage() {
                 </ul>
               )}
             </section>
+
+            {designDraft ? (
+              <section className="rounded-xl border border-slate-700 bg-slate-900/80 p-5 space-y-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-semibold text-slate-200">Design</h3>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      Layout, thickness, colors, and motion for Stage / Lower / PiP.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowDesign((v) => !v)}
+                      className="px-2.5 py-1.5 text-xs rounded border border-slate-600 text-slate-300 hover:bg-slate-800"
+                    >
+                      {showDesign ? 'Hide editor' : 'Edit design'}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={designBusy || !showDesign}
+                      onClick={() => void saveDesign()}
+                      className="px-3 py-1.5 text-xs rounded bg-violet-600 hover:bg-violet-500 disabled:opacity-50 font-semibold"
+                    >
+                      {designBusy ? 'Saving…' : 'Save design'}
+                    </button>
+                    {designMsg ? (
+                      <span className="text-xs text-emerald-300">{designMsg}</span>
+                    ) : null}
+                  </div>
+                </div>
+                {showDesign ? (
+                  <WebPollDesignEditor
+                    pollType={poll.poll_type}
+                    value={designDraft}
+                    onChange={setDesignDraft}
+                    question={poll.question}
+                    previewOptions={options.map((o) => ({
+                      id: o.id,
+                      label: o.label,
+                      color: o.color,
+                      votes: Number(o.votes ?? o.vote_count ?? 0),
+                    }))}
+                  />
+                ) : null}
+              </section>
+            ) : null}
           </>
         ) : null}
       </main>

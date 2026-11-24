@@ -2988,8 +2988,9 @@ export default function AdminPage() {
               <div className="min-w-0 flex-1">
                 <h3 className="font-semibold text-white text-sm">Web Polls</h3>
                 <p className="text-slate-400 text-sm mt-1">
-                  Soft path writes votes into Neon inbox then drains to counters. Flip to Redis only after
-                  Railway Redis is wired — same project billing as API; keeps big spikes off Neon.
+                  Soft path writes votes into Neon inbox (waiting to count) then auto-drains to
+                  counters. Flip to Redis only after Railway Redis is wired — same project billing as
+                  API; keeps big spikes off Neon.
                 </p>
                 {pollInboxError ? (
                   <p className="mt-2 text-sm text-rose-300">{pollInboxError}</p>

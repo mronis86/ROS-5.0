@@ -171,6 +171,7 @@ const {
   getPollById: getWebPollById,
   getPollByToken: getWebPollByToken,
   setPollStatus: setWebPollStatus,
+  updatePollDisplayStyle: updateWebPollDisplayStyle,
   acceptVote: acceptWebPollVote,
   drainInbox: drainWebPollInbox,
   getRollup: getWebPollRollup,
@@ -8049,6 +8050,26 @@ app.patch('/api/web-polls/poll/:pollId/status', async (req, res) => {
   }
 });
 
+app.patch('/api/web-polls/poll/:pollId/display-style', async (req, res) => {
+  try {
+    await ensureWebPollsSchema(pool);
+    const poll = await updateWebPollDisplayStyle(
+      pool,
+      req.params.pollId,
+      req.body?.display_style ?? req.body?.displayStyle ?? req.body,
+      {
+        recolorOptions:
+          req.body?.recolorOptions !== false && req.body?.recolor_options !== false,
+      }
+    );
+    res.json({ poll });
+  } catch (error) {
+    const status = error.status || 500;
+    if (status >= 500) console.error('[web-polls] display-style', error);
+    res.status(status).json({ error: error.message || 'Failed to update display style' });
+  }
+});
+
 app.post('/api/web-polls/poll/:pollId/drain', async (req, res) => {
   try {
     await ensureWebPollsSchema(pool);
@@ -8077,6 +8098,7 @@ app.get('/api/web-polls/public/:token', async (req, res) => {
         question: poll.question,
         poll_type: poll.poll_type,
         status: poll.status,
+        display_style: poll.display_style,
         options: (poll.options || []).map((o) => ({
           id: o.id,
           label: o.label,
@@ -8108,6 +8130,10 @@ app.get('/api/web-polls/public/:token/rollup', async (req, res) => {
       pending_inbox: rollup.pending_inbox,
       status: poll.status,
       results_snapshot: rollup.results_snapshot,
+      display_style: rollup.display_style || poll.display_style,
+      question: poll.question,
+      poll_type: poll.poll_type,
+      options: poll.options || [],
     });
   } catch (error) {
     console.error('[web-polls] public rollup', error);
@@ -8205,6 +8231,7 @@ app.post('/api/web-polls/:eventId', async (req, res) => {
       pollType: req.body?.poll_type ?? req.body?.pollType,
       options: req.body?.options,
       cueItemId: req.body?.cue_item_id ?? req.body?.cueItemId,
+      displayStyle: req.body?.display_style ?? req.body?.displayStyle,
     });
     res.status(201).json({ poll });
   } catch (error) {

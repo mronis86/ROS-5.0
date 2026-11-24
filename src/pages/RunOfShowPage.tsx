@@ -2163,6 +2163,7 @@ const RunOfShowPage: React.FC = () => {
   const [importExportGroup, setImportExportGroup] = useState<'export' | 'import' | null>(null);
   const [showOperatorActionsSubmenu, setShowOperatorActionsSubmenu] = useState(false);
   const [showPowerPointSubmenu, setShowPowerPointSubmenu] = useState(false);
+  const [showWebPollsSubmenu, setShowWebPollsSubmenu] = useState(false);
   const [showReportsSubmenu, setShowReportsSubmenu] = useState(false);
   const [fullScreenTimerWindow, setFullScreenTimerWindow] = useState<Window | null>(null);
   const [clockWindow, setClockWindow] = useState<Window | null>(null);
@@ -9810,6 +9811,7 @@ const RunOfShowPage: React.FC = () => {
   const menuMainPanelRef = useRef<HTMLDivElement>(null);
   const operatorActionsFlyoutRef = useRef<HTMLDivElement>(null);
   const powerPointFlyoutRef = useRef<HTMLDivElement>(null);
+  const webPollsFlyoutRef = useRef<HTMLDivElement>(null);
   const importExportFlyoutRef = useRef<HTMLDivElement>(null);
   const reportsFlyoutRef = useRef<HTMLDivElement>(null);
 
@@ -9824,6 +9826,9 @@ const RunOfShowPage: React.FC = () => {
       }
       if (showPowerPointSubmenu) {
         clampMenuPanelToViewport(powerPointFlyoutRef.current, 'flyout', panel);
+      }
+      if (showWebPollsSubmenu) {
+        clampMenuPanelToViewport(webPollsFlyoutRef.current, 'flyout', panel);
       }
       if (showImportExportSubmenu) {
         clampMenuPanelToViewport(importExportFlyoutRef.current, 'flyout', panel);
@@ -9845,6 +9850,7 @@ const RunOfShowPage: React.FC = () => {
     showMenuDropdown,
     showOperatorActionsSubmenu,
     showPowerPointSubmenu,
+    showWebPollsSubmenu,
     showImportExportSubmenu,
     importExportGroup,
     showReportsSubmenu,
@@ -17780,6 +17786,7 @@ const RunOfShowPage: React.FC = () => {
                           type="button"
                           onClick={() => {
                             setShowPowerPointSubmenu(!showPowerPointSubmenu);
+                            setShowWebPollsSubmenu(false);
                             setShowOperatorActionsSubmenu(false);
                             setShowImportExportSubmenu(false);
                             setImportExportGroup(null);
@@ -17837,6 +17844,7 @@ const RunOfShowPage: React.FC = () => {
                         onClick={() => {
                           setShowMenuDropdown(false);
                           setShowPowerPointSubmenu(false);
+                          setShowWebPollsSubmenu(false);
                           setShowOperatorActionsSubmenu(false);
                           const qaModUrl = `/qa-mod?eventId=${event?.id}&eventName=${encodeURIComponent(event?.name || '')}`;
                           window.open(qaModUrl, '_blank');
@@ -17849,24 +17857,65 @@ const RunOfShowPage: React.FC = () => {
                         </svg>
                         Web Q&A
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setShowMenuDropdown(false);
-                          setShowPowerPointSubmenu(false);
-                          setShowOperatorActionsSubmenu(false);
-                          const pollsUrl = `/polls-setup?eventId=${event?.id}&eventName=${encodeURIComponent(event?.name || '')}`;
-                          window.open(pollsUrl, '_blank');
-                        }}
-                        className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center gap-3"
-                        title="Web Polls management: cues with Poll checked, setup, control, reports"
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 3.055A9.001 9.001 0 1020.945 13H11V3.055z" />
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.488 9H15V3.512A9.025 9.025 0 0120.488 9z" />
-                        </svg>
-                        Web Polls
-                      </button>
+                      <div className="relative">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowWebPollsSubmenu(!showWebPollsSubmenu);
+                            setShowPowerPointSubmenu(false);
+                            setShowOperatorActionsSubmenu(false);
+                            setShowImportExportSubmenu(false);
+                            setImportExportGroup(null);
+                            setShowReportsSubmenu(false);
+                          }}
+                          className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors flex items-center justify-between gap-3"
+                          title="Web Polls: Setup (create / open·close) and Control (design / surfaces / on air)"
+                        >
+                          <span className="flex items-center gap-3">
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 3.055A9.001 9.001 0 1020.945 13H11V3.055z" />
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.488 9H15V3.512A9.025 9.025 0 0120.488 9z" />
+                            </svg>
+                            Web Polls
+                          </span>
+                          <svg className={`w-4 h-4 flex-shrink-0 transition-transform ${showWebPollsSubmenu ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                          </svg>
+                        </button>
+                        {showWebPollsSubmenu && (
+                          <div
+                            ref={webPollsFlyoutRef}
+                            className="absolute top-0 z-[60] w-64 py-1 bg-slate-800 border border-slate-600 rounded-lg shadow-lg"
+                          >
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setShowMenuDropdown(false);
+                                setShowWebPollsSubmenu(false);
+                                const pollsUrl = `/polls-setup?eventId=${event?.id}&eventName=${encodeURIComponent(event?.name || '')}`;
+                                window.open(pollsUrl, '_blank');
+                              }}
+                              className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors"
+                              title="Create polls, audience QR / links, open and close voting"
+                            >
+                              Setup
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setShowMenuDropdown(false);
+                                setShowWebPollsSubmenu(false);
+                                const pollsUrl = `/polls-control?eventId=${event?.id}&eventName=${encodeURIComponent(event?.name || '')}`;
+                                window.open(pollsUrl, '_blank');
+                              }}
+                              className="w-full px-4 py-2 text-left text-white hover:bg-slate-700 transition-colors"
+                              title="Design, surface links, and animate on / off"
+                            >
+                              Control
+                            </button>
+                          </div>
+                        )}
+                      </div>
                       <button
                         onClick={() => {
                           setShowMenuDropdown(false);
@@ -17897,6 +17946,7 @@ const RunOfShowPage: React.FC = () => {
                           onClick={() => {
                             setShowOperatorActionsSubmenu(!showOperatorActionsSubmenu);
                             setShowPowerPointSubmenu(false);
+                            setShowWebPollsSubmenu(false);
                             setShowImportExportSubmenu(false);
                             setImportExportGroup(null);
                             setShowReportsSubmenu(false);
