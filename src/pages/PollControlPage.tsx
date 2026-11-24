@@ -4,9 +4,11 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import WebPollDesignEditor from '../components/WebPollDesignEditor';
 import type { WebPollDisplayStyle } from '../lib/webPollDisplayStyle';
 import {
+  acquireWebPollDesignLock,
   fetchWebPoll,
   fetchWebPollRollup,
   listWebPolls,
+  releaseWebPollDesignLock,
   setWebPollOnAir,
   updateWebPollDisplayStyle,
   webPollDisplayStyle,
@@ -50,7 +52,6 @@ export default function PollControlPage() {
   const [rollup, setRollup] = useState<Rollup | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [onAirBusy, setOnAirBusy] = useState(false);
   const [designDraft, setDesignDraft] = useState<WebPollDisplayStyle | null>(null);
   const [designBusy, setDesignBusy] = useState(false);
   const [designMsg, setDesignMsg] = useState<string | null>(null);
@@ -118,13 +119,13 @@ export default function PollControlPage() {
 
   const liveStyle = poll ? webPollDisplayStyle(poll) : null;
   const onAir = Boolean(liveStyle?.surfaces.onAir);
+  const designFrozen = poll?.status === 'open';
 
   const saveDesign = async () => {
-    if (!poll || !designDraft || designBusy) return;
+    if (!poll || !designDraft || designBusy || designFrozen) return;
     setDesignBusy(true);
     setDesignMsg(null);
     try {
-      // Keep live on-air state when saving look/layout from the draft.
       const next: WebPollDisplayStyle = {
         ...designDraft,
         surfaces: {
@@ -135,9 +136,9 @@ export default function PollControlPage() {
       const updated = await updateWebPollDisplayStyle(poll.id, next);
       setPoll(updated);
       setDesignDraft(webPollDisplayStyle(updated));
-      setDesignMsg('Design saved');
+      setDesignMsg('Design saved — re-confirm in Setup before opening');
       await loadList();
-      window.setTimeout(() => setDesignMsg(null), 2000);
+      window.setTimeout(() => setDesignMsg(null), 2500);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to save design');
     } finally {
@@ -146,16 +147,29 @@ export default function PollControlPage() {
   };
 
   const toggleOnAir = async () => {
-    if (!pollId || onAirBusy) return;
-    setOnAirBusy(true);
+    if (!pollId || !poll || onAirBusy) return;
+    const next = !onAir;
     setError(null);
+    // Optimistic: flip immediately, no spinner — revert only on failure.
+    setPoll({
+      ...poll,
+      display_style: {
+        ...webPollDisplayStyle(poll),
+        surfaces: { ...webPollDisplayStyle(poll).surfaces, onAir: next },
+      },
+    });
     try {
-      const updated = await setWebPollOnAir(pollId, !onAir);
+      const updated = await setWebPollOnAir(pollId, next);
       setPoll(updated);
     } catch (e) {
+      setPoll({
+        ...poll,
+        display_style: {
+          ...webPollDisplayStyle(poll),
+          surfaces: { ...webPollDisplayStyle(poll).surfaces, onAir: !next },
+        },
+      });
       setError(e instanceof Error ? e.message : 'Failed to update on-air');
-    } finally {
-      setOnAirBusy(false);
     }
   };
 
@@ -268,15 +282,14 @@ export default function PollControlPage() {
                 </div>
                 <button
                   type="button"
-                  disabled={onAirBusy}
                   onClick={() => void toggleOnAir()}
-                  className={`min-w-[9.5rem] px-5 py-3 rounded-xl text-sm font-bold tracking-wide border transition-colors disabled:opacity-50 ${
+                  className={`min-w-[9.5rem] px-5 py-3 rounded-xl text-sm font-bold tracking-wide border transition-colors ${
                     onAir
                       ? 'bg-emerald-500 text-emerald-950 border-emerald-300 shadow-[0_0_24px_rgba(16,185,129,0.35)]'
                       : 'bg-slate-950 text-slate-200 border-slate-600 hover:border-slate-400'
                   }`}
                 >
-                  {onAirBusy ? '…' : onAir ? 'ON AIR · Off' : 'Animate ON'}
+                  {onAir ? 'ON AIR · Off' : 'Animate ON'}
                 </button>
               </div>
 
@@ -400,20 +413,45 @@ export default function PollControlPage() {
                   <div>
                     <h3 className="text-sm font-semibold text-slate-200">Design</h3>
                     <p className="text-xs text-slate-400 mt-0.5">
-                      Layout, thickness, colors, and motion for Stage / Lower / PiP.
+                      {designFrozen
+                        ? 'Frozen while the poll is open. Close voting in Setup to edit look again (e.g. for results).'
+                        : 'Layout, thickness, colors, and motion for Stage / Lower / PiP. Confirm in Setup before opening.'}
                     </p>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     <button
                       type="button"
-                      onClick={() => setShowDesign((v) => !v)}
-                      className="px-2.5 py-1.5 text-xs rounded border border-slate-600 text-slate-300 hover:bg-slate-800"
+                      disabled={designFrozen}
+                      onClick={() => {
+                        void (async () => {
+                          if (!poll || designFrozen) return;
+                          if (showDesign) {
+                            try {
+                              await releaseWebPollDesignLock(poll.id);
+                            } catch {
+                              /* ignore */
+                            }
+                            setShowDesign(false);
+                            return;
+                          }
+                          try {
+                            setError(null);
+                            const locked = await acquireWebPollDesignLock(poll.id);
+                            setPoll(locked);
+                            setDesignDraft(webPollDisplayStyle(locked));
+                            setShowDesign(true);
+                          } catch (e) {
+                            setError(e instanceof Error ? e.message : 'Failed to lock design');
+                          }
+                        })();
+                      }}
+                      className="px-2.5 py-1.5 text-xs rounded border border-slate-600 text-slate-300 hover:bg-slate-800 disabled:opacity-40"
                     >
                       {showDesign ? 'Hide editor' : 'Edit design'}
                     </button>
                     <button
                       type="button"
-                      disabled={designBusy || !showDesign}
+                      disabled={designBusy || !showDesign || designFrozen}
                       onClick={() => void saveDesign()}
                       className="px-3 py-1.5 text-xs rounded bg-violet-600 hover:bg-violet-500 disabled:opacity-50 font-semibold"
                     >
@@ -424,7 +462,7 @@ export default function PollControlPage() {
                     ) : null}
                   </div>
                 </div>
-                {showDesign ? (
+                {showDesign && !designFrozen ? (
                   <WebPollDesignEditor
                     pollType={poll.poll_type}
                     value={designDraft}

@@ -13,14 +13,19 @@ import {
   type WebPollDisplayStyle,
 } from '../lib/webPollDisplayStyle';
 import {
+  acquireWebPollDesignLock,
   buildWebPollsCsv,
   createWebPoll,
   downloadTextFile,
   fetchWebPollOverview,
+  releaseWebPollDesignLock,
   rotateWebPollSession,
+  setWebPollDesignConfirmed,
   setWebPollStatus,
   updateWebPollDisplayStyle,
   webPollAudienceUrl,
+  webPollDesignFrozen,
+  webPollDesignLockActive,
   webPollDisplayStyle,
   webPollEventAudienceUrl,
   type WebPoll,
@@ -245,21 +250,38 @@ export default function PollSetupPage() {
     }
   };
 
-  const openDesign = (poll: WebPoll) => {
+  const openDesign = async (poll: WebPoll) => {
     if (designPollId === poll.id) {
+      try {
+        await releaseWebPollDesignLock(poll.id);
+      } catch {
+        /* ignore unlock errors when closing panel */
+      }
       setDesignPollId(null);
       setDesignDraft(null);
       setDesignMsg(null);
+      await load();
       return;
     }
+    if (webPollDesignFrozen(poll)) {
+      setError('Design is frozen while the poll is open. Close voting to edit look again.');
+      return;
+    }
+    setError(null);
     setShowCreate(false);
-    setDesignPollId(poll.id);
-    setDesignDraft(webPollDisplayStyle(poll));
-    setDesignMsg(null);
+    try {
+      const locked = await acquireWebPollDesignLock(poll.id);
+      setDesignPollId(locked.id);
+      setDesignDraft(webPollDisplayStyle(locked));
+      setDesignMsg(null);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to lock design');
+    }
   };
 
   const saveDesign = async (poll: WebPoll) => {
-    if (!designDraft || designBusy) return;
+    if (!designDraft || designBusy || webPollDesignFrozen(poll)) return;
     setDesignBusy(true);
     setDesignMsg(null);
     try {
@@ -273,9 +295,9 @@ export default function PollSetupPage() {
       };
       const updated = await updateWebPollDisplayStyle(poll.id, next);
       setDesignDraft(webPollDisplayStyle(updated));
-      setDesignMsg('Design saved');
+      setDesignMsg('Saved — confirm design before Open');
       await load();
-      window.setTimeout(() => setDesignMsg(null), 2000);
+      window.setTimeout(() => setDesignMsg(null), 2500);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save design');
     } finally {
@@ -283,11 +305,33 @@ export default function PollSetupPage() {
     }
   };
 
-  const setPollOpenClosed = async (poll: WebPoll, next: 'open' | 'closed') => {
-    if (statusBusyId) return;
+  const toggleDesignConfirmed = async (poll: WebPoll, confirmed: boolean) => {
+    if (statusBusyId || webPollDesignFrozen(poll)) return;
     setStatusBusyId(poll.id);
     setError(null);
     try {
+      await setWebPollDesignConfirmed(poll.id, confirmed);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update design confirmation');
+    } finally {
+      setStatusBusyId(null);
+    }
+  };
+
+  const setPollOpenClosed = async (poll: WebPoll, next: 'open' | 'closed') => {
+    if (statusBusyId) return;
+    if (next === 'open' && !poll.design_confirmed) {
+      setError('Confirm design before opening the poll.');
+      return;
+    }
+    setStatusBusyId(poll.id);
+    setError(null);
+    try {
+      if (next === 'open' && designPollId === poll.id) {
+        setDesignPollId(null);
+        setDesignDraft(null);
+      }
       await setWebPollStatus(poll.id, next);
       await load();
     } catch (err) {
@@ -909,6 +953,9 @@ export default function PollSetupPage() {
                         const statusBusy = statusBusyId === poll.id;
                         const isOpen = poll.status === 'open';
                         const designing = designPollId === poll.id && designDraft;
+                        const frozen = webPollDesignFrozen(poll);
+                        const lockActive = webPollDesignLockActive(poll);
+                        const confirmed = Boolean(poll.design_confirmed);
                         const savedStyle = webPollDisplayStyle(poll);
                         return (
                           <li
@@ -934,6 +981,25 @@ export default function PollSetupPage() {
                                   <span className="text-[11px] text-slate-500 tabular-nums">
                                     {poll.received_count}/{poll.counted_count} recv/counted
                                   </span>
+                                  {confirmed ? (
+                                    <span className="text-[10px] uppercase tracking-wide font-semibold px-2 py-0.5 rounded border border-emerald-700/50 text-emerald-300">
+                                      Design OK
+                                    </span>
+                                  ) : (
+                                    <span className="text-[10px] uppercase tracking-wide font-semibold px-2 py-0.5 rounded border border-amber-700/50 text-amber-200">
+                                      Needs confirm
+                                    </span>
+                                  )}
+                                  {lockActive && !frozen ? (
+                                    <span className="text-[10px] text-sky-300/90">
+                                      Editing: {poll.design_lock_name || 'operator'}
+                                    </span>
+                                  ) : null}
+                                  {frozen ? (
+                                    <span className="text-[10px] text-slate-400">
+                                      Design frozen
+                                    </span>
+                                  ) : null}
                                 </div>
                                 <p className="font-medium text-white truncate">{poll.question}</p>
                                 <p className="text-[11px] text-slate-500 font-mono truncate">
@@ -943,8 +1009,9 @@ export default function PollSetupPage() {
                               <div className="flex flex-wrap gap-2 shrink-0">
                                 <button
                                   type="button"
-                                  onClick={() => openDesign(poll)}
-                                  className={`px-2.5 py-1.5 text-xs rounded border font-semibold ${
+                                  disabled={frozen && !designing}
+                                  onClick={() => void openDesign(poll)}
+                                  className={`px-2.5 py-1.5 text-xs rounded border font-semibold disabled:opacity-40 ${
                                     designing
                                       ? 'border-sky-500 bg-sky-950/40 text-sky-100'
                                       : 'border-slate-600 text-slate-200 hover:bg-slate-800'
@@ -954,7 +1021,12 @@ export default function PollSetupPage() {
                                 </button>
                                 <button
                                   type="button"
-                                  disabled={statusBusy || isOpen}
+                                  disabled={statusBusy || isOpen || !confirmed}
+                                  title={
+                                    !confirmed && !isOpen
+                                      ? 'Confirm design before opening'
+                                      : undefined
+                                  }
                                   onClick={() => void setPollOpenClosed(poll, 'open')}
                                   className={`px-2.5 py-1.5 text-xs rounded font-semibold disabled:opacity-40 ${
                                     isOpen
@@ -1023,7 +1095,7 @@ export default function PollSetupPage() {
                                     votes: o.vote_count,
                                   }))}
                                 />
-                                <div className="flex flex-wrap items-center gap-2">
+                                <div className="flex flex-wrap items-center gap-3">
                                   <button
                                     type="button"
                                     disabled={designBusy}
@@ -1032,15 +1104,47 @@ export default function PollSetupPage() {
                                   >
                                     {designBusy ? 'Saving…' : 'Save design'}
                                   </button>
+                                  <label className="inline-flex items-center gap-2 text-xs text-slate-200 cursor-pointer select-none">
+                                    <input
+                                      type="checkbox"
+                                      className="rounded border-slate-600 bg-slate-900"
+                                      checked={confirmed}
+                                      disabled={statusBusy}
+                                      onChange={(e) =>
+                                        void toggleDesignConfirmed(poll, e.target.checked)
+                                      }
+                                    />
+                                    Confirm design (required before Open)
+                                  </label>
                                   {designMsg ? (
                                     <span className="text-xs text-emerald-300">{designMsg}</span>
                                   ) : (
                                     <span className="text-[11px] text-slate-500">
-                                      Saves layout, colors, and surfaces. On-air state stays with
-                                      Control.
+                                      One editor at a time. Saving clears confirm until you check
+                                      again. On-air stays with Control.
                                     </span>
                                   )}
                                 </div>
+                              </div>
+                            ) : !frozen ? (
+                              <div className="border-t border-slate-800 px-3 py-2 flex flex-wrap items-center gap-3 bg-slate-950/40">
+                                <label className="inline-flex items-center gap-2 text-xs text-slate-300 cursor-pointer select-none">
+                                  <input
+                                    type="checkbox"
+                                    className="rounded border-slate-600 bg-slate-900"
+                                    checked={confirmed}
+                                    disabled={statusBusy || lockActive}
+                                    onChange={(e) =>
+                                      void toggleDesignConfirmed(poll, e.target.checked)
+                                    }
+                                  />
+                                  Confirm design
+                                </label>
+                                {lockActive ? (
+                                  <span className="text-[11px] text-slate-500">
+                                    Locked by {poll.design_lock_name || 'another operator'}
+                                  </span>
+                                ) : null}
                               </div>
                             ) : null}
                           </li>

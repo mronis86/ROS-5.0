@@ -172,6 +172,10 @@ const {
   getPollByToken: getWebPollByToken,
   setPollStatus: setWebPollStatus,
   updatePollDisplayStyle: updateWebPollDisplayStyle,
+  setPollOnAir: setWebPollOnAir,
+  acquireDesignLock: acquireWebPollDesignLock,
+  releaseDesignLock: releaseWebPollDesignLock,
+  setDesignConfirmed: setWebPollDesignConfirmed,
   acceptVote: acceptWebPollVote,
   drainInbox: drainWebPollInbox,
   getRollup: getWebPollRollup,
@@ -8060,6 +8064,7 @@ app.patch('/api/web-polls/poll/:pollId/display-style', async (req, res) => {
       {
         recolorOptions:
           req.body?.recolorOptions !== false && req.body?.recolor_options !== false,
+        auth: req.auth,
       }
     );
     res.json({ poll });
@@ -8067,6 +8072,69 @@ app.patch('/api/web-polls/poll/:pollId/display-style', async (req, res) => {
     const status = error.status || 500;
     if (status >= 500) console.error('[web-polls] display-style', error);
     res.status(status).json({ error: error.message || 'Failed to update display style' });
+  }
+});
+
+app.patch('/api/web-polls/poll/:pollId/on-air', async (req, res) => {
+  try {
+    await ensureWebPollsSchema(pool);
+    const onAir = req.body?.onAir ?? req.body?.on_air;
+    if (onAir === undefined) {
+      return res.status(400).json({ error: 'onAir is required' });
+    }
+    const poll = await setWebPollOnAir(pool, req.params.pollId, onAir);
+    res.json({ poll });
+  } catch (error) {
+    const status = error.status || 500;
+    if (status >= 500) console.error('[web-polls] on-air', error);
+    res.status(status).json({ error: error.message || 'Failed to update on-air' });
+  }
+});
+
+app.post('/api/web-polls/poll/:pollId/design-lock', async (req, res) => {
+  try {
+    await ensureWebPollsSchema(pool);
+    const poll = await acquireWebPollDesignLock(pool, req.params.pollId, req.auth);
+    res.json({ poll });
+  } catch (error) {
+    const status = error.status || 500;
+    if (status >= 500) console.error('[web-polls] design-lock', error);
+    res.status(status).json({ error: error.message || 'Failed to lock design' });
+  }
+});
+
+app.delete('/api/web-polls/poll/:pollId/design-lock', async (req, res) => {
+  try {
+    await ensureWebPollsSchema(pool);
+    const poll = await releaseWebPollDesignLock(pool, req.params.pollId, req.auth, {
+      force: req.body?.force === true || req.query?.force === '1',
+    });
+    res.json({ poll });
+  } catch (error) {
+    const status = error.status || 500;
+    if (status >= 500) console.error('[web-polls] design-unlock', error);
+    res.status(status).json({ error: error.message || 'Failed to unlock design' });
+  }
+});
+
+app.patch('/api/web-polls/poll/:pollId/design-confirmed', async (req, res) => {
+  try {
+    await ensureWebPollsSchema(pool);
+    const confirmed = req.body?.design_confirmed ?? req.body?.confirmed ?? req.body?.designConfirmed;
+    if (confirmed === undefined) {
+      return res.status(400).json({ error: 'design_confirmed is required' });
+    }
+    const poll = await setWebPollDesignConfirmed(
+      pool,
+      req.params.pollId,
+      confirmed,
+      req.auth
+    );
+    res.json({ poll });
+  } catch (error) {
+    const status = error.status || 500;
+    if (status >= 500) console.error('[web-polls] design-confirmed', error);
+    res.status(status).json({ error: error.message || 'Failed to update design confirmation' });
   }
 });
 

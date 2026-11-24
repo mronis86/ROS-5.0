@@ -41,12 +41,26 @@ export type WebPoll = {
   results_snapshot?: Record<string, unknown> | null;
   display_style?: WebPollDisplayStyle | Record<string, unknown> | null;
   options?: WebPollOption[];
+  design_confirmed?: boolean;
+  design_lock_owner?: string | null;
+  design_lock_name?: string | null;
+  design_lock_until?: string | null;
   opened_at?: string | null;
   closed_at?: string | null;
   finalized_at?: string | null;
   created_at?: string;
   updated_at?: string;
 };
+
+export function webPollDesignFrozen(poll: Pick<WebPoll, 'status'> | null | undefined) {
+  return poll?.status === 'open';
+}
+
+export function webPollDesignLockActive(poll: Pick<WebPoll, 'design_lock_owner' | 'design_lock_until'> | null | undefined) {
+  if (!poll?.design_lock_owner || !poll?.design_lock_until) return false;
+  const until = new Date(poll.design_lock_until).getTime();
+  return Number.isFinite(until) && until > Date.now();
+}
 
 export function webPollDisplayStyle(poll: {
   display_style?: unknown;
@@ -361,16 +375,56 @@ export function webPollSurfaceUrl(
   return `${origin.replace(/\/$/, '')}/poll-surface/${encodeURIComponent(token)}/${surface}`;
 }
 
-/** Toggle Stage / Lower / PiP animate on·off without recoloring options. */
+/** Partial write: flip surfaces.onAir only (no full design replace). */
 export async function setWebPollOnAir(pollId: string, onAir: boolean): Promise<WebPoll> {
-  const poll = await fetchWebPoll(pollId);
-  const style = webPollDisplayStyle(poll);
-  return updateWebPollDisplayStyle(
-    pollId,
+  const res = await fetch(
+    `${apiBase()}/api/web-polls/poll/${encodeURIComponent(pollId)}/on-air`,
     {
-      ...style,
-      surfaces: { ...style.surfaces, onAir: Boolean(onAir) },
-    },
-    { recolorOptions: false }
+      method: 'PATCH',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ onAir: Boolean(onAir) }),
+    }
   );
+  const data = await parseJson(res);
+  return data.poll;
+}
+
+export async function acquireWebPollDesignLock(pollId: string): Promise<WebPoll> {
+  const res = await fetch(
+    `${apiBase()}/api/web-polls/poll/${encodeURIComponent(pollId)}/design-lock`,
+    {
+      method: 'POST',
+      headers: { ...authHeaders(), Accept: 'application/json' },
+    }
+  );
+  const data = await parseJson(res);
+  return data.poll;
+}
+
+export async function releaseWebPollDesignLock(pollId: string): Promise<WebPoll> {
+  const res = await fetch(
+    `${apiBase()}/api/web-polls/poll/${encodeURIComponent(pollId)}/design-lock`,
+    {
+      method: 'DELETE',
+      headers: { ...authHeaders(), Accept: 'application/json' },
+    }
+  );
+  const data = await parseJson(res);
+  return data.poll;
+}
+
+export async function setWebPollDesignConfirmed(
+  pollId: string,
+  confirmed: boolean
+): Promise<WebPoll> {
+  const res = await fetch(
+    `${apiBase()}/api/web-polls/poll/${encodeURIComponent(pollId)}/design-confirmed`,
+    {
+      method: 'PATCH',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ design_confirmed: Boolean(confirmed) }),
+    }
+  );
+  const data = await parseJson(res);
+  return data.poll;
 }
