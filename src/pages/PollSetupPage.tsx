@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Check, Copy, MoreHorizontal } from 'lucide-react';
+import { Check, ChevronDown, Copy } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   downloadWebQaQrPng,
@@ -1085,7 +1085,7 @@ export default function PollSetupPage() {
                             key={poll.id}
                             className="rounded-lg border border-slate-700 bg-slate-950/50 overflow-hidden"
                           >
-                            <div className="px-3 py-2.5 flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
+                            <div className="px-3 py-2.5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                               <div className="min-w-0 flex-1">
                                 <div className="flex flex-wrap items-center gap-1.5 mb-1">
                                   <span
@@ -1121,7 +1121,7 @@ export default function PollSetupPage() {
                                 </p>
                               </div>
 
-                              <div className="flex flex-wrap items-center gap-2 shrink-0 sm:justify-end">
+                              <div className="flex flex-wrap items-center gap-2 shrink-0">
                                 {editing ? (
                                   <button
                                     type="button"
@@ -1188,73 +1188,74 @@ export default function PollSetupPage() {
                                 >
                                   Control
                                 </button>
-                                <div className="relative">
-                                  <button
-                                    type="button"
-                                    aria-label="More poll actions"
-                                    aria-expanded={menuOpen}
-                                    onClick={() =>
-                                      setMenuPollId((id) => (id === poll.id ? null : poll.id))
-                                    }
-                                    className={`p-1.5 rounded border ${
-                                      menuOpen
-                                        ? 'border-slate-500 bg-slate-800 text-white'
-                                        : 'border-slate-600 text-slate-300 hover:bg-slate-800'
-                                    }`}
-                                  >
-                                    <MoreHorizontal className="w-4 h-4" />
-                                  </button>
-                                  {menuOpen ? (
-                                    <div className="absolute right-0 top-full mt-1 z-30 min-w-[11rem] rounded-lg border border-slate-600 bg-slate-900 shadow-xl py-1">
-                                      {!frozen && !editing ? (
-                                        <button
-                                          type="button"
-                                          className="w-full text-left px-3 py-2 text-xs text-slate-200 hover:bg-slate-800"
-                                          onClick={() => {
-                                            setMenuPollId(null);
-                                            openEdit(poll);
-                                          }}
-                                        >
-                                          Edit question / type
-                                        </button>
-                                      ) : null}
-                                      <button
-                                        type="button"
-                                        className="w-full text-left px-3 py-2 text-xs text-slate-200 hover:bg-slate-800 inline-flex items-center gap-2"
-                                        onClick={() => {
-                                          setMenuPollId(null);
-                                          void copyLink(poll);
-                                        }}
-                                      >
-                                        {copiedId === poll.id ? (
-                                          <Check className="w-3.5 h-3.5 text-emerald-400" />
-                                        ) : (
-                                          <Copy className="w-3.5 h-3.5" />
-                                        )}
-                                        {copiedId === poll.id ? 'Copied' : 'Copy audience link'}
-                                      </button>
-                                      <a
-                                        href={audience}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="block px-3 py-2 text-xs text-slate-200 hover:bg-slate-800"
-                                        onClick={() => setMenuPollId(null)}
-                                      >
-                                        Open audience
-                                      </a>
-                                      <button
-                                        type="button"
-                                        disabled={clearBusyId === poll.id}
-                                        className="w-full text-left px-3 py-2 text-xs text-rose-300 hover:bg-rose-950/40 disabled:opacity-40"
-                                        onClick={() => requestClearResults(poll)}
-                                      >
-                                        Clear results…
-                                      </button>
-                                    </div>
-                                  ) : null}
-                                </div>
+                                <button
+                                  type="button"
+                                  aria-expanded={menuOpen}
+                                  onClick={() =>
+                                    setMenuPollId((id) => (id === poll.id ? null : poll.id))
+                                  }
+                                  className={`inline-flex items-center gap-1 px-2.5 py-1.5 text-xs rounded border font-semibold ${
+                                    menuOpen
+                                      ? 'border-slate-500 bg-slate-800 text-white'
+                                      : 'border-slate-600 text-slate-300 hover:bg-slate-800'
+                                  }`}
+                                >
+                                  More
+                                  <ChevronDown
+                                    className={`w-3.5 h-3.5 transition-transform ${menuOpen ? 'rotate-180' : ''}`}
+                                  />
+                                </button>
                               </div>
                             </div>
+
+                            {menuOpen ? (
+                              <div className="border-t border-slate-800 px-3 py-2.5 flex flex-wrap gap-2 bg-slate-950/70">
+                                {!frozen && !editing ? (
+                                  <button
+                                    type="button"
+                                    className="px-2.5 py-1.5 text-xs rounded border border-slate-600 text-slate-200 hover:bg-slate-800"
+                                    onClick={() => {
+                                      setMenuPollId(null);
+                                      openEdit(poll);
+                                    }}
+                                  >
+                                    Edit question / type
+                                  </button>
+                                ) : (
+                                  <span className="px-2.5 py-1.5 text-xs text-slate-500 self-center">
+                                    Edit locked while open
+                                  </span>
+                                )}
+                                <button
+                                  type="button"
+                                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded border border-slate-600 text-slate-200 hover:bg-slate-800"
+                                  onClick={() => void copyLink(poll)}
+                                >
+                                  {copiedId === poll.id ? (
+                                    <Check className="w-3.5 h-3.5 text-emerald-400" />
+                                  ) : (
+                                    <Copy className="w-3.5 h-3.5" />
+                                  )}
+                                  {copiedId === poll.id ? 'Copied' : 'Copy link'}
+                                </button>
+                                <a
+                                  href={audience}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="px-2.5 py-1.5 text-xs rounded border border-slate-600 text-slate-200 hover:bg-slate-800"
+                                >
+                                  Audience
+                                </a>
+                                <button
+                                  type="button"
+                                  disabled={clearBusyId === poll.id}
+                                  className="px-2.5 py-1.5 text-xs rounded border border-rose-700/60 text-rose-200 hover:bg-rose-950/50 font-semibold disabled:opacity-40"
+                                  onClick={() => requestClearResults(poll)}
+                                >
+                                  Clear results…
+                                </button>
+                              </div>
+                            ) : null}
                             {editing ? (
                               <form
                                 onSubmit={(e) => void onSaveEdit(e, poll)}
