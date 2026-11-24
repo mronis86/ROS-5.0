@@ -55,6 +55,7 @@ export default function PollControlPage() {
   const [designDraft, setDesignDraft] = useState<WebPollDisplayStyle | null>(null);
   const [designBusy, setDesignBusy] = useState(false);
   const [designMsg, setDesignMsg] = useState<string | null>(null);
+  const [designConfirmChecked, setDesignConfirmChecked] = useState(false);
   const [showDesign, setShowDesign] = useState(false);
   const [copiedSurface, setCopiedSurface] = useState<string | null>(null);
 
@@ -104,6 +105,7 @@ export default function PollControlPage() {
   useEffect(() => {
     setDesignDraft(null);
     setDesignMsg(null);
+    setDesignConfirmChecked(false);
     setShowDesign(false);
   }, [pollId]);
 
@@ -123,6 +125,10 @@ export default function PollControlPage() {
 
   const saveDesign = async () => {
     if (!poll || !designDraft || designBusy || designFrozen) return;
+    if (!designConfirmChecked) {
+      setError('Check Confirm design, then Save.');
+      return;
+    }
     setDesignBusy(true);
     setDesignMsg(null);
     try {
@@ -133,10 +139,12 @@ export default function PollControlPage() {
           onAir: Boolean(webPollDisplayStyle(poll).surfaces.onAir),
         },
       };
-      const updated = await updateWebPollDisplayStyle(poll.id, next);
+      const updated = await updateWebPollDisplayStyle(poll.id, next, {
+        designConfirmed: true,
+      });
       setPoll(updated);
       setDesignDraft(webPollDisplayStyle(updated));
-      setDesignMsg('Design saved — re-confirm in Setup before opening');
+      setDesignMsg('Design saved & confirmed');
       await loadList();
       window.setTimeout(() => setDesignMsg(null), 2500);
     } catch (e) {
@@ -147,7 +155,7 @@ export default function PollControlPage() {
   };
 
   const toggleOnAir = async () => {
-    if (!pollId || !poll || onAirBusy) return;
+    if (!pollId || !poll) return;
     const next = !onAir;
     setError(null);
     // Optimistic: flip immediately, no spinner — revert only on failure.
@@ -439,6 +447,7 @@ export default function PollControlPage() {
                               /* ignore */
                             }
                             setShowDesign(false);
+                            setDesignConfirmChecked(false);
                             return;
                           }
                           try {
@@ -446,6 +455,7 @@ export default function PollControlPage() {
                             const locked = await acquireWebPollDesignLock(poll.id);
                             setPoll(locked);
                             setDesignDraft(webPollDisplayStyle(locked));
+                            setDesignConfirmChecked(false);
                             setShowDesign(true);
                           } catch (e) {
                             setError(e instanceof Error ? e.message : 'Failed to lock design');
@@ -469,34 +479,53 @@ export default function PollControlPage() {
                         'Edit design'
                       )}
                     </button>
-                    {!designFrozen ? (
-                      <button
-                        type="button"
-                        disabled={designBusy || !showDesign}
-                        onClick={() => void saveDesign()}
-                        className="px-3 py-1.5 text-xs rounded bg-violet-600 hover:bg-violet-500 disabled:opacity-50 font-semibold"
-                      >
-                        {designBusy ? 'Saving…' : 'Save design'}
-                      </button>
-                    ) : null}
                     {designMsg ? (
                       <span className="text-xs text-emerald-300">{designMsg}</span>
                     ) : null}
                   </div>
                 </div>
-                {showDesign && !designFrozen ? (
-                  <WebPollDesignEditor
-                    pollType={poll.poll_type}
-                    value={designDraft}
-                    onChange={setDesignDraft}
-                    question={poll.question}
-                    previewOptions={options.map((o) => ({
-                      id: o.id,
-                      label: o.label,
-                      color: o.color,
-                      votes: Number(o.votes ?? o.vote_count ?? 0),
-                    }))}
-                  />
+                {showDesign && !designFrozen && designDraft ? (
+                  <>
+                    <WebPollDesignEditor
+                      pollType={poll.poll_type}
+                      value={designDraft}
+                      onChange={setDesignDraft}
+                      question={poll.question}
+                      previewOptions={options.map((o) => ({
+                        id: o.id,
+                        label: o.label,
+                        color: o.color,
+                        votes: Number(o.votes ?? o.vote_count ?? 0),
+                      }))}
+                    />
+                    <div className="flex flex-wrap items-center gap-3">
+                      <label className="inline-flex items-center gap-2 text-xs text-slate-200 cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          className="rounded border-slate-600 bg-slate-900"
+                          checked={designConfirmChecked}
+                          onChange={(e) => setDesignConfirmChecked(e.target.checked)}
+                        />
+                        Confirm design
+                      </label>
+                      <button
+                        type="button"
+                        disabled={designBusy || !designConfirmChecked}
+                        title={
+                          designConfirmChecked
+                            ? 'Save look and mark design confirmed for Open'
+                            : 'Check Confirm design, then save'
+                        }
+                        onClick={() => void saveDesign()}
+                        className="px-3 py-1.5 text-xs rounded bg-violet-600 hover:bg-violet-500 disabled:opacity-50 font-semibold"
+                      >
+                        {designBusy ? 'Saving…' : 'Save design'}
+                      </button>
+                      <span className="text-[11px] text-slate-500">
+                        Check Confirm, then Save — required before Open in Setup.
+                      </span>
+                    </div>
+                  </>
                 ) : null}
               </section>
             ) : null}

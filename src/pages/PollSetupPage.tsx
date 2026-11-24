@@ -20,8 +20,8 @@ import {
   fetchWebPollOverview,
   releaseWebPollDesignLock,
   rotateWebPollSession,
-  setWebPollDesignConfirmed,
   setWebPollStatus,
+  updateWebPoll,
   updateWebPollDisplayStyle,
   webPollAudienceUrl,
   webPollDesignFrozen,
@@ -113,6 +113,13 @@ export default function PollSetupPage() {
   const [designDraft, setDesignDraft] = useState<WebPollDisplayStyle | null>(null);
   const [designBusy, setDesignBusy] = useState(false);
   const [designMsg, setDesignMsg] = useState<string | null>(null);
+  const [designConfirmChecked, setDesignConfirmChecked] = useState(false);
+  const [editPollId, setEditPollId] = useState<string | null>(null);
+  const [editQuestion, setEditQuestion] = useState('');
+  const [editPollType, setEditPollType] = useState<WebPollType>('single');
+  const [editOptionLabels, setEditOptionLabels] = useState<string[]>([]);
+  const [editBusy, setEditBusy] = useState(false);
+  const [editStructureLocked, setEditStructureLocked] = useState(false);
 
   const load = useCallback(async () => {
     if (!eventId) {
@@ -199,7 +206,75 @@ export default function PollSetupPage() {
     setDesignPollId(null);
     setDesignDraft(null);
     setDesignMsg(null);
+    setEditPollId(null);
     navigate(`/polls-setup?${qs}&cueItemId=${id}`, { replace: true });
+  };
+
+  const closeEdit = () => {
+    setEditPollId(null);
+    setEditQuestion('');
+    setEditOptionLabels([]);
+    setEditStructureLocked(false);
+  };
+
+  const openEdit = (poll: WebPoll) => {
+    if (editPollId === poll.id) {
+      closeEdit();
+      return;
+    }
+    if (webPollDesignFrozen(poll)) {
+      setError('Poll content is locked while open. Close voting to edit question, type, or options.');
+      return;
+    }
+    setShowCreate(false);
+    setDesignPollId(null);
+    setDesignDraft(null);
+    setDesignMsg(null);
+    setError(null);
+    setEditPollId(poll.id);
+    setEditQuestion(poll.question || '');
+    setEditPollType(poll.poll_type);
+    setEditOptionLabels(
+      (poll.options || []).map((o) => o.label).filter(Boolean).length >= 2
+        ? (poll.options || []).map((o) => o.label)
+        : defaultOptions(poll.poll_type).map((o) => o.label)
+    );
+    setEditStructureLocked(
+      Number(poll.received_count || 0) > 0 || Number(poll.counted_count || 0) > 0
+    );
+  };
+
+  const onSaveEdit = async (e: React.FormEvent, poll: WebPoll) => {
+    e.preventDefault();
+    if (!editPollId || editBusy) return;
+    const q = editQuestion.trim();
+    if (!q) return;
+    setEditBusy(true);
+    setError(null);
+    try {
+      const payload: {
+        question: string;
+        pollType?: WebPollType;
+        options?: { label: string }[];
+      } = { question: q };
+      if (!editStructureLocked) {
+        payload.pollType = editPollType;
+        payload.options =
+          editPollType === 'rating'
+            ? defaultOptions('rating')
+            : editOptionLabels
+                .map((label) => label.trim())
+                .filter(Boolean)
+                .map((label) => ({ label }));
+      }
+      await updateWebPoll(poll.id, payload);
+      closeEdit();
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update poll');
+    } finally {
+      setEditBusy(false);
+    }
   };
 
   const onCreate = async (e: React.FormEvent) => {
@@ -229,8 +304,15 @@ export default function PollSetupPage() {
       setCreateStyle({ ...DEFAULT_DISPLAY_STYLE });
       setShowCreate(false);
       await load();
-      setDesignPollId(poll.id);
-      setDesignDraft(webPollDisplayStyle(poll));
+      try {
+        const locked = await acquireWebPollDesignLock(poll.id);
+        setDesignPollId(locked.id);
+        setDesignDraft(webPollDisplayStyle(locked));
+      } catch {
+        setDesignPollId(poll.id);
+        setDesignDraft(webPollDisplayStyle(poll));
+      }
+      setDesignConfirmChecked(false);
       setDesignMsg(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Create failed');
@@ -260,6 +342,7 @@ export default function PollSetupPage() {
       setDesignPollId(null);
       setDesignDraft(null);
       setDesignMsg(null);
+      setDesignConfirmChecked(false);
       await load();
       return;
     }
@@ -269,10 +352,12 @@ export default function PollSetupPage() {
     }
     setError(null);
     setShowCreate(false);
+    closeEdit();
     try {
       const locked = await acquireWebPollDesignLock(poll.id);
       setDesignPollId(locked.id);
       setDesignDraft(webPollDisplayStyle(locked));
+      setDesignConfirmChecked(false);
       setDesignMsg(null);
       await load();
     } catch (err) {
@@ -282,6 +367,10 @@ export default function PollSetupPage() {
 
   const saveDesign = async (poll: WebPoll) => {
     if (!designDraft || designBusy || webPollDesignFrozen(poll)) return;
+    if (!designConfirmChecked) {
+      setError('Check Confirm design, then Save.');
+      return;
+    }
     setDesignBusy(true);
     setDesignMsg(null);
     try {
@@ -293,29 +382,26 @@ export default function PollSetupPage() {
           onAir: Boolean(live.surfaces.onAir),
         },
       };
-      const updated = await updateWebPollDisplayStyle(poll.id, next);
+      const updated = await updateWebPollDisplayStyle(poll.id, next, {
+        designConfirmed: true,
+      });
       setDesignDraft(webPollDisplayStyle(updated));
-      setDesignMsg('Saved — confirm design before Open');
+      setDesignMsg('Design saved & confirmed');
+      // Close editor so Open can enable from the refreshed poll row.
+      try {
+        await releaseWebPollDesignLock(poll.id);
+      } catch {
+        /* ignore */
+      }
+      setDesignPollId(null);
+      setDesignDraft(null);
+      setDesignConfirmChecked(false);
       await load();
       window.setTimeout(() => setDesignMsg(null), 2500);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save design');
     } finally {
       setDesignBusy(false);
-    }
-  };
-
-  const toggleDesignConfirmed = async (poll: WebPoll, confirmed: boolean) => {
-    if (statusBusyId || webPollDesignFrozen(poll)) return;
-    setStatusBusyId(poll.id);
-    setError(null);
-    try {
-      await setWebPollDesignConfirmed(poll.id, confirmed);
-      await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to update design confirmation');
-    } finally {
-      setStatusBusyId(null);
     }
   };
 
@@ -815,7 +901,12 @@ export default function PollSetupPage() {
                   </div>
                   <button
                     type="button"
-                    onClick={() => setShowCreate((v) => !v)}
+                    onClick={() => {
+                      setShowCreate((v) => !v);
+                      closeEdit();
+                      setDesignPollId(null);
+                      setDesignDraft(null);
+                    }}
                     className="px-3 py-1.5 text-sm rounded bg-sky-600 hover:bg-sky-500 font-semibold"
                   >
                     {showCreate ? 'Cancel' : 'New poll for this cue'}
@@ -953,6 +1044,7 @@ export default function PollSetupPage() {
                         const statusBusy = statusBusyId === poll.id;
                         const isOpen = poll.status === 'open';
                         const designing = designPollId === poll.id && designDraft;
+                        const editing = editPollId === poll.id;
                         const frozen = webPollDesignFrozen(poll);
                         const lockActive = webPollDesignLockActive(poll);
                         const confirmed = Boolean(poll.design_confirmed);
@@ -983,11 +1075,11 @@ export default function PollSetupPage() {
                                   </span>
                                   {confirmed ? (
                                     <span className="text-[10px] uppercase tracking-wide font-semibold px-2 py-0.5 rounded border border-emerald-700/50 text-emerald-300">
-                                      Design OK
+                                      Design confirmed
                                     </span>
                                   ) : (
                                     <span className="text-[10px] uppercase tracking-wide font-semibold px-2 py-0.5 rounded border border-amber-700/50 text-amber-200">
-                                      Needs confirm
+                                      Needs design confirmation
                                     </span>
                                   )}
                                   {lockActive && !frozen ? (
@@ -1003,6 +1095,36 @@ export default function PollSetupPage() {
                               </div>
                               <div className="flex flex-col items-stretch sm:items-end gap-1.5 shrink-0">
                                 <div className="flex flex-wrap gap-2 justify-end">
+                                  <button
+                                    type="button"
+                                    disabled={frozen && !editing}
+                                    title={
+                                      frozen
+                                        ? 'Content locked while the poll is open. Close voting to edit.'
+                                        : editing
+                                          ? 'Cancel content edit'
+                                          : 'Edit question, type, or options'
+                                    }
+                                    onClick={() => openEdit(poll)}
+                                    className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded border font-semibold disabled:cursor-not-allowed ${
+                                      frozen && !editing
+                                        ? 'border-amber-700/60 bg-amber-950/40 text-amber-100'
+                                        : editing
+                                          ? 'border-violet-500 bg-violet-950/40 text-violet-100'
+                                          : 'border-slate-600 text-slate-200 hover:bg-slate-800'
+                                    }`}
+                                  >
+                                    {frozen && !editing ? (
+                                      <>
+                                        <Lock className="w-3.5 h-3.5" />
+                                        Edit locked
+                                      </>
+                                    ) : editing ? (
+                                      'Cancel edit'
+                                    ) : (
+                                      'Edit'
+                                    )}
+                                  </button>
                                   <button
                                     type="button"
                                     disabled={frozen && !designing}
@@ -1107,7 +1229,131 @@ export default function PollSetupPage() {
                                 ) : null}
                               </div>
                             </div>
-                            {designing ? (
+                            {editing ? (
+                              <form
+                                onSubmit={(e) => void onSaveEdit(e, poll)}
+                                className="border-t border-slate-800 px-3 py-3 space-y-3 bg-slate-950/80"
+                              >
+                                <div>
+                                  <label className="block text-xs font-semibold text-slate-400 mb-1.5">
+                                    Question
+                                  </label>
+                                  <input
+                                    value={editQuestion}
+                                    onChange={(e) => setEditQuestion(e.target.value)}
+                                    maxLength={280}
+                                    required
+                                    className="w-full rounded-lg bg-slate-950 border border-slate-600 px-3 py-2.5 text-white focus:outline-none focus:border-violet-500"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-xs font-semibold text-slate-400 mb-1.5">
+                                    Type
+                                  </label>
+                                  <div className="flex flex-wrap gap-2">
+                                    {POLL_TYPES.map((t) => (
+                                      <button
+                                        key={t.id}
+                                        type="button"
+                                        disabled={editStructureLocked}
+                                        onClick={() => {
+                                          if (editStructureLocked) return;
+                                          setEditPollType(t.id);
+                                          setEditOptionLabels(
+                                            defaultOptions(t.id).map((o) => o.label)
+                                          );
+                                        }}
+                                        className={`px-3 py-1.5 text-xs rounded-md border transition-colors disabled:opacity-40 ${
+                                          editPollType === t.id
+                                            ? 'border-violet-500 bg-violet-950/40 text-violet-100'
+                                            : 'border-slate-600 bg-slate-950 text-slate-300 hover:border-slate-500'
+                                        }`}
+                                      >
+                                        {t.label}
+                                      </button>
+                                    ))}
+                                  </div>
+                                  {editStructureLocked ? (
+                                    <p className="text-[11px] text-amber-200/90 mt-1.5">
+                                      Type and options are locked after votes. Question can still
+                                      change.
+                                    </p>
+                                  ) : null}
+                                </div>
+                                {!editStructureLocked && editPollType !== 'rating' ? (
+                                  <div className="space-y-2">
+                                    <label className="block text-xs font-semibold text-slate-400">
+                                      Options
+                                    </label>
+                                    {editOptionLabels.map((label, i) => (
+                                      <div key={i} className="flex gap-2">
+                                        <input
+                                          value={label}
+                                          onChange={(e) => {
+                                            const next = [...editOptionLabels];
+                                            next[i] = e.target.value;
+                                            setEditOptionLabels(next);
+                                          }}
+                                          maxLength={80}
+                                          className="flex-1 rounded-lg bg-slate-950 border border-slate-600 px-3 py-2 text-white focus:outline-none focus:border-violet-500"
+                                        />
+                                        {editOptionLabels.length > 2 ? (
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              setEditOptionLabels(
+                                                editOptionLabels.filter((_, j) => j !== i)
+                                              )
+                                            }
+                                            className="px-2.5 rounded-lg border border-slate-600 text-slate-400 hover:bg-slate-800"
+                                          >
+                                            −
+                                          </button>
+                                        ) : null}
+                                      </div>
+                                    ))}
+                                    {editOptionLabels.length < 8 && editPollType !== 'yesno' ? (
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setEditOptionLabels([
+                                            ...editOptionLabels,
+                                            `Option ${String.fromCharCode(65 + editOptionLabels.length)}`,
+                                          ])
+                                        }
+                                        className="text-xs text-violet-300 hover:text-violet-200"
+                                      >
+                                        + Add option
+                                      </button>
+                                    ) : null}
+                                  </div>
+                                ) : !editStructureLocked ? (
+                                  <p className="text-xs text-slate-500">
+                                    Rating uses fixed options 1–5.
+                                  </p>
+                                ) : null}
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <button
+                                    type="submit"
+                                    disabled={editBusy || !editQuestion.trim()}
+                                    className="px-3 py-1.5 text-xs rounded bg-violet-600 hover:bg-violet-500 disabled:opacity-50 font-semibold"
+                                  >
+                                    {editBusy ? 'Saving…' : 'Save poll'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={closeEdit}
+                                    className="px-3 py-1.5 text-xs rounded border border-slate-600 text-slate-300 hover:bg-slate-800"
+                                  >
+                                    Cancel
+                                  </button>
+                                  <span className="text-[11px] text-slate-500">
+                                    Content save clears design confirm — open Design, confirm, and
+                                    save again before Open.
+                                  </span>
+                                </div>
+                              </form>
+                            ) : designing ? (
                               <div className="border-t border-slate-800 px-3 py-3 space-y-3 bg-slate-950/80">
                                 <WebPollDesignEditor
                                   pollType={poll.poll_type}
@@ -1122,55 +1368,43 @@ export default function PollSetupPage() {
                                   }))}
                                 />
                                 <div className="flex flex-wrap items-center gap-3">
+                                  <label className="inline-flex items-center gap-2 text-xs text-slate-200 cursor-pointer select-none">
+                                    <input
+                                      type="checkbox"
+                                      className="rounded border-slate-600 bg-slate-900"
+                                      checked={designConfirmChecked}
+                                      onChange={(e) => setDesignConfirmChecked(e.target.checked)}
+                                    />
+                                    Confirm design
+                                  </label>
                                   <button
                                     type="button"
-                                    disabled={designBusy}
+                                    disabled={designBusy || !designConfirmChecked}
+                                    title={
+                                      designConfirmChecked
+                                        ? 'Save look and mark design confirmed for Open'
+                                        : 'Check Confirm design, then save'
+                                    }
                                     onClick={() => void saveDesign(poll)}
                                     className="px-3 py-1.5 text-xs rounded bg-sky-600 hover:bg-sky-500 disabled:opacity-50 font-semibold"
                                   >
                                     {designBusy ? 'Saving…' : 'Save design'}
                                   </button>
-                                  <label className="inline-flex items-center gap-2 text-xs text-slate-200 cursor-pointer select-none">
-                                    <input
-                                      type="checkbox"
-                                      className="rounded border-slate-600 bg-slate-900"
-                                      checked={confirmed}
-                                      disabled={statusBusy}
-                                      onChange={(e) =>
-                                        void toggleDesignConfirmed(poll, e.target.checked)
-                                      }
-                                    />
-                                    Confirm design (required before Open)
-                                  </label>
                                   {designMsg ? (
                                     <span className="text-xs text-emerald-300">{designMsg}</span>
                                   ) : (
                                     <span className="text-[11px] text-slate-500">
-                                      One editor at a time. Saving clears confirm until you check
-                                      again. On-air stays with Control.
+                                      Check Confirm, then Save — required before Open. On-air stays
+                                      with Control.
                                     </span>
                                   )}
                                 </div>
                               </div>
-                            ) : !frozen ? (
-                              <div className="border-t border-slate-800 px-3 py-2 flex flex-wrap items-center gap-3 bg-slate-950/40">
-                                <label className="inline-flex items-center gap-2 text-xs text-slate-300 cursor-pointer select-none">
-                                  <input
-                                    type="checkbox"
-                                    className="rounded border-slate-600 bg-slate-900"
-                                    checked={confirmed}
-                                    disabled={statusBusy || lockActive}
-                                    onChange={(e) =>
-                                      void toggleDesignConfirmed(poll, e.target.checked)
-                                    }
-                                  />
-                                  Confirm design
-                                </label>
-                                {lockActive ? (
-                                  <span className="text-[11px] text-slate-500">
-                                    Locked by {poll.design_lock_name || 'another operator'}
-                                  </span>
-                                ) : null}
+                            ) : lockActive && !frozen ? (
+                              <div className="border-t border-slate-800 px-3 py-2 bg-slate-950/40">
+                                <span className="text-[11px] text-slate-500">
+                                  Design locked by {poll.design_lock_name || 'another operator'}
+                                </span>
                               </div>
                             ) : null}
                           </li>

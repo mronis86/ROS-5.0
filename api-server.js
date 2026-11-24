@@ -167,6 +167,7 @@ const {
 const {
   ensureWebPollsSchema,
   createPoll: createWebPoll,
+  updatePoll: updateWebPoll,
   listPollsForEvent: listWebPollsForEvent,
   getPollById: getWebPollById,
   getPollByToken: getWebPollByToken,
@@ -8054,6 +8055,22 @@ app.patch('/api/web-polls/poll/:pollId/status', async (req, res) => {
   }
 });
 
+app.patch('/api/web-polls/poll/:pollId', async (req, res) => {
+  try {
+    await ensureWebPollsSchema(pool);
+    const poll = await updateWebPoll(pool, req.params.pollId, {
+      question: req.body?.question,
+      pollType: req.body?.poll_type ?? req.body?.pollType,
+      options: req.body?.options,
+    });
+    res.json({ poll });
+  } catch (error) {
+    const status = error.status || 500;
+    if (status >= 500) console.error('[web-polls] update poll', error);
+    res.status(status).json({ error: error.message || 'Failed to update poll' });
+  }
+});
+
 app.patch('/api/web-polls/poll/:pollId/display-style', async (req, res) => {
   try {
     await ensureWebPollsSchema(pool);
@@ -8065,6 +8082,10 @@ app.patch('/api/web-polls/poll/:pollId/display-style', async (req, res) => {
         recolorOptions:
           req.body?.recolorOptions !== false && req.body?.recolor_options !== false,
         auth: req.auth,
+        designConfirmed:
+          req.body?.design_confirmed ??
+          req.body?.designConfirmed ??
+          req.body?.confirmed,
       }
     );
     res.json({ poll });

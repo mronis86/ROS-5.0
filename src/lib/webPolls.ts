@@ -227,10 +227,32 @@ export async function createWebPoll(
   return data.poll;
 }
 
+/** Edit question / type / options. Blocked while open; type/options blocked after votes. */
+export async function updateWebPoll(
+  pollId: string,
+  body: {
+    question?: string;
+    pollType?: WebPollType;
+    options?: { label: string; color?: string }[];
+  }
+): Promise<WebPoll> {
+  const res = await fetch(`${apiBase()}/api/web-polls/poll/${encodeURIComponent(pollId)}`, {
+    method: 'PATCH',
+    headers: { ...authHeaders(), 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({
+      question: body.question,
+      poll_type: body.pollType,
+      options: body.options,
+    }),
+  });
+  const data = await parseJson(res);
+  return data.poll;
+}
+
 export async function updateWebPollDisplayStyle(
   pollId: string,
   displayStyle: WebPollDisplayStyle,
-  opts?: { recolorOptions?: boolean }
+  opts?: { recolorOptions?: boolean; designConfirmed?: boolean }
 ): Promise<WebPoll> {
   const res = await fetch(
     `${apiBase()}/api/web-polls/poll/${encodeURIComponent(pollId)}/display-style`,
@@ -240,6 +262,7 @@ export async function updateWebPollDisplayStyle(
       body: JSON.stringify({
         display_style: displayStyle,
         recolorOptions: opts?.recolorOptions !== false,
+        design_confirmed: opts?.designConfirmed === true,
       }),
     }
   );
